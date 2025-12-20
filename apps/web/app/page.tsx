@@ -11,7 +11,6 @@ import {
   GitBranch,
   Cpu,
   Clock,
-  CheckCircle2,
   Sparkles,
   ChevronRight,
 } from "lucide-react";
@@ -37,7 +36,7 @@ function AnimatedTerminal() {
     const interval = setInterval(() => {
       setVisibleLines((prev) => {
         if (prev >= TERMINAL_LINES.length) {
-          return 0; // Reset to loop
+          return 1; // Reset to loop (keep first line visible to avoid blank frame)
         }
         return prev + 1;
       });
@@ -198,8 +197,8 @@ export default function HomePage() {
             <div className="flex flex-col justify-center">
               {/* Badge */}
               <div
-                className={`mb-6 inline-flex w-fit items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm text-primary ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-                style={{ animationDelay: "0.1s", animationFillMode: "forwards" }}
+                className={`mb-6 inline-flex w-fit items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm text-primary opacity-0 ${mounted ? "animate-slide-up" : ""}`}
+                style={mounted ? { animationDelay: "0.1s", animationFillMode: "forwards" } : undefined}
               >
                 <Sparkles className="h-4 w-4" />
                 <span>Zero to agentic coding in 30 minutes</span>
@@ -207,8 +206,8 @@ export default function HomePage() {
 
               {/* Headline */}
               <h1
-                className={`mb-6 font-mono text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-                style={{ animationDelay: "0.2s", animationFillMode: "forwards" }}
+                className={`mb-6 font-mono text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl opacity-0 ${mounted ? "animate-slide-up" : ""}`}
+                style={mounted ? { animationDelay: "0.2s", animationFillMode: "forwards" } : undefined}
               >
                 <span className="text-gradient-cosmic">AI Agents</span>
                 <br />
@@ -217,8 +216,8 @@ export default function HomePage() {
 
               {/* Subheadline */}
               <p
-                className={`mb-8 max-w-xl text-lg leading-relaxed text-muted-foreground ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-                style={{ animationDelay: "0.3s", animationFillMode: "forwards" }}
+                className={`mb-8 max-w-xl text-lg leading-relaxed text-muted-foreground opacity-0 ${mounted ? "animate-slide-up" : ""}`}
+                style={mounted ? { animationDelay: "0.3s", animationFillMode: "forwards" } : undefined}
               >
                 Transform a fresh Ubuntu VPS into a fully-configured agentic coding
                 environment. Claude, Codex, Gemini — all pre-configured with 30+ modern
@@ -227,8 +226,8 @@ export default function HomePage() {
 
               {/* CTA Buttons */}
               <div
-                className={`flex flex-col gap-3 sm:flex-row sm:items-center ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-                style={{ animationDelay: "0.4s", animationFillMode: "forwards" }}
+                className={`flex flex-col gap-3 sm:flex-row sm:items-center opacity-0 ${mounted ? "animate-slide-up" : ""}`}
+                style={mounted ? { animationDelay: "0.4s", animationFillMode: "forwards" } : undefined}
               >
                 <Button
                   asChild
@@ -257,8 +256,8 @@ export default function HomePage() {
 
               {/* Stats */}
               <div
-                className={`mt-10 flex items-center divide-x divide-border/50 ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-                style={{ animationDelay: "0.5s", animationFillMode: "forwards" }}
+                className={`mt-10 flex items-center divide-x divide-border/50 opacity-0 ${mounted ? "animate-slide-up" : ""}`}
+                style={mounted ? { animationDelay: "0.5s", animationFillMode: "forwards" } : undefined}
               >
                 <StatBadge value="30+" label="Tools Installed" />
                 <StatBadge value="3" label="AI Agents" />
@@ -298,14 +297,14 @@ export default function HomePage() {
         <section className="mx-auto max-w-7xl px-6 py-24">
           <div className="mb-12 text-center">
             <h2
-              className={`mb-4 font-mono text-3xl font-bold tracking-tight ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-              style={{ animationDelay: "0.6s", animationFillMode: "forwards" }}
+              className={`mb-4 font-mono text-3xl font-bold tracking-tight opacity-0 ${mounted ? "animate-slide-up" : ""}`}
+              style={mounted ? { animationDelay: "0.6s", animationFillMode: "forwards" } : undefined}
             >
               Everything You Need
             </h2>
             <p
-              className={`mx-auto max-w-2xl text-muted-foreground ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-              style={{ animationDelay: "0.7s", animationFillMode: "forwards" }}
+              className={`mx-auto max-w-2xl text-muted-foreground opacity-0 ${mounted ? "animate-slide-up" : ""}`}
+              style={mounted ? { animationDelay: "0.7s", animationFillMode: "forwards" } : undefined}
             >
               A single curl command installs and configures your complete agentic coding environment
             </p>
@@ -357,8 +356,57 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* Workflow Steps Preview */}
+        {/* Flywheel Teaser */}
         <section className="border-t border-border/30 bg-card/20 py-24">
+          <div className="mx-auto max-w-7xl px-6">
+            <div className="mb-12 text-center">
+              <div className="mb-4 flex items-center justify-center gap-3">
+                <div className="h-px w-8 bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
+                <span className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary">Ecosystem</span>
+                <div className="h-px w-8 bg-gradient-to-l from-transparent via-primary/50 to-transparent" />
+              </div>
+              <h2 className="mb-4 font-mono text-3xl font-bold tracking-tight">
+                The Agentic Coding Flywheel
+              </h2>
+              <p className="mx-auto max-w-2xl text-muted-foreground">
+                Eight interconnected tools that transform multi-agent workflows. Each tool enhances the others.
+              </p>
+            </div>
+
+            {/* Tool preview grid */}
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-4 mb-8">
+              {[
+                { name: "NTM", color: "from-sky-400 to-blue-500", desc: "Agent Orchestration" },
+                { name: "Mail", color: "from-violet-400 to-purple-500", desc: "Coordination" },
+                { name: "UBS", color: "from-rose-400 to-red-500", desc: "Bug Scanning" },
+                { name: "BV", color: "from-emerald-400 to-teal-500", desc: "Task Graph" },
+                { name: "CASS", color: "from-cyan-400 to-sky-500", desc: "Search" },
+                { name: "CM", color: "from-pink-400 to-fuchsia-500", desc: "Memory" },
+                { name: "CAAM", color: "from-amber-400 to-orange-500", desc: "Auth" },
+                { name: "SLB", color: "from-yellow-400 to-amber-500", desc: "Safety" },
+              ].map((tool, i) => (
+                <div key={tool.name} className="flex flex-col items-center gap-2 opacity-0 animate-slide-up" style={{ animationDelay: `${1.4 + i * 0.1}s`, animationFillMode: "forwards" }}>
+                  <div className={`flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${tool.color} shadow-lg`}>
+                    <span className="text-xs font-bold text-white">{tool.name}</span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground text-center">{tool.desc}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-center">
+              <Button asChild size="lg" variant="outline" className="border-primary/30 hover:bg-primary/10">
+                <Link href="/flywheel">
+                  Explore the Flywheel
+                  <ChevronRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        {/* Workflow Steps Preview */}
+        <section className="border-t border-border/30 bg-card/30 py-24">
           <div className="mx-auto max-w-7xl px-6">
             <div className="mb-12 text-center">
               <h2 className="mb-4 font-mono text-3xl font-bold tracking-tight">

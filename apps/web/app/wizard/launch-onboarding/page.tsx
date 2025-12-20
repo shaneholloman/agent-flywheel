@@ -6,18 +6,27 @@ import { Card } from "@/components/ui/card";
 import { CommandCard } from "@/components/command-card";
 import { markStepComplete, setCompletedSteps, TOTAL_STEPS } from "@/lib/wizardSteps";
 
-// Confetti particle component
-function ConfettiParticle({ delay, left }: { delay: number; left: number }) {
-  const colors = [
-    "oklch(0.75 0.18 195)", // cyan
-    "oklch(0.78 0.16 75)",  // amber
-    "oklch(0.7 0.2 330)",   // magenta
-    "oklch(0.72 0.19 145)", // green
-  ];
-  const color = colors[Math.floor(Math.random() * colors.length)];
-  const size = 6 + Math.random() * 6;
-  const rotation = Math.random() * 360;
+// Confetti colors
+const CONFETTI_COLORS = [
+  "oklch(0.75 0.18 195)", // cyan
+  "oklch(0.78 0.16 75)",  // amber
+  "oklch(0.7 0.2 330)",   // magenta
+  "oklch(0.72 0.19 145)", // green
+];
 
+interface ConfettiParticleData {
+  id: number;
+  delay: number;
+  left: number;
+  color: string;
+  size: number;
+  rotation: number;
+  duration: number;
+  isRound: boolean;
+}
+
+// Confetti particle component - all random values passed as props for deterministic rendering
+function ConfettiParticle({ delay, left, color, size, rotation, duration, isRound }: Omit<ConfettiParticleData, 'id'>) {
   return (
     <div
       className="pointer-events-none fixed animate-confetti-fall"
@@ -25,7 +34,7 @@ function ConfettiParticle({ delay, left }: { delay: number; left: number }) {
         left: `${left}%`,
         top: "-20px",
         animationDelay: `${delay}ms`,
-        animationDuration: `${2500 + Math.random() * 1500}ms`,
+        animationDuration: `${duration}ms`,
       }}
     >
       <div
@@ -34,7 +43,7 @@ function ConfettiParticle({ delay, left }: { delay: number; left: number }) {
           height: size,
           backgroundColor: color,
           transform: `rotate(${rotation}deg)`,
-          borderRadius: Math.random() > 0.5 ? "50%" : "2px",
+          borderRadius: isRound ? "50%" : "2px",
         }}
       />
     </div>
@@ -43,7 +52,7 @@ function ConfettiParticle({ delay, left }: { delay: number; left: number }) {
 
 export default function LaunchOnboardingPage() {
   const [showConfetti, setShowConfetti] = useState(false);
-  const [confettiParticles, setConfettiParticles] = useState<Array<{ id: number; delay: number; left: number }>>([]);
+  const [confettiParticles, setConfettiParticles] = useState<ConfettiParticleData[]>([]);
 
   // Mark all steps complete on reaching this page
   useEffect(() => {
@@ -52,12 +61,17 @@ export default function LaunchOnboardingPage() {
     const allSteps = Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1);
     setCompletedSteps(allSteps);
 
-    // Trigger confetti celebration
+    // Trigger confetti celebration - calculate all random values once
     setShowConfetti(true);
-    const particles = Array.from({ length: 50 }, (_, i) => ({
+    const particles: ConfettiParticleData[] = Array.from({ length: 50 }, (_, i) => ({
       id: i,
       delay: Math.random() * 1000,
       left: Math.random() * 100,
+      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+      size: 6 + Math.random() * 6,
+      rotation: Math.random() * 360,
+      duration: 2500 + Math.random() * 1500,
+      isRound: Math.random() > 0.5,
     }));
     setConfettiParticles(particles);
 
@@ -72,7 +86,16 @@ export default function LaunchOnboardingPage() {
       {showConfetti && (
         <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
           {confettiParticles.map((p) => (
-            <ConfettiParticle key={p.id} delay={p.delay} left={p.left} />
+            <ConfettiParticle
+              key={p.id}
+              delay={p.delay}
+              left={p.left}
+              color={p.color}
+              size={p.size}
+              rotation={p.rotation}
+              duration={p.duration}
+              isRound={p.isRound}
+            />
           ))}
         </div>
       )}
