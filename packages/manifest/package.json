@@ -20,7 +20,9 @@
     "dev": "tsc --watch",
     "type-check": "tsc --noEmit",
     "test": "bun test",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "generate": "bun run src/generate.ts",
+    "generate:dry": "bun run src/generate.ts --dry-run --verbose"
   },
   "dependencies": {
     "yaml": "^2.7.0",
