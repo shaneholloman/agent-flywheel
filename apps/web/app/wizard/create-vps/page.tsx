@@ -9,6 +9,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { markStepComplete } from "@/lib/wizardSteps";
 import { useVPSIP, isValidIP } from "@/lib/userPreferences";
+import {
+  SimplerGuide,
+  GuideSection,
+  GuideStep,
+  GuideExplain,
+  GuideTip,
+  GuideCaution,
+} from "@/components/simpler-guide";
 
 const CHECKLIST_ITEMS = [
   { id: "ubuntu", label: "Selected Ubuntu 25.x (or newest Ubuntu available)" },
@@ -214,6 +222,108 @@ export default function CreateVPSPage() {
             />
           ))}
         </div>
+
+        {/* Beginner Guide */}
+        <SimplerGuide>
+          <div className="space-y-6">
+            <GuideExplain term="IP Address">
+              An IP address is like a phone number for computers. It&apos;s a series
+              of numbers (like 192.168.1.100) that identifies your VPS on the internet.
+              <br /><br />
+              You&apos;ll need this address to connect to your VPS from your computer.
+              It&apos;s like knowing someone&apos;s phone number so you can call them.
+            </GuideExplain>
+
+            <GuideSection title="Detailed Steps for Creating Your VPS">
+              <div className="space-y-4">
+                <GuideStep number={1} title="Log into your VPS provider">
+                  Go to the website where you created your account (Hetzner, OVH, or Contabo)
+                  and sign in with the email and password you created earlier.
+                </GuideStep>
+
+                <GuideStep number={2} title="Find the 'Create Server' or 'Add VPS' button">
+                  Look for a button that says something like:
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li><strong>Hetzner:</strong> Click &quot;Add Server&quot; (big blue button)</li>
+                    <li><strong>OVH:</strong> Click &quot;Create an instance&quot; or &quot;Order&quot;</li>
+                    <li><strong>Contabo:</strong> Go to &quot;Your services&quot; → click the VPS you ordered</li>
+                  </ul>
+                </GuideStep>
+
+                <GuideStep number={3} title="Choose your server location">
+                  Pick a data center close to you for faster speeds:
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>USA: Choose US-West or US-East</li>
+                    <li>Europe: Choose Germany (FSN) or Finland (HEL)</li>
+                    <li>If unsure, any location works fine!</li>
+                  </ul>
+                </GuideStep>
+
+                <GuideStep number={4} title="Select Ubuntu as the operating system">
+                  You&apos;ll see a list of &quot;images&quot; or &quot;operating systems&quot;.
+                  <br /><br />
+                  <strong>Look for:</strong> Ubuntu 25.04 or Ubuntu 24.04 LTS
+                  <br />
+                  <em className="text-xs">
+                    LTS stands for &quot;Long Term Support&quot; — it means the version
+                    is stable and well-supported.
+                  </em>
+                </GuideStep>
+
+                <GuideStep number={5} title="Add your SSH key">
+                  This is VERY important! Look for a section called &quot;SSH Keys&quot; or
+                  &quot;Authentication&quot;.
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>Click &quot;Add SSH Key&quot; or &quot;Add Key&quot;</li>
+                    <li>Give it a name like &quot;My Laptop&quot; or &quot;ACFS Key&quot;</li>
+                    <li><strong>Paste your public key</strong> (the text you copied earlier that starts with ssh-ed25519)</li>
+                    <li>Click Save or Add</li>
+                  </ul>
+                </GuideStep>
+
+                <GuideStep number={6} title="Choose your plan size">
+                  Look for a plan with:
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>4-8 vCPU (virtual CPUs)</li>
+                    <li>8-16 GB RAM (memory)</li>
+                    <li>100GB+ storage</li>
+                    <li>Cost should be around $30-60/month</li>
+                  </ul>
+                </GuideStep>
+
+                <GuideStep number={7} title="Create and wait">
+                  Click the &quot;Create&quot;, &quot;Deploy&quot;, or &quot;Order&quot; button.
+                  <br /><br />
+                  Your VPS will take 1-5 minutes to start up. You&apos;ll see a status like
+                  &quot;Running&quot; or a green indicator when it&apos;s ready.
+                </GuideStep>
+
+                <GuideStep number={8} title="Find and copy the IP address">
+                  Once your VPS is running, look for the IP address. It&apos;s usually shown:
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>On the main server overview page</li>
+                    <li>In a &quot;Network&quot; or &quot;IP Addresses&quot; section</li>
+                    <li>It looks like: <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">123.45.67.89</code></li>
+                  </ul>
+                  <br />
+                  <strong>Copy this number</strong> — you&apos;ll paste it in the box below!
+                </GuideStep>
+              </div>
+            </GuideSection>
+
+            <GuideTip>
+              The IP address should be 4 groups of numbers separated by periods,
+              like <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">192.168.1.100</code>.
+              Don&apos;t include any letters or extra characters!
+            </GuideTip>
+
+            <GuideCaution>
+              <strong>Make sure you added your SSH key!</strong> If you skip this step,
+              you won&apos;t be able to connect to your VPS. Go back and add it before
+              continuing.
+            </GuideCaution>
+          </div>
+        </SimplerGuide>
 
         {/* IP Address input */}
         <div className="space-y-3">

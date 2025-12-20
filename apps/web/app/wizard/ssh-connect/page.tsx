@@ -9,6 +9,14 @@ import { AlertCard, OutputPreview } from "@/components/alert-card";
 import { cn } from "@/lib/utils";
 import { markStepComplete } from "@/lib/wizardSteps";
 import { useVPSIP, useUserOS, useMounted } from "@/lib/userPreferences";
+import {
+  SimplerGuide,
+  GuideSection,
+  GuideStep,
+  GuideExplain,
+  GuideTip,
+  GuideCaution,
+} from "@/components/simpler-guide";
 
 interface TroubleshootingItem {
   error: string;
@@ -249,6 +257,100 @@ export default function SSHConnectPage() {
           ))}
         </div>
       </div>
+
+      {/* Beginner Guide */}
+      <SimplerGuide>
+        <div className="space-y-6">
+          <GuideExplain term="SSH (Secure Shell)">
+            SSH is a way to securely connect to another computer over the internet.
+            It&apos;s like making a phone call to your VPS — once connected, everything
+            you type appears on the VPS, not your local computer.
+            <br /><br />
+            When you &quot;SSH into&quot; a computer, you&apos;re essentially remote-controlling it
+            through text commands.
+          </GuideExplain>
+
+          <GuideSection title="Step-by-Step Connection Guide">
+            <div className="space-y-4">
+              <GuideStep number={1} title="Open your terminal">
+                Open the terminal app you installed earlier (Ghostty, WezTerm, or Windows Terminal).
+              </GuideStep>
+
+              <GuideStep number={2} title="Copy the SSH command">
+                Look at the gray command box above. Click the <strong>copy button</strong>
+                on the right side (it looks like two overlapping squares).
+              </GuideStep>
+
+              <GuideStep number={3} title="Paste the command">
+                Click inside your terminal window, then paste:
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  <li><strong>Mac:</strong> <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">⌘</kbd> + <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">V</kbd></li>
+                  <li><strong>Windows:</strong> Right-click inside the terminal, or <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">Ctrl</kbd> + <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">V</kbd></li>
+                </ul>
+              </GuideStep>
+
+              <GuideStep number={4} title="Press Enter">
+                Press the <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">Enter</kbd> key to run the command.
+              </GuideStep>
+
+              <GuideStep number={5} title="Say 'yes' to the security question">
+                You&apos;ll see a scary-looking message about &quot;authenticity of host&quot;
+                and a &quot;fingerprint&quot;. This is normal for first-time connections!
+                <br /><br />
+                Type <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">yes</kbd> (spelled out, not just &quot;y&quot;)
+                and press <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">Enter</kbd>.
+              </GuideStep>
+
+              <GuideStep number={6} title="You're connected!">
+                If successful, you&apos;ll see a new prompt like:
+                <code className="mt-2 block rounded bg-muted px-3 py-2 font-mono text-sm">
+                  ubuntu@vps:~$
+                </code>
+                The &quot;ubuntu@vps&quot; part means you&apos;re now controlling the VPS!
+                Everything you type from now on runs on the VPS, not your laptop.
+              </GuideStep>
+            </div>
+          </GuideSection>
+
+          <GuideSection title="Understanding What You See">
+            <p className="mb-3">
+              After connecting, your terminal looks different because you&apos;re now
+              &quot;inside&quot; the VPS:
+            </p>
+            <ul className="space-y-2">
+              <li>
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ubuntu@</code>
+                — This is your username on the VPS
+              </li>
+              <li>
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">vps</code>
+                — This is the VPS hostname (might be different)
+              </li>
+              <li>
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">~</code>
+                — This means you&apos;re in your &quot;home&quot; folder
+              </li>
+              <li>
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">$</code>
+                — This means the terminal is ready for your next command
+              </li>
+            </ul>
+          </GuideSection>
+
+          <GuideTip>
+            To disconnect from the VPS and return to your local computer, type{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">exit</code>
+            and press Enter. You can always reconnect using the same SSH command.
+          </GuideTip>
+
+          <GuideCaution>
+            <strong>&quot;Permission denied&quot; error?</strong> This usually means your SSH key
+            wasn&apos;t added to the VPS correctly. Go back to your VPS provider&apos;s control
+            panel and make sure your public key is added. Then try the &quot;root&quot; command
+            shown above as a fallback.
+          </GuideCaution>
+        </div>
+      </SimplerGuide>
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">

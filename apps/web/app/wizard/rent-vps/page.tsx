@@ -7,6 +7,14 @@ import { Button } from "@/components/ui/button";
 import { AlertCard } from "@/components/alert-card";
 import { cn } from "@/lib/utils";
 import { markStepComplete } from "@/lib/wizardSteps";
+import {
+  SimplerGuide,
+  GuideSection,
+  GuideStep,
+  GuideExplain,
+  GuideTip,
+  GuideCaution,
+} from "@/components/simpler-guide";
 
 interface ProviderInfo {
   id: string;
@@ -222,6 +230,120 @@ export default function RentVPSPage() {
         Any provider with Ubuntu VPS and SSH key login works. Just make sure
         you can add your SSH public key during setup.
       </AlertCard>
+
+      {/* Beginner Guide */}
+      <SimplerGuide>
+        <div className="space-y-6">
+          <GuideExplain term="VPS (Virtual Private Server)">
+            A VPS is like renting a computer that lives in a data center somewhere
+            in the world. It runs 24/7, even when your laptop is closed.
+            <br /><br />
+            Think of it like renting an apartment: you don&apos;t own the building,
+            but you have your own private space to use however you want.
+            <br /><br />
+            <strong>Why do you need one?</strong>
+            <br />
+            AI coding assistants work best on a dedicated server that&apos;s always on.
+            Running them on your laptop would drain your battery and slow everything down.
+            With a VPS, your AI assistants can work even when you&apos;re asleep!
+          </GuideExplain>
+
+          <GuideSection title="Which provider should I choose?">
+            <p className="mb-4">
+              All three providers we recommend are good choices. Here&apos;s a simple guide:
+            </p>
+            <ul className="space-y-3">
+              <li>
+                <strong>Hetzner</strong> — Best for most people. Clean interface, fair prices,
+                popular with developers. We recommend this if you&apos;re unsure.
+              </li>
+              <li>
+                <strong>OVH</strong> — Great if you&apos;re in Europe or want European data centers.
+                Slightly more complex signup process.
+              </li>
+              <li>
+                <strong>Contabo</strong> — Cheapest option for high specs. Good if budget is
+                a concern, but their interface is a bit dated.
+              </li>
+            </ul>
+          </GuideSection>
+
+          <GuideSection title="Step-by-Step: Signing Up (Hetzner Example)">
+            <div className="space-y-4">
+              <GuideStep number={1} title="Go to the provider's website">
+                Click on &quot;Hetzner&quot; above, or go to{" "}
+                <a href="https://www.hetzner.com/cloud" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                  hetzner.com/cloud
+                </a>
+              </GuideStep>
+
+              <GuideStep number={2} title="Create an account">
+                Click &quot;Sign up&quot; or &quot;Register&quot;. You&apos;ll need:
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  <li>An email address</li>
+                  <li>A password (make it strong!)</li>
+                  <li>Your name and address</li>
+                </ul>
+              </GuideStep>
+
+              <GuideStep number={3} title="Verify your email">
+                Check your email for a verification link. Click it to confirm
+                your account. <em>Check your spam folder if you don&apos;t see it!</em>
+              </GuideStep>
+
+              <GuideStep number={4} title="Add payment method">
+                Most providers require a credit card or PayPal. This is normal —
+                you&apos;ll only be charged for what you use.
+                <br /><br />
+                <strong>Expected cost:</strong> Around $30-60/month depending on
+                the plan you choose. You can cancel anytime.
+              </GuideStep>
+
+              <GuideStep number={5} title="That's it for now!">
+                Once your account is verified and payment is set up, you&apos;re ready
+                for the next step where we&apos;ll actually create the VPS.
+              </GuideStep>
+            </div>
+          </GuideSection>
+
+          <GuideSection title="Understanding the specs">
+            <p className="mb-3">
+              When choosing a plan, you&apos;ll see terms like vCPU, RAM, and SSD.
+              Here&apos;s what they mean:
+            </p>
+            <ul className="space-y-2">
+              <li>
+                <strong>vCPU (4-8)</strong> — The &quot;brain&quot; of the computer. More = faster.
+                4 is minimum, 8 is comfortable.
+              </li>
+              <li>
+                <strong>RAM (8-16 GB)</strong> — Short-term memory. More = can do more things
+                at once. 8GB minimum, 16GB is better.
+              </li>
+              <li>
+                <strong>Storage (100GB+ SSD)</strong> — Long-term storage for files and programs.
+                SSD means it&apos;s fast. 100GB is plenty to start.
+              </li>
+              <li>
+                <strong>Ubuntu</strong> — The operating system we&apos;ll install. It&apos;s like
+                Windows or macOS, but for servers. It&apos;s free and widely used.
+              </li>
+            </ul>
+          </GuideSection>
+
+          <GuideTip>
+            Don&apos;t overthink the provider choice! All three work great. Pick one,
+            sign up, and you can always switch later if needed. The setup process
+            is similar for all of them.
+          </GuideTip>
+
+          <GuideCaution>
+            <strong>Keep your account credentials safe!</strong> Write down your
+            login email and password somewhere secure. You&apos;ll need them to
+            manage your VPS later.
+          </GuideCaution>
+        </div>
+      </SimplerGuide>
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">

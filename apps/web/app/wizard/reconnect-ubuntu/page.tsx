@@ -8,6 +8,13 @@ import { CommandCard } from "@/components/command-card";
 import { OutputPreview } from "@/components/alert-card";
 import { markStepComplete } from "@/lib/wizardSteps";
 import { useVPSIP, useMounted } from "@/lib/userPreferences";
+import {
+  SimplerGuide,
+  GuideSection,
+  GuideStep,
+  GuideExplain,
+  GuideTip,
+} from "@/components/simpler-guide";
 
 export default function ReconnectUbuntuPage() {
   const router = useRouter();
@@ -125,6 +132,61 @@ export default function ReconnectUbuntuPage() {
           <li className="text-[oklch(0.72_0.19_145)]">• The shell feels more responsive</li>
         </ul>
       </OutputPreview>
+
+      {/* Beginner Guide */}
+      <SimplerGuide>
+        <div className="space-y-6">
+          <GuideExplain term="Why reconnect as ubuntu?">
+            During installation, you may have connected as &quot;root&quot; — the super-admin
+            account. Now we want you to use the &quot;ubuntu&quot; account instead because:
+            <br /><br />
+            <strong>1. Safety</strong> — The root account can accidentally break things.
+            The ubuntu account is safer for everyday use.
+            <br /><br />
+            <strong>2. Better experience</strong> — The installer set up special features
+            (like the colorful prompt) for the ubuntu user.
+          </GuideExplain>
+
+          <GuideSection title="How do I know which user I am?">
+            <p>Look at your terminal prompt:</p>
+            <ul className="mt-2 space-y-2">
+              <li>
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">root@vps:~#</code>
+                — You&apos;re logged in as root (note the <strong>#</strong> symbol)
+              </li>
+              <li>
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ubuntu@vps:~$</code>
+                — You&apos;re logged in as ubuntu (note the <strong>$</strong> symbol)
+              </li>
+            </ul>
+          </GuideSection>
+
+          <GuideSection title="Step-by-Step: Switching to Ubuntu">
+            <div className="space-y-4">
+              <GuideStep number={1} title="Disconnect from the current session">
+                Type <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">exit</code>
+                and press Enter. This closes your connection to the VPS.
+              </GuideStep>
+
+              <GuideStep number={2} title="Connect as ubuntu">
+                Copy and paste the SSH command shown above (the one with{" "}
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ubuntu@</code>)
+                and press Enter.
+              </GuideStep>
+
+              <GuideStep number={3} title="Verify you're ubuntu">
+                Your prompt should now show &quot;ubuntu@&quot; at the beginning.
+                You might also see a fancy colorful prompt!
+              </GuideStep>
+            </div>
+          </GuideSection>
+
+          <GuideTip>
+            If you were already connected as ubuntu (skip button above applies to you),
+            just click &quot;Skip&quot; or &quot;Continue&quot; — you don&apos;t need to do anything!
+          </GuideTip>
+        </div>
+      </SimplerGuide>
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">

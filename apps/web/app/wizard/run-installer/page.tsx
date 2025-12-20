@@ -13,6 +13,14 @@ import { Button } from "@/components/ui/button";
 import { CommandCard } from "@/components/command-card";
 import { AlertCard, OutputPreview, DetailsSection } from "@/components/alert-card";
 import { markStepComplete } from "@/lib/wizardSteps";
+import {
+  SimplerGuide,
+  GuideSection,
+  GuideStep,
+  GuideExplain,
+  GuideTip,
+  GuideCaution,
+} from "@/components/simpler-guide";
 
 const ACFS_COMMAND = `curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh?$(date +%s)" | bash -s -- --yes --mode vibe`;
 
@@ -144,6 +152,90 @@ export default function RunInstallerPage() {
           Please reconnect as: ssh ubuntu@YOUR_IP
         </p>
       </OutputPreview>
+
+      {/* Beginner Guide */}
+      <SimplerGuide>
+        <div className="space-y-6">
+          <GuideExplain term="What is this command doing?">
+            This command downloads and runs a setup script that automatically installs
+            everything you need on your VPS. Think of it like running an installer
+            on your computer — but this one installs dozens of tools at once!
+            <br /><br />
+            The script is &quot;idempotent&quot; which means it&apos;s safe to run multiple times.
+            If something fails, you can just run it again.
+          </GuideExplain>
+
+          <GuideSection title="Step-by-Step">
+            <div className="space-y-4">
+              <GuideStep number={1} title="Make sure you're connected to your VPS">
+                Your terminal should show something like{" "}
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ubuntu@vps:~$</code>
+                or <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">root@vps:~#</code>.
+                <br /><br />
+                If it shows your regular computer name, you need to SSH in first!
+              </GuideStep>
+
+              <GuideStep number={2} title="Copy the install command">
+                Click the copy button on the purple command box above. The command
+                is quite long — make sure you copy the whole thing!
+              </GuideStep>
+
+              <GuideStep number={3} title="Paste and run">
+                In your SSH terminal (where you&apos;re connected to the VPS), paste
+                the command and press <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">Enter</kbd>.
+                <br /><br />
+                You&apos;ll see lots of text scrolling by — this is normal!
+              </GuideStep>
+
+              <GuideStep number={4} title="Wait patiently (10-15 minutes)">
+                The installation takes time because it&apos;s downloading and installing
+                many tools. You&apos;ll see progress messages like:
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  <li><code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">[1/8] Installing zsh...</code></li>
+                  <li><code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">[2/8] Installing bun...</code></li>
+                  <li>etc.</li>
+                </ul>
+                <br />
+                <strong>Don&apos;t close the terminal!</strong> Let it run until you see
+                &quot;Installation complete&quot;.
+              </GuideStep>
+            </div>
+          </GuideSection>
+
+          <GuideSection title="What gets installed?">
+            <p className="mb-3">
+              The installer sets up a complete development environment including:
+            </p>
+            <ul className="space-y-2">
+              <li>
+                <strong>Modern shell (zsh)</strong> — A better terminal experience with
+                colors and suggestions
+              </li>
+              <li>
+                <strong>Programming languages</strong> — JavaScript/TypeScript, Python,
+                Rust, and Go
+              </li>
+              <li>
+                <strong>AI coding assistants</strong> — Claude Code, Codex, and Gemini CLI
+              </li>
+              <li>
+                <strong>Developer tools</strong> — Git interface, file searchers, and more
+              </li>
+            </ul>
+          </GuideSection>
+
+          <GuideTip>
+            If your internet connection drops during installation, just SSH back in
+            and run the command again. The installer will pick up where it left off!
+          </GuideTip>
+
+          <GuideCaution>
+            <strong>Don&apos;t close the terminal window</strong> while the installation
+            is running. If you accidentally close it, SSH back in and run the
+            command again — it will resume from where it stopped.
+          </GuideCaution>
+        </div>
+      </SimplerGuide>
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">
