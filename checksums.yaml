@@ -1,0 +1,63 @@
+# checksums.yaml - ACFS Installer Security Checksums
+# Auto-generated: 2025-12-20
+#
+# These checksums verify upstream installer scripts.
+# To update: ./scripts/lib/security.sh --update-checksums
+# To verify: ./scripts/lib/security.sh --verify
+
+installers:
+  atuin:
+    url: "https://setup.atuin.sh"
+    sha256: "7cfabf7e18c03953f3fbd9288c97d9d8b47df3666da522ef903608de617370e7"
+
+  bun:
+    url: "https://bun.sh/install"
+    sha256: "16d1ca592a28bd08b3304073491c4304e50073da6b8af34f8d1e5e8c00fc64d5"
+
+  bv:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"
+    sha256: "5cc023bfb705b0b4a2d1a335d80da5f59285040182d4d26cca01282752dbde7b"
+
+  caam:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_account_manager/main/install.sh"
+    sha256: "082b65742cc4277981ac1dc064fe4201bdd6414be620815171451b847a776dc8"
+
+  cass:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh"
+    sha256: "1545a3b7f028007e68eccb84b3e7dcd0e44ab2f21b5c078b7302b6683ed939e9"
+
+  cm:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh"
+    sha256: "c3e5c65b3d61cedb6c983e47a39d69b0b01423f627670eb756d48561a49883fd"
+
+  mcp_agent_mail:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/scripts/install.sh"
+    sha256: "e5a183bde1c637e0c14692d6adcc27e81b3adc55f05499434615330fc581c02f"
+
+  ntm:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh"
+    sha256: "0818e7c3e43d7b1c03ffcadbdc1f8fb2dce4611e17dae2a612c37b7d6954a725"
+
+  ohmyzsh:
+    url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
+    sha256: "ce0b7c94aa04d8c7a8137e45fe5c4744e3947871f785fd58117c480c1bf49352"
+
+  rust:
+    url: "https://sh.rustup.rs"
+    sha256: "17247e4bcacf6027ec2e11c79a72c494c9af69ac8d1abcc1b271fa4375a106c2"
+
+  slb:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/simultaneous_launch_button/main/scripts/install.sh"
+    sha256: "bc278b4b234e3f85c9dc4def16336f420d5823fabba48aec26c4f72685dba191"
+
+  ubs:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/master/install.sh"
+    sha256: "f709cdf4793320c1e0a1711151f9116339956c26cd51964afb2ab0f1eac3738d"
+
+  uv:
+    url: "https://astral.sh/uv/install.sh"
+    sha256: "e27424708d1ac59cfc94e3f540a111f2edbb37bc8164febce8ee7fa5d5505c71"
+
+  zoxide:
+    url: "https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh"
+    sha256: "c5d94701cfdd87d19f3989c1239e921d4ff95d4c0742b16beca061618c937bf0"
