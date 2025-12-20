@@ -315,17 +315,17 @@ verify_all_installers() {
         local actual
         actual=$(fetch_checksum "$url" 2>/dev/null) || {
             echo -e "${RED}[fail]${NC} fetch error"
-            ((failed++))
+            ((failed += 1))
             all_pass=false
             continue
         }
 
         if [[ "$actual" == "$expected" ]]; then
             echo -e "${GREEN}[ok]${NC}"
-            ((verified++))
+            ((verified += 1))
         else
             echo -e "${RED}[fail]${NC} checksum changed"
-            ((failed++))
+            ((failed += 1))
             all_pass=false
         fi
     done

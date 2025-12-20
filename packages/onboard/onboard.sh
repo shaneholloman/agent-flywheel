@@ -372,7 +372,7 @@ show_status() {
     local completed_count=0
     for i in {0..7}; do
         if is_completed "$i"; then
-            ((completed_count++))
+            ((completed_count += 1))
         fi
     done
 

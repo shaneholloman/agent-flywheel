@@ -70,13 +70,13 @@ run_manifest_checks() {
         
         if eval "$cmd" &>/dev/null; then
             echo -e "\033[0;32m[ok]\033[0m $id - $desc"
-            ((passed++))
+            ((passed += 1))
         elif [[ "$optional" == "optional" ]]; then
             echo -e "\033[0;33m[skip]\033[0m $id - $desc"
-            ((skipped++))
+            ((skipped += 1))
         else
             echo -e "\033[0;31m[fail]\033[0m $id - $desc"
-            ((failed++))
+            ((failed += 1))
         fi
     done
 

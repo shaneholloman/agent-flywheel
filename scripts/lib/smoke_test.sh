@@ -116,7 +116,7 @@ _check_workspace() {
         _smoke_pass "Workspace: /data/projects exists"
         return 0
     else
-        _smoke_fail "Workspace: /data/projects missing" "sudo mkdir -p /data/projects && sudo chown $TARGET_USER:$TARGET_USER /data"
+        _smoke_fail "Workspace: /data/projects missing" "sudo mkdir -p /data/projects && sudo chown $TARGET_USER:$TARGET_USER /data/projects"
         return 1
     fi
 }

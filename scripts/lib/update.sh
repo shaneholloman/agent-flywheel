@@ -50,17 +50,17 @@ log_item() {
         ok)
             echo -e "  ${GREEN}[ok]${NC} $msg"
             [[ -n "$details" && "$VERBOSE" == "true" ]] && echo -e "       ${DIM}$details${NC}"
-            ((SUCCESS_COUNT++))
+            ((SUCCESS_COUNT += 1))
             ;;
         skip)
             echo -e "  ${DIM}[skip]${NC} $msg"
             [[ -n "$details" ]] && echo -e "       ${DIM}$details${NC}"
-            ((SKIP_COUNT++))
+            ((SKIP_COUNT += 1))
             ;;
         fail)
             echo -e "  ${RED}[fail]${NC} $msg"
             [[ -n "$details" ]] && echo -e "       ${DIM}$details${NC}"
-            ((FAIL_COUNT++))
+            ((FAIL_COUNT += 1))
             ;;
         run)
             echo -e "  ${YELLOW}[...]${NC} $msg"
@@ -83,12 +83,14 @@ run_cmd() {
     if eval "$cmd" >/dev/null 2>&1; then
         # Move cursor up and overwrite
         echo -e "\033[1A\033[2K  ${GREEN}[ok]${NC} $desc"
-        ((SUCCESS_COUNT++))
+        ((SUCCESS_COUNT += 1))
         return 0
     else
         echo -e "\033[1A\033[2K  ${RED}[fail]${NC} $desc"
-        ((FAIL_COUNT++))
-        return 1
+        ((FAIL_COUNT += 1))
+        # Do not propagate failure under `set -e`; we want to continue and
+        # summarize all failures at the end via FAIL_COUNT.
+        return 0
     fi
 }
 

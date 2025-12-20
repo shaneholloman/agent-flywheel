@@ -152,7 +152,7 @@ check_workspace() {
     if [[ -d "/data/projects" ]] && [[ -w "/data/projects" ]]; then
         check "workspace.data_projects" "/data/projects exists and writable" "pass"
     else
-        check "workspace.data_projects" "/data/projects" "fail" "missing or not writable" "sudo mkdir -p /data/projects && sudo chown ubuntu:ubuntu /data"
+        check "workspace.data_projects" "/data/projects" "fail" "missing or not writable" "sudo mkdir -p /data/projects && sudo chown ubuntu:ubuntu /data/projects"
     fi
 
     blank_line
@@ -321,11 +321,11 @@ print_json() {
 
     cat << EOF
 {
-  "acfs_version": "$ACFS_VERSION",
-  "timestamp": "$(date -Iseconds)",
-  "mode": "${ACFS_MODE:-vibe}",
-  "user": "$(whoami)",
-  "os": {"id": "$os_id", "version": "$os_version"},
+  "acfs_version": "$(json_escape "$ACFS_VERSION")",
+  "timestamp": "$(json_escape "$(date -Iseconds)")",
+  "mode": "$(json_escape "${ACFS_MODE:-vibe}")",
+  "user": "$(json_escape "$(whoami)")",
+  "os": {"id": "$(json_escape "$os_id")", "version": "$(json_escape "$os_version")"},
   "checks": [$checks_json],
   "summary": {"pass": $PASS_COUNT, "warn": $WARN_COUNT, "fail": $FAIL_COUNT}
 }
@@ -355,11 +355,18 @@ main() {
     done
 
     if [[ "$JSON_MODE" != "true" ]]; then
+        local os_pretty="unknown"
+        if [[ -f /etc/os-release ]]; then
+            # shellcheck disable=SC1091
+            . /etc/os-release
+            os_pretty="${PRETTY_NAME:-${ID:-unknown} ${VERSION_ID:-unknown}}"
+        fi
+
         echo ""
         echo "ACFS Doctor v$ACFS_VERSION"
         echo "User: $(whoami)"
         echo "Mode: ${ACFS_MODE:-vibe}"
-        echo "OS: $(. /etc/os-release && echo "$PRETTY_NAME")"
+        echo "OS: $os_pretty"
         echo ""
     fi
 

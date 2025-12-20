@@ -217,13 +217,13 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('        ');
   lines.push('        if eval "$cmd" &>/dev/null; then');
   lines.push('            echo -e "\\033[0;32m[ok]\\033[0m $id - $desc"');
-  lines.push('            ((passed++))');
+  lines.push('            ((passed += 1))');
   lines.push('        elif [[ "$optional" == "optional" ]]; then');
   lines.push('            echo -e "\\033[0;33m[skip]\\033[0m $id - $desc"');
-  lines.push('            ((skipped++))');
+  lines.push('            ((skipped += 1))');
   lines.push('        else');
   lines.push('            echo -e "\\033[0;31m[fail]\\033[0m $id - $desc"');
-  lines.push('            ((failed++))');
+  lines.push('            ((failed += 1))');
   lines.push('        fi');
   lines.push('    done');
   lines.push('');
