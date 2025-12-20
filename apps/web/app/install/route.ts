@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 
+// Ensure this route is always dynamic (never cached at build time)
+export const dynamic = "force-dynamic";
+
 /**
  * GET /install
  *
@@ -12,5 +15,11 @@ export async function GET() {
   const scriptUrl =
     "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh";
 
-  return NextResponse.redirect(scriptUrl, 302);
+  // Create redirect response with cache-control headers to prevent caching
+  const response = NextResponse.redirect(scriptUrl, 302);
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
+
+  return response;
 }
