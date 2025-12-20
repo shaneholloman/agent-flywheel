@@ -2,14 +2,23 @@
  * User Preferences Storage
  *
  * Handles localStorage persistence of user choices during the wizard.
- * Uses useSyncExternalStore for React 19 compatible state management.
+ * Uses TanStack Query for React state management with localStorage persistence.
  */
 
-import { useSyncExternalStore, useCallback, useRef, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 export type OperatingSystem = "mac" | "windows";
 
 const OS_KEY = "acfs-user-os";
+const VPS_IP_KEY = "acfs-vps-ip";
+
+// Query keys for TanStack Query
+export const userPreferencesKeys = {
+  userOS: ["userPreferences", "os"] as const,
+  vpsIP: ["userPreferences", "vpsIP"] as const,
+  detectedOS: ["userPreferences", "detectedOS"] as const,
+};
 
 /**
  * Get the user's selected operating system from localStorage.
@@ -44,9 +53,6 @@ export function detectOS(): OperatingSystem | null {
   return null;
 }
 
-// VPS IP Address storage
-const VPS_IP_KEY = "acfs-vps-ip";
-
 /**
  * Get the user's VPS IP address from localStorage.
  */
@@ -77,65 +83,74 @@ export function isValidIP(ip: string): boolean {
   });
 }
 
-// --- React Hooks using useSyncExternalStore ---
-
-// Event emitter for localStorage changes within the same tab
-const storageListeners = new Set<() => void>();
-
-function emitStorageChange() {
-  storageListeners.forEach((listener) => listener());
-}
-
-function subscribeToStorage(callback: () => void) {
-  if (typeof window === "undefined") {
-    return () => {}; // No-op on server
-  }
-  storageListeners.add(callback);
-  // Also listen for storage events from other tabs
-  const handleStorage = () => callback();
-  window.addEventListener("storage", handleStorage);
-  return () => {
-    storageListeners.delete(callback);
-    window.removeEventListener("storage", handleStorage);
-  };
-}
+// --- React Hooks using TanStack Query ---
 
 /**
  * Hook to get and set the user's operating system.
- * Uses useSyncExternalStore for React 19 compatibility.
+ * Uses TanStack Query for state management with localStorage persistence.
  */
 export function useUserOS(): [OperatingSystem | null, (os: OperatingSystem) => void] {
-  const os = useSyncExternalStore(
-    subscribeToStorage,
-    getUserOS,
-    () => null // Server snapshot
+  const queryClient = useQueryClient();
+
+  const { data: os } = useQuery({
+    queryKey: userPreferencesKeys.userOS,
+    queryFn: getUserOS,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+
+  const mutation = useMutation({
+    mutationFn: async (newOS: OperatingSystem) => {
+      setUserOS(newOS);
+      return newOS;
+    },
+    onSuccess: (newOS) => {
+      queryClient.setQueryData(userPreferencesKeys.userOS, newOS);
+    },
+  });
+
+  const setOS = useCallback(
+    (newOS: OperatingSystem) => {
+      mutation.mutate(newOS);
+    },
+    [mutation]
   );
 
-  const setOS = useCallback((newOS: OperatingSystem) => {
-    setUserOS(newOS);
-    emitStorageChange();
-  }, []);
-
-  return [os, setOS];
+  return [os ?? null, setOS];
 }
 
 /**
  * Hook to get and set the VPS IP address.
- * Uses useSyncExternalStore for React 19 compatibility.
+ * Uses TanStack Query for state management with localStorage persistence.
  */
 export function useVPSIP(): [string | null, (ip: string) => void] {
-  const ip = useSyncExternalStore(
-    subscribeToStorage,
-    getVPSIP,
-    () => null // Server snapshot
+  const queryClient = useQueryClient();
+
+  const { data: ip } = useQuery({
+    queryKey: userPreferencesKeys.vpsIP,
+    queryFn: getVPSIP,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+
+  const mutation = useMutation({
+    mutationFn: async (newIP: string) => {
+      setVPSIP(newIP);
+      return newIP;
+    },
+    onSuccess: (newIP) => {
+      queryClient.setQueryData(userPreferencesKeys.vpsIP, newIP);
+    },
+  });
+
+  const setIP = useCallback(
+    (newIP: string) => {
+      mutation.mutate(newIP);
+    },
+    [mutation]
   );
 
-  const setIP = useCallback((newIP: string) => {
-    setVPSIP(newIP);
-    emitStorageChange();
-  }, []);
-
-  return [ip, setIP];
+  return [ip ?? null, setIP];
 }
 
 /**
@@ -143,50 +158,27 @@ export function useVPSIP(): [string | null, (ip: string) => void] {
  * Only runs on client side.
  */
 export function useDetectedOS(): OperatingSystem | null {
-  return useSyncExternalStore(
-    () => () => {}, // No subscription needed for static detection
-    detectOS,
-    () => null // Server snapshot
-  );
-}
+  const { data: detectedOS } = useQuery({
+    queryKey: userPreferencesKeys.detectedOS,
+    queryFn: detectOS,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
 
-// --- Mounted state tracking ---
-
-// Singleton for tracking mounted state across all useMounted calls
-let isMountedGlobal = false;
-const mountedListeners = new Set<() => void>();
-
-function getMounted() {
-  return isMountedGlobal;
-}
-
-function subscribeToMounted(callback: () => void) {
-  if (typeof window === "undefined") {
-    return () => {}; // No-op on server
-  }
-  mountedListeners.add(callback);
-  return () => mountedListeners.delete(callback);
+  return detectedOS ?? null;
 }
 
 /**
  * Hook to track if the component is mounted (client-side hydrated).
- * Uses useSyncExternalStore to avoid setState-in-effect lint errors.
+ * Returns true once the component is mounted on the client.
  */
 export function useMounted(): boolean {
-  const hasSetMounted = useRef(false);
+  const { data: isMounted } = useQuery({
+    queryKey: ["mounted"],
+    queryFn: () => true,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
 
-  // Set mounted state once on client
-  useEffect(() => {
-    if (!hasSetMounted.current) {
-      hasSetMounted.current = true;
-      isMountedGlobal = true;
-      mountedListeners.forEach((listener) => listener());
-    }
-  }, []);
-
-  return useSyncExternalStore(
-    subscribeToMounted,
-    getMounted,
-    () => false // Server snapshot - never mounted on server
-  );
+  return isMounted ?? false;
 }

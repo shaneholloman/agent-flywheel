@@ -79,10 +79,7 @@ function OSCard({ icon, title, description, selected, detected, onClick }: OSCar
 
       {/* Text */}
       <div className="relative">
-        <h3 className={cn(
-          "text-xl font-bold tracking-tight transition-colors",
-          selected ? "text-foreground" : "text-foreground"
-        )}>
+        <h3 className="text-xl font-bold tracking-tight transition-colors text-foreground">
           {title}
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">

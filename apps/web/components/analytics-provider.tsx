@@ -26,8 +26,8 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const scrollDepthsReached = useRef<Set<number>>(new Set());
-  const pageStartTime = useRef<number>(0);
-  const timeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pageStartTime = useRef<number>(Date.now());
+  const timeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Track page views on route change
   useEffect(() => {
@@ -204,13 +204,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
             send_page_view: true,
             allow_google_signals: true,
             allow_ad_personalization_signals: false,
-          });
-
-          // Enhanced measurement configuration
-          gtag('config', '${GA_MEASUREMENT_ID}', {
-            // Enable enhanced measurement
-            enhanced_measurement: true,
-            // Custom dimensions
+            // Custom dimensions for user segmentation
             custom_map: {
               'dimension1': 'user_type',
               'dimension2': 'wizard_step',

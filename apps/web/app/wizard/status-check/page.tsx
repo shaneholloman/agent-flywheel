@@ -2,10 +2,10 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle, AlertCircle } from "lucide-react";
+import { AlertCircle, Stethoscope } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { CommandCard } from "@/components/command-card";
+import { AlertCard, OutputPreview } from "@/components/alert-card";
 import { markStepComplete } from "@/lib/wizardSteps";
 
 const QUICK_CHECKS = [
@@ -37,17 +37,27 @@ export default function StatusCheckPage() {
     <div className="space-y-8">
       {/* Header */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">
-          ACFS status check
-        </h1>
-        <p className="text-lg text-muted-foreground">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/20">
+            <Stethoscope className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="bg-gradient-to-r from-foreground via-foreground to-muted-foreground bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
+              ACFS status check
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              ~1 min
+            </p>
+          </div>
+        </div>
+        <p className="text-muted-foreground">
           Let&apos;s verify everything installed correctly.
         </p>
       </div>
 
       {/* Doctor command */}
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Run the doctor command</h2>
+        <h2 className="text-xl font-semibold text-foreground">Run the doctor command</h2>
         <p className="text-sm text-muted-foreground">
           This checks all installed tools and reports any issues:
         </p>
@@ -60,23 +70,17 @@ export default function StatusCheckPage() {
       </div>
 
       {/* Expected output */}
-      <Card className="border-green-200 bg-green-50 p-4 dark:border-green-900 dark:bg-green-950">
-        <div className="space-y-2">
-          <h3 className="flex items-center gap-2 font-medium text-green-800 dark:text-green-200">
-            <CheckCircle className="h-5 w-5" />
-            Expected output
-          </h3>
-          <div className="rounded bg-green-100 p-3 font-mono text-xs text-green-800 dark:bg-green-900/50 dark:text-green-200">
-            <p>ACFS Doctor - System Health Check</p>
-            <p>================================</p>
-            <p className="text-green-600">✔ Shell: zsh with oh-my-zsh</p>
-            <p className="text-green-600">✔ Languages: bun, uv, rust, go</p>
-            <p className="text-green-600">✔ Tools: tmux, ripgrep, lazygit</p>
-            <p className="text-green-600">✔ Agents: claude-code, codex</p>
-            <p className="mt-2">All checks passed!</p>
-          </div>
+      <OutputPreview title="Expected output">
+        <div className="space-y-1 font-mono text-xs">
+          <p className="text-muted-foreground">ACFS Doctor - System Health Check</p>
+          <p className="text-muted-foreground">================================</p>
+          <p className="text-[oklch(0.72_0.19_145)]">✔ Shell: zsh with oh-my-zsh</p>
+          <p className="text-[oklch(0.72_0.19_145)]">✔ Languages: bun, uv, rust, go</p>
+          <p className="text-[oklch(0.72_0.19_145)]">✔ Tools: tmux, ripgrep, lazygit</p>
+          <p className="text-[oklch(0.72_0.19_145)]">✔ Agents: claude-code, codex</p>
+          <p className="mt-2 text-foreground">All checks passed!</p>
         </div>
-      </Card>
+      </OutputPreview>
 
       {/* Quick spot checks */}
       <div className="space-y-4">
@@ -96,19 +100,11 @@ export default function StatusCheckPage() {
       </div>
 
       {/* Troubleshooting */}
-      <Card className="p-4">
-        <div className="flex gap-3">
-          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-          <div>
-            <p className="font-medium">Something not working?</p>
-            <p className="text-sm text-muted-foreground">
-              Try running{" "}
-              <code className="rounded bg-muted px-1">source ~/.zshrc</code> to
-              reload your shell config, then try the doctor again.
-            </p>
-          </div>
-        </div>
-      </Card>
+      <AlertCard variant="warning" icon={AlertCircle} title="Something not working?">
+        Try running{" "}
+        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">source ~/.zshrc</code> to
+        reload your shell config, then try the doctor again.
+      </AlertCard>
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">

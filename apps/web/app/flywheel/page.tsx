@@ -64,12 +64,6 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
 // ============================================================
 
 function HeroSection() {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   return (
     <section className="relative overflow-hidden">
       {/* Background effects */}
@@ -81,8 +75,8 @@ function HeroSection() {
       <div className="relative z-10 mx-auto max-w-7xl px-6 pt-16 pb-20 lg:pt-24 lg:pb-28">
         {/* Badge */}
         <div
-          className={`mb-6 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-          style={mounted ? { animationDelay: "0.1s", animationFillMode: "forwards" } : undefined}
+          className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 opacity-0 animate-slide-up"
+          style={{ animationDelay: "0.1s", animationFillMode: "forwards" }}
         >
           <Sparkles className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium text-primary">
@@ -92,8 +86,8 @@ function HeroSection() {
 
         {/* Main headline */}
         <h1
-          className={`max-w-4xl font-mono text-3xl font-bold leading-[1.15] tracking-tight sm:text-4xl lg:text-5xl xl:text-6xl ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-          style={mounted ? { animationDelay: "0.2s", animationFillMode: "forwards" } : undefined}
+          className="max-w-4xl font-mono text-3xl font-bold leading-[1.15] tracking-tight sm:text-4xl lg:text-5xl xl:text-6xl opacity-0 animate-slide-up"
+          style={{ animationDelay: "0.2s", animationFillMode: "forwards" }}
         >
           <span className="text-gradient-cosmic">Unheard-of Velocity</span>
           <br />
@@ -102,8 +96,8 @@ function HeroSection() {
 
         {/* Subtitle */}
         <p
-          className={`mt-6 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg lg:text-xl ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-          style={mounted ? { animationDelay: "0.3s", animationFillMode: "forwards" } : undefined}
+          className="mt-6 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg lg:text-xl opacity-0 animate-slide-up"
+          style={{ animationDelay: "0.3s", animationFillMode: "forwards" }}
         >
           Eight interconnected tools that enable multiple AI agents to work in parallel,
           review each other&apos;s work, and make incredible autonomous progress—
@@ -112,8 +106,8 @@ function HeroSection() {
 
         {/* Key insight quote */}
         <div
-          className={`mt-8 max-w-2xl rounded-2xl border border-border/30 bg-card/30 p-5 backdrop-blur-sm ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-          style={mounted ? { animationDelay: "0.4s", animationFillMode: "forwards" } : undefined}
+          className="mt-8 max-w-2xl rounded-2xl border border-border/30 bg-card/30 p-5 backdrop-blur-sm opacity-0 animate-slide-up"
+          style={{ animationDelay: "0.4s", animationFillMode: "forwards" }}
         >
           <div className="flex gap-3">
             <Quote className="h-6 w-6 shrink-0 text-primary/50" />
@@ -128,8 +122,8 @@ function HeroSection() {
 
         {/* Stats row */}
         <div
-          className={`mt-10 grid grid-cols-2 gap-4 sm:flex sm:flex-wrap sm:items-center sm:gap-6 lg:gap-8 ${mounted ? "opacity-0 animate-slide-up" : ""}`}
-          style={mounted ? { animationDelay: "0.5s", animationFillMode: "forwards" } : undefined}
+          className="mt-10 grid grid-cols-2 gap-4 sm:flex sm:flex-wrap sm:items-center sm:gap-6 lg:gap-8 opacity-0 animate-slide-up"
+          style={{ animationDelay: "0.5s", animationFillMode: "forwards" }}
         >
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 sm:h-12 sm:w-12">

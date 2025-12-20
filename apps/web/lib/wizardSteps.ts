@@ -3,10 +3,11 @@
  *
  * Defines the 10 steps of the ACFS setup wizard.
  * Each step guides beginners from "I have a laptop" to "fully configured VPS".
- * Uses useSyncExternalStore for React 19 compatible state management.
+ * Uses TanStack Query for React state management with localStorage persistence.
  */
 
-import { useSyncExternalStore, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 export interface WizardStep {
   /** Step number (1-10) */
@@ -98,6 +99,11 @@ export function getStepBySlug(slug: string): WizardStep | undefined {
 /** localStorage key for storing completed steps */
 export const COMPLETED_STEPS_KEY = "acfs-wizard-completed-steps";
 
+// Query keys for TanStack Query
+export const wizardStepsKeys = {
+  completedSteps: ["wizardSteps", "completed"] as const,
+};
+
 /** Get completed steps from localStorage */
 export function getCompletedSteps(): number[] {
   if (typeof window === "undefined") return [];
@@ -118,58 +124,65 @@ export function getCompletedSteps(): number[] {
 export function setCompletedSteps(steps: number[]): void {
   if (typeof window === "undefined") return;
   localStorage.setItem(COMPLETED_STEPS_KEY, JSON.stringify(steps));
-  emitStepsChange();
 }
 
-/** Mark a step as completed */
-export function markStepComplete(stepId: number): number[] {
-  const completed = getCompletedSteps();
-  if (!completed.includes(stepId)) {
-    completed.push(stepId);
-    completed.sort((a, b) => a - b);
-    setCompletedSteps(completed);
+/** Mark a step as completed (pure function, returns new array) */
+export function addCompletedStep(currentSteps: number[], stepId: number): number[] {
+  if (currentSteps.includes(stepId)) {
+    return currentSteps;
   }
-  return completed;
+  const newSteps = [...currentSteps, stepId];
+  newSteps.sort((a, b) => a - b);
+  return newSteps;
 }
 
-// --- React Hooks using useSyncExternalStore ---
-
-// Event emitter for step changes within the same tab
-const stepsListeners = new Set<() => void>();
-
-function emitStepsChange() {
-  stepsListeners.forEach((listener) => listener());
-}
-
-function subscribeToSteps(callback: () => void) {
-  if (typeof window === "undefined") {
-    return () => {}; // No-op on server
-  }
-  stepsListeners.add(callback);
-  const handleStorage = (e: StorageEvent) => {
-    if (e.key === COMPLETED_STEPS_KEY) callback();
-  };
-  window.addEventListener("storage", handleStorage);
-  return () => {
-    stepsListeners.delete(callback);
-    window.removeEventListener("storage", handleStorage);
-  };
-}
+// --- React Hooks using TanStack Query ---
 
 /**
  * Hook to get and manage completed wizard steps.
- * Uses useSyncExternalStore for React 19 compatibility.
+ * Uses TanStack Query for state management with localStorage persistence.
  */
 export function useCompletedSteps(): [number[], (stepId: number) => void] {
-  const steps = useSyncExternalStore(
-    subscribeToSteps,
-    getCompletedSteps,
-    () => [] // Server snapshot
+  const queryClient = useQueryClient();
+
+  const { data: steps } = useQuery({
+    queryKey: wizardStepsKeys.completedSteps,
+    queryFn: getCompletedSteps,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+
+  const mutation = useMutation({
+    mutationFn: async (stepId: number) => {
+      const currentSteps = getCompletedSteps();
+      const newSteps = addCompletedStep(currentSteps, stepId);
+      setCompletedSteps(newSteps);
+      return newSteps;
+    },
+    onSuccess: (newSteps) => {
+      queryClient.setQueryData(wizardStepsKeys.completedSteps, newSteps);
+    },
+  });
+
+  const markComplete = useCallback(
+    (stepId: number) => {
+      mutation.mutate(stepId);
+    },
+    [mutation]
   );
 
-  const markComplete = useCallback((stepId: number) => {
-    markStepComplete(stepId);
-  }, []);
+  return [steps ?? [], markComplete];
+}
 
-  return [steps, markComplete];
+/**
+ * Imperatively mark a step as complete (for use outside React components).
+ * Note: If used, you should invalidate the query in components that depend on it.
+ */
+export function markStepComplete(stepId: number): number[] {
+  const completed = getCompletedSteps();
+  const newSteps = addCompletedStep(completed, stepId);
+  if (newSteps !== completed) {
+    setCompletedSteps(newSteps);
+  }
+  return newSteps;
 }

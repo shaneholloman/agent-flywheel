@@ -7,31 +7,23 @@ import { Analytics } from '@vercel/analytics/react';
 import { SpeedInsights } from '@vercel/speed-insights/next';
 
 // Environment variables for third-party services
-const GA_MEASUREMENT_ID = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
+// Note: GA4 is handled by AnalyticsProvider to avoid duplicate scripts
 const GTM_ID = process.env.NEXT_PUBLIC_GTM_ID;
 const CLARITY_PROJECT_ID = process.env.NEXT_PUBLIC_CLARITY_PROJECT_ID;
 
 /**
- * Comprehensive third-party scripts manager
- * Handles: GTM, GA4, Microsoft Clarity - all invisible, non-intrusive
+ * Third-party scripts manager (non-GA4)
+ * Handles: GTM, Microsoft Clarity, Vercel Analytics
+ * Note: GA4 is loaded by AnalyticsProvider for comprehensive tracking
  */
 export function ThirdPartyScripts() {
   const pathname = usePathname();
 
-  // Track virtual pageviews for SPA navigation
+  // Track virtual pageviews for GTM on SPA navigation
   useEffect(() => {
-    // GTM virtual pageview
-    if (window.dataLayer) {
+    if (GTM_ID && window.dataLayer) {
       window.dataLayer.push({
         event: 'virtual_pageview',
-        page_path: pathname,
-        page_title: document.title,
-      });
-    }
-
-    // GA4 pageview (backup if not using GTM)
-    if (window.gtag && GA_MEASUREMENT_ID) {
-      window.gtag('config', GA_MEASUREMENT_ID, {
         page_path: pathname,
         page_title: document.title,
       });
@@ -40,7 +32,7 @@ export function ThirdPartyScripts() {
 
   return (
     <>
-      {/* Google Tag Manager - Head */}
+      {/* Google Tag Manager - for advanced tag management */}
       {GTM_ID && (
         <Script
           id="gtm-script"
@@ -55,33 +47,6 @@ export function ThirdPartyScripts() {
             `,
           }}
         />
-      )}
-
-      {/* Google Analytics 4 - Direct (fallback if no GTM) */}
-      {GA_MEASUREMENT_ID && !GTM_ID && (
-        <>
-          <Script
-            src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`}
-            strategy="afterInteractive"
-          />
-          <Script
-            id="ga4-config"
-            strategy="afterInteractive"
-            dangerouslySetInnerHTML={{
-              __html: `
-                window.dataLayer = window.dataLayer || [];
-                function gtag(){dataLayer.push(arguments);}
-                gtag('js', new Date());
-
-                gtag('config', '${GA_MEASUREMENT_ID}', {
-                  page_path: window.location.pathname,
-                  send_page_view: true,
-                  cookie_flags: 'SameSite=None;Secure',
-                });
-              `,
-            }}
-          />
-        </>
       )}
 
       {/* Microsoft Clarity - Free heatmaps & session recording (invisible) */}

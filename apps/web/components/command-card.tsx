@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useSyncExternalStore, useRef, useEffect } from "react";
+import { useState, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Terminal, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -33,47 +34,24 @@ type OS = "mac" | "windows" | "linux";
 type CheckedState = boolean | "indeterminate";
 
 const COMPLETION_KEY_PREFIX = "acfs-command-";
-const completionListenersByKey = new Map<string, Set<() => void>>();
+
+// Query keys for TanStack Query
+export const commandCompletionKeys = {
+  completion: (key: string) => ["commandCompletion", key] as const,
+};
 
 function getCompletionKey(persistKey: string | undefined): string | null {
   return persistKey ? `${COMPLETION_KEY_PREFIX}${persistKey}` : null;
 }
 
-function emitCompletionChange(key: string) {
-  const listeners = completionListenersByKey.get(key);
-  if (!listeners) return;
-  listeners.forEach((listener) => listener());
-}
-
-function subscribeToCompletion(key: string, callback: () => void) {
-  if (typeof window === "undefined") {
-    return () => {}; // No-op on server
-  }
-
-  const listeners = completionListenersByKey.get(key) ?? new Set();
-  listeners.add(callback);
-  completionListenersByKey.set(key, listeners);
-
-  const handleStorage = (e: StorageEvent) => {
-    if (e.key === key) callback();
-  };
-  window.addEventListener("storage", handleStorage);
-
-  return () => {
-    const set = completionListenersByKey.get(key);
-    if (set) {
-      set.delete(callback);
-      if (set.size === 0) {
-        completionListenersByKey.delete(key);
-      }
-    }
-    window.removeEventListener("storage", handleStorage);
-  };
-}
-
-function getCompletionSnapshot(key: string | null): boolean {
+function getCompletionFromStorage(key: string | null): boolean {
   if (!key || typeof window === "undefined") return false;
   return localStorage.getItem(key) === "true";
+}
+
+function setCompletionInStorage(key: string, completed: boolean): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(key, completed ? "true" : "false");
 }
 
 export function CommandCard({
@@ -88,21 +66,39 @@ export function CommandCard({
 }: CommandCardProps) {
   const [copied, setCopied] = useState(false);
   const [copyAnimation, setCopyAnimation] = useState(false);
+  const queryClient = useQueryClient();
 
   const [storedOS] = useUserOS();
   const detectedOS = useDetectedOS();
   const os: OS = storedOS ?? detectedOS ?? "mac";
 
-  // Use useSyncExternalStore for completion state
+  // Use TanStack Query for completion state
   const completionKey = getCompletionKey(persistKey);
-  const completed = useSyncExternalStore(
-    (callback) => {
-      if (!completionKey) return () => {};
-      return subscribeToCompletion(completionKey, callback);
+
+  const { data: completed = false } = useQuery({
+    queryKey: completionKey ? commandCompletionKeys.completion(completionKey) : ["disabled"],
+    queryFn: () => getCompletionFromStorage(completionKey),
+    enabled: !!completionKey,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+
+  const completionMutation = useMutation({
+    mutationFn: async (isChecked: boolean) => {
+      if (completionKey) {
+        setCompletionInStorage(completionKey, isChecked);
+      }
+      return isChecked;
     },
-    () => getCompletionSnapshot(completionKey),
-    () => false // Server snapshot
-  );
+    onSuccess: (isChecked) => {
+      if (completionKey) {
+        queryClient.setQueryData(commandCompletionKeys.completion(completionKey), isChecked);
+      }
+      if (isChecked && onComplete) {
+        onComplete();
+      }
+    },
+  });
 
   // Get the appropriate command for the current OS
   const displayCommand = (() => {
@@ -141,17 +137,9 @@ export function CommandCard({
   const handleCheckboxChange = useCallback(
     (checked: CheckedState) => {
       const isChecked = checked === true;
-
-      if (completionKey && typeof window !== "undefined") {
-        localStorage.setItem(completionKey, isChecked ? "true" : "false");
-        emitCompletionChange(completionKey);
-      }
-
-      if (isChecked && onComplete) {
-        onComplete();
-      }
+      completionMutation.mutate(isChecked);
     },
-    [completionKey, onComplete]
+    [completionMutation]
   );
 
   return (

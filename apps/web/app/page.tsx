@@ -439,40 +439,45 @@ export default function HomePage() {
         <section className="mx-auto max-w-7xl px-6 pb-20 pt-12 sm:pt-20">
           <div className="grid gap-12 lg:grid-cols-2 lg:gap-16">
             {/* Left column - Text */}
-            <div className="flex flex-col justify-center">
+            <motion.div
+              className="flex flex-col justify-center"
+              variants={staggerContainer}
+              initial="hidden"
+              animate="visible"
+            >
               {/* Badge */}
-              <div
-                className="mb-6 inline-flex w-fit items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm text-primary opacity-0 animate-slide-up"
-                style={{ animationDelay: "0.1s", animationFillMode: "forwards" }}
+              <motion.div
+                className="mb-6 inline-flex w-fit items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-sm text-primary"
+                variants={fadeUp}
               >
                 <Sparkles className="h-4 w-4" />
                 <span>Zero to agentic coding in 30 minutes</span>
-              </div>
+              </motion.div>
 
               {/* Headline */}
-              <h1
-                className="mb-6 font-mono text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl opacity-0 animate-slide-up"
-                style={{ animationDelay: "0.2s", animationFillMode: "forwards" }}
+              <motion.h1
+                className="mb-6 font-mono text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl"
+                variants={fadeUp}
               >
                 <span className="text-gradient-cosmic">AI Agents</span>
                 <br />
                 <span className="text-foreground">Coding For You</span>
-              </h1>
+              </motion.h1>
 
               {/* Subheadline */}
-              <p
-                className="mb-8 max-w-xl text-lg leading-relaxed text-muted-foreground opacity-0 animate-slide-up"
-                style={{ animationDelay: "0.3s", animationFillMode: "forwards" }}
+              <motion.p
+                className="mb-8 max-w-xl text-lg leading-relaxed text-muted-foreground"
+                variants={fadeUp}
               >
                 Transform a fresh Ubuntu VPS into a fully-configured agentic coding
                 environment. Claude, Codex, Gemini — all pre-configured with 30+ modern
                 developer tools.
-              </p>
+              </motion.p>
 
               {/* CTA Buttons */}
-              <div
-                className="flex flex-col gap-3 sm:flex-row sm:items-center opacity-0 animate-slide-up"
-                style={{ animationDelay: "0.4s", animationFillMode: "forwards" }}
+              <motion.div
+                className="flex flex-col gap-3 sm:flex-row sm:items-center"
+                variants={fadeUp}
               >
                 <Button
                   asChild
@@ -497,23 +502,28 @@ export default function HomePage() {
                     View on GitHub
                   </a>
                 </Button>
-              </div>
+              </motion.div>
 
               {/* Stats */}
-              <div
-                className="mt-10 flex items-center divide-x divide-border/50 opacity-0 animate-slide-up"
-                style={{ animationDelay: "0.5s", animationFillMode: "forwards" }}
+              <motion.div
+                className="mt-10 flex items-center divide-x divide-border/50"
+                variants={fadeUp}
               >
                 <StatBadge value="30+" label="Tools Installed" />
                 <StatBadge value="3" label="AI Agents" />
                 <StatBadge value="~30m" label="Setup Time" />
-              </div>
-            </div>
+              </motion.div>
+            </motion.div>
 
             {/* Right column - Terminal */}
-            <div className="flex items-center justify-center lg:justify-end">
+            <motion.div
+              className="flex items-center justify-center lg:justify-end"
+              initial={{ opacity: 0, x: 40 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ ...springs.smooth, delay: 0.3 }}
+            >
               <AnimatedTerminal />
-            </div>
+            </motion.div>
           </div>
         </section>
 
