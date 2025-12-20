@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
+import { useDetectedOS, useUserOS } from "@/lib/userPreferences";
 
 export interface CommandCardProps {
   /** The default command to display */
@@ -28,54 +29,50 @@ export interface CommandCardProps {
 
 type OS = "mac" | "windows" | "linux";
 
-function getOS(): OS {
-  if (typeof window === "undefined") return "mac";
+type CheckedState = boolean | "indeterminate";
 
-  // Check localStorage first for user preference
-  const stored = localStorage.getItem("acfs-user-os");
-  if (stored === "mac" || stored === "windows" || stored === "linux") {
-    return stored;
-  }
+const COMPLETION_KEY_PREFIX = "acfs-command-";
+const completionListenersByKey = new Map<string, Set<() => void>>();
 
-  // Auto-detect from user agent
-  const ua = navigator.userAgent.toLowerCase();
-  if (ua.includes("win")) return "windows";
-  if (ua.includes("mac")) return "mac";
-  return "linux";
+function getCompletionKey(persistKey: string | undefined): string | null {
+  return persistKey ? `${COMPLETION_KEY_PREFIX}${persistKey}` : null;
 }
 
-// Subscribe to storage changes for OS preference
-function subscribeToOS(callback: () => void) {
+function emitCompletionChange(key: string) {
+  const listeners = completionListenersByKey.get(key);
+  if (!listeners) return;
+  listeners.forEach((listener) => listener());
+}
+
+function subscribeToCompletion(key: string, callback: () => void) {
   if (typeof window === "undefined") {
     return () => {}; // No-op on server
   }
+
+  const listeners = completionListenersByKey.get(key) ?? new Set();
+  listeners.add(callback);
+  completionListenersByKey.set(key, listeners);
+
   const handleStorage = (e: StorageEvent) => {
-    if (e.key === "acfs-user-os") callback();
+    if (e.key === key) callback();
   };
   window.addEventListener("storage", handleStorage);
-  return () => window.removeEventListener("storage", handleStorage);
+
+  return () => {
+    const set = completionListenersByKey.get(key);
+    if (set) {
+      set.delete(callback);
+      if (set.size === 0) {
+        completionListenersByKey.delete(key);
+      }
+    }
+    window.removeEventListener("storage", handleStorage);
+  };
 }
 
-// Create a factory for command completion state hooks
-function createCompletionStore(persistKey: string | undefined) {
-  const key = persistKey ? `acfs-command-${persistKey}` : null;
-
-  return {
-    getSnapshot: () => {
-      if (!key || typeof window === "undefined") return false;
-      return localStorage.getItem(key) === "true";
-    },
-    subscribe: (callback: () => void) => {
-      if (typeof window === "undefined") {
-        return () => {}; // No-op on server
-      }
-      const handleStorage = (e: StorageEvent) => {
-        if (e.key === key) callback();
-      };
-      window.addEventListener("storage", handleStorage);
-      return () => window.removeEventListener("storage", handleStorage);
-    },
-  };
+function getCompletionSnapshot(key: string | null): boolean {
+  if (!key || typeof window === "undefined") return false;
+  return localStorage.getItem(key) === "true";
 }
 
 export function CommandCard({
@@ -90,18 +87,18 @@ export function CommandCard({
 }: CommandCardProps) {
   const [copied, setCopied] = useState(false);
 
-  // Use useSyncExternalStore for OS detection
-  const os = useSyncExternalStore(
-    subscribeToOS,
-    getOS,
-    () => "mac" as OS // Server snapshot
-  );
+  const [storedOS] = useUserOS();
+  const detectedOS = useDetectedOS();
+  const os: OS = storedOS ?? detectedOS ?? "mac";
 
   // Use useSyncExternalStore for completion state
-  const completionStore = createCompletionStore(persistKey);
+  const completionKey = getCompletionKey(persistKey);
   const completed = useSyncExternalStore(
-    completionStore.subscribe,
-    completionStore.getSnapshot,
+    (callback) => {
+      if (!completionKey) return () => {};
+      return subscribeToCompletion(completionKey, callback);
+    },
+    () => getCompletionSnapshot(completionKey),
     () => false // Server snapshot
   );
 
@@ -133,20 +130,19 @@ export function CommandCard({
   }, [displayCommand]);
 
   const handleCheckboxChange = useCallback(
-    (checked: boolean) => {
-      if (persistKey && typeof window !== "undefined") {
-        localStorage.setItem(`acfs-command-${persistKey}`, String(checked));
-        // Dispatch storage event to trigger re-render
-        window.dispatchEvent(new StorageEvent("storage", {
-          key: `acfs-command-${persistKey}`,
-          newValue: String(checked),
-        }));
+    (checked: CheckedState) => {
+      const isChecked = checked === true;
+
+      if (completionKey && typeof window !== "undefined") {
+        localStorage.setItem(completionKey, isChecked ? "true" : "false");
+        emitCompletionChange(completionKey);
       }
-      if (checked && onComplete) {
+
+      if (isChecked && onComplete) {
         onComplete();
       }
     },
-    [persistKey, onComplete]
+    [completionKey, onComplete]
   );
 
   return (

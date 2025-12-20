@@ -113,9 +113,30 @@ verify_checksum() {
         return 1
     fi
 
-    local actual_sha256
-    actual_sha256=$(curl -fsSL "$url" 2>/dev/null | calculate_sha256) || {
+    # Fetch once and verify the exact bytes we will output/run.
+    #
+    # NOTE: Bash command substitution trims trailing newlines, so we append a
+    # sentinel token to preserve the original content verbatim (including
+    # trailing newlines) without writing temp files.
+    local sentinel="__ACFS_EOF_SENTINEL__"
+    local content
+    content="$(
+        curl -fsSL "$url" 2>/dev/null || exit 1
+        printf '%s' "$sentinel"
+    )" || {
         echo -e "${RED}Security Error:${NC} Failed to fetch $name" >&2
+        return 1
+    }
+
+    if [[ "$content" != *"$sentinel" ]]; then
+        echo -e "${RED}Security Error:${NC} Failed to fetch $name" >&2
+        return 1
+    fi
+    content="${content%"$sentinel"}"
+
+    local actual_sha256
+    actual_sha256=$(printf '%s' "$content" | calculate_sha256) || {
+        echo -e "${RED}Security Error:${NC} Failed to checksum $name" >&2
         return 1
     }
 
@@ -129,10 +150,7 @@ verify_checksum() {
 
     echo -e "${GREEN}Verified:${NC} $name" >&2
     # Return the verified content (verbatim bytes) on stdout.
-    curl -fsSL "$url" 2>/dev/null || {
-        echo -e "${RED}Security Error:${NC} Failed to fetch $name (post-verify)" >&2
-        return 1
-    }
+    printf '%s' "$content"
 }
 
 # Fetch and run with optional verification
@@ -150,7 +168,10 @@ fetch_and_run() {
     if [[ -n "$expected_sha256" ]]; then
         verify_checksum "$url" "$expected_sha256" "$name" | bash -s -- "${args[@]}"
     else
-        curl -fsSL "$url" 2>/dev/null | bash -s -- "${args[@]}"
+        curl -fsSL "$url" 2>/dev/null | bash -s -- "${args[@]}" || {
+            echo -e "${RED}Error:${NC} Failed to fetch or run $name" >&2
+            return 1
+        }
     fi
 }
 
