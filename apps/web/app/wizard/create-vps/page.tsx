@@ -2,10 +2,10 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, AlertCircle, Server, ChevronDown } from "lucide-react";
+import { Check, AlertCircle, Server, ChevronDown, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DetailsSection } from "@/components/alert-card";
 import { cn } from "@/lib/utils";
 import { markStepComplete } from "@/lib/wizardSteps";
 import { useVPSIP, isValidIP } from "@/lib/userPreferences";
@@ -31,22 +31,27 @@ function ProviderGuide({
   onToggle,
 }: ProviderGuideProps) {
   return (
-    <div className="rounded-lg border">
+    <div className={cn(
+      "rounded-xl border transition-all duration-200",
+      isExpanded
+        ? "border-primary/30 bg-card/80"
+        : "border-border/50 bg-card/50"
+    )}>
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between p-3 text-left hover:bg-muted/50"
+        className="flex w-full items-center justify-between p-3 text-left"
       >
-        <span className="font-medium">{name} specific steps</span>
+        <span className="font-medium text-foreground">{name} specific steps</span>
         <ChevronDown
           className={cn(
-            "h-4 w-4 text-muted-foreground transition-transform",
+            "h-4 w-4 text-muted-foreground transition-transform duration-200",
             isExpanded && "rotate-180"
           )}
         />
       </button>
       {isExpanded && (
-        <div className="border-t px-3 pb-3 pt-2">
+        <div className="border-t border-border/50 px-3 pb-3 pt-2">
           <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
             {steps.map((step, i) => (
               <li key={i}>{step}</li>
@@ -150,18 +155,28 @@ export default function CreateVPSPage() {
     <div className="space-y-8">
       {/* Header */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">
-          Create your VPS instance
-        </h1>
-        <p className="text-lg text-muted-foreground">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/20">
+            <HardDrive className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="bg-gradient-to-r from-foreground via-foreground to-muted-foreground bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
+              Create your VPS instance
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              ~5 min
+            </p>
+          </div>
+        </div>
+        <p className="text-muted-foreground">
           Launch your VPS and attach your SSH key. Follow the checklist below.
         </p>
       </div>
 
       {/* Universal checklist */}
-      <Card className="p-4">
-        <h2 className="mb-4 flex items-center gap-2 font-semibold">
-          <Server className="h-5 w-5" />
+      <div className="rounded-xl border border-border/50 bg-card/50 p-4">
+        <h2 className="mb-4 flex items-center gap-2 font-semibold text-foreground">
+          <Server className="h-5 w-5 text-primary" />
           Setup checklist
         </h2>
         <div className="space-y-3">
@@ -178,8 +193,10 @@ export default function CreateVPSPage() {
               />
               <span
                 className={cn(
-                  "text-sm",
-                  checkedItems.has(item.id) && "text-muted-foreground line-through"
+                  "text-sm transition-all",
+                  checkedItems.has(item.id)
+                    ? "text-muted-foreground line-through"
+                    : "text-foreground"
                 )}
               >
                 {item.label}
@@ -187,7 +204,7 @@ export default function CreateVPSPage() {
             </label>
           ))}
         </div>
-      </Card>
+      </div>
 
       {/* Provider-specific guides */}
       <div className="space-y-3">
@@ -209,7 +226,7 @@ export default function CreateVPSPage() {
 
       {/* IP Address input */}
       <div className="space-y-3">
-        <h2 className="font-semibold">Your VPS IP address</h2>
+        <h2 className="font-semibold text-foreground">Your VPS IP address</h2>
         <p className="text-sm text-muted-foreground">
           Enter the IP address of your new VPS. You&apos;ll find this in your
           provider&apos;s control panel after the VPS is created.
@@ -221,8 +238,11 @@ export default function CreateVPSPage() {
             onChange={handleIpChange}
             placeholder="e.g., 192.168.1.100"
             className={cn(
-              "w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary",
-              ipError && "border-destructive focus:border-destructive focus:ring-destructive"
+              "w-full rounded-xl border bg-background px-4 py-3 font-mono text-sm outline-none transition-all",
+              "focus:border-primary focus:ring-2 focus:ring-primary/20",
+              ipError
+                ? "border-destructive focus:border-destructive focus:ring-destructive/20"
+                : "border-border/50"
             )}
           />
           {ipError && (
@@ -232,7 +252,7 @@ export default function CreateVPSPage() {
             </p>
           )}
           {ipAddress && !ipError && isValidIP(ipAddress) && (
-            <p className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
+            <p className="flex items-center gap-1 text-sm text-[oklch(0.72_0.19_145)]">
               <Check className="h-4 w-4" />
               Valid IP address
             </p>

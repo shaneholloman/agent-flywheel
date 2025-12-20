@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw, Check } from "lucide-react";
+import { RefreshCw, Check, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { CommandCard } from "@/components/command-card";
+import { AlertCard, OutputPreview } from "@/components/alert-card";
 import { markStepComplete } from "@/lib/wizardSteps";
 import { useVPSIP, useMounted } from "@/lib/userPreferences";
 
@@ -49,23 +49,33 @@ export default function ReconnectUbuntuPage() {
     <div className="space-y-8">
       {/* Header */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">
-          Reconnect as ubuntu
-        </h1>
-        <p className="text-lg text-muted-foreground">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/20">
+            <UserCheck className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="bg-gradient-to-r from-foreground via-foreground to-muted-foreground bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
+              Reconnect as ubuntu
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              ~1 min
+            </p>
+          </div>
+        </div>
+        <p className="text-muted-foreground">
           If you ran the installer as root, reconnect as the ubuntu user to get
           the full shell experience.
         </p>
       </div>
 
       {/* Already ubuntu? */}
-      <Card className="p-4">
+      <div className="rounded-xl border border-[oklch(0.72_0.19_145/0.3)] bg-[oklch(0.72_0.19_145/0.08)] p-4">
         <div className="flex items-start gap-3">
-          <Check className="mt-0.5 h-5 w-5 text-green-500" />
+          <Check className="mt-0.5 h-5 w-5 text-[oklch(0.72_0.19_145)]" />
           <div>
-            <p className="font-medium">Already connected as ubuntu?</p>
+            <p className="font-medium text-foreground">Already connected as ubuntu?</p>
             <p className="text-sm text-muted-foreground">
-              If your prompt shows <code>ubuntu@</code>, you can skip this step.
+              If your prompt shows <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">ubuntu@</code>, you can skip this step.
             </p>
             <Button
               variant="outline"
@@ -77,7 +87,7 @@ export default function ReconnectUbuntuPage() {
             </Button>
           </div>
         </div>
-      </Card>
+      </div>
 
       {/* Reconnect steps */}
       <div className="space-y-4">
@@ -106,20 +116,15 @@ export default function ReconnectUbuntuPage() {
       </div>
 
       {/* Verification */}
-      <Card className="border-green-200 bg-green-50 p-4 dark:border-green-900 dark:bg-green-950">
-        <div className="space-y-2">
-          <h3 className="font-medium text-green-800 dark:text-green-200">
-            You&apos;ll know it worked when:
-          </h3>
-          <ul className="space-y-1 text-sm text-green-700 dark:text-green-300">
-            <li>
-              • Your prompt shows <code>ubuntu@</code> (not <code>root@</code>)
-            </li>
-            <li>• You see the colorful powerlevel10k prompt</li>
-            <li>• The shell feels more responsive</li>
-          </ul>
-        </div>
-      </Card>
+      <OutputPreview title="You'll know it worked when:">
+        <ul className="space-y-1 text-sm">
+          <li className="text-[oklch(0.72_0.19_145)]">
+            • Your prompt shows <code className="text-muted-foreground">ubuntu@</code> (not <code className="text-muted-foreground">root@</code>)
+          </li>
+          <li className="text-[oklch(0.72_0.19_145)]">• You see the colorful powerlevel10k prompt</li>
+          <li className="text-[oklch(0.72_0.19_145)]">• The shell feels more responsive</li>
+        </ul>
+      </OutputPreview>
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">

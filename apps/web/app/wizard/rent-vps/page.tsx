@@ -2,9 +2,9 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink, Check, Server, ChevronDown } from "lucide-react";
+import { ExternalLink, Check, Server, ChevronDown, Cloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { AlertCard } from "@/components/alert-card";
 import { cn } from "@/lib/utils";
 import { markStepComplete } from "@/lib/wizardSteps";
 
@@ -64,37 +64,47 @@ interface ProviderCardProps {
 
 function ProviderCard({ provider, isExpanded, onToggle }: ProviderCardProps) {
   return (
-    <Card className="overflow-hidden">
+    <div className={cn(
+      "overflow-hidden rounded-xl border transition-all duration-200",
+      isExpanded
+        ? "border-primary/30 bg-card/80 shadow-md"
+        : "border-border/50 bg-card/50 hover:border-primary/20"
+    )}>
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between p-4 text-left hover:bg-muted/50"
+        className="flex w-full items-center justify-between p-4 text-left"
       >
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted font-bold">
+          <div className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-lg font-bold transition-colors",
+            isExpanded
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground"
+          )}>
             {provider.name[0]}
           </div>
           <div>
-            <h3 className="font-semibold">{provider.name}</h3>
+            <h3 className="font-semibold text-foreground">{provider.name}</h3>
             <p className="text-sm text-muted-foreground">{provider.tagline}</p>
           </div>
         </div>
         <ChevronDown
           className={cn(
-            "h-5 w-5 text-muted-foreground transition-transform",
+            "h-5 w-5 text-muted-foreground transition-transform duration-200",
             isExpanded && "rotate-180"
           )}
         />
       </button>
 
       {isExpanded && (
-        <div className="border-t px-4 pb-4 pt-3 space-y-4">
+        <div className="border-t border-border/50 px-4 pb-4 pt-3 space-y-4">
           <div className="space-y-2">
-            <h4 className="text-sm font-medium">Why {provider.name}:</h4>
+            <h4 className="text-sm font-medium text-foreground">Why {provider.name}:</h4>
             <ul className="space-y-1">
               {provider.pros.map((pro, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm">
-                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-[oklch(0.72_0.19_145)]" />
                   <span className="text-muted-foreground">{pro}</span>
                 </li>
               ))}
@@ -102,9 +112,9 @@ function ProviderCard({ provider, isExpanded, onToggle }: ProviderCardProps) {
           </div>
 
           {provider.recommended && (
-            <div className="rounded-md bg-muted/50 p-3">
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
               <p className="text-sm">
-                <span className="font-medium">Recommended plan:</span>{" "}
+                <span className="font-medium text-foreground">Recommended plan:</span>{" "}
                 <span className="text-muted-foreground">
                   {provider.recommended}
                 </span>
@@ -123,7 +133,7 @@ function ProviderCard({ provider, isExpanded, onToggle }: ProviderCardProps) {
           </a>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -154,19 +164,29 @@ export default function RentVPSPage() {
     <div className="space-y-8">
       {/* Header */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">
-          Rent a VPS (~$50/month sweet spot)
-        </h1>
-        <p className="text-lg text-muted-foreground">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/20">
+            <Cloud className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="bg-gradient-to-r from-foreground via-foreground to-muted-foreground bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
+              Rent a VPS (~$50/month)
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              ~5 min
+            </p>
+          </div>
+        </div>
+        <p className="text-muted-foreground">
           Pick a VPS provider and rent a server. This is where your coding
           agents will live.
         </p>
       </div>
 
       {/* Spec checklist */}
-      <Card className="p-4">
-        <h2 className="mb-3 flex items-center gap-2 font-semibold">
-          <Server className="h-5 w-5" />
+      <div className="rounded-xl border border-border/50 bg-card/50 p-4">
+        <h2 className="mb-3 flex items-center gap-2 font-semibold text-foreground">
+          <Server className="h-5 w-5 text-primary" />
           What to choose
         </h2>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -175,11 +195,11 @@ export default function RentVPSPage() {
               <span className="font-medium text-muted-foreground min-w-20">
                 {spec.label}:
               </span>
-              <span>{spec.value}</span>
+              <span className="text-foreground">{spec.value}</span>
             </div>
           ))}
         </div>
-      </Card>
+      </div>
 
       {/* Provider cards */}
       <div className="space-y-4">
@@ -197,13 +217,10 @@ export default function RentVPSPage() {
       </div>
 
       {/* Other providers note */}
-      <div className="rounded-lg border bg-muted/30 p-4">
-        <p className="text-sm text-muted-foreground">
-          <strong className="text-foreground">Using a different provider?</strong>{" "}
-          Any provider with Ubuntu VPS and SSH key login works. Just make sure
-          you can add your SSH public key during setup.
-        </p>
-      </div>
+      <AlertCard variant="tip" title="Using a different provider?">
+        Any provider with Ubuntu VPS and SSH key login works. Just make sure
+        you can add your SSH public key during setup.
+      </AlertCard>
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">
