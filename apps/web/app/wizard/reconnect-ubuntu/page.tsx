@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { RefreshCw, Check, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CommandCard } from "@/components/command-card";
-import { AlertCard, OutputPreview } from "@/components/alert-card";
+import { OutputPreview } from "@/components/alert-card";
 import { markStepComplete } from "@/lib/wizardSteps";
 import { useVPSIP, useMounted } from "@/lib/userPreferences";
 

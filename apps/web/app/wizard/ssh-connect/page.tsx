@@ -4,9 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Terminal, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { CommandCard } from "@/components/command-card";
-import { AlertCard, OutputPreview, DetailsSection } from "@/components/alert-card";
+import { AlertCard, OutputPreview } from "@/components/alert-card";
 import { cn } from "@/lib/utils";
 import { markStepComplete } from "@/lib/wizardSteps";
 import { useVPSIP, useUserOS, useMounted } from "@/lib/userPreferences";
@@ -84,6 +83,7 @@ function TroubleshootingSection({
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={isExpanded}
         className="flex w-full items-center justify-between p-3 text-left hover:bg-muted/50"
       >
         <span className="font-medium text-destructive">{item.error}</span>

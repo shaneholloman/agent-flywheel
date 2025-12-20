@@ -1,6 +1,28 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useSyncExternalStore } from "react";
+
+const PREFERS_REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribe(callback: () => void) {
+  if (typeof window === "undefined") return () => {};
+
+  const mediaQuery = window.matchMedia(PREFERS_REDUCED_MOTION_QUERY);
+  const handler = () => callback();
+
+  // Modern API (all current browsers)
+  mediaQuery.addEventListener("change", handler);
+  return () => mediaQuery.removeEventListener("change", handler);
+}
+
+function getSnapshot() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia(PREFERS_REDUCED_MOTION_QUERY).matches;
+}
+
+function getServerSnapshot() {
+  return false;
+}
 
 /**
  * Hook to detect user's reduced motion preference.
@@ -13,30 +35,7 @@ import { useState, useEffect } from "react";
  * const animation = prefersReducedMotion ? {} : { y: [20, 0], opacity: [0, 1] };
  */
 export function useReducedMotion(): boolean {
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-
-  useEffect(() => {
-    // Check if window is available (client-side)
-    if (typeof window === "undefined") return;
-
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-
-    // Set initial value
-    setPrefersReducedMotion(mediaQuery.matches);
-
-    // Listen for changes
-    const handleChange = (event: MediaQueryListEvent) => {
-      setPrefersReducedMotion(event.matches);
-    };
-
-    mediaQuery.addEventListener("change", handleChange);
-
-    return () => {
-      mediaQuery.removeEventListener("change", handleChange);
-    };
-  }, []);
-
-  return prefersReducedMotion;
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
 
 /**

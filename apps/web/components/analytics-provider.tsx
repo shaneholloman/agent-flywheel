@@ -26,7 +26,7 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const scrollDepthsReached = useRef<Set<number>>(new Set());
-  const pageStartTime = useRef<number>(Date.now());
+  const pageStartTime = useRef<number>(0);
   const timeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Track page views on route change

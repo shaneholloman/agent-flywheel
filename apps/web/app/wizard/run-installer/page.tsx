@@ -12,8 +12,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { CommandCard } from "@/components/command-card";
 import { AlertCard, OutputPreview, DetailsSection } from "@/components/alert-card";
-import { Card } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 import { markStepComplete } from "@/lib/wizardSteps";
 
 const ACFS_COMMAND = `curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh?$(date +%s)" | bash -s -- --yes --mode vibe`;
@@ -47,7 +45,6 @@ const WHAT_IT_INSTALLS = [
 
 export default function RunInstallerPage() {
   const router = useRouter();
-  const [showDetails, setShowDetails] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
 
   const handleContinue = useCallback(() => {

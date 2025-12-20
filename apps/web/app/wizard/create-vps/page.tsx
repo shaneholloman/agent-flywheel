@@ -42,6 +42,7 @@ function ProviderGuide({
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={isExpanded}
         className="flex w-full items-center justify-between p-3 text-left"
       >
         <span className="font-medium text-foreground">{name} specific steps</span>

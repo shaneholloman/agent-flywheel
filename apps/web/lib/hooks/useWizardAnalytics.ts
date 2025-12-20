@@ -29,7 +29,7 @@ export function useWizardAnalytics({
   stepTitle,
   totalSteps = 10,
 }: UseWizardAnalyticsOptions) {
-  const startTime = useRef<number>(Date.now());
+  const startTime = useRef<number>(0);
   const hasTrackedView = useRef<boolean>(false);
   const isCompleted = useRef<boolean>(false);
 
@@ -102,8 +102,6 @@ export function useWizardAnalytics({
     getTimeSpent,
     markComplete,
     markAbandoned,
-    startTime: startTime.current,
-    isCompleted: isCompleted.current,
   };
 }
 

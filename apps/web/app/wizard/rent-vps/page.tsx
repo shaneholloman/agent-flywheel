@@ -73,6 +73,7 @@ function ProviderCard({ provider, isExpanded, onToggle }: ProviderCardProps) {
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={isExpanded}
         className="flex w-full items-center justify-between p-4 text-left"
       >
         <div className="flex items-center gap-3">

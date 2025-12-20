@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "./useReducedMotion";
 
 export interface UseScrollRevealOptions {
@@ -51,27 +51,17 @@ export function useScrollReveal(options: UseScrollRevealOptions = {}): UseScroll
   } = options;
 
   const ref = useRef<HTMLElement | null>(null);
-  const [isInView, setIsInView] = useState(false);
-  const [hasBeenInView, setHasBeenInView] = useState(false);
+  const [isInViewState, setIsInViewState] = useState(false);
+  const [hasBeenInViewState, setHasBeenInViewState] = useState(false);
   const prefersReducedMotion = useReducedMotion();
+  const shouldShowImmediately =
+    disabled || prefersReducedMotion || typeof IntersectionObserver === "undefined";
 
   useEffect(() => {
-    // If disabled or reduced motion, show immediately
-    if (disabled || prefersReducedMotion) {
-      setIsInView(true);
-      setHasBeenInView(true);
-      return;
-    }
+    if (shouldShowImmediately) return;
 
     const element = ref.current;
     if (!element) return;
-
-    // Check if IntersectionObserver is available
-    if (typeof IntersectionObserver === "undefined") {
-      setIsInView(true);
-      setHasBeenInView(true);
-      return;
-    }
 
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -81,12 +71,12 @@ export function useScrollReveal(options: UseScrollRevealOptions = {}): UseScroll
           if (entry.isIntersecting) {
             if (delay > 0) {
               timeoutId = setTimeout(() => {
-                setIsInView(true);
-                setHasBeenInView(true);
+                setIsInViewState(true);
+                setHasBeenInViewState(true);
               }, delay);
             } else {
-              setIsInView(true);
-              setHasBeenInView(true);
+              setIsInViewState(true);
+              setHasBeenInViewState(true);
             }
 
             // Unobserve if triggerOnce
@@ -99,7 +89,7 @@ export function useScrollReveal(options: UseScrollRevealOptions = {}): UseScroll
               clearTimeout(timeoutId);
               timeoutId = null;
             }
-            setIsInView(false);
+            setIsInViewState(false);
           }
         });
       },
@@ -112,9 +102,13 @@ export function useScrollReveal(options: UseScrollRevealOptions = {}): UseScroll
       if (timeoutId) clearTimeout(timeoutId);
       observer.disconnect();
     };
-  }, [threshold, rootMargin, triggerOnce, delay, disabled, prefersReducedMotion]);
+  }, [threshold, rootMargin, triggerOnce, delay, shouldShowImmediately]);
 
-  return { ref, isInView, hasBeenInView };
+  return {
+    ref,
+    isInView: shouldShowImmediately || isInViewState,
+    hasBeenInView: shouldShowImmediately || hasBeenInViewState,
+  };
 }
 
 /**
