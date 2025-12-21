@@ -332,7 +332,7 @@ function PromptCard({ prompt, index }: { prompt: AgentPrompt; index: number }) {
           </div>
           <button
             onClick={copyPrompt}
-            className="shrink-0 rounded-lg bg-muted/50 p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="shrink-0 flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg bg-muted/50 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             title="Copy prompt"
           >
             {copied ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
@@ -549,23 +549,23 @@ function ToolCard({ tool, index }: { tool: FlywheelTool; index: number }) {
             </code>
             <button
               onClick={copyInstall}
-              className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="shrink-0 flex items-center justify-center min-w-[44px] min-h-[44px] -my-2 rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
-              {copied ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
+              {copied ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
             </button>
           </div>
         )}
 
         {/* Actions */}
         <div className="flex gap-2">
-          <Button asChild size="sm" variant="outline" className="flex-1 text-xs">
+          <Button asChild size="sm" variant="outline" className="flex-1 h-11 text-xs">
             <a href={tool.href} target="_blank" rel="noopener noreferrer">
               GitHub
               <ExternalLink className="ml-1 h-3 w-3" />
             </a>
           </Button>
           {tool.demoUrl && (
-            <Button asChild size="sm" variant="ghost" className="text-xs">
+            <Button asChild size="sm" variant="ghost" className="h-11 text-xs">
               <a href={tool.demoUrl} target="_blank" rel="noopener noreferrer">
                 Demo
               </a>

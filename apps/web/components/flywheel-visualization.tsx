@@ -474,7 +474,7 @@ function MobileBottomSheet({
               </div>
               <button
                 onClick={onClose}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-foreground"
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-muted text-foreground"
                 aria-label="Close"
               >
                 <X className="h-5 w-5" />
