@@ -196,7 +196,7 @@ install_codex_cli() {
     if _agent_run_as_user "\"$bun_bin\" install -g $CODEX_PACKAGE"; then
         if [[ -x "$codex_bin" ]]; then
             log_success "Codex CLI installed"
-            log_detail "Note: Set OPENAI_API_KEY or run 'codex' to complete login"
+            log_detail "Note: Run 'codex login' to authenticate with your ChatGPT Pro account"
             return 0
         fi
     fi
@@ -344,11 +344,11 @@ check_agent_auth() {
         log_warn "  Claude: not configured (run 'claude' to login)"
     fi
 
-    # Codex: Check for API key or config
-    if [[ -n "${OPENAI_API_KEY:-}" ]] || [[ -f "$target_home/.codex/config.json" ]]; then
+    # Codex: Check for OAuth auth.json (uses ChatGPT accounts, not API keys)
+    if [[ -f "$target_home/.codex/auth.json" ]]; then
         log_detail "  Codex: configured"
     else
-        log_warn "  Codex: not configured (set OPENAI_API_KEY or run 'codex')"
+        log_warn "  Codex: not configured (run 'codex login' to authenticate)"
     fi
 
     # Gemini: Check for credentials
@@ -420,7 +420,7 @@ install_all_agents() {
     echo ""
     log_detail "Next steps: Login to each agent"
     log_detail "  • Claude: Run 'claude' and follow prompts"
-    log_detail "  • Codex:  Set OPENAI_API_KEY or run 'codex'"
+    log_detail "  • Codex:  Run 'codex login' (uses ChatGPT Pro account, not API key)"
     log_detail "  • Gemini: Run 'gemini' and complete Google login"
     echo ""
 
