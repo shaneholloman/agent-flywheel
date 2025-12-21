@@ -525,7 +525,8 @@ test.describe("Query Param Fallback", () => {
     await expect(page.locator("h1").first()).toContainText(/terminal/i);
 
     // Windows-specific content should render without redirecting.
-    await expect(page.getByText(/Windows Terminal/i)).toBeVisible();
+    // Use .first() because "Windows Terminal" appears multiple times (heading, link, description)
+    await expect(page.getByText(/Windows Terminal/i).first()).toBeVisible();
   });
 
   test("should honor ?os and ?ip on deep-link to ssh-connect", async ({ page }) => {
