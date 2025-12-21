@@ -57,11 +57,11 @@ modules:
 - Phase 3: Filesystem setup
 - Phase 4: Shell configuration
 - Phase 5: CLI tools
-- Phase 6: Language runtimes
-- Phase 7: Development tools
-- Phase 8: Database tools
-- Phase 9: AI agents
-- Phase 10: Cloud/integration tools
+- Phase 6: Language runtimes + shell tools (atuin, zoxide, ast-grep)
+- Phase 7: AI agents (Claude, Codex, Gemini)
+- Phase 8: Cloud tools + databases (Vault, PostgreSQL, Wrangler, Supabase, Vercel)
+- Phase 9: Stack tools (ntm, mcp_agent_mail, cass, etc.)
+- Phase 10: ACFS utilities (onboard, doctor)
 
 ### Installation Fields
 
@@ -185,13 +185,13 @@ installed_check:
     - sudo -n true
 ```
 
-### Optional Cloud Tool
+### Optional Cloud Tool (Legacy Pattern)
 
 ```yaml
 - id: cloud.gcloud
   description: Google Cloud CLI
   category: cloud
-  phase: 10
+  phase: 8
   run_as: root
   optional: true          # Failures are warnings
   enabled_by_default: false  # Must be explicitly requested
@@ -202,6 +202,8 @@ installed_check:
     run_as: current
     command: "command -v gcloud"
   install:
+    # NOTE: curl|bash is a legacy pattern. New modules should use
+    # verified_installer with checksums.yaml for security.
     - curl https://sdk.cloud.google.com | bash
   verify:
     - gcloud --version
@@ -250,7 +252,7 @@ Dependencies must be in the same or earlier phase.
 
 **Error Example:**
 ```
-[PHASE_VIOLATION] Module "shell.zsh" (phase 2) depends on "agent.claude" (phase 9)
+[PHASE_VIOLATION] Module "shell.zsh" (phase 4) depends on "agents.claude" (phase 7)
   → Move dependency to earlier phase or move module to later phase
 ```
 
@@ -311,22 +313,20 @@ cd packages/manifest && bun run generate
 4. **Regenerate**: Update generated scripts
 
 ```bash
-# Find dependents
-grep -r "dependencies:" acfs.manifest.yaml | grep "module-id"
+# Find modules that depend on a specific module (e.g., lang.bun)
+grep -B15 -- "- lang.bun" acfs.manifest.yaml | grep "^  - id:"
 ```
 
 ### Debugging Validation Errors
 
 ```bash
-# Parse and validate manifest (dry-run mode)
 cd packages/manifest
+
+# Dry-run: validates manifest and shows what would be generated (no file writes)
 bun run generate:dry
 
-# Generate with verbose output
-bun run generate:dry  # Shows validation + what would be generated
-
-# View actual generation output
-bun run generate      # Writes files to scripts/generated/
+# Full generation: validates and writes files to scripts/generated/
+bun run generate
 ```
 
 ## Generated Output
