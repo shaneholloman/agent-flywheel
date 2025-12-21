@@ -374,3 +374,130 @@ contains_secrets() {
 
     return 1
 }
+
+# ============================================================
+# SESSION LISTING (via CASS)
+# ============================================================
+
+# Check if CASS is installed
+# Usage: check_cass_installed
+# Returns: 0 if installed, 1 otherwise
+check_cass_installed() {
+    if ! command -v cass >/dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+# List recent sessions via CASS search
+# Usage: list_sessions [--json] [--days N] [--agent AGENT] [--limit N]
+# Returns: Session list to stdout
+list_sessions() {
+    local output_json=false
+    local days=30
+    local agent=""
+    local limit=20
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json)
+                output_json=true
+                shift
+                ;;
+            --days)
+                days="$2"
+                shift 2
+                ;;
+            --agent)
+                agent="$2"
+                shift 2
+                ;;
+            --limit)
+                limit="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    # Check CASS is installed
+    if ! check_cass_installed; then
+        if [[ "$output_json" == "true" ]]; then
+            echo '{"error": "CASS not installed", "install": "See https://github.com/Dicklesworthstone/coding_agent_session_search"}'
+        else
+            log_error "CASS (Coding Agent Session Search) is not installed"
+            log_info "Install from: https://github.com/Dicklesworthstone/coding_agent_session_search"
+        fi
+        return 1
+    fi
+
+    # Build CASS search command
+    local cass_args=("search" "*" "--limit" "$limit" "--days" "$days")
+
+    if [[ -n "$agent" ]]; then
+        cass_args+=("--agent" "$agent")
+    fi
+
+    if [[ "$output_json" == "true" ]]; then
+        # JSON output: aggregate by session with stats
+        cass "${cass_args[@]}" --json --aggregate agent,workspace 2>/dev/null | jq '
+            {
+                sessions: (.aggregations // []) | map({
+                    agent: .agent,
+                    workspace: .workspace,
+                    count: .count
+                }),
+                total: .count,
+                query_info: {
+                    limit: .limit,
+                    offset: .offset
+                }
+            }
+        ' 2>/dev/null || echo '{"error": "Failed to query CASS"}'
+    else
+        # Human-readable output
+        echo ""
+        echo "Recent Sessions (last ${days} days):"
+        echo ""
+
+        # Get stats by agent
+        local stats
+        stats=$(cass stats --json 2>/dev/null)
+
+        if [[ -n "$stats" ]]; then
+            echo "$stats" | jq -r '
+                "  By Agent:",
+                (.by_agent[] | "    \(.agent): \(.count) sessions"),
+                "",
+                "  Top Workspaces:",
+                (.top_workspaces[:5][] | "    \(.workspace): \(.count) sessions")
+            ' 2>/dev/null
+
+            echo ""
+            echo "  Date Range: $(echo "$stats" | jq -r '.date_range.oldest[:10]') to $(echo "$stats" | jq -r '.date_range.newest[:10]')"
+            echo "  Total Conversations: $(echo "$stats" | jq -r '.conversations')"
+            echo "  Total Messages: $(echo "$stats" | jq -r '.messages')"
+        fi
+
+        echo ""
+        echo "Use: cass search \"<query>\" to find specific sessions"
+        echo "Use: cass export <session-path> --format json to export"
+    fi
+}
+
+# Get session details for a specific workspace
+# Usage: get_workspace_sessions <workspace_path> [--limit N]
+get_workspace_sessions() {
+    local workspace="$1"
+    local limit="${2:-10}"
+
+    if ! check_cass_installed; then
+        log_error "CASS not installed"
+        return 1
+    fi
+
+    cass search "*" --workspace "$workspace" --limit "$limit" --json 2>/dev/null
+}
