@@ -375,6 +375,166 @@ Example:
 | `ACFS_MODULES_IN_ORDER` | `scripts/generated/manifest_index.sh` | Topological order data |
 | `parse_args()` | `install.sh` | CLI parsing + legacy flag mapping |
 
+---
+
+## Bootstrap Contract (Phase 0 Spec)
+
+This section defines the `curl | bash` bootstrap process for atomic, validated, self-consistent installs.
+
+### Core Principle: Never Source from Network
+
+```bash
+# WRONG: Race conditions, partial downloads, mixed refs
+source <(curl -fsSL https://example.com/script.sh)
+
+# RIGHT: Download → Validate → Extract → Validate → Source
+curl -fsSL "$ARCHIVE_URL" -o "$TMP_ARCHIVE"
+# ... validation steps ...
+source "$ACFS_LIB_DIR/security.sh"
+```
+
+### Required Environment Variables
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `ACFS_REPO_OWNER` | Yes | GitHub org/user | `Dicklesworthstone` |
+| `ACFS_REPO_NAME` | Yes | Repository name | `agentic_coding_flywheel_setup` |
+| `ACFS_REF` | Yes | Branch, tag, or SHA | `main`, `v1.2.3`, `abc1234` |
+| `ACFS_BOOTSTRAP_DIR` | No | Override temp dir | `/tmp/acfs-bootstrap` |
+| `ACFS_KEEP_BOOTSTRAP` | No | Keep extracted tree | `1` (for debugging) |
+
+### Archive Download URL
+
+```bash
+# GitHub archive URL (single ref, atomic snapshot)
+ARCHIVE_URL="https://github.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/archive/${ACFS_REF}.tar.gz"
+```
+
+### Bootstrap Sequence (Pseudocode)
+
+```bash
+acfs_bootstrap() {
+    # 1. CREATE TEMP DIRECTORY
+    ACFS_BOOTSTRAP_DIR="${ACFS_BOOTSTRAP_DIR:-$(mktemp -d -t acfs-bootstrap.XXXXXX)}"
+    trap 'rm -rf "$ACFS_BOOTSTRAP_DIR"' EXIT  # cleanup unless ACFS_KEEP_BOOTSTRAP
+
+    # 2. DOWNLOAD ARCHIVE
+    local archive_file="$ACFS_BOOTSTRAP_DIR/archive.tar.gz"
+    if ! curl -fsSL --max-time 60 "$ARCHIVE_URL" -o "$archive_file"; then
+        fail "BOOTSTRAP_DOWNLOAD_FAILED: Could not download archive from $ARCHIVE_URL"
+    fi
+
+    # 3. VALIDATE ARCHIVE (basic check)
+    if ! file "$archive_file" | grep -q "gzip compressed"; then
+        fail "BOOTSTRAP_INVALID_ARCHIVE: Downloaded file is not a valid gzip archive"
+    fi
+
+    # 4. EXTRACT ARCHIVE
+    local extract_dir="$ACFS_BOOTSTRAP_DIR/extracted"
+    if ! tar -xzf "$archive_file" -C "$ACFS_BOOTSTRAP_DIR"; then
+        fail "BOOTSTRAP_EXTRACT_FAILED: Could not extract archive"
+    fi
+    # GitHub archives extract to repo-ref/ directory
+    extract_dir="$(find "$ACFS_BOOTSTRAP_DIR" -maxdepth 1 -type d -name '*-*' | head -1)"
+
+    # 5. VALIDATE REQUIRED FILES EXIST
+    local required_files=(
+        "scripts/lib/security.sh"
+        "scripts/lib/logging.sh"
+        "scripts/lib/tools.sh"
+        "acfs.manifest.yaml"
+        "checksums.yaml"
+    )
+    for f in "${required_files[@]}"; do
+        [[ -f "$extract_dir/$f" ]] || fail "BOOTSTRAP_MISSING_FILE: $f not found in archive"
+    done
+
+    # 6. SYNTAX-CHECK ALL SHELL SCRIPTS
+    while IFS= read -r -d '' script; do
+        if ! bash -n "$script"; then
+            fail "BOOTSTRAP_SYNTAX_ERROR: $script has syntax errors"
+        fi
+    done < <(find "$extract_dir/scripts" -name "*.sh" -print0)
+
+    # 7. COHERENCE CHECK (manifest vs generated index)
+    local manifest_sha256
+    manifest_sha256=$(sha256sum "$extract_dir/acfs.manifest.yaml" | cut -d' ' -f1)
+    local index_sha256=""
+    if [[ -f "$extract_dir/scripts/generated/manifest_index.sh" ]]; then
+        index_sha256=$(grep -oP 'ACFS_MANIFEST_SHA256="\K[^"]+' \
+            "$extract_dir/scripts/generated/manifest_index.sh" || true)
+    fi
+    if [[ -n "$index_sha256" && "$manifest_sha256" != "$index_sha256" ]]; then
+        fail "BOOTSTRAP_COHERENCE_FAILED: Manifest SHA256 mismatch (mixed ref or stale generated output)"
+    fi
+
+    # 8. SET UP ENVIRONMENT (only after all validations pass)
+    export ACFS_ROOT="$extract_dir"
+    export ACFS_LIB_DIR="$extract_dir/scripts/lib"
+    export ACFS_GENERATED_DIR="$extract_dir/scripts/generated"
+    export ACFS_ASSETS_DIR="$extract_dir/acfs"
+
+    # 9. SOURCE ESSENTIAL LIBRARIES
+    source "$ACFS_LIB_DIR/logging.sh"
+    source "$ACFS_LIB_DIR/security.sh"
+    source "$ACFS_LIB_DIR/tools.sh"
+    if [[ -f "$ACFS_GENERATED_DIR/manifest_index.sh" ]]; then
+        source "$ACFS_GENERATED_DIR/manifest_index.sh"
+    fi
+
+    log_success "Bootstrap complete from $ACFS_REF"
+}
+```
+
+### Extraction Set (Required Files)
+
+| Path | Purpose |
+|------|---------|
+| `scripts/lib/**` | Core installer libraries |
+| `scripts/generated/**` | Manifest-generated scripts |
+| `scripts/preflight.sh` | Pre-flight validation |
+| `acfs/**` | Assets deployed to `~/.acfs/` |
+| `acfs.manifest.yaml` | Module definitions |
+| `checksums.yaml` | Verified installer checksums |
+
+**Note:** Full `scripts/**` extraction is recommended over minimal allowlist to avoid "forgot to add new script" failures.
+
+### Failure Modes
+
+| Code | Condition | Message | Cause |
+|------|-----------|---------|-------|
+| `BOOTSTRAP_DOWNLOAD_FAILED` | Network error | "Could not download archive from $URL" | Network timeout, 404, rate limit |
+| `BOOTSTRAP_INVALID_ARCHIVE` | Corrupt download | "Downloaded file is not a valid gzip archive" | Partial download, HTML error page |
+| `BOOTSTRAP_EXTRACT_FAILED` | Tar error | "Could not extract archive" | Disk full, permissions |
+| `BOOTSTRAP_MISSING_FILE` | Incomplete archive | "$file not found in archive" | Wrong ref, partial upload |
+| `BOOTSTRAP_SYNTAX_ERROR` | Shell syntax | "$script has syntax errors" | Corrupt file, encoding issue |
+| `BOOTSTRAP_COHERENCE_FAILED` | Mixed ref | "Manifest SHA256 mismatch" | Stale generated/, partial push |
+
+### Atomicity Guarantees
+
+1. **Download is atomic:** Archive saved to temp file first
+2. **Extraction is atomic:** Extracts to temp directory
+3. **Environment only set after ALL validations pass**
+4. **Cleanup on failure:** `trap` ensures temp dir removed
+
+### User Recovery Actions
+
+| Failure | Action |
+|---------|--------|
+| `BOOTSTRAP_DOWNLOAD_FAILED` | Check internet, try again, or use `--ref` with specific tag |
+| `BOOTSTRAP_COHERENCE_FAILED` | Wait for upstream to fix, or use `--ref` with known-good tag |
+| `BOOTSTRAP_SYNTAX_ERROR` | Report bug with script name |
+
+### Debug Mode
+
+```bash
+# Keep bootstrap directory for debugging
+ACFS_KEEP_BOOTSTRAP=1 curl -fsSL ... | bash -s -- --mode vibe
+
+# After failure, inspect extracted files
+ls /tmp/acfs-bootstrap.*/
+```
+
 ## How This Plan Interacts With Other ACFS Work
 
 This plan is intentionally focused on **eliminating “two universes” drift** (manifest vs install.sh), but it must coexist cleanly with the project’s other reliability initiatives.
