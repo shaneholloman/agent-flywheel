@@ -48,21 +48,42 @@ acfs_security_init() {
 
 # Zsh + Oh My Zsh + Powerlevel10k + plugins + canonical ACFS zshrc
 install_shell_zsh() {
+    local module_id="shell.zsh"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing shell.zsh"
 
-    sudo apt-get install -y zsh
-    # Install Oh My Zsh (non-interactive)
-    log_info "TODO: Install Oh My Zsh (non-interactive)"
-    # Install powerlevel10k theme
-    log_info "TODO: Install powerlevel10k theme"
-    # Install plugins: zsh-autosuggestions, zsh-syntax-highlighting
-    log_info "TODO: Install plugins: zsh-autosuggestions, zsh-syntax-highlighting"
-    # Write ~/.acfs/zsh/acfs.zshrc and source it from ~/.zshrc
-    log_info "TODO: Write ~/.acfs/zsh/acfs.zshrc and source it from ~/.zshrc"
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: sudo apt-get install -y zsh"
+    else
+        if ! {
+            sudo apt-get install -y zsh
+        }; then
+            log_error "shell.zsh: install command failed: sudo apt-get install -y zsh"
+            return 1
+        fi
+    fi
 
     # Verify
-    zsh --version || { log_error "Verify failed: shell.zsh"; return 1; }
-    test -f ~/.acfs/zsh/acfs.zshrc || { log_error "Verify failed: shell.zsh"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: zsh --version"
+    else
+        if ! {
+            zsh --version
+        }; then
+            log_error "shell.zsh: verify failed: zsh --version"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: test -f ~/.acfs/zsh/acfs.zshrc"
+    else
+        if ! {
+            test -f ~/.acfs/zsh/acfs.zshrc
+        }; then
+            log_error "shell.zsh: verify failed: test -f ~/.acfs/zsh/acfs.zshrc"
+            return 1
+        fi
+    fi
 
     log_success "shell.zsh installed"
 }

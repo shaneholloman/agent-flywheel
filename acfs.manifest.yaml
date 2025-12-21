@@ -204,7 +204,7 @@ modules:
       run_as: target_user
       command: "test -x ~/.cargo/bin/cargo"
     verified_installer:
-      tool: rustup
+      tool: rust
       runner: sh
       args: ["-s", "--", "-y"]
     install: []
@@ -365,14 +365,14 @@ modules:
     installed_check:
       run_as: current
       command: "command -v vault"
-    verified_installer:
-      tool: vault
-      runner: bash
-    install: []
+    install:
+      - curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+      - echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list
+      - apt-get update && apt-get install -y vault
     verify:
       - vault --version
     notes:
-      - "Install Vault via official HashiCorp instructions (apt repo or binary)"
+      - "Uses official HashiCorp apt repository (GPG-signed)"
 
   - id: db.postgres18
     description: PostgreSQL 18
@@ -533,7 +533,7 @@ modules:
       run_as: target_user
       command: "command -v bv || command -v bd"
     verified_installer:
-      tool: beads_viewer
+      tool: bv
       runner: bash
     install: []
     verify:

@@ -48,37 +48,111 @@ acfs_security_init() {
 
 # Claude Code
 install_agents_claude() {
+    local module_id="agents.claude"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing agents.claude"
 
-    # Install claude code via official method
-    log_info "TODO: Install claude code via official method"
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: agents.claude"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for agents.claude"
+                false
+            else
+                local tool="claude"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash
+                fi
+            fi
+        }; then
+            log_error "agents.claude: verified installer failed"
+            return 1
+        fi
+    fi
 
     # Verify
-    claude --version || claude --help || { log_error "Verify failed: agents.claude"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: claude --version || claude --help"
+    else
+        if ! {
+            claude --version || claude --help
+        }; then
+            log_error "agents.claude: verify failed: claude --version || claude --help"
+            return 1
+        fi
+    fi
 
     log_success "agents.claude installed"
 }
 
 # OpenAI Codex CLI
 install_agents_codex() {
+    local module_id="agents.codex"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing agents.codex"
 
-    ~/.bun/bin/bun install -g @openai/codex@latest
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: ~/.bun/bin/bun install -g @openai/codex@latest"
+    else
+        if ! {
+            ~/.bun/bin/bun install -g @openai/codex@latest
+        }; then
+            log_error "agents.codex: install command failed: ~/.bun/bin/bun install -g @openai/codex@latest"
+            return 1
+        fi
+    fi
 
     # Verify
-    codex --version || codex --help || { log_error "Verify failed: agents.codex"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: codex --version || codex --help"
+    else
+        if ! {
+            codex --version || codex --help
+        }; then
+            log_error "agents.codex: verify failed: codex --version || codex --help"
+            return 1
+        fi
+    fi
 
     log_success "agents.codex installed"
 }
 
 # Google Gemini CLI
 install_agents_gemini() {
+    local module_id="agents.gemini"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing agents.gemini"
 
-    ~/.bun/bin/bun install -g @google/gemini-cli@latest
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: ~/.bun/bin/bun install -g @google/gemini-cli@latest"
+    else
+        if ! {
+            ~/.bun/bin/bun install -g @google/gemini-cli@latest
+        }; then
+            log_error "agents.gemini: install command failed: ~/.bun/bin/bun install -g @google/gemini-cli@latest"
+            return 1
+        fi
+    fi
 
     # Verify
-    gemini --version || gemini --help || { log_error "Verify failed: agents.gemini"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: gemini --version || gemini --help"
+    else
+        if ! {
+            gemini --version || gemini --help
+        }; then
+            log_error "agents.gemini: verify failed: gemini --version || gemini --help"
+            return 1
+        fi
+    fi
 
     log_success "agents.gemini installed"
 }

@@ -48,77 +48,198 @@ acfs_security_init() {
 
 # Atuin shell history (Ctrl-R superpowers)
 install_tools_atuin() {
+    local module_id="tools.atuin"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing tools.atuin"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for tools.atuin"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: tools.atuin"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for tools.atuin"
+                false
+            else
+                local tool="atuin"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | sh
+                fi
+            fi
+        }; then
+            log_error "tools.atuin: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="atuin"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | sh
 
     # Verify
-    ~/.atuin/bin/atuin --version || { log_error "Verify failed: tools.atuin"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: ~/.atuin/bin/atuin --version"
+    else
+        if ! {
+            ~/.atuin/bin/atuin --version
+        }; then
+            log_error "tools.atuin: verify failed: ~/.atuin/bin/atuin --version"
+            return 1
+        fi
+    fi
 
     log_success "tools.atuin installed"
 }
 
 # Zoxide (better cd)
 install_tools_zoxide() {
+    local module_id="tools.zoxide"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing tools.zoxide"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for tools.zoxide"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: tools.zoxide"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for tools.zoxide"
+                false
+            else
+                local tool="zoxide"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | sh
+                fi
+            fi
+        }; then
+            log_error "tools.zoxide: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="zoxide"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | sh
 
     # Verify
-    command -v zoxide || { log_error "Verify failed: tools.zoxide"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: command -v zoxide"
+    else
+        if ! {
+            command -v zoxide
+        }; then
+            log_error "tools.zoxide: verify failed: command -v zoxide"
+            return 1
+        fi
+    fi
 
     log_success "tools.zoxide installed"
 }
 
 # ast-grep (used by UBS for syntax-aware scanning)
 install_tools_ast_grep() {
+    local module_id="tools.ast_grep"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing tools.ast_grep"
 
-    ~/.cargo/bin/cargo install ast-grep --locked
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: ~/.cargo/bin/cargo install ast-grep --locked"
+    else
+        if ! {
+            ~/.cargo/bin/cargo install ast-grep --locked
+        }; then
+            log_error "tools.ast_grep: install command failed: ~/.cargo/bin/cargo install ast-grep --locked"
+            return 1
+        fi
+    fi
 
     # Verify
-    sg --version || { log_error "Verify failed: tools.ast_grep"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: sg --version"
+    else
+        if ! {
+            sg --version
+        }; then
+            log_error "tools.ast_grep: verify failed: sg --version"
+            return 1
+        fi
+    fi
 
     log_success "tools.ast_grep installed"
 }
 
 # HashiCorp Vault CLI
 install_tools_vault() {
+    local module_id="tools.vault"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing tools.vault"
 
-    # Install Vault via official HashiCorp instructions (apt repo or binary)
-    log_info "TODO: Install Vault via official HashiCorp instructions (apt repo or binary)"
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg"
+    else
+        if ! {
+            curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+        }; then
+            log_warn "tools.vault: install command failed: curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.vault" "install command failed: curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.vault"
+            fi
+            return 0
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: echo \"deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com \$(lsb_release -cs) main\" > /etc/apt/sources.list.d/hashicorp.list"
+    else
+        if ! {
+            echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list
+        }; then
+            log_warn "tools.vault: install command failed: echo \"deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com \$(lsb_release -cs) main\" > /etc/apt/sources.list.d/hashicorp.list"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.vault" "install command failed: echo \"deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com \$(lsb_release -cs) main\" > /etc/apt/sources.list.d/hashicorp.list"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.vault"
+            fi
+            return 0
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: apt-get update && apt-get install -y vault"
+    else
+        if ! {
+            apt-get update && apt-get install -y vault
+        }; then
+            log_warn "tools.vault: install command failed: apt-get update && apt-get install -y vault"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.vault" "install command failed: apt-get update && apt-get install -y vault"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.vault"
+            fi
+            return 0
+        fi
+    fi
 
     # Verify
-    vault --version || { log_error "Verify failed: tools.vault"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: vault --version"
+    else
+        if ! {
+            vault --version
+        }; then
+            log_warn "tools.vault: verify failed: vault --version"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "tools.vault" "verify failed: vault --version"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "tools.vault"
+            fi
+            return 0
+        fi
+    fi
 
     log_success "tools.vault installed"
 }

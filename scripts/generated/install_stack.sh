@@ -48,211 +48,413 @@ acfs_security_init() {
 
 # Named tmux manager (agent cockpit)
 install_stack_ntm() {
+    local module_id="stack.ntm"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing stack.ntm"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for stack.ntm"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: stack.ntm"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for stack.ntm"
+                false
+            else
+                local tool="ntm"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash
+                fi
+            fi
+        }; then
+            log_error "stack.ntm: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="ntm"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | bash -s --
 
     # Verify
-    ntm --help || { log_error "Verify failed: stack.ntm"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: ntm --help"
+    else
+        if ! {
+            ntm --help
+        }; then
+            log_error "stack.ntm: verify failed: ntm --help"
+            return 1
+        fi
+    fi
 
     log_success "stack.ntm installed"
 }
 
 # Like gmail for coding agents; MCP HTTP server + token; installs beads tools
 install_stack_mcp_agent_mail() {
+    local module_id="stack.mcp_agent_mail"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing stack.mcp_agent_mail"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for stack.mcp_agent_mail"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: stack.mcp_agent_mail"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for stack.mcp_agent_mail"
+                false
+            else
+                local tool="mcp_agent_mail"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash --yes
+                fi
+            fi
+        }; then
+            log_error "stack.mcp_agent_mail: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="mcp_agent_mail"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | bash -s -- --yes
 
     # Verify
-    command -v am || { log_error "Verify failed: stack.mcp_agent_mail"; return 1; }
-    curl -fsS http://127.0.0.1:8765/health || log_warn "Optional: stack.mcp_agent_mail verify skipped"
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: command -v am"
+    else
+        if ! {
+            command -v am
+        }; then
+            log_error "stack.mcp_agent_mail: verify failed: command -v am"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify (optional): curl -fsS http://127.0.0.1:8765/health"
+    else
+        if ! {
+            curl -fsS http://127.0.0.1:8765/health
+        }; then
+            log_warn "Optional verify failed: stack.mcp_agent_mail"
+        fi
+    fi
 
     log_success "stack.mcp_agent_mail installed"
 }
 
 # UBS bug scanning (easy-mode)
 install_stack_ultimate_bug_scanner() {
+    local module_id="stack.ultimate_bug_scanner"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing stack.ultimate_bug_scanner"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for stack.ultimate_bug_scanner"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: stack.ultimate_bug_scanner"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for stack.ultimate_bug_scanner"
+                false
+            else
+                local tool="ubs"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash --easy-mode
+                fi
+            fi
+        }; then
+            log_error "stack.ultimate_bug_scanner: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="ubs"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | bash -s -- --easy-mode
 
     # Verify
-    ubs --help || { log_error "Verify failed: stack.ultimate_bug_scanner"; return 1; }
-    ubs doctor || log_warn "Optional: stack.ultimate_bug_scanner verify skipped"
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: ubs --help"
+    else
+        if ! {
+            ubs --help
+        }; then
+            log_error "stack.ultimate_bug_scanner: verify failed: ubs --help"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify (optional): ubs doctor"
+    else
+        if ! {
+            ubs doctor
+        }; then
+            log_warn "Optional verify failed: stack.ultimate_bug_scanner"
+        fi
+    fi
 
     log_success "stack.ultimate_bug_scanner installed"
 }
 
 # bv TUI for Beads tasks
 install_stack_beads_viewer() {
+    local module_id="stack.beads_viewer"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing stack.beads_viewer"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for stack.beads_viewer"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: stack.beads_viewer"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for stack.beads_viewer"
+                false
+            else
+                local tool="bv"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash
+                fi
+            fi
+        }; then
+            log_error "stack.beads_viewer: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="bv"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | bash -s --
 
     # Verify
-    bv --help || bv --version || { log_error "Verify failed: stack.beads_viewer"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: bv --help || bv --version"
+    else
+        if ! {
+            bv --help || bv --version
+        }; then
+            log_error "stack.beads_viewer: verify failed: bv --help || bv --version"
+            return 1
+        fi
+    fi
 
     log_success "stack.beads_viewer installed"
 }
 
 # Unified search across agent session history
 install_stack_cass() {
+    local module_id="stack.cass"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing stack.cass"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for stack.cass"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: stack.cass"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for stack.cass"
+                false
+            else
+                local tool="cass"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash --easy-mode --verify
+                fi
+            fi
+        }; then
+            log_error "stack.cass: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="cass"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | bash -s -- --easy-mode --verify
 
     # Verify
-    cass --help || cass --version || { log_error "Verify failed: stack.cass"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: cass --help || cass --version"
+    else
+        if ! {
+            cass --help || cass --version
+        }; then
+            log_error "stack.cass: verify failed: cass --help || cass --version"
+            return 1
+        fi
+    fi
 
     log_success "stack.cass installed"
 }
 
 # Procedural memory for agents (cass-memory)
 install_stack_cm() {
+    local module_id="stack.cm"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing stack.cm"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for stack.cm"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: stack.cm"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for stack.cm"
+                false
+            else
+                local tool="cm"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash --easy-mode --verify
+                fi
+            fi
+        }; then
+            log_error "stack.cm: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="cm"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | bash -s -- --easy-mode --verify
 
     # Verify
-    cm --version || { log_error "Verify failed: stack.cm"; return 1; }
-    cm doctor --json || log_warn "Optional: stack.cm verify skipped"
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: cm --version"
+    else
+        if ! {
+            cm --version
+        }; then
+            log_error "stack.cm: verify failed: cm --version"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify (optional): cm doctor --json"
+    else
+        if ! {
+            cm doctor --json
+        }; then
+            log_warn "Optional verify failed: stack.cm"
+        fi
+    fi
 
     log_success "stack.cm installed"
 }
 
 # Instant auth switching for agent CLIs
 install_stack_caam() {
+    local module_id="stack.caam"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing stack.caam"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for stack.caam"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: stack.caam"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for stack.caam"
+                false
+            else
+                local tool="caam"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash
+                fi
+            fi
+        }; then
+            log_error "stack.caam: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="caam"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | bash -s --
 
     # Verify
-    caam status || caam --help || { log_error "Verify failed: stack.caam"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: caam status || caam --help"
+    else
+        if ! {
+            caam status || caam --help
+        }; then
+            log_error "stack.caam: verify failed: caam status || caam --help"
+            return 1
+        fi
+    fi
 
     log_success "stack.caam installed"
 }
 
 # Two-person rule for dangerous commands (optional guardrails)
 install_stack_slb() {
+    local module_id="stack.slb"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing stack.slb"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for stack.slb"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: stack.slb"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for stack.slb"
+                false
+            else
+                local tool="slb"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash
+                fi
+            fi
+        }; then
+            log_warn "stack.slb: verified installer failed"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "stack.slb" "verified installer failed"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "stack.slb"
+            fi
+            return 0
+        fi
     fi
-
-    local tool="slb"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | bash -s --
 
     # Verify
-    slb --help || { log_error "Verify failed: stack.slb"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: slb --help"
+    else
+        if ! {
+            slb --help
+        }; then
+            log_warn "stack.slb: verify failed: slb --help"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "stack.slb" "verify failed: slb --help"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "stack.slb"
+            fi
+            return 0
+        fi
+    fi
 
     log_success "stack.slb installed"
 }

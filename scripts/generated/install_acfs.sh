@@ -48,26 +48,44 @@ acfs_security_init() {
 
 # Onboarding TUI tutorial
 install_acfs_onboard() {
+    local module_id="acfs.onboard"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing acfs.onboard"
 
-    # Install onboard script to ~/.local/bin/onboard
-    log_info "TODO: Install onboard script to ~/.local/bin/onboard"
 
     # Verify
-    onboard --help || command -v onboard || { log_error "Verify failed: acfs.onboard"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: onboard --help || command -v onboard"
+    else
+        if ! {
+            onboard --help || command -v onboard
+        }; then
+            log_error "acfs.onboard: verify failed: onboard --help || command -v onboard"
+            return 1
+        fi
+    fi
 
     log_success "acfs.onboard installed"
 }
 
 # ACFS doctor command for health checks
 install_acfs_doctor() {
+    local module_id="acfs.doctor"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing acfs.doctor"
 
-    # Install acfs script to ~/.local/bin/acfs
-    log_info "TODO: Install acfs script to ~/.local/bin/acfs"
 
     # Verify
-    acfs doctor --help || command -v acfs || { log_error "Verify failed: acfs.doctor"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: acfs doctor --help || command -v acfs"
+    else
+        if ! {
+            acfs doctor --help || command -v acfs
+        }; then
+            log_error "acfs.doctor: verify failed: acfs doctor --help || command -v acfs"
+            return 1
+        fi
+    fi
 
     log_success "acfs.doctor installed"
 }

@@ -44,27 +44,127 @@ acfs_security_init() {
 }
 
 # Category: base
-# Modules: 1
+# Modules: 2
 
 # Base packages + sane defaults
 install_base_system() {
+    local module_id="base.system"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing base.system"
 
-    sudo apt-get update -y
-    sudo apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: apt-get update -y"
+    else
+        if ! {
+            apt-get update -y
+        }; then
+            log_error "base.system: install command failed: apt-get update -y"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential"
+    else
+        if ! {
+            apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential
+        }; then
+            log_error "base.system: install command failed: apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential"
+            return 1
+        fi
+    fi
 
     # Verify
-    curl --version || { log_error "Verify failed: base.system"; return 1; }
-    git --version || { log_error "Verify failed: base.system"; return 1; }
-    jq --version || { log_error "Verify failed: base.system"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: curl --version"
+    else
+        if ! {
+            curl --version
+        }; then
+            log_error "base.system: verify failed: curl --version"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: git --version"
+    else
+        if ! {
+            git --version
+        }; then
+            log_error "base.system: verify failed: git --version"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: jq --version"
+    else
+        if ! {
+            jq --version
+        }; then
+            log_error "base.system: verify failed: jq --version"
+            return 1
+        fi
+    fi
 
     log_success "base.system installed"
+}
+
+# Create workspace and ACFS directories
+install_base_filesystem() {
+    local module_id="base.filesystem"
+    acfs_require_contract "module:${module_id}" || return 1
+    log_step "Installing base.filesystem"
+
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: mkdir -p /data/projects /data/cache"
+    else
+        if ! {
+            mkdir -p /data/projects /data/cache
+        }; then
+            log_error "base.filesystem: install command failed: mkdir -p /data/projects /data/cache"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: chown -R ubuntu:ubuntu /data"
+    else
+        if ! {
+            chown -R ubuntu:ubuntu /data
+        }; then
+            log_error "base.filesystem: install command failed: chown -R ubuntu:ubuntu /data"
+            return 1
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: test -d /data/projects"
+    else
+        if ! {
+            test -d /data/projects
+        }; then
+            log_error "base.filesystem: verify failed: test -d /data/projects"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: test -d ~/.acfs"
+    else
+        if ! {
+            test -d ~/.acfs
+        }; then
+            log_error "base.filesystem: verify failed: test -d ~/.acfs"
+            return 1
+        fi
+    fi
+
+    log_success "base.filesystem installed"
 }
 
 # Install all base modules
 install_base() {
     log_section "Installing base modules"
     install_base_system
+    install_base_filesystem
 }
 
 # Run if executed directly

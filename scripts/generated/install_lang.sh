@@ -48,90 +48,173 @@ acfs_security_init() {
 
 # Bun runtime for JS tooling and global CLIs
 install_lang_bun() {
+    local module_id="lang.bun"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing lang.bun"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for lang.bun"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: lang.bun"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for lang.bun"
+                false
+            else
+                local tool="bun"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | bash
+                fi
+            fi
+        }; then
+            log_error "lang.bun: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="bun"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | bash -s --
 
     # Verify
-    ~/.bun/bin/bun --version || { log_error "Verify failed: lang.bun"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: ~/.bun/bin/bun --version"
+    else
+        if ! {
+            ~/.bun/bin/bun --version
+        }; then
+            log_error "lang.bun: verify failed: ~/.bun/bin/bun --version"
+            return 1
+        fi
+    fi
 
     log_success "lang.bun installed"
 }
 
 # uv Python tooling (fast venvs)
 install_lang_uv() {
+    local module_id="lang.uv"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing lang.uv"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for lang.uv"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: lang.uv"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for lang.uv"
+                false
+            else
+                local tool="uv"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | sh
+                fi
+            fi
+        }; then
+            log_error "lang.uv: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="uv"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | sh
 
     # Verify
-    ~/.local/bin/uv --version || { log_error "Verify failed: lang.uv"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: ~/.local/bin/uv --version"
+    else
+        if ! {
+            ~/.local/bin/uv --version
+        }; then
+            log_error "lang.uv: verify failed: ~/.local/bin/uv --version"
+            return 1
+        fi
+    fi
 
     log_success "lang.uv installed"
 }
 
 # Rust + cargo
 install_lang_rust() {
+    local module_id="lang.rust"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing lang.rust"
 
-    # Verified upstream installer script (checksums.yaml)
-    if ! acfs_security_init; then
-        log_error "Security verification unavailable for lang.rust"
-        return 1
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verified installer: lang.rust"
+    else
+        if ! {
+            # Verified upstream installer script (checksums.yaml)
+            if ! acfs_security_init; then
+                log_error "Security verification unavailable for lang.rust"
+                false
+            else
+                local tool="rust"
+                local url="${KNOWN_INSTALLERS[$tool]:-}"
+                local expected_sha256
+                expected_sha256="$(get_checksum "$tool")"
+                if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+                    log_error "Missing checksum entry for $tool"
+                    false
+                else
+                    verify_checksum "$url" "$expected_sha256" "$tool" | sh -s -- -y
+                fi
+            fi
+        }; then
+            log_error "lang.rust: verified installer failed"
+            return 1
+        fi
     fi
-
-    local tool="rust"
-    local url="${KNOWN_INSTALLERS[$tool]:-}"
-    local expected_sha256
-    expected_sha256="$(get_checksum "$tool")"
-    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-        log_error "Missing checksum entry for $tool"
-        return 1
-    fi
-    verify_checksum "$url" "$expected_sha256" "$tool" | sh -s -- -y
 
     # Verify
-    ~/.cargo/bin/cargo --version || { log_error "Verify failed: lang.rust"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: ~/.cargo/bin/cargo --version"
+    else
+        if ! {
+            ~/.cargo/bin/cargo --version
+        }; then
+            log_error "lang.rust: verify failed: ~/.cargo/bin/cargo --version"
+            return 1
+        fi
+    fi
 
     log_success "lang.rust installed"
 }
 
 # Go toolchain
 install_lang_go() {
+    local module_id="lang.go"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing lang.go"
 
-    sudo apt-get install -y golang-go
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: apt-get install -y golang-go"
+    else
+        if ! {
+            apt-get install -y golang-go
+        }; then
+            log_error "lang.go: install command failed: apt-get install -y golang-go"
+            return 1
+        fi
+    fi
 
     # Verify
-    go version || { log_error "Verify failed: lang.go"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: go version"
+    else
+        if ! {
+            go version
+        }; then
+            log_error "lang.go: verify failed: go version"
+            return 1
+        fi
+    fi
 
     log_success "lang.go installed"
 }

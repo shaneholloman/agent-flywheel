@@ -48,36 +48,126 @@ acfs_security_init() {
 
 # Cloudflare Wrangler CLI
 install_cloud_wrangler() {
+    local module_id="cloud.wrangler"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing cloud.wrangler"
 
-    ~/.bun/bin/bun install -g wrangler
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: ~/.bun/bin/bun install -g wrangler"
+    else
+        if ! {
+            ~/.bun/bin/bun install -g wrangler
+        }; then
+            log_warn "cloud.wrangler: install command failed: ~/.bun/bin/bun install -g wrangler"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "cloud.wrangler" "install command failed: ~/.bun/bin/bun install -g wrangler"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "cloud.wrangler"
+            fi
+            return 0
+        fi
+    fi
 
     # Verify
-    wrangler --version || { log_error "Verify failed: cloud.wrangler"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: wrangler --version"
+    else
+        if ! {
+            wrangler --version
+        }; then
+            log_warn "cloud.wrangler: verify failed: wrangler --version"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "cloud.wrangler" "verify failed: wrangler --version"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "cloud.wrangler"
+            fi
+            return 0
+        fi
+    fi
 
     log_success "cloud.wrangler installed"
 }
 
 # Supabase CLI
 install_cloud_supabase() {
+    local module_id="cloud.supabase"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing cloud.supabase"
 
-    ~/.bun/bin/bun install -g supabase
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: ~/.bun/bin/bun install -g supabase"
+    else
+        if ! {
+            ~/.bun/bin/bun install -g supabase
+        }; then
+            log_warn "cloud.supabase: install command failed: ~/.bun/bin/bun install -g supabase"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "cloud.supabase" "install command failed: ~/.bun/bin/bun install -g supabase"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "cloud.supabase"
+            fi
+            return 0
+        fi
+    fi
 
     # Verify
-    supabase --version || { log_error "Verify failed: cloud.supabase"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: supabase --version"
+    else
+        if ! {
+            supabase --version
+        }; then
+            log_warn "cloud.supabase: verify failed: supabase --version"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "cloud.supabase" "verify failed: supabase --version"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "cloud.supabase"
+            fi
+            return 0
+        fi
+    fi
 
     log_success "cloud.supabase installed"
 }
 
 # Vercel CLI
 install_cloud_vercel() {
+    local module_id="cloud.vercel"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing cloud.vercel"
 
-    ~/.bun/bin/bun install -g vercel
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: ~/.bun/bin/bun install -g vercel"
+    else
+        if ! {
+            ~/.bun/bin/bun install -g vercel
+        }; then
+            log_warn "cloud.vercel: install command failed: ~/.bun/bin/bun install -g vercel"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "cloud.vercel" "install command failed: ~/.bun/bin/bun install -g vercel"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "cloud.vercel"
+            fi
+            return 0
+        fi
+    fi
 
     # Verify
-    vercel --version || { log_error "Verify failed: cloud.vercel"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: vercel --version"
+    else
+        if ! {
+            vercel --version
+        }; then
+            log_warn "cloud.vercel: verify failed: vercel --version"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "cloud.vercel" "verify failed: vercel --version"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "cloud.vercel"
+            fi
+            return 0
+        fi
+    fi
 
     log_success "cloud.vercel installed"
 }

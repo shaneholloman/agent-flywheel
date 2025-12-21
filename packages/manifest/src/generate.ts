@@ -90,31 +90,22 @@ const MANIFEST_INDEX_HEADER = `#!/usr/bin/env bash
 // Helpers
 // ============================================================
 
-type VerifiedInstallerSpec = {
-  tool: string;
-  pipe: string;
-};
+/**
+ * Build the pipe command from verified_installer.runner and args
+ */
+function buildVerifiedInstallerPipe(module: Module): string {
+  const vi = module.verified_installer;
+  if (!vi) return '';
 
-const VERIFIED_INSTALLERS_BY_MODULE_ID: Record<string, VerifiedInstallerSpec> = {
-  // Languages
-  'lang.bun': { tool: 'bun', pipe: 'bash -s --' },
-  'lang.uv': { tool: 'uv', pipe: 'sh' },
-  'lang.rust': { tool: 'rust', pipe: 'sh -s -- -y' },
-
-  // Tools
-  'tools.atuin': { tool: 'atuin', pipe: 'sh' },
-  'tools.zoxide': { tool: 'zoxide', pipe: 'sh' },
-
-  // Stack
-  'stack.ntm': { tool: 'ntm', pipe: 'bash -s --' },
-  'stack.mcp_agent_mail': { tool: 'mcp_agent_mail', pipe: 'bash -s -- --yes' },
-  'stack.ultimate_bug_scanner': { tool: 'ubs', pipe: 'bash -s -- --easy-mode' },
-  'stack.beads_viewer': { tool: 'bv', pipe: 'bash -s --' },
-  'stack.cass': { tool: 'cass', pipe: 'bash -s -- --easy-mode --verify' },
-  'stack.cm': { tool: 'cm', pipe: 'bash -s -- --easy-mode --verify' },
-  'stack.caam': { tool: 'caam', pipe: 'bash -s --' },
-  'stack.slb': { tool: 'slb', pipe: 'bash -s --' },
-};
+  const parts = [vi.runner];
+  if (vi.args && vi.args.length > 0) {
+    // Quote args that contain spaces
+    for (const arg of vi.args) {
+      parts.push(arg.includes(' ') ? `"${arg}"` : arg);
+    }
+  }
+  return parts.join(' ');
+}
 
 /**
  * Convert module ID to a valid bash function name
@@ -277,18 +268,18 @@ function sortModulesByPhaseAndDependency(manifest: Manifest): Module[] {
   return ordered;
 }
 
-function isCurlPipeInstaller(cmd: string): boolean {
-  return /\bcurl\b/.test(cmd) && /\|\s*(bash|sh)\b/.test(cmd);
-}
+function generateVerifiedInstallerSnippet(module: Module): string[] {
+  const vi = module.verified_installer!;
+  const tool = vi.tool;
+  const pipe = buildVerifiedInstallerPipe(module);
 
-function generateVerifiedInstallerSnippet(moduleId: string, spec: VerifiedInstallerSpec): string[] {
   return [
     '# Verified upstream installer script (checksums.yaml)',
     'if ! acfs_security_init; then',
-    `    log_error "Security verification unavailable for ${moduleId}"`,
+    `    log_error "Security verification unavailable for ${module.id}"`,
     '    false',
     'else',
-    `    local tool="${spec.tool}"`,
+    `    local tool="${tool}"`,
     '    local url="${KNOWN_INSTALLERS[$tool]:-}"',
     '    local expected_sha256',
     '    expected_sha256="$(get_checksum "$tool")"',
@@ -296,7 +287,7 @@ function generateVerifiedInstallerSnippet(moduleId: string, spec: VerifiedInstal
     '        log_error "Missing checksum entry for $tool"',
     '        false',
     '    else',
-    `        verify_checksum "$url" "$expected_sha256" "$tool" | ${spec.pipe}`,
+    `        verify_checksum "$url" "$expected_sha256" "$tool" | ${pipe}`,
     '    fi',
     'fi',
   ];
@@ -307,23 +298,16 @@ function generateVerifiedInstallerSnippet(moduleId: string, spec: VerifiedInstal
  */
 function generateInstallCommands(module: Module): string[] {
   const lines: string[] = [];
-  const verifiedSpec = VERIFIED_INSTALLERS_BY_MODULE_ID[module.id];
-  let verifiedInserted = false;
 
+  // If module has verified_installer, generate that first (before any install commands)
+  if (module.verified_installer) {
+    const snippet = generateVerifiedInstallerSnippet(module);
+    const summary = `verified installer: ${module.id}`;
+    lines.push(...wrapCommandBlock(module, summary, snippet, 'verified installer failed'));
+  }
+
+  // Process remaining install commands
   for (const cmd of module.install) {
-    const normalized = cmd.includes('\n') || cmd.startsWith('|')
-      ? cmd.replace(/^\|?\n?/, '').trim()
-      : cmd.trim();
-
-    // Rewrite known upstream curl|bash/sh install commands to verified execution.
-    if (verifiedSpec && !verifiedInserted && isCurlPipeInstaller(normalized)) {
-      const snippet = generateVerifiedInstallerSnippet(module.id, verifiedSpec);
-      const summary = `verified installer: ${module.id}`;
-      lines.push(...wrapCommandBlock(module, summary, snippet, 'verified installer failed'));
-      verifiedInserted = true;
-      continue;
-    }
-
     // Check if it's a description (not an actual command)
     if (cmd.startsWith('"') || cmd.match(/^[A-Z][a-z]/)) {
       lines.push(`    # ${cmd}`);
@@ -673,11 +657,15 @@ async function main(): Promise<void> {
     };
     const installers = checksums.installers ?? {};
 
+    // Validate all verified_installer entries in manifest have checksums.yaml coverage
     const missingTools = new Set<string>();
-    for (const spec of Object.values(VERIFIED_INSTALLERS_BY_MODULE_ID)) {
-      const entry = installers[spec.tool];
-      if (!entry?.url || !entry?.sha256) {
-        missingTools.add(spec.tool);
+    for (const module of manifest.modules) {
+      if (module.verified_installer) {
+        const tool = module.verified_installer.tool;
+        const entry = installers[tool];
+        if (!entry?.url || !entry?.sha256) {
+          missingTools.add(`${tool} (used by ${module.id})`);
+        }
       }
     }
 

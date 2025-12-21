@@ -48,18 +48,32 @@ acfs_security_init() {
 
 # Ensure ubuntu user + passwordless sudo + ssh keys
 install_users_ubuntu() {
+    local module_id="users.ubuntu"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing users.ubuntu"
 
-    # Ensure user ubuntu exists with home /home/ubuntu
-    log_info "TODO: Ensure user ubuntu exists with home /home/ubuntu"
-    # Write /etc/sudoers.d/90-ubuntu-acfs: ubuntu ALL=(ALL) NOPASSWD:ALL
-    log_info "TODO: Write /etc/sudoers.d/90-ubuntu-acfs: ubuntu ALL=(ALL) NOPASSWD:ALL"
-    # Copy authorized_keys from invoking user to /home/ubuntu/.ssh/
-    log_info "TODO: Copy authorized_keys from invoking user to /home/ubuntu/.ssh/"
 
     # Verify
-    id ubuntu || { log_error "Verify failed: users.ubuntu"; return 1; }
-    sudo -n true || { log_error "Verify failed: users.ubuntu"; return 1; }
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: id ubuntu"
+    else
+        if ! {
+            id ubuntu
+        }; then
+            log_error "users.ubuntu: verify failed: id ubuntu"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: sudo -n true"
+    else
+        if ! {
+            sudo -n true
+        }; then
+            log_error "users.ubuntu: verify failed: sudo -n true"
+            return 1
+        fi
+    fi
 
     log_success "users.ubuntu installed"
 }

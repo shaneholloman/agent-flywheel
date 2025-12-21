@@ -48,15 +48,51 @@ acfs_security_init() {
 
 # PostgreSQL 18
 install_db_postgres18() {
+    local module_id="db.postgres18"
+    acfs_require_contract "module:${module_id}" || return 1
     log_step "Installing db.postgres18"
 
-    # Add PGDG apt repo
-    log_info "TODO: Add PGDG apt repo"
-    sudo apt-get install -y postgresql-18
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: apt-get install -y postgresql-18"
+    else
+        if ! {
+            apt-get install -y postgresql-18
+        }; then
+            log_warn "db.postgres18: install command failed: apt-get install -y postgresql-18"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "db.postgres18" "install command failed: apt-get install -y postgresql-18"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "db.postgres18"
+            fi
+            return 0
+        fi
+    fi
 
     # Verify
-    psql --version || { log_error "Verify failed: db.postgres18"; return 1; }
-    systemctl status postgresql --no-pager || log_warn "Optional: db.postgres18 verify skipped"
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: psql --version"
+    else
+        if ! {
+            psql --version
+        }; then
+            log_warn "db.postgres18: verify failed: psql --version"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "db.postgres18" "verify failed: psql --version"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "db.postgres18"
+            fi
+            return 0
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify (optional): systemctl status postgresql --no-pager"
+    else
+        if ! {
+            systemctl status postgresql --no-pager
+        }; then
+            log_warn "Optional verify failed: db.postgres18"
+        fi
+    fi
 
     log_success "db.postgres18 installed"
 }

@@ -51,9 +51,9 @@ source "$SCRIPT_DIR/install_shell.sh"
 source "$SCRIPT_DIR/install_cli.sh"
 source "$SCRIPT_DIR/install_lang.sh"
 source "$SCRIPT_DIR/install_tools.sh"
+source "$SCRIPT_DIR/install_agents.sh"
 source "$SCRIPT_DIR/install_db.sh"
 source "$SCRIPT_DIR/install_cloud.sh"
-source "$SCRIPT_DIR/install_agents.sh"
 source "$SCRIPT_DIR/install_stack.sh"
 source "$SCRIPT_DIR/install_acfs.sh"
 
@@ -67,9 +67,9 @@ install_all() {
     install_cli
     install_lang
     install_tools
+    install_agents
     install_db
     install_cloud
-    install_agents
     install_stack
     install_acfs
 
