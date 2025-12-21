@@ -544,14 +544,14 @@ function StatBadge({ value, label }: { value: string; label: string }) {
   );
 }
 
-function ToolLogo({ name, color }: { name: string; color: string }) {
+function ToolBadge({ name, color }: { name: string; color: string }) {
   return (
-    <div
-      className="flex h-10 w-10 items-center justify-center rounded-lg border border-border/50 bg-card/50 text-xs font-bold transition-all hover:scale-110 hover:border-primary/30"
+    <span
+      className="inline-flex items-center rounded-full border border-border/50 bg-card/50 px-3 py-1.5 text-sm font-medium transition-all hover:scale-105 hover:border-primary/30"
       style={{ color }}
     >
-      {name.slice(0, 2).toUpperCase()}
-    </div>
+      {name}
+    </span>
   );
 }
 
@@ -696,19 +696,19 @@ export default function HomePage() {
         {/* Tools ticker */}
         <section className="border-y border-border/30 bg-card/30 py-6">
           <div className="mx-auto max-w-7xl px-6">
-            <div className="flex items-center justify-center gap-6 overflow-hidden">
+            <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center sm:gap-6">
               <span className="shrink-0 text-xs uppercase tracking-widest text-muted-foreground">
                 Powered by
               </span>
-              <div className="flex items-center gap-4">
-                <ToolLogo name="Claude" color="oklch(0.78 0.16 75)" />
-                <ToolLogo name="Codex" color="oklch(0.72 0.19 145)" />
-                <ToolLogo name="Gemini" color="oklch(0.75 0.18 195)" />
-                <ToolLogo name="Bun" color="oklch(0.78 0.16 75)" />
-                <ToolLogo name="Rust" color="oklch(0.65 0.22 25)" />
-                <ToolLogo name="Go" color="oklch(0.75 0.18 195)" />
-                <ToolLogo name="tmux" color="oklch(0.72 0.19 145)" />
-                <ToolLogo name="zsh" color="oklch(0.7 0.2 330)" />
+              <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                <ToolBadge name="Claude Code" color="oklch(0.78 0.16 75)" />
+                <ToolBadge name="Codex CLI" color="oklch(0.72 0.19 145)" />
+                <ToolBadge name="Gemini CLI" color="oklch(0.75 0.18 195)" />
+                <ToolBadge name="Bun" color="oklch(0.78 0.16 75)" />
+                <ToolBadge name="Rust" color="oklch(0.65 0.22 25)" />
+                <ToolBadge name="Go" color="oklch(0.75 0.18 195)" />
+                <ToolBadge name="tmux" color="oklch(0.72 0.19 145)" />
+                <ToolBadge name="zsh" color="oklch(0.7 0.2 330)" />
               </div>
             </div>
           </div>
