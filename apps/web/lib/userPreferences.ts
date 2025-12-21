@@ -47,8 +47,17 @@ export function detectOS(): OperatingSystem | null {
   if (typeof window === "undefined") return null;
 
   const ua = navigator.userAgent.toLowerCase();
-  if (ua.includes("mac")) return "mac";
+
+  // If the user is on a phone/tablet, we can't reliably infer the OS of the
+  // computer they'll use for the terminal/VPS steps. Force an explicit choice.
+  if (ua.includes("iphone") || ua.includes("ipad") || ua.includes("ipod") || ua.includes("android")) {
+    return null;
+  }
+
   if (ua.includes("win")) return "windows";
+
+  // Avoid mis-detecting iOS user agents that contain "like Mac OS X".
+  if (ua.includes("mac") && !ua.includes("like mac os x")) return "mac";
   return null;
 }
 
@@ -65,20 +74,22 @@ export function getVPSIP(): string | null {
  * Returns true if saved successfully, false otherwise.
  */
 export function setVPSIP(ip: string): boolean {
-  if (!isValidIP(ip)) {
+  const normalized = ip.trim();
+  if (!isValidIP(normalized)) {
     return false;
   }
-  return safeSetItem(VPS_IP_KEY, ip);
+  return safeSetItem(VPS_IP_KEY, normalized);
 }
 
 /**
  * Validate an IP address (basic IPv4 validation).
  */
 export function isValidIP(ip: string): boolean {
+  const normalized = ip.trim();
   const pattern = /^(\d{1,3}\.){3}\d{1,3}$/;
-  if (!pattern.test(ip)) return false;
+  if (!pattern.test(normalized)) return false;
 
-  const parts = ip.split(".");
+  const parts = normalized.split(".");
   return parts.every((part) => {
     const num = parseInt(part, 10);
     return num >= 0 && num <= 255;

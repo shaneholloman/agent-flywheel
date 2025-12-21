@@ -34,12 +34,12 @@ const PROVIDERS: ProviderInfo[] = [
     tagline: "Best value for high specs",
     url: "https://contabo.com/en/vps/",
     pros: [
-      "32GB RAM for ~$35/month",
-      "Excellent specs-to-price ratio",
+      "Best specs-to-price ratio on the market",
+      "Cloud VPS 30 (8 vCPU, 24GB) for ~€11/month or Cloud VPS 40 (12 vCPU, 48GB) for ~€20/month",
       "EU and US data centers",
       "Instant activation",
     ],
-    recommended: "Cloud VPS L (6 vCPU, 32GB RAM), ~$35/mo",
+    recommended: "Cloud VPS 40 (12 vCPU, 48GB RAM, ~€20/month) for best multi-agent performance",
   },
   {
     id: "ovh",
@@ -140,10 +140,10 @@ function ProviderCard({ provider, isExpanded, onToggle }: ProviderCardProps) {
 
 const SPEC_CHECKLIST = [
   { label: "OS", value: "Ubuntu 25.x (or newest Ubuntu)" },
-  { label: "CPU", value: "6-8 vCPU" },
-  { label: "RAM", value: "32 GB (minimum 16 GB)" },
+  { label: "CPU", value: "8-12 vCPU" },
+  { label: "RAM", value: "24-48 GB (minimum 16 GB)" },
   { label: "Storage", value: "200GB+ NVMe SSD" },
-  { label: "Price", value: "$35-60/month" },
+  { label: "Price", value: "€11-25/month (~$12-27)" },
 ];
 
 export default function RentVPSPage() {
@@ -179,7 +179,7 @@ export default function RentVPSPage() {
           </div>
           <div>
             <h1 className="bg-gradient-to-r from-foreground via-foreground to-muted-foreground bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
-              Rent a <Jargon term="vps">VPS</Jargon> ($35-60/month)
+              Rent a <Jargon term="vps">VPS</Jargon> (~€15-25/month)
             </h1>
             <p className="text-sm text-muted-foreground">
               ~5 min
@@ -338,7 +338,7 @@ export default function RentVPSPage() {
             <ul className="space-y-3">
               <li>
                 <strong>Contabo:</strong> Our top recommendation! Best specs for the price.
-                Their 32GB RAM VPS is only ~$35/month. Interface is basic but functional.
+                Look for a 16–32GB RAM plan in the ~$30–60/month range. Interface is basic but functional.
                 Instant activation with no waiting.
               </li>
               <li>
@@ -358,9 +358,9 @@ export default function RentVPSPage() {
                 </a>
               </GuideStep>
 
-              <GuideStep number={2} title="Choose the Cloud VPS L plan">
-                Look for &quot;Cloud VPS L&quot; which has 6 vCPU, 32GB RAM, and 400GB storage
-                for about $35/month. Click &quot;Configure&quot; or &quot;Order&quot;.
+              <GuideStep number={2} title="Choose a plan with enough resources">
+                Look for a plan with <strong>6–8 vCPU</strong> and <strong>16–32GB RAM</strong>.
+                If you see NVMe storage, that&apos;s a nice bonus. Click &quot;Configure&quot; or &quot;Order&quot;.
               </GuideStep>
 
               <GuideStep number={3} title="Configure your VPS">
@@ -406,8 +406,8 @@ export default function RentVPSPage() {
                 6 is comfortable, 8 is great.
               </li>
               <li>
-                <strong>RAM (32 GB):</strong> Short-term memory. This is crucial for running
-                multiple AI agents! 32GB lets you run 10+ agents comfortably.
+                <strong>RAM (16–32 GB):</strong> Short-term memory. This is crucial for running
+                multiple AI agents. 16GB is workable; 32GB is comfortable.
               </li>
               <li>
                 <strong>Storage (200GB+ SSD):</strong> Long-term storage for files, databases,
@@ -421,9 +421,8 @@ export default function RentVPSPage() {
           </GuideSection>
 
           <GuideTip>
-            <strong>Start with Contabo&apos;s Cloud VPS L</strong> for the best balance of
-            price and power. At ~$35/month for 32GB RAM, it&apos;s hard to beat. Both
-            Contabo and OVH activate servers instantly with no waiting period!
+            If you&apos;re not sure what to pick, start with a plan around <strong>6 vCPU</strong> and
+            <strong> 16–32GB RAM</strong>. Both Contabo and OVH typically activate servers quickly.
           </GuideTip>
 
           <GuideCaution>
@@ -436,7 +435,7 @@ export default function RentVPSPage() {
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">
-        <Button onClick={handleContinue} disabled={isNavigating} size="lg">
+        <Button onClick={handleContinue} disabled={isNavigating} size="lg" disableMotion>
           {isNavigating ? "Loading..." : "I rented a VPS"}
         </Button>
       </div>

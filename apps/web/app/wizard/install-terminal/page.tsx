@@ -368,7 +368,7 @@ export default function InstallTerminalPage() {
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">
-        <Button onClick={handleContinue} disabled={isNavigating} size="lg">
+        <Button onClick={handleContinue} disabled={isNavigating} size="lg" disableMotion>
           {isNavigating ? "Loading..." : "I installed it, continue"}
         </Button>
       </div>

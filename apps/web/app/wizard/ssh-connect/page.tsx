@@ -363,7 +363,7 @@ export default function SSHConnectPage() {
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">
-        <Button onClick={handleContinue} disabled={isNavigating} size="lg">
+        <Button onClick={handleContinue} disabled={isNavigating} size="lg" disableMotion>
           {isNavigating ? "Loading..." : "I'm connected, continue"}
         </Button>
       </div>

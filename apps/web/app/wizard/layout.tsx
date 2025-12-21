@@ -7,6 +7,7 @@ import { Terminal, Home, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Stepper, StepperMobile } from "@/components/stepper";
 import { WIZARD_STEPS, getStepBySlug } from "@/lib/wizardSteps";
+import { detectOS, getUserOS, setUserOS } from "@/lib/userPreferences";
 
 export default function WizardLayout({
   children,
@@ -26,14 +27,37 @@ export default function WizardLayout({
   const prevStep = WIZARD_STEPS.find((s) => s.id === currentStep - 1);
   const nextStep = WIZARD_STEPS.find((s) => s.id === currentStep + 1);
 
+  const ensureOSSelected = useCallback((): boolean => {
+    const existing = getUserOS();
+    if (existing) return true;
+
+    const detected = detectOS();
+    if (detected) {
+      setUserOS(detected);
+      return true;
+    }
+
+    return false;
+  }, []);
+
   const handleStepClick = useCallback(
     (stepId: number) => {
       const step = WIZARD_STEPS.find((s) => s.id === stepId);
       if (step) {
+        // Step 1 is a hard prerequisite for the rest of the wizard.
+        // Users often hit the global "Next" without explicitly clicking an OS card.
+        // Ensure we persist a selection (or block navigation) so later steps don't
+        // immediately redirect back to Step 1.
+        if (currentStep === 1 && stepId > 1) {
+          if (!ensureOSSelected()) {
+            window.alert("Please choose Mac or Windows to continue.");
+            return;
+          }
+        }
         router.push(`/wizard/${step.slug}`);
       }
     },
-    [router]
+    [router, currentStep, ensureOSSelected]
   );
 
   const progress = (currentStep / WIZARD_STEPS.length) * 100;

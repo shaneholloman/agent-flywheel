@@ -80,7 +80,7 @@ const PROVIDER_GUIDES = [
   {
     name: "Contabo",
     steps: [
-      'Go to contabo.com/en/vps and find "Cloud VPS L" (32GB RAM)',
+      "Go to contabo.com/en/vps and pick a plan with at least 16GB RAM (32GB ideal)",
       'Click "Configure" and select your preferred region (US or EU)',
       'Under "Image", select Ubuntu 24.04 or 25.x',
       'In the order form, paste your SSH public key when prompted',

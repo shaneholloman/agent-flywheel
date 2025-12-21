@@ -384,6 +384,20 @@ test.describe("Beginner Guide", () => {
 });
 
 test.describe("Complete Wizard Flow Integration", () => {
+  test("should continue from OS selection using detected OS (desktop only)", async ({ page }, testInfo) => {
+    test.skip(/Mobile/i.test(testInfo.project.name), "Auto-detect is disabled on mobile");
+
+    await page.goto("/wizard/os-selection");
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+
+    // On desktop projects, the OS should be auto-detected and the Continue button enabled.
+    await expect(page.getByRole("button", { name: /^continue$/i })).toBeEnabled();
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await expect(page).toHaveURL("/wizard/install-terminal");
+  });
+
   test("should complete entire wizard flow from start to finish", async ({ page }) => {
     // Start fresh
     await page.goto("/");
@@ -417,7 +431,8 @@ test.describe("Complete Wizard Flow Integration", () => {
     for (let i = 0; i < count; i++) {
       await checkboxes.nth(i).click();
     }
-    await page.fill('input[placeholder*="192.168"]', "192.168.1.100");
+    // Users often paste IPs with surrounding whitespace/newlines.
+    await page.fill('input[placeholder*="192.168"]', " 192.168.1.100 ");
     await expect(page.locator('text="Valid IP address"')).toBeVisible();
     await page.click('button:has-text("Continue to SSH")');
     await expect(page).toHaveURL("/wizard/ssh-connect");
@@ -443,6 +458,6 @@ test.describe("Complete Wizard Flow Integration", () => {
     await expect(page).toHaveURL("/wizard/launch-onboarding");
 
     // Step 10: Launch Onboarding - Final step!
-    await expect(page.locator("h1").first()).toContainText(/onboard/i);
+    await expect(page.locator("h1").first()).toContainText(/congratulations|set up/i);
   });
 });

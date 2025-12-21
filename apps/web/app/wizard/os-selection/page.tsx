@@ -121,6 +121,7 @@ export default function OSSelectionPage() {
 
   // Use stored OS if available, otherwise use detected OS
   const selectedOS = storedOS ?? detectedOS;
+  const hasDetection = detectedOS !== null;
 
   // Select OS without navigating
   const handleSelectOS = useCallback(
@@ -133,12 +134,14 @@ export default function OSSelectionPage() {
   // Navigate only when Continue is clicked
   const handleContinue = useCallback(() => {
     if (selectedOS) {
+      // Confirm the selection explicitly so subsequent steps can rely on it.
+      setStoredOS(selectedOS);
       markComplete({ selected_os: selectedOS });
       markStepComplete(1);
       setIsNavigating(true);
       router.push("/wizard/install-terminal");
     }
-  }, [selectedOS, router, markComplete]);
+  }, [selectedOS, router, markComplete, setStoredOS]);
 
   return (
     <div className="space-y-8">
@@ -185,7 +188,12 @@ export default function OSSelectionPage() {
       {/* Tip */}
       <div className="rounded-xl border border-border/30 bg-muted/30 p-4">
         <p className="text-sm text-muted-foreground">
-          <span className="font-medium text-foreground">Tip:</span> Your operating system was automatically detected. Click to confirm or select the other option.
+          <span className="font-medium text-foreground">Tip:</span>{" "}
+          {hasDetection ? (
+            <>We guessed your OS from your browser. If that&apos;s wrong, pick the other option—otherwise just hit Continue.</>
+          ) : (
+            <>If you&apos;re on a phone/tablet, pick the computer you&apos;ll use for the next steps (Mac or Windows).</>
+          )}
         </p>
       </div>
 
@@ -227,9 +235,17 @@ export default function OSSelectionPage() {
           </GuideSection>
 
           <GuideTip>
-            We already tried to detect your computer type automatically! Look at the card
-            above that says &quot;Detected&quot;; that&apos;s probably correct. Just click
-            on it to confirm, then click &quot;Continue&quot;.
+            {hasDetection ? (
+              <>
+                We tried to detect your computer type automatically. If it looks right, you can just click
+                &quot;Continue&quot;. If it looks wrong, click the other option first.
+              </>
+            ) : (
+              <>
+                If you&apos;re reading this on your phone, choose the computer you&apos;ll use next (Mac or Windows),
+                then click &quot;Continue&quot;.
+              </>
+            )}
           </GuideTip>
         </div>
       </SimplerGuide>
@@ -241,6 +257,7 @@ export default function OSSelectionPage() {
           disabled={!selectedOS || isNavigating}
           size="lg"
           className="group"
+          disableMotion
         >
           {isNavigating ? (
             <>

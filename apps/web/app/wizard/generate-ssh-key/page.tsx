@@ -315,7 +315,7 @@ export default function GenerateSSHKeyPage() {
 
       {/* Continue button */}
       <div className="flex justify-end pt-4">
-        <Button onClick={handleContinue} disabled={isNavigating} size="lg">
+        <Button onClick={handleContinue} disabled={isNavigating} size="lg" disableMotion>
           {isNavigating ? "Loading..." : "I copied my public key"}
         </Button>
       </div>
