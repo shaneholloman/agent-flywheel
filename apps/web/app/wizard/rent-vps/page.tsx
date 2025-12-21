@@ -446,6 +446,26 @@ export default function RentVPSPage() {
             </ul>
           </GuideSection>
 
+          <GuideSection title="Backup Strategy">
+            <p className="mb-3 text-sm text-muted-foreground">
+              Both providers offer VPS snapshots (~$2-5/month) for quick restore points. But for code,
+              <strong> <Jargon term="github">GitHub</Jargon> is your real backup</strong>:
+            </p>
+            <ul className="space-y-2 text-sm">
+              <li>
+                <strong>Push to GitHub regularly.</strong> If your VPS dies, your code is safe. We install the{" "}
+                <code className="rounded bg-muted px-1">gh</code> CLI for easy GitHub access.
+              </li>
+              <li>
+                <strong>Open-source = free everything.</strong> Public repos, unlimited Actions, GitHub Pages—all free.
+              </li>
+              <li>
+                <strong>Private projects:</strong> Free tier works for individuals. Teams or heavy CI/CD may need
+                GitHub Pro ($4/month) or Team ($4/user/month) for more Actions minutes.
+              </li>
+            </ul>
+          </GuideSection>
+
           <GuideTip>
             <strong>TL;DR:</strong> Get Contabo <strong>Cloud VPS 50</strong> (64GB RAM, 16 vCPU, ~$56/month US).
             Don&apos;t overthink it—64GB is the right choice when you&apos;re investing $400+/month in AI subscriptions.

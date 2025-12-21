@@ -522,7 +522,16 @@ export const jargonDictionary: Record<string, JargonTerm> = {
     long: "A repository (or 'repo') is a project folder that Git manages. It contains your code, configuration files, and the complete history of every change ever made. Repositories can be local (on your computer) or remote (on GitHub/GitLab). When you 'clone a repository,' you're downloading a complete copy including all history. A single project = one repository.",
     analogy: "Like a project folder with a time machine attached. You can see every version of every file, who changed what, and when, all the way back to the project's beginning.",
     why: "All serious software lives in repositories. Git repos enable collaboration, backup, and deployment. If your code isn't in a repo, it's at risk.",
-    related: ["git", "lazygit"],
+    related: ["git", "lazygit", "github"],
+  },
+
+  github: {
+    term: "GitHub",
+    short: "The world's largest code hosting platform, owned by Microsoft",
+    long: "GitHub is where most open-source code lives. It hosts Git repositories in the cloud, provides collaboration tools (pull requests, issues, code review), and offers GitHub Actions for CI/CD automation. Public repositories are free and unlimited. Private repositories are free for individuals (with some limits) but teams and heavy Actions usage may require a paid plan ($4-21/user/month). GitHub is the de facto standard; having your code on GitHub means it's backed up, shareable, and ready for collaboration.",
+    analogy: "Like Google Drive but specifically for code, with built-in tools for collaboration, code review, and automation. It's where developers store, share, and work on code together.",
+    why: "GitHub IS your backup strategy. If your VPS dies, your code is safe on GitHub. We use the 'gh' CLI to interact with GitHub from the terminal. For open-source projects, everything (repos, Actions, Pages) is free. Private projects may need GitHub Pro or Team for unlimited Actions minutes and advanced features.",
+    related: ["git", "repository", "deployment"],
   },
 
   webhook: {
