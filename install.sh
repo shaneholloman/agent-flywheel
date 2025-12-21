@@ -264,6 +264,152 @@ run_as_target() {
     su - "$user" -c "$(printf '%q ' "$@")"
 }
 
+# ============================================================
+# Upstream installer verification (checksums.yaml)
+# ============================================================
+
+declare -A ACFS_UPSTREAM_URLS=()
+declare -A ACFS_UPSTREAM_SHA256=()
+ACFS_UPSTREAM_LOADED=false
+
+acfs_calculate_sha256() {
+    if command_exists sha256sum; then
+        sha256sum | cut -d' ' -f1
+        return 0
+    fi
+
+    if command_exists shasum; then
+        shasum -a 256 | cut -d' ' -f1
+        return 0
+    fi
+
+    log_error "No SHA256 tool available (need sha256sum or shasum)"
+    return 1
+}
+
+acfs_fetch_url_content() {
+    local url="$1"
+
+    if [[ "$url" != https://* ]]; then
+        log_error "Security error: upstream URL is not HTTPS: $url"
+        return 1
+    fi
+
+    local sentinel="__ACFS_EOF_SENTINEL__"
+    local content
+    content="$(
+        curl -fsSL "$url" 2>/dev/null || exit 1
+        printf '%s' "$sentinel"
+    )" || {
+        log_error "Failed to fetch upstream URL: $url"
+        return 1
+    }
+
+    if [[ "$content" != *"$sentinel" ]]; then
+        log_error "Failed to fetch upstream URL: $url"
+        return 1
+    fi
+    printf '%s' "${content%"$sentinel"}"
+}
+
+acfs_load_upstream_checksums() {
+    if [[ "$ACFS_UPSTREAM_LOADED" == "true" ]]; then
+        return 0
+    fi
+
+    local content=""
+    if [[ -r "$SCRIPT_DIR/checksums.yaml" ]]; then
+        content="$(cat "$SCRIPT_DIR/checksums.yaml")"
+    else
+        content="$(curl -fsSL "$ACFS_RAW/checksums.yaml" 2>/dev/null)" || {
+            log_error "Failed to fetch checksums.yaml from $ACFS_RAW"
+            return 1
+        }
+    fi
+
+    local in_installers=false
+    local current_tool=""
+
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+
+        if [[ "$line" =~ ^installers: ]]; then
+            in_installers=true
+            continue
+        fi
+        if [[ "$in_installers" != "true" ]]; then
+            continue
+        fi
+
+        if [[ "$line" =~ ^[[:space:]]{2}([a-z_]+):[[:space:]]*$ ]]; then
+            current_tool="${BASH_REMATCH[1]}"
+            continue
+        fi
+
+        [[ -n "$current_tool" ]] || continue
+
+        if [[ "$line" =~ url:[[:space:]]*\"([^\"]+)\" ]]; then
+            ACFS_UPSTREAM_URLS["$current_tool"]="${BASH_REMATCH[1]}"
+            continue
+        fi
+
+        if [[ "$line" =~ sha256:[[:space:]]*\"([a-f0-9]{64})\" ]]; then
+            ACFS_UPSTREAM_SHA256["$current_tool"]="${BASH_REMATCH[1]}"
+            continue
+        fi
+    done <<< "$content"
+
+    local required_tools=(
+        atuin bun bv caam cass cm mcp_agent_mail ntm ohmyzsh rust slb ubs uv zoxide
+    )
+    local missing=false
+    local tool
+    for tool in "${required_tools[@]}"; do
+        if [[ -z "${ACFS_UPSTREAM_URLS[$tool]:-}" ]] || [[ -z "${ACFS_UPSTREAM_SHA256[$tool]:-}" ]]; then
+            log_error "checksums.yaml missing entry for '$tool'"
+            missing=true
+        fi
+    done
+    if [[ "$missing" == "true" ]]; then
+        return 1
+    fi
+
+    ACFS_UPSTREAM_LOADED=true
+    return 0
+}
+
+acfs_run_verified_upstream_script_as_target() {
+    local tool="$1"
+    local runner="$2"
+    shift 2 || true
+
+    acfs_load_upstream_checksums
+
+    local url="${ACFS_UPSTREAM_URLS[$tool]:-}"
+    local expected_sha256="${ACFS_UPSTREAM_SHA256[$tool]:-}"
+    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+        log_error "No checksum recorded for upstream installer: $tool"
+        return 1
+    fi
+
+    local content
+    content="$(acfs_fetch_url_content "$url")" || return 1
+
+    local actual_sha256
+    actual_sha256="$(printf '%s' "$content" | acfs_calculate_sha256)" || return 1
+
+    if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+        log_error "Security error: checksum mismatch for '$tool'"
+        log_detail "URL: $url"
+        log_detail "Expected: $expected_sha256"
+        log_detail "Actual:   $actual_sha256"
+        return 1
+    fi
+
+    printf '%s' "$content" | run_as_target "$runner" -s -- "$@"
+}
+
 ensure_root() {
     if [[ $EUID -ne 0 ]]; then
         if command_exists sudo; then
@@ -455,7 +601,7 @@ setup_shell() {
     if [[ ! -d "$omz_dir" ]]; then
         log_detail "Installing Oh My Zsh for $TARGET_USER"
         # Run as target user to install in their home
-        run_as_target bash -c 'set -euo pipefail; curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | sh -s -- --unattended'
+        acfs_run_verified_upstream_script_as_target "ohmyzsh" "sh" --unattended
     fi
 
     # Install Powerlevel10k theme
@@ -552,13 +698,13 @@ install_languages() {
     # Bun (install as target user)
     if [[ ! -d "$TARGET_HOME/.bun" ]]; then
         log_detail "Installing Bun for $TARGET_USER"
-        run_as_target bash -c 'set -euo pipefail; curl -fsSL https://bun.sh/install | bash'
+        acfs_run_verified_upstream_script_as_target "bun" "bash"
     fi
 
     # Rust (install as target user)
     if [[ ! -d "$TARGET_HOME/.cargo" ]]; then
         log_detail "Installing Rust for $TARGET_USER"
-        run_as_target bash -c 'set -euo pipefail; curl -sSf https://sh.rustup.rs | sh -s -- -y'
+        acfs_run_verified_upstream_script_as_target "rust" "sh" -y
     fi
 
     # Go (system-wide)
@@ -570,19 +716,19 @@ install_languages() {
     # uv (install as target user)
     if [[ ! -f "$TARGET_HOME/.local/bin/uv" ]]; then
         log_detail "Installing uv for $TARGET_USER"
-        run_as_target bash -c 'set -euo pipefail; curl -LsSf https://astral.sh/uv/install.sh | sh'
+        acfs_run_verified_upstream_script_as_target "uv" "sh"
     fi
 
     # Atuin (install as target user)
     if [[ ! -d "$TARGET_HOME/.atuin" ]]; then
         log_detail "Installing Atuin for $TARGET_USER"
-        run_as_target bash -c 'set -euo pipefail; curl --proto "=https" --tlsv1.2 -LsSf https://setup.atuin.sh | sh'
+        acfs_run_verified_upstream_script_as_target "atuin" "sh"
     fi
 
     # Zoxide (install as target user)
     if [[ ! -f "$TARGET_HOME/.local/bin/zoxide" ]]; then
         log_detail "Installing Zoxide for $TARGET_USER"
-        run_as_target bash -c 'set -euo pipefail; curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh'
+        acfs_run_verified_upstream_script_as_target "zoxide" "sh"
     fi
 
     log_success "Language runtimes installed"
@@ -738,45 +884,37 @@ install_cloud_db() {
 install_stack() {
     log_step "8/9" "Installing Dicklesworthstone stack..."
 
-    # Helper to run install scripts as target user
-    run_install_as_target() {
-        local url="$1"
-        shift || true
-        # shellcheck disable=SC2016
-        run_as_target bash -c 'set -euo pipefail; url="$1"; shift; curl -fsSL "$url" | bash -s -- "$@"' _ "$url" "$@"
-    }
-
     # NTM (Named Tmux Manager)
     log_detail "Installing NTM"
-    run_install_as_target "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh" || log_warn "NTM installation may have failed"
+    acfs_run_verified_upstream_script_as_target "ntm" "bash" || log_warn "NTM installation may have failed"
 
     # MCP Agent Mail
     log_detail "Installing MCP Agent Mail"
-    run_install_as_target "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/scripts/install.sh?$(date +%s)" --yes || log_warn "MCP Agent Mail installation may have failed"
+    acfs_run_verified_upstream_script_as_target "mcp_agent_mail" "bash" --yes || log_warn "MCP Agent Mail installation may have failed"
 
     # Ultimate Bug Scanner
     log_detail "Installing Ultimate Bug Scanner"
-    run_install_as_target "https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/master/install.sh?$(date +%s)" --easy-mode || log_warn "UBS installation may have failed"
+    acfs_run_verified_upstream_script_as_target "ubs" "bash" --easy-mode || log_warn "UBS installation may have failed"
 
     # Beads Viewer
     log_detail "Installing Beads Viewer"
-    run_install_as_target "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" || log_warn "Beads Viewer installation may have failed"
+    acfs_run_verified_upstream_script_as_target "bv" "bash" || log_warn "Beads Viewer installation may have failed"
 
     # CASS (Coding Agent Session Search)
     log_detail "Installing CASS"
-    run_install_as_target "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh" --easy-mode --verify || log_warn "CASS installation may have failed"
+    acfs_run_verified_upstream_script_as_target "cass" "bash" --easy-mode --verify || log_warn "CASS installation may have failed"
 
     # CASS Memory System
     log_detail "Installing CASS Memory System"
-    run_install_as_target "https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh" --easy-mode --verify || log_warn "CM installation may have failed"
+    acfs_run_verified_upstream_script_as_target "cm" "bash" --easy-mode --verify || log_warn "CM installation may have failed"
 
     # CAAM (Coding Agent Account Manager)
     log_detail "Installing CAAM"
-    run_install_as_target "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_account_manager/main/install.sh?$(date +%s)" || log_warn "CAAM installation may have failed"
+    acfs_run_verified_upstream_script_as_target "caam" "bash" || log_warn "CAAM installation may have failed"
 
     # SLB (Simultaneous Launch Button)
     log_detail "Installing SLB"
-    run_install_as_target "https://raw.githubusercontent.com/Dicklesworthstone/simultaneous_launch_button/main/scripts/install.sh" || log_warn "SLB installation may have failed"
+    acfs_run_verified_upstream_script_as_target "slb" "bash" || log_warn "SLB installation may have failed"
 
     log_success "Dicklesworthstone stack installed"
 }
@@ -956,7 +1094,7 @@ run_smoke_test() {
         ((critical_passed += 1))
     else
         echo "✖ NTM: not working" >&2
-        echo "    Fix: re-run installer (phase 8) or run NTM installer: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh | bash" >&2
+        echo "    Fix: re-run installer (phase 8) and check $ACFS_LOG_DIR/install.log" >&2
         ((critical_failed += 1))
     fi
 

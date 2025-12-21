@@ -791,19 +791,19 @@ export default function FlywheelPage() {
               <span className="font-mono text-sm font-bold">ACFS</span>
             </div>
 
-            <div className="flex items-center gap-5 text-sm text-muted-foreground">
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <a
                 href="https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="transition-colors hover:text-foreground"
+                className="flex items-center min-h-[44px] px-2 transition-colors hover:text-foreground"
               >
                 GitHub
               </a>
-              <Link href="/" className="transition-colors hover:text-foreground">
+              <Link href="/" className="flex items-center min-h-[44px] px-2 transition-colors hover:text-foreground">
                 Home
               </Link>
-              <Link href="/wizard/os-selection" className="transition-colors hover:text-foreground">
+              <Link href="/wizard/os-selection" className="flex items-center min-h-[44px] px-2 transition-colors hover:text-foreground">
                 Get Started
               </Link>
             </div>
