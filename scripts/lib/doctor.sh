@@ -624,80 +624,192 @@ check_gemini_auth() {
 }
 
 # Deep check: Database connectivity
+# Enhanced per bead azw: PostgreSQL connection and role checks
 deep_check_database() {
-    # PostgreSQL connection check
-    # Use -w to avoid password prompts (would hang), and timeout to prevent blocking
-    if command -v psql &>/dev/null; then
-        # Try to connect to local postgres (5 second timeout, no password prompt)
-        if timeout 5 psql -w -h localhost -U postgres -c '\q' &>/dev/null 2>&1; then
-            check "deep.db.postgres_connect" "PostgreSQL connection" "pass" "localhost:5432"
-        elif timeout 5 psql -w -h /var/run/postgresql -U postgres -c '\q' &>/dev/null 2>&1; then
-            check "deep.db.postgres_connect" "PostgreSQL connection" "pass" "unix socket"
-        else
-            check "deep.db.postgres_connect" "PostgreSQL connection" "warn" "connection failed" "Check PostgreSQL is running: sudo systemctl status postgresql"
-        fi
+    check_postgres_connection
+    check_postgres_role
+}
+
+# check_postgres_connection - Test PostgreSQL connectivity
+# Related: bead azw
+check_postgres_connection() {
+    # Skip if not installed
+    if ! command -v psql &>/dev/null; then
+        check "deep.db.postgres_connect" "PostgreSQL connection" "warn" "psql not installed" "sudo apt install postgresql-client"
+        return
+    fi
+
+    # Try to connect to local postgres (5 second timeout, no password prompt)
+    # Use -w to avoid password prompts (would hang)
+    if timeout 5 psql -w -h localhost -U postgres -c 'SELECT 1' &>/dev/null 2>&1; then
+        check "deep.db.postgres_connect" "PostgreSQL connection" "pass" "localhost:5432"
+    elif timeout 5 psql -w -h /var/run/postgresql -U postgres -c 'SELECT 1' &>/dev/null 2>&1; then
+        check "deep.db.postgres_connect" "PostgreSQL connection" "pass" "unix socket"
     else
-        check "deep.db.postgres_connect" "PostgreSQL connection" "warn" "psql not installed"
+        # Try connecting as current user
+        if timeout 5 psql -w -c 'SELECT 1' &>/dev/null 2>&1; then
+            check "deep.db.postgres_connect" "PostgreSQL connection" "pass" "current user"
+        else
+            check "deep.db.postgres_connect" "PostgreSQL connection" "warn" "connection failed" "sudo systemctl status postgresql"
+        fi
+    fi
+}
+
+# check_postgres_role - Verify ubuntu role exists in PostgreSQL
+# Related: bead azw
+check_postgres_role() {
+    # Skip if not installed
+    if ! command -v psql &>/dev/null; then
+        return  # Already reported in connection check
+    fi
+
+    # Try to check if ubuntu role exists
+    local role_check
+    role_check=$(timeout 5 psql -w -h localhost -U postgres -tAc \
+        "SELECT 1 FROM pg_roles WHERE rolname='ubuntu'" 2>/dev/null) || \
+    role_check=$(timeout 5 psql -w -h /var/run/postgresql -U postgres -tAc \
+        "SELECT 1 FROM pg_roles WHERE rolname='ubuntu'" 2>/dev/null) || \
+    role_check=""
+
+    if [[ "$role_check" == "1" ]]; then
+        check "deep.db.postgres_role" "PostgreSQL ubuntu role" "pass" "role exists"
+    elif [[ -z "$role_check" ]]; then
+        # Connection failed or role doesn't exist - info status
+        check "deep.db.postgres_role" "PostgreSQL ubuntu role" "warn" "could not verify" "sudo -u postgres createuser -s ubuntu"
+    else
+        check "deep.db.postgres_role" "PostgreSQL ubuntu role" "warn" "role missing" "sudo -u postgres createuser -s ubuntu"
     fi
 }
 
 # Deep check: Cloud CLI authentication
+# Enhanced per bead azw: Thorough cloud CLI auth checks with proper status handling
 # All checks use 10 second timeout to prevent hanging on network issues
 deep_check_cloud() {
-    # Vault status check
-    if command -v vault &>/dev/null; then
-        if timeout 10 vault status &>/dev/null 2>&1; then
-            check "deep.cloud.vault_status" "Vault status" "pass" "connected"
-        else
-            check "deep.cloud.vault_status" "Vault status" "warn" "not reachable" "vault status"
-        fi
-    else
-        check "deep.cloud.vault_status" "Vault status" "warn" "not installed"
+    check_vault_configured
+    check_gh_auth
+    check_wrangler_auth
+    check_supabase_auth
+    check_vercel_auth
+}
+
+# check_vault_configured - Check if Vault is configured and reachable
+# Related: bead azw
+check_vault_configured() {
+    # Skip if not installed
+    if ! command -v vault &>/dev/null; then
+        check "deep.cloud.vault_status" "Vault" "warn" "not installed" "Install from https://www.vaultproject.io/"
+        return
     fi
 
-    # GitHub CLI auth check
-    if command -v gh &>/dev/null; then
-        if timeout 10 gh auth status &>/dev/null 2>&1; then
-            check "deep.cloud.gh_auth" "GitHub CLI auth" "pass" "authenticated"
+    # Check if VAULT_ADDR is set (required for vault to work)
+    if [[ -z "${VAULT_ADDR:-}" ]]; then
+        # Check common config locations
+        if [[ -f "$HOME/.zshrc.local" ]] && grep -q "VAULT_ADDR" "$HOME/.zshrc.local" 2>/dev/null; then
+            check "deep.cloud.vault_config" "Vault config" "pass" "VAULT_ADDR in ~/.zshrc.local"
         else
-            check "deep.cloud.gh_auth" "GitHub CLI auth" "warn" "not authenticated" "gh auth login"
+            check "deep.cloud.vault_config" "Vault config" "warn" "VAULT_ADDR not set" "export VAULT_ADDR=https://your-vault-server:8200"
         fi
-    else
-        check "deep.cloud.gh_auth" "GitHub CLI auth" "warn" "not installed"
+        return
     fi
 
-    # Wrangler auth check (Cloudflare)
-    if command -v wrangler &>/dev/null; then
-        if timeout 10 wrangler whoami &>/dev/null 2>&1; then
-            check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare) auth" "pass" "authenticated"
+    # VAULT_ADDR is set, try to connect
+    if timeout 10 vault status &>/dev/null 2>&1; then
+        check "deep.cloud.vault_status" "Vault status" "pass" "connected to $VAULT_ADDR"
+    else
+        check "deep.cloud.vault_status" "Vault status" "warn" "not reachable" "Check VAULT_ADDR and network"
+    fi
+}
+
+# check_gh_auth - GitHub CLI authentication check
+# Related: bead azw
+check_gh_auth() {
+    if ! command -v gh &>/dev/null; then
+        check "deep.cloud.gh_auth" "GitHub CLI" "warn" "not installed" "sudo apt install gh"
+        return
+    fi
+
+    if timeout 10 gh auth status &>/dev/null 2>&1; then
+        # Get the authenticated user for more detail
+        local gh_user
+        gh_user=$(timeout 5 gh api user --jq '.login' 2>/dev/null) || gh_user="authenticated"
+        check "deep.cloud.gh_auth" "GitHub CLI auth" "pass" "$gh_user"
+    else
+        check "deep.cloud.gh_auth" "GitHub CLI auth" "warn" "not authenticated" "gh auth login"
+    fi
+}
+
+# check_wrangler_auth - Cloudflare Wrangler authentication check
+# Related: bead azw
+check_wrangler_auth() {
+    if ! command -v wrangler &>/dev/null; then
+        check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare)" "warn" "not installed" "bun install -g wrangler"
+        return
+    fi
+
+    if timeout 10 wrangler whoami &>/dev/null 2>&1; then
+        check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare) auth" "pass" "authenticated"
+    else
+        # Check for CLOUDFLARE_API_TOKEN as alternative
+        if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare) auth" "pass" "CLOUDFLARE_API_TOKEN set"
         else
             check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare) auth" "warn" "not authenticated" "wrangler login"
         fi
-    else
-        check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare) auth" "warn" "not installed"
+    fi
+}
+
+# check_supabase_auth - Supabase CLI authentication check
+# Related: bead azw
+check_supabase_auth() {
+    if ! command -v supabase &>/dev/null; then
+        check "deep.cloud.supabase" "Supabase CLI" "warn" "not installed" "bun install -g supabase"
+        return
     fi
 
-    # Supabase auth check
-    if command -v supabase &>/dev/null; then
-        # Supabase doesn't have a simple auth check, just verify it runs
-        if timeout 5 supabase --version &>/dev/null 2>&1; then
-            check "deep.cloud.supabase" "Supabase CLI (binary OK)" "pass"
+    # Check if binary works
+    if ! timeout 5 supabase --version &>/dev/null 2>&1; then
+        check "deep.cloud.supabase" "Supabase CLI" "fail" "binary error" "Reinstall: bun install -g supabase"
+        return
+    fi
+
+    # Check for access token in config directory
+    local supabase_config="$HOME/.supabase"
+    local access_token_file="$supabase_config/access-token"
+
+    if [[ -f "$access_token_file" ]]; then
+        # Check if token is not empty
+        if [[ -s "$access_token_file" ]]; then
+            check "deep.cloud.supabase" "Supabase CLI auth" "pass" "access token exists"
         else
-            check "deep.cloud.supabase" "Supabase CLI" "warn" "binary error"
+            check "deep.cloud.supabase" "Supabase CLI auth" "warn" "empty access token" "supabase login"
         fi
+    elif [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+        check "deep.cloud.supabase" "Supabase CLI auth" "pass" "SUPABASE_ACCESS_TOKEN set"
     else
-        check "deep.cloud.supabase" "Supabase CLI" "warn" "not installed"
+        check "deep.cloud.supabase" "Supabase CLI auth" "warn" "not authenticated" "supabase login"
+    fi
+}
+
+# check_vercel_auth - Vercel CLI authentication check
+# Related: bead azw
+check_vercel_auth() {
+    if ! command -v vercel &>/dev/null; then
+        check "deep.cloud.vercel_auth" "Vercel CLI" "warn" "not installed" "bun install -g vercel"
+        return
     fi
 
-    # Vercel auth check
-    if command -v vercel &>/dev/null; then
-        if timeout 10 vercel whoami &>/dev/null 2>&1; then
-            check "deep.cloud.vercel_auth" "Vercel auth" "pass" "authenticated"
+    if timeout 10 vercel whoami &>/dev/null 2>&1; then
+        # Get the authenticated user/team for more detail
+        local vercel_user
+        vercel_user=$(timeout 5 vercel whoami 2>/dev/null) || vercel_user="authenticated"
+        check "deep.cloud.vercel_auth" "Vercel auth" "pass" "$vercel_user"
+    else
+        # Check for VERCEL_TOKEN as alternative
+        if [[ -n "${VERCEL_TOKEN:-}" ]]; then
+            check "deep.cloud.vercel_auth" "Vercel auth" "pass" "VERCEL_TOKEN set"
         else
             check "deep.cloud.vercel_auth" "Vercel auth" "warn" "not authenticated" "vercel login"
         fi
-    else
-        check "deep.cloud.vercel_auth" "Vercel auth" "warn" "not installed"
     fi
 }
 
