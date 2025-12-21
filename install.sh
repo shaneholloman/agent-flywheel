@@ -634,6 +634,12 @@ detect_environment() {
         source "$ACFS_LIB_DIR/error_tracking.sh"
     fi
 
+    # Source tailscale installer (bt5)
+    if [[ -f "$ACFS_LIB_DIR/tailscale.sh" ]]; then
+        # shellcheck source=scripts/lib/tailscale.sh
+        source "$ACFS_LIB_DIR/tailscale.sh"
+    fi
+
     # Source manifest index (data-only, safe to source)
     if [[ -f "$ACFS_GENERATED_DIR/manifest_index.sh" ]]; then
         # shellcheck source=scripts/generated/manifest_index.sh
@@ -944,14 +950,12 @@ bootstrap_repo_archive() {
     fi
 
     # mktemp portability: BSD mktemp requires Xs at end of template; tar doesn't need a .tar.gz suffix.
-    tmp_archive="$(mktemp "/tmp/acfs-archive-${ref_safe}.XXXXXX" 2>/dev/null)" || {
-        log_error "Failed to create temp file for bootstrap archive"
-        return 1
+    tmp_archive="$(mktemp "${TMPDIR:-/tmp}/acfs-archive-${ref_safe}.XXXXXX" 2>/dev/null)" || {
+        log_fatal "Failed to create temp file for archive"
     }
 
-    tmp_dir="$(mktemp -d "/tmp/acfs-bootstrap-${ref_safe}.XXXXXX" 2>/dev/null)" || {
-        log_error "Failed to create temp directory for bootstrap extract"
-        return 1
+    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-bootstrap-${ref_safe}.XXXXXX" 2>/dev/null)" || {
+        log_fatal "Failed to create temp dir for extraction"
     }
 
     log_step "Bootstrapping ACFS archive (${ref})"
@@ -1866,6 +1870,18 @@ install_cli_tools() {
     # Add user to docker group
     try_step "Adding $TARGET_USER to docker group" $SUDO usermod -aG docker "$TARGET_USER" || true
 
+    # Tailscale VPN for secure remote access (bt5)
+    if command -v tailscale &>/dev/null; then
+        log_detail "Tailscale already installed"
+    else
+        log_detail "Installing Tailscale..."
+        if try_step "Installing Tailscale" install_tailscale; then
+            log_success "Tailscale installed"
+        else
+            log_warn "Tailscale installation failed (optional, continuing)"
+        fi
+    fi
+
     log_success "CLI tools installed"
 }
 
@@ -2312,6 +2328,10 @@ finalize() {
     # Install acfs scripts (for acfs CLI subcommands)
     log_detail "Installing acfs scripts"
     try_step "Creating ACFS scripts directory" $SUDO mkdir -p "$ACFS_HOME/scripts/lib" || return 1
+    
+    # Install Claude hooks
+    try_step "Creating ACFS claude directory" $SUDO mkdir -p "$ACFS_HOME/claude/hooks" || return 1
+    try_step "Installing git_safety_guard.py" install_asset "acfs/claude/hooks/git_safety_guard.py" "$ACFS_HOME/claude/hooks/git_safety_guard.py" || return 1
 
     # Install script libraries
     try_step "Installing logging.sh" install_asset "scripts/lib/logging.sh" "$ACFS_HOME/scripts/lib/logging.sh" || return 1
@@ -2319,6 +2339,7 @@ finalize() {
     try_step "Installing security.sh" install_asset "scripts/lib/security.sh" "$ACFS_HOME/scripts/lib/security.sh" || return 1
     try_step "Installing doctor.sh" install_asset "scripts/lib/doctor.sh" "$ACFS_HOME/scripts/lib/doctor.sh" || return 1
     try_step "Installing update.sh" install_asset "scripts/lib/update.sh" "$ACFS_HOME/scripts/lib/update.sh" || return 1
+    try_step "Installing session.sh" install_asset "scripts/lib/session.sh" "$ACFS_HOME/scripts/lib/session.sh" || return 1
 
     # Install acfs-update wrapper command
     try_step "Installing acfs-update" install_asset "scripts/acfs-update" "$ACFS_HOME/bin/acfs-update" || return 1

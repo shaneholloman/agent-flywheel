@@ -126,8 +126,117 @@ print_acfs_help() {
     echo "    --deep            Run functional tests (auth, connections)"
     echo "  update [options]    Update ACFS tools to latest versions"
     echo "  services-setup      Configure AI agents and cloud services"
+    echo "  session <command>   Export/import/share agent sessions"
     echo "  version             Show ACFS version"
     echo "  help                Show this help message"
+}
+
+resolve_session_lib() {
+    if [[ -f "$HOME/.acfs/scripts/lib/session.sh" ]]; then
+        echo "$HOME/.acfs/scripts/lib/session.sh"
+        return 0
+    fi
+    if [[ -f "$SCRIPT_DIR/session.sh" ]]; then
+        echo "$SCRIPT_DIR/session.sh"
+        return 0
+    fi
+    if [[ -f "$SCRIPT_DIR/../scripts/lib/session.sh" ]]; then
+        echo "$SCRIPT_DIR/../scripts/lib/session.sh"
+        return 0
+    fi
+    return 1
+}
+
+print_session_help() {
+    echo "Usage: acfs session <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  list [--json] [--days N] [--agent NAME] [--limit N]"
+    echo "  export <session_path> [--format json|markdown] [--no-sanitize] [--output FILE]"
+    echo "  recent [--workspace PATH] [--format json|markdown]"
+    echo "  import <file.json> [--dry-run]"
+    echo "  show <id> [--format json|markdown|summary]"
+    echo "  list-imported"
+    echo ""
+    echo "Examples:"
+    echo "  acfs session list --days 7"
+    echo "  acfs session export ~/.codex/sessions/.../abc.jsonl --output session.json"
+    echo "  acfs session recent --workspace /data/projects/foo"
+    echo "  acfs session import session.json --dry-run"
+}
+
+acfs_session_recent() {
+    local workspace="$(pwd)"
+    local format="json"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --workspace)
+                workspace="$2"
+                shift 2
+                ;;
+            --format)
+                format="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    export_recent_session "$workspace" "$format"
+}
+
+acfs_session_main() {
+    local session_lib
+    session_lib="$(resolve_session_lib)" || {
+        echo "Error: session.sh not found. Re-run the ACFS installer." >&2
+        return 1
+    }
+
+    # shellcheck source=/dev/null
+    source "$session_lib"
+
+    if ! check_session_deps; then
+        return 1
+    fi
+
+    local subcmd="${1:-}"
+    case "$subcmd" in
+        list)
+            shift
+            list_sessions "$@"
+            ;;
+        export)
+            shift
+            export_session "$@"
+            ;;
+        recent)
+            shift
+            acfs_session_recent "$@"
+            ;;
+        import)
+            shift
+            import_session "$@"
+            ;;
+        show)
+            shift
+            show_session "$@"
+            ;;
+        list-imported)
+            shift
+            list_imported_sessions "$@"
+            ;;
+        help|-h|"")
+            print_session_help
+            ;;
+        *)
+            echo "Unknown session command: $subcmd" >&2
+            print_session_help
+            return 1
+            ;;
+    esac
 }
 
 # Print a section header only in human output mode.
@@ -666,6 +775,25 @@ check_cloud() {
     check_optional_command "cloud.wrangler" "Wrangler" "wrangler" "bun install -g wrangler"
     check_optional_command "cloud.supabase" "Supabase CLI" "supabase" "bun install -g supabase"
     check_optional_command "cloud.vercel" "Vercel CLI" "vercel" "bun install -g vercel"
+
+    # Tailscale VPN (bt5)
+    if command -v tailscale &>/dev/null; then
+        local ts_status
+        ts_status=$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "unknown"' 2>/dev/null || echo "unknown")
+        case "$ts_status" in
+            "Running")
+                check "network.tailscale" "Tailscale" "pass" "connected"
+                ;;
+            "NeedsLogin")
+                check "network.tailscale" "Tailscale" "warn" "needs login" "Run: sudo tailscale up"
+                ;;
+            *)
+                check "network.tailscale" "Tailscale" "warn" "$ts_status" "Run: sudo tailscale up"
+                ;;
+        esac
+    else
+        check "network.tailscale" "Tailscale" "skip" "not installed" "Optional VPN for secure remote access"
+    fi
 
     blank_line
 }
@@ -1381,6 +1509,11 @@ main() {
     case "$subcmd" in
         doctor|check)
             shift
+            ;;
+        session)
+            shift
+            acfs_session_main "$@"
+            return $?
             ;;
         update)
             shift
