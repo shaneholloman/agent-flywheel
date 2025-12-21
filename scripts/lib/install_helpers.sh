@@ -277,6 +277,85 @@ should_run_module() {
 }
 
 # ------------------------------------------------------------
+# Feature flags for incremental category rollout (mjt.5.6)
+#
+# Usage:
+#   ACFS_USE_GENERATED=0 ./install.sh ...        # Force legacy for all
+#   ACFS_USE_GENERATED_LANG=0 ./install.sh ...   # Force legacy for lang only
+#
+# Per-category flags override the global flag.
+# Default: use generated installers for all categories.
+# ------------------------------------------------------------
+
+: "${ACFS_USE_GENERATED:=1}"
+
+# Per-category overrides (unset means use global default)
+# Available categories: base, users, shell, cli, lang, tools, agents, db, cloud, stack, acfs
+
+# Check if a category should use generated installers
+# Returns 0 (true) if generated should be used, 1 (false) for legacy
+acfs_use_generated_for_category() {
+    local category="$1"
+    local upper_category
+    upper_category="$(echo "$category" | tr '[:lower:]' '[:upper:]')"
+    local flag_name="ACFS_USE_GENERATED_${upper_category}"
+
+    # Check per-category override first
+    local flag_value="${!flag_name:-}"
+    if [[ -n "$flag_value" ]]; then
+        [[ "$flag_value" == "1" ]]
+        return $?
+    fi
+
+    # Fall back to global toggle
+    [[ "${ACFS_USE_GENERATED:-1}" == "1" ]]
+}
+
+# Check if a module should use generated installer
+# Determines category from module ID (e.g., "lang.bun" -> "lang")
+acfs_use_generated_for_module() {
+    local module_id="$1"
+    local category
+
+    # Extract category from module ID (first segment before dot)
+    category="${module_id%%.*}"
+
+    acfs_use_generated_for_category "$category"
+}
+
+# Get the installer function name for a module
+# Returns generated function if enabled, empty string if legacy should be used
+acfs_get_module_installer() {
+    local module_id="$1"
+
+    if acfs_use_generated_for_module "$module_id"; then
+        # Use generated function from manifest_index
+        echo "${ACFS_MODULE_FUNC[$module_id]:-}"
+    else
+        # Empty means caller should use legacy installer
+        echo ""
+    fi
+}
+
+# Log current feature flag state (for debugging)
+acfs_log_feature_flags() {
+    local categories=("base" "users" "shell" "cli" "lang" "tools" "agents" "db" "cloud" "stack" "acfs")
+
+    log_debug "Feature flags:"
+    log_debug "  ACFS_USE_GENERATED=${ACFS_USE_GENERATED:-1}"
+
+    for cat in "${categories[@]}"; do
+        local upper_cat
+        upper_cat="$(echo "$cat" | tr '[:lower:]' '[:upper:]')"
+        local flag_name="ACFS_USE_GENERATED_${upper_cat}"
+        local flag_value="${!flag_name:-}"
+        if [[ -n "$flag_value" ]]; then
+            log_debug "  ${flag_name}=${flag_value}"
+        fi
+    done
+}
+
+# ------------------------------------------------------------
 # Legacy flag mapping (mjt.5.5)
 # Maps old-style --skip-* flags to SKIP_MODULES array
 # ------------------------------------------------------------
@@ -383,4 +462,133 @@ command_exists_as_target() {
     fi
 
     run_as_target bash -lc "command -v '$cmd' >/dev/null 2>&1"
+}
+
+# ------------------------------------------------------------
+# Generated vs legacy installer feature flags
+# ------------------------------------------------------------
+# Global: ACFS_USE_GENERATED=0|1
+# Per-category: ACFS_USE_GENERATED_<CATEGORY>=0|1
+# Default: use generated only for categories listed below.
+# Update ACFS_GENERATED_DEFAULT_CATEGORIES as categories migrate.
+
+ACFS_GENERATED_DEFAULT_CATEGORIES=()
+
+_acfs_normalize_category_key() {
+    local category="$1"
+    local upper="${category^^}"
+    # Replace non-alnum with underscores for env var names
+    upper="${upper//[^A-Z0-9]/_}"
+    echo "$upper"
+}
+
+_acfs_parse_bool() {
+    local value="${1:-}"
+    case "${value,,}" in
+        1|true|yes|on)
+            echo "1"
+            ;;
+        0|false|no|off)
+            echo "0"
+            ;;
+        "")
+            echo ""
+            return 1
+            ;;
+        *)
+            echo "invalid"
+            return 2
+            ;;
+    esac
+}
+
+acfs_use_generated_category() {
+    local category="$1"
+    local key
+    key="$(_acfs_normalize_category_key "$category")"
+    local var="ACFS_USE_GENERATED_${key}"
+    local raw="${!var-}"
+    local parsed=""
+
+    if [[ -n "$raw" ]]; then
+        parsed=$(_acfs_parse_bool "$raw")
+        if [[ "$parsed" == "1" ]]; then
+            return 0
+        fi
+        if [[ "$parsed" == "0" ]]; then
+            return 1
+        fi
+        log_warn "Invalid $var=$raw (expected 0|1); defaulting to legacy"
+        return 1
+    fi
+
+    if [[ -n "${ACFS_USE_GENERATED-}" ]]; then
+        parsed=$(_acfs_parse_bool "$ACFS_USE_GENERATED")
+        if [[ "$parsed" == "1" ]]; then
+            return 0
+        fi
+        if [[ "$parsed" == "0" ]]; then
+            return 1
+        fi
+        log_warn "Invalid ACFS_USE_GENERATED=$ACFS_USE_GENERATED (expected 0|1); defaulting to legacy"
+        return 1
+    fi
+
+    local default_category=""
+    for default_category in "${ACFS_GENERATED_DEFAULT_CATEGORIES[@]}"; do
+        if [[ "$default_category" == "$category" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+acfs_run_generated_category_phase() {
+    local category="$1"
+    local phase="$2"
+
+    if [[ "${ACFS_MANIFEST_INDEX_LOADED:-false}" != "true" ]]; then
+        log_error "Manifest index not loaded; cannot run generated category: $category"
+        return 1
+    fi
+    if [[ "${ACFS_GENERATED_SOURCED:-false}" != "true" ]]; then
+        log_error "Generated installers not sourced; cannot run generated category: $category"
+        return 1
+    fi
+
+    local module=""
+    local key=""
+    local func=""
+    local ran_any=false
+
+    for module in "${ACFS_EFFECTIVE_PLAN[@]}"; do
+        key="$module"
+        if [[ "${ACFS_MODULE_CATEGORY[$key]:-}" != "$category" ]]; then
+            continue
+        fi
+        if [[ "${ACFS_MODULE_PHASE[$key]:-}" != "$phase" ]]; then
+            continue
+        fi
+        func="${ACFS_MODULE_FUNC[$key]:-}"
+        if [[ -z "$func" ]]; then
+            log_error "Missing generated function for $module"
+            return 1
+        fi
+        if ! declare -f "$func" >/dev/null 2>&1; then
+            log_error "Generated function not found: $func (module $module)"
+            return 1
+        fi
+        if ! "$func"; then
+            log_error "Generated module failed: $module"
+            return 1
+        fi
+        ran_any=true
+    done
+
+    if [[ "$ran_any" != "true" ]]; then
+        log_detail "No generated modules selected for $category (phase $phase)"
+    fi
+
+    return 0
 }
