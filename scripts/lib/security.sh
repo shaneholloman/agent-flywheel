@@ -21,6 +21,16 @@ fi
 # Configuration
 # ============================================================
 
+# curl defaults: enforce HTTPS (including redirects) when supported
+ACFS_CURL_BASE_ARGS=(-fsSL)
+if curl --help all 2>/dev/null | grep -q -- '--proto'; then
+    ACFS_CURL_BASE_ARGS=(--proto '=https' --proto-redir '=https' -fsSL)
+fi
+
+acfs_curl() {
+    curl "${ACFS_CURL_BASE_ARGS[@]}" "$@"
+}
+
 # Checksums file location.
 # Prefer the repo-root checksums.yaml based on this script's location.
 DEFAULT_CHECKSUMS_FILE="$SECURITY_SCRIPT_DIR/../../checksums.yaml"
@@ -109,7 +119,7 @@ fetch_checksum() {
     local sentinel="__ACFS_EOF_SENTINEL__"
     local content
     content="$(
-        curl -fsSL "$url" 2>/dev/null || exit 1
+        acfs_curl "$url" 2>/dev/null || exit 1
         printf '%s' "$sentinel"
     )" || {
         echo "ERROR: Failed to fetch $url" >&2
@@ -146,7 +156,7 @@ verify_checksum() {
     local sentinel="__ACFS_EOF_SENTINEL__"
     local content
     content="$(
-        curl -fsSL "$url" 2>/dev/null || exit 1
+        acfs_curl "$url" 2>/dev/null || exit 1
         printf '%s' "$sentinel"
     )" || {
         echo -e "${RED}Security Error:${NC} Failed to fetch $name" >&2

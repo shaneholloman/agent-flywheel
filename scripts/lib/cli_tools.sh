@@ -231,7 +231,7 @@ install_gum() {
 
     # Add Charm repository
     $sudo_cmd mkdir -p /etc/apt/keyrings
-    curl -fsSL https://repo.charm.sh/apt/gpg.key | $sudo_cmd gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null || true
+    curl --proto '=https' --proto-redir '=https' -fsSL https://repo.charm.sh/apt/gpg.key | $sudo_cmd gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null || true
     echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | $sudo_cmd tee /etc/apt/sources.list.d/charm.list > /dev/null
     $sudo_cmd apt-get update -y >/dev/null 2>&1 || true
     $sudo_cmd apt-get install -y gum >/dev/null 2>&1 || log_warn "Could not install gum"
@@ -275,7 +275,8 @@ install_lazygit() {
 
     local tmpdir
     tmpdir=$(mktemp -d)
-    curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${version}/lazygit_${version}_Linux_${arch}.tar.gz" -o "$tmpdir/lazygit.tar.gz" || {
+    curl --proto '=https' --proto-redir '=https' -fsSL -o "$tmpdir/lazygit.tar.gz" \
+        "https://github.com/jesseduffield/lazygit/releases/download/v${version}/lazygit_${version}_Linux_${arch}.tar.gz" || {
         log_warn "Could not download lazygit"
         rm -rf "$tmpdir"
         return 1
@@ -316,7 +317,8 @@ install_lazydocker() {
 
     local tmpdir
     tmpdir=$(mktemp -d)
-    curl -fsSL "https://github.com/jesseduffield/lazydocker/releases/download/v${version}/lazydocker_${version}_Linux_${arch}.tar.gz" -o "$tmpdir/lazydocker.tar.gz" || {
+    curl --proto '=https' --proto-redir '=https' -fsSL -o "$tmpdir/lazydocker.tar.gz" \
+        "https://github.com/jesseduffield/lazydocker/releases/download/v${version}/lazydocker_${version}_Linux_${arch}.tar.gz" || {
         log_warn "Could not download lazydocker"
         rm -rf "$tmpdir"
         return 1

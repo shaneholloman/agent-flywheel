@@ -209,6 +209,15 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
+ACFS_CURL_BASE_ARGS=(-fsSL)
+if curl --help all 2>/dev/null | grep -q -- '--proto'; then
+    ACFS_CURL_BASE_ARGS=(--proto '=https' --proto-redir '=https' -fsSL)
+fi
+
+acfs_curl() {
+    curl "${ACFS_CURL_BASE_ARGS[@]}" "$@"
+}
+
 install_asset() {
     local rel_path="$1"
     local dest_path="$2"
@@ -236,7 +245,7 @@ install_asset() {
     if [[ -f "$SCRIPT_DIR/$rel_path" ]]; then
         cp "$SCRIPT_DIR/$rel_path" "$dest_path"
     else
-        curl -fsSL "$ACFS_RAW/$rel_path" -o "$dest_path"
+        acfs_curl -o "$dest_path" "$ACFS_RAW/$rel_path"
     fi
 }
 
@@ -298,7 +307,7 @@ acfs_fetch_url_content() {
     local sentinel="__ACFS_EOF_SENTINEL__"
     local content
     content="$(
-        curl -fsSL "$url" 2>/dev/null || exit 1
+        acfs_curl "$url" 2>/dev/null || exit 1
         printf '%s' "$sentinel"
     )" || {
         log_error "Failed to fetch upstream URL: $url"
@@ -321,7 +330,7 @@ acfs_load_upstream_checksums() {
     if [[ -r "$SCRIPT_DIR/checksums.yaml" ]]; then
         content="$(cat "$SCRIPT_DIR/checksums.yaml")"
     else
-        content="$(curl -fsSL "$ACFS_RAW/checksums.yaml" 2>/dev/null)" || {
+        content="$(acfs_curl "$ACFS_RAW/checksums.yaml" 2>/dev/null)" || {
             log_error "Failed to fetch checksums.yaml from $ACFS_RAW"
             return 1
         }
@@ -660,7 +669,7 @@ install_cli_tools() {
     if ! command_exists gum; then
         log_detail "Installing gum for glamorous shell scripts"
         $SUDO mkdir -p /etc/apt/keyrings
-        curl -fsSL https://repo.charm.sh/apt/gpg.key | $SUDO gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null || true
+        acfs_curl https://repo.charm.sh/apt/gpg.key | $SUDO gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null || true
         echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | $SUDO tee /etc/apt/sources.list.d/charm.list > /dev/null
         $SUDO apt-get update -y
         $SUDO apt-get install -y gum 2>/dev/null || true
@@ -785,7 +794,7 @@ install_cloud_db() {
         log_detail "Installing PostgreSQL 18 (PGDG repo, codename=$codename)"
         $SUDO mkdir -p /etc/apt/keyrings
 
-        if ! curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | \
+        if ! acfs_curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | \
             $SUDO gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg 2>/dev/null; then
             log_warn "PostgreSQL: failed to install signing key (skipping)"
         else
@@ -830,7 +839,7 @@ install_cloud_db() {
         log_detail "Installing Vault (HashiCorp repo, codename=$codename)"
         $SUDO mkdir -p /etc/apt/keyrings
 
-        if ! curl -fsSL https://apt.releases.hashicorp.com/gpg | \
+        if ! acfs_curl https://apt.releases.hashicorp.com/gpg | \
             $SUDO gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg 2>/dev/null; then
             log_warn "Vault: failed to install signing key (skipping)"
         else

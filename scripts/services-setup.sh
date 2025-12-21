@@ -28,7 +28,29 @@ fi
 # ============================================================
 
 TARGET_USER="${TARGET_USER:-${SUDO_USER:-$(whoami)}}"
-TARGET_HOME="${TARGET_HOME:-$(eval echo ~"$TARGET_USER")}"
+
+resolve_home_dir() {
+    local user="$1"
+    local home=""
+
+    if command -v getent &>/dev/null; then
+        home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
+    elif [[ -r /etc/passwd ]]; then
+        home="$(awk -F: -v u="$user" '$1==u{print $6}' /etc/passwd)"
+    fi
+
+    printf '%s' "$home"
+}
+
+TARGET_HOME="${TARGET_HOME:-}"
+if [[ -z "$TARGET_HOME" ]]; then
+    TARGET_HOME="$(resolve_home_dir "$TARGET_USER")"
+fi
+if [[ -z "$TARGET_HOME" ]]; then
+    log_error "Unable to determine home directory for user: $TARGET_USER"
+    exit 1
+fi
+
 BUN_BIN="$TARGET_HOME/.bun/bin/bun"
 
 # Service status tracking
@@ -359,10 +381,12 @@ Which method would you like to use?"
             # Add to shell config
             local zshrc="$TARGET_HOME/.zshrc"
             if ! grep -q "OPENAI_API_KEY" "$zshrc" 2>/dev/null; then
+                local api_key_escaped
+                api_key_escaped="$(printf '%q' "$api_key")"
                 {
                     echo ""
                     echo "# OpenAI API Key (added by ACFS services-setup)"
-                    echo "export OPENAI_API_KEY='$api_key'"
+                    echo "export OPENAI_API_KEY=$api_key_escaped"
                 } >> "$zshrc"
                 gum_success "API key added to ~/.zshrc"
                 gum_detail "Run 'source ~/.zshrc' or start a new shell to use it"

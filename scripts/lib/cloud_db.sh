@@ -148,7 +148,7 @@ install_postgresql() {
     $sudo_cmd mkdir -p /etc/apt/keyrings
 
     # Download and install the repository signing key
-    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | \
+    curl --proto '=https' --proto-redir '=https' -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | \
         $sudo_cmd gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg 2>/dev/null || true
 
     # Add repository
@@ -227,7 +227,7 @@ install_vault() {
     # Add HashiCorp GPG key and repository
     $sudo_cmd mkdir -p /etc/apt/keyrings
 
-    curl -fsSL https://apt.releases.hashicorp.com/gpg | \
+    curl --proto '=https' --proto-redir '=https' -fsSL https://apt.releases.hashicorp.com/gpg | \
         $sudo_cmd gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg 2>/dev/null || true
 
     # Get Ubuntu codename

@@ -366,7 +366,7 @@ install_go_latest() {
 
     # Get latest version
     local version
-    version=$(curl -sL 'https://go.dev/VERSION?m=text' | head -1) || version="go1.23.4"
+    version=$(curl --proto '=https' --proto-redir '=https' -sL 'https://go.dev/VERSION?m=text' | head -1) || version="go1.23.4"
 
     # Download and install
     local tmpdir
@@ -374,7 +374,7 @@ install_go_latest() {
     local tarball="${version}.linux-${arch}.tar.gz"
 
     log_detail "Downloading $tarball..."
-    if ! curl -fsSL "https://go.dev/dl/$tarball" -o "$tmpdir/$tarball"; then
+    if ! curl --proto '=https' --proto-redir '=https' -fsSL -o "$tmpdir/$tarball" "https://go.dev/dl/$tarball"; then
         log_warn "Failed to download Go"
         rm -rf "$tmpdir"
         return 1
