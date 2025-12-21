@@ -178,6 +178,22 @@ export default function RunInstallerPage() {
         </div>
       </DetailsSection>
 
+      {/* View source */}
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-muted-foreground">
+          Want to see exactly what it does?
+        </span>
+        <a
+          href="https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/blob/main/install.sh"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+        >
+          View install.sh source
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      </div>
+
       {/* Success signs */}
       <OutputPreview title="You'll know it's done when you see:">
         <p className="text-[oklch(0.72_0.19_145)]">✔ Agent Flywheel installation complete!</p>
