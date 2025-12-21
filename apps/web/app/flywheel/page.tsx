@@ -738,7 +738,7 @@ function CTASection() {
               Ready to 10x Your Velocity?
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-base text-muted-foreground lg:text-lg">
-              The ACFS installer sets up all flywheel tools automatically.
+              The Agent Flywheel installer sets up all flywheel tools automatically.
               From zero to multi-agent workflows in 30 minutes.
             </p>
 
@@ -788,7 +788,7 @@ export default function FlywheelPage() {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/20 lg:h-9 lg:w-9">
             <Terminal className="h-4 w-4 text-primary lg:h-5 lg:w-5" />
           </div>
-          <span className="font-mono text-base font-bold tracking-tight lg:text-lg">ACFS</span>
+          <span className="font-mono text-base font-bold tracking-tight lg:text-lg">Agent Flywheel</span>
         </div>
         <div className="flex items-center gap-4">
           <Button asChild size="default" variant="outline" className="h-11 border-primary/30 hover:bg-primary/10">
@@ -825,7 +825,7 @@ export default function FlywheelPage() {
               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/20">
                 <Terminal className="h-3.5 w-3.5 text-primary" />
               </div>
-              <span className="font-mono text-sm font-bold">ACFS</span>
+              <span className="font-mono text-sm font-bold">Agent Flywheel</span>
             </div>
 
             <div className="flex items-center gap-3 text-sm text-muted-foreground">

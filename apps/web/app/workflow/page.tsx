@@ -1304,7 +1304,7 @@ export default function WorkflowPage() {
 
           <SimplerGuide>
             <GuideExplain term="Why a separate setup script?">
-              The main ACFS installer focuses on development tools. This second script handles
+              The main Agent Flywheel installer focuses on development tools. This second script handles
               cloud service configuration, which requires your specific accounts and API keys.
               Running them separately keeps initial setup fast.
             </GuideExplain>

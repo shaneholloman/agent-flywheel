@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * Playwright configuration for ACFS web e2e testing.
+ * Playwright configuration for Agent Flywheel web e2e testing.
  * @see https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({

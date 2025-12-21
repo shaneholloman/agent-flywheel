@@ -20,7 +20,7 @@ const instrumentSans = Instrument_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "ACFS - Agentic Coding Flywheel Setup",
+  title: "Agent Flywheel - Agentic Coding Setup",
   description:
     "Transform a fresh cloud server into a fully-configured agentic coding environment. Claude Code, OpenAI Codex, Google Gemini: all pre-configured with 30+ modern developer tools. All totally free and open-source.",
   keywords: [
@@ -31,17 +31,18 @@ export const metadata: Metadata = {
     "Gemini",
     "developer tools",
     "agentic coding",
+    "Agent Flywheel",
   ],
-  authors: [{ name: "Jeffrey Emanuel", url: "https://x.com/doodlestein" }],
+  authors: [{ name: "Jeffrey Emanuel", url: "https://jeffreyemanuel.com/" }],
   openGraph: {
-    title: "ACFS - Agentic Coding Flywheel Setup",
+    title: "Agent Flywheel - Agentic Coding Setup",
     description:
       "From zero to fully-configured agentic coding VPS in 30 minutes.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "ACFS - Agentic Coding Flywheel Setup",
+    title: "Agent Flywheel - Agentic Coding Setup",
     description:
       "From zero to fully-configured agentic coding VPS in 30 minutes.",
   },

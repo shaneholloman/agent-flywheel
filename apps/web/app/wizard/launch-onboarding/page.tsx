@@ -193,7 +193,7 @@ export default function LaunchOnboardingPage() {
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-primary hover:underline"
                 >
-                  ACFS GitHub Repository
+                  Agent Flywheel GitHub Repository
                   <ExternalLink className="h-3 w-3" />
                 </a>
               </li>

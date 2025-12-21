@@ -578,7 +578,7 @@ export default function HomePage() {
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/20">
             <Terminal className="h-5 w-5 text-primary" />
           </div>
-          <span className="font-mono text-lg font-bold tracking-tight">ACFS</span>
+          <span className="font-mono text-lg font-bold tracking-tight">Agent Flywheel</span>
         </div>
         <div className="flex items-center gap-4">
           <a
@@ -734,7 +734,7 @@ export default function HomePage() {
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/20">
                   <Terminal className="h-4 w-4 text-primary" />
                 </div>
-                <span className="font-mono text-sm font-bold">ACFS</span>
+                <span className="font-mono text-sm font-bold">Agent Flywheel</span>
               </div>
 
               <div className="flex items-center gap-6 text-sm text-muted-foreground">

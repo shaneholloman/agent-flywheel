@@ -56,7 +56,7 @@ export default function WizardLayout({
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/20">
                   <Terminal className="h-4 w-4 text-primary" />
                 </div>
-                <span className="font-mono text-sm font-bold tracking-tight">ACFS</span>
+                <span className="font-mono text-sm font-bold tracking-tight">Agent Flywheel</span>
               </Link>
             </div>
 
@@ -104,7 +104,7 @@ export default function WizardLayout({
               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/20">
                 <Terminal className="h-3.5 w-3.5 text-primary" />
               </div>
-              <span className="font-mono text-sm font-bold">ACFS</span>
+              <span className="font-mono text-sm font-bold">Agent Flywheel</span>
             </Link>
             <div className="text-xs text-muted-foreground">
               Step <span className="font-mono text-primary">{currentStep}</span> of {WIZARD_STEPS.length}

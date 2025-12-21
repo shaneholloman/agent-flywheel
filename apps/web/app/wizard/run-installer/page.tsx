@@ -23,7 +23,7 @@ import {
   GuideCaution,
 } from "@/components/simpler-guide";
 
-const ACFS_COMMAND = `curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh?$(date +%s)" | bash -s -- --yes --mode vibe`;
+const INSTALL_COMMAND = `curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/install.sh?$(date +%s)" | bash -s -- --yes --mode vibe`;
 
 const WHAT_IT_INSTALLS = [
   {
@@ -81,7 +81,7 @@ export default function RunInstallerPage() {
           </div>
           <div>
             <h1 className="bg-gradient-to-r from-primary via-foreground to-[oklch(0.7_0.2_330)] bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
-              Run the ACFS installer
+              Run the Agent Flywheel installer
             </h1>
             <p className="text-sm text-muted-foreground">
               ~15 min
@@ -105,10 +105,10 @@ export default function RunInstallerPage() {
           Paste this command in your SSH session
         </h2>
         <CommandCard
-          command={ACFS_COMMAND}
-          description="ACFS installer one-liner"
+          command={INSTALL_COMMAND}
+          description="Agent Flywheel installer one-liner"
           showCheckbox
-          persistKey="run-acfs-installer"
+          persistKey="run-flywheel-installer"
           className="border-2 border-primary/20"
         />
       </div>
@@ -156,7 +156,7 @@ export default function RunInstallerPage() {
 
       {/* Success signs */}
       <OutputPreview title="You'll know it's done when you see:">
-        <p className="text-[oklch(0.72_0.19_145)]">✔ ACFS installation complete!</p>
+        <p className="text-[oklch(0.72_0.19_145)]">✔ Agent Flywheel installation complete!</p>
         <p className="text-muted-foreground">
           Please reconnect as: ssh ubuntu@YOUR_IP
         </p>

@@ -10,6 +10,20 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SOURCE_URL="https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/command_palette.md"
 DEST_FILE="$PROJECT_ROOT/acfs/onboard/docs/ntm/command_palette.md"
 
+# Security library (HTTPS-only curl enforcement + hashing helpers)
+SECURITY_LIB="$PROJECT_ROOT/scripts/lib/security.sh"
+if [[ -r "$SECURITY_LIB" ]]; then
+    # shellcheck disable=SC1090,SC1091
+    source "$SECURITY_LIB"
+else
+    echo "ERROR: security library not found at $SECURITY_LIB" >&2
+    exit 1
+fi
+
+if ! enforce_https "$SOURCE_URL" "ntm command palette"; then
+    exit 1
+fi
+
 # Colors
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -62,8 +76,8 @@ if [[ "$check_mode" == "true" ]]; then
         exit 1
     fi
 
-    local_hash=$(sha256sum "$DEST_FILE" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$DEST_FILE" | cut -d' ' -f1)
-    remote_hash=$(curl -fsSL "$SOURCE_URL" | sha256sum 2>/dev/null | cut -d' ' -f1 || curl -fsSL "$SOURCE_URL" | shasum -a 256 | cut -d' ' -f1)
+    local_hash="$(calculate_sha256 < "$DEST_FILE")"
+    remote_hash="$(acfs_curl "$SOURCE_URL" | calculate_sha256)"
 
     if [[ "$local_hash" == "$remote_hash" ]]; then
         echo -e "${GREEN}Up to date${NC}"
@@ -77,7 +91,7 @@ fi
 # Download
 echo "Syncing command_palette.md from NTM..."
 
-if curl -fsSL "$SOURCE_URL" -o "$DEST_FILE"; then
+if acfs_curl "$SOURCE_URL" -o "$DEST_FILE"; then
     lines=$(wc -l < "$DEST_FILE" | tr -d ' ')
     echo -e "${GREEN}Synced command_palette.md ($lines lines)${NC}"
     echo "Saved to: $DEST_FILE"

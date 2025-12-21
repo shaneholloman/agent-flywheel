@@ -1,5 +1,5 @@
 /**
- * ACFS Analytics Library
+ * Agent Flywheel Analytics Library
  * Comprehensive GA4 instrumentation for deep user insights
  */
 

@@ -292,7 +292,7 @@ export default function CreateVPSPage() {
                   &quot;Authentication&quot;.
                   <ul className="mt-2 list-disc space-y-1 pl-5">
                     <li>Click &quot;Add SSH Key&quot; or &quot;Add Key&quot;</li>
-                    <li>Give it a name like &quot;My Laptop&quot; or &quot;ACFS Key&quot;</li>
+                    <li>Give it a name like &quot;My Laptop&quot; or &quot;Agent Flywheel Key&quot;</li>
                     <li><strong>Paste your public key</strong> (the text you copied earlier that starts with ssh-ed25519)</li>
                     <li>Click Save or Add</li>
                   </ul>

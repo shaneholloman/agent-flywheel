@@ -418,8 +418,129 @@ export const jargonDictionary: Record<string, JargonTerm> = {
     short: "Software with publicly available code that anyone can inspect, modify, and share",
     long: "Open-source software has its source code freely available. Anyone can read it (verify it's not malicious), modify it (customize for their needs), and share improvements. Major open-source projects include Linux, Firefox, Python, and most development tools. It's developed by communities, not companies, though companies often contribute.",
     analogy: "Like a recipe that anyone can read, modify, and share. No secrets, no license fees, and if you want to make changes, you're free to fork off and cook your own version.",
-    why: "All tools in ACFS are open-source. You can verify they're safe, they're free to use, and they have active communities maintaining and improving them.",
+    why: "All tools in Agent Flywheel are open-source. You can verify they're safe, they're free to use, and they have active communities maintaining and improving them.",
     related: ["linux", "git"],
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // ADDITIONAL TERMS FOR CLARITY
+  // ═══════════════════════════════════════════════════════════════
+
+  "one-liner": {
+    term: "One-liner",
+    short: "A single command that does everything — just copy, paste, and run",
+    long: "A one-liner is a complete operation condensed into a single command you can copy and paste. Instead of running 50 separate commands, one well-crafted one-liner does everything automatically. For example, our install command downloads the script, sets up your environment, installs all tools, and configures everything — all from one paste.",
+    analogy: "Like ordering a complete meal deal instead of ordering the burger, fries, and drink separately. One action, complete result.",
+    why: "One-liners remove friction. Instead of following 50 steps where you might make a typo or miss something, you just paste one command and everything works.",
+    related: ["curl", "bash"],
+  },
+
+  dependency: {
+    term: "Dependency",
+    short: "A tool or library that other software needs to work",
+    long: "A dependency is something your software relies on. If you're building a house, lumber is a dependency — you can't build without it. In software, dependencies are libraries, tools, or programs that your code needs. 'Dependency hell' happens when different programs need conflicting versions of the same dependency.",
+    analogy: "Like a recipe that requires flour. Flour is a dependency — you can't make the recipe without it. Some recipes share ingredients, others conflict (you can't use the same flour for two recipes at once).",
+    why: "Agent Flywheel installs dependencies automatically so you don't have to. Our installer handles the complex web of requirements so everything just works together.",
+    related: ["bun", "uv"],
+  },
+
+  "package-manager": {
+    term: "Package Manager",
+    short: "A tool that automatically downloads, installs, and updates software",
+    long: "A package manager is like an app store for developers. Instead of manually downloading software from websites, you run a command like 'bun install' or 'uv pip install' and it automatically downloads the right version, handles dependencies, and configures everything. Examples: npm/bun for JavaScript, pip/uv for Python, apt for Ubuntu system packages.",
+    analogy: "Like the App Store on your phone. You say 'I want this app' and it handles downloading, installing, and updating automatically.",
+    why: "Package managers prevent 'works on my machine' problems. Everyone gets the exact same versions, installed the same way.",
+    related: ["bun", "uv", "dependency"],
+  },
+
+  runtime: {
+    term: "Runtime",
+    short: "The engine that actually runs your code",
+    long: "A runtime is the program that executes your code. JavaScript code needs a JavaScript runtime (like Node.js or Bun) to run. Python code needs a Python runtime. The runtime handles memory management, I/O operations, and translates your high-level code into actions the computer understands.",
+    analogy: "If your code is a script for a play, the runtime is the stage, actors, and director that actually perform it.",
+    why: "Different runtimes have different performance characteristics. Bun is much faster than Node.js for JavaScript. We install the fastest, most modern runtimes.",
+    related: ["bun", "node", "python"],
+  },
+
+  llm: {
+    term: "LLM",
+    short: "Large Language Model — the AI brain behind ChatGPT, Claude, and Gemini",
+    long: "An LLM (Large Language Model) is the neural network that powers AI assistants like ChatGPT, Claude, and Gemini. It's trained on vast amounts of text and learns to predict what comes next in a conversation. LLMs can understand context, follow instructions, write code, explain concepts, and reason through problems. They're called 'large' because they have billions of parameters (adjustable values the AI learned during training).",
+    analogy: "Like a very well-read assistant who has read billions of documents and can draw on all that knowledge to help with almost any task. They don't 'know' things like humans do — they predict what a helpful response would look like.",
+    why: "AI coding agents are powered by LLMs. Understanding what an LLM is helps you understand what AI agents can (and can't) do.",
+    related: ["ai-agents", "agentic", "claude-code"],
+  },
+
+  prompt: {
+    term: "Prompt",
+    short: "The message or instruction you give to an AI",
+    long: "A prompt is what you type to tell an AI what you want. It can be a question ('How do I...'), a command ('Write a function that...'), or context ('Given this code, find the bug...'). Better prompts get better results — being specific, providing context, and clearly stating what you want helps the AI help you better.",
+    analogy: "Like giving instructions to a very capable assistant who takes things literally. 'Make dinner' might get you something random; 'Make spaghetti carbonara for four people' gets you exactly what you want.",
+    why: "AI agents are only as good as their prompts. Learning to write clear prompts makes you more effective with AI tools.",
+    related: ["llm", "ai-agents"],
+  },
+
+  token: {
+    term: "Token",
+    short: "A chunk of text that AI processes — roughly 4 characters",
+    long: "AI models don't read text character by character — they process 'tokens,' which are roughly 4 characters or one word on average. 'Hello world' is about 2 tokens. Understanding tokens matters because AI has context limits (like 128K tokens) and costs are often per-token. A 100K token limit means roughly 75,000 words of conversation history.",
+    analogy: "Like a speed-reader who doesn't read letter by letter but glances at word-sized chunks. Tokens are the AI's 'chunks' of understanding.",
+    why: "Knowing about tokens helps you understand context limits. Long conversations may need summarization to fit within token limits.",
+    related: ["llm", "prompt"],
+  },
+
+  "context-window": {
+    term: "Context Window",
+    short: "How much text an AI can 'remember' in a single conversation",
+    long: "The context window is the AI's working memory — everything it can consider at once. Claude has a 200K token context window, meaning it can process about 150,000 words in one conversation. Older models had much smaller windows (4K-8K tokens). A larger context window means the AI can understand more code, longer documents, and more conversation history.",
+    analogy: "Like a desk — a bigger desk lets you spread out more papers and work with more information at once. A small desk means you have to put some things away to make room for others.",
+    why: "Context window size determines how much code an AI agent can analyze at once. Larger windows = better understanding of complex codebases.",
+    related: ["llm", "token"],
+  },
+
+  "data-center": {
+    term: "Data Center",
+    short: "A warehouse full of computers that power cloud services",
+    long: "A data center is a specialized building filled with thousands of servers, all connected to very fast internet with multiple power backups. When you rent a VPS, your virtual server lives in a data center. These facilities have 24/7 security, redundant power supplies, advanced cooling systems, and connections to major internet backbones. Major data centers are run by companies like Equinix, AWS, Google, and Microsoft.",
+    analogy: "Like a massive hotel for computers. Each computer gets its own space, power, internet, and cooling. Staff are on-site 24/7 to handle any issues.",
+    why: "Your VPS lives in a data center, which is why it has better uptime and faster internet than your home computer. Data centers are designed for reliability.",
+    related: ["vps", "cloud-server"],
+  },
+
+  repository: {
+    term: "Repository",
+    short: "A folder containing your project's code, tracked by Git",
+    long: "A repository (or 'repo') is a project folder that Git manages. It contains your code, configuration files, and the complete history of every change ever made. Repositories can be local (on your computer) or remote (on GitHub/GitLab). When you 'clone a repository,' you're downloading a complete copy including all history. A single project = one repository.",
+    analogy: "Like a project folder with a time machine attached. You can see every version of every file, who changed what, and when — all the way back to the project's beginning.",
+    why: "All serious software lives in repositories. Git repos enable collaboration, backup, and deployment. If your code isn't in a repo, it's at risk.",
+    related: ["git", "lazygit"],
+  },
+
+  webhook: {
+    term: "Webhook",
+    short: "An automatic notification sent when something happens",
+    long: "A webhook is like a doorbell that rings automatically when something happens. Instead of constantly checking 'did anything change?' (polling), webhooks let a service notify you instantly. For example, GitHub can send a webhook when code is pushed, Stripe when a payment is made, or a monitoring service when a server goes down.",
+    analogy: "Instead of repeatedly checking your mailbox to see if mail arrived, it's like having a doorbell that rings the moment mail is delivered.",
+    why: "Webhooks enable automation. AI agents can be triggered by webhooks — for example, automatically reviewing code when a pull request is opened.",
+    related: ["api"],
+  },
+
+  deployment: {
+    term: "Deployment",
+    short: "Making your code live and available to users",
+    long: "Deployment is the process of taking code from development and making it available in production (the real world). This might involve building the code, running tests, uploading to servers, updating databases, and verifying everything works. Modern deployments are often automated — push code to Git and everything happens automatically.",
+    analogy: "Like a restaurant's process for serving a new dish: test the recipe, prepare ingredients, train staff, then officially add it to the menu. Deployment is the moment your code goes 'on the menu.'",
+    why: "Agent Flywheel includes deployment tools like Vercel CLI so you can deploy instantly. No more manual FTP uploads or complex server configurations.",
+    related: ["git", "repository"],
+  },
+
+  environment: {
+    term: "Environment",
+    short: "A complete setup where code runs — like development, staging, or production",
+    long: "An environment is everything needed to run your code: the operating system, installed tools, configuration, databases, and settings. 'Development environment' is your local setup for building. 'Production environment' is the live system users see. 'Staging' is a test copy of production. Agent Flywheel creates a complete development environment on your VPS.",
+    analogy: "Like different kitchens for different purposes: a test kitchen for experiments, a prep kitchen for practice, and the main kitchen for serving customers. Same recipes, different environments.",
+    why: "Having a consistent environment prevents 'works on my machine' problems. Agent Flywheel gives everyone the same, reproducible development environment.",
+    related: ["vps", "deployment"],
   },
 };
 

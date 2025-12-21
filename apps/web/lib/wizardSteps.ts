@@ -1,7 +1,7 @@
 /**
  * Wizard Steps Configuration
  *
- * Defines the 10 steps of the ACFS setup wizard.
+ * Defines the 10 steps of the Agent Flywheel setup wizard.
  * Each step guides beginners from "I have a laptop" to "fully configured VPS".
  * Uses TanStack Query for React state management with localStorage persistence.
  */
@@ -60,7 +60,7 @@ export const WIZARD_STEPS: WizardStep[] = [
   },
   {
     id: 7,
-    title: "Run ACFS Installer",
+    title: "Run Installer",
     description: "Paste and run the one-liner to install everything",
     slug: "run-installer",
   },
@@ -72,7 +72,7 @@ export const WIZARD_STEPS: WizardStep[] = [
   },
   {
     id: 9,
-    title: "ACFS Status Check",
+    title: "Status Check",
     description: "Verify everything installed correctly",
     slug: "status-check",
   },
@@ -98,7 +98,7 @@ export function getStepBySlug(slug: string): WizardStep | undefined {
 }
 
 /** localStorage key for storing completed steps */
-export const COMPLETED_STEPS_KEY = "acfs-wizard-completed-steps";
+export const COMPLETED_STEPS_KEY = "flywheel-wizard-completed-steps";
 
 // Query keys for TanStack Query
 export const wizardStepsKeys = {

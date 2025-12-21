@@ -60,7 +60,7 @@ export default function StatusCheckPage() {
           </div>
           <div>
             <h1 className="bg-gradient-to-r from-foreground via-foreground to-muted-foreground bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
-              ACFS status check
+              Agent Flywheel status check
             </h1>
             <p className="text-sm text-muted-foreground">
               ~1 min
@@ -80,16 +80,16 @@ export default function StatusCheckPage() {
         </p>
         <CommandCard
           command="acfs doctor"
-          description="Run ACFS health check"
+          description="Run Agent Flywheel health check"
           showCheckbox
-          persistKey="acfs-doctor"
+          persistKey="flywheel-doctor"
         />
       </div>
 
       {/* Expected output */}
       <OutputPreview title="Expected output">
         <div className="space-y-1 font-mono text-xs">
-          <p className="text-muted-foreground">ACFS Doctor - System Health Check</p>
+          <p className="text-muted-foreground">Agent Flywheel Doctor - System Health Check</p>
           <p className="text-muted-foreground">================================</p>
           <p className="text-[oklch(0.72_0.19_145)]">✔ Shell: zsh with oh-my-zsh</p>
           <p className="text-[oklch(0.72_0.19_145)]">✔ Languages: bun, uv, rust, go</p>
