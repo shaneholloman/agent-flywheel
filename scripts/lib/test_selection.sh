@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091,SC2034
 # ============================================================
 # Test script for selection.sh
 # Run: bash scripts/lib/test_selection.sh
