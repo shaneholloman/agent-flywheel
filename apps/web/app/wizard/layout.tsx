@@ -7,7 +7,7 @@ import { Terminal, Home, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Stepper, StepperMobile } from "@/components/stepper";
 import { WIZARD_STEPS, getStepBySlug } from "@/lib/wizardSteps";
-import { detectOS, getUserOS, setUserOS } from "@/lib/userPreferences";
+import { detectOS, getUserOS, setUserOS, getVPSIP } from "@/lib/userPreferences";
 import { withCurrentSearch } from "@/lib/utils";
 
 export default function WizardLayout({
@@ -54,6 +54,18 @@ export default function WizardLayout({
             return;
           }
         }
+
+        // Step 5 (Create VPS) requires IP address before proceeding to step 6 (SSH Connect).
+        // The SSH Connect page redirects back if no IP is stored, which looks like a page reload.
+        // Block navigation here with a helpful message instead.
+        if (currentStep === 5 && stepId === 6) {
+          const storedIP = getVPSIP();
+          if (!storedIP) {
+            window.alert("Please enter your VPS IP address and click 'Continue to SSH' to proceed.");
+            return;
+          }
+        }
+
         router.push(withCurrentSearch(`/wizard/${step.slug}`));
       }
     },
