@@ -124,6 +124,7 @@ check_codex_status() {
 
     # Check for API key or config
     if [[ -n "${OPENAI_API_KEY:-}" ]] || \
+       user_file_exists "$TARGET_HOME/.codex/auth.json" || \
        user_file_exists "$TARGET_HOME/.codex/config.json" || \
        user_file_exists "$TARGET_HOME/.config/codex/config.json"; then
         SERVICE_STATUS[codex]="configured"
@@ -160,6 +161,7 @@ check_vercel_status() {
 
     # Check if logged in by looking for auth token
     if user_file_exists "$TARGET_HOME/.config/vercel/auth.json" || \
+       user_file_exists "$TARGET_HOME/.vercel/auth.json" || \
        [[ -n "${VERCEL_TOKEN:-}" ]]; then
         SERVICE_STATUS[vercel]="configured"
     else
@@ -176,7 +178,8 @@ check_supabase_status() {
     fi
 
     # Check for access token
-    if user_file_exists "$TARGET_HOME/.config/supabase/access-token" || \
+    if user_file_exists "$TARGET_HOME/.supabase/access-token" || \
+       user_file_exists "$TARGET_HOME/.config/supabase/access-token" || \
        [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
         SERVICE_STATUS[supabase]="configured"
     else
@@ -193,7 +196,7 @@ check_wrangler_status() {
     fi
 
     # Check for Cloudflare credentials
-    if user_file_exists "$TARGET_HOME/.config/wrangler/config/default.toml" || \
+    if user_file_exists "$TARGET_HOME/.config/.wrangler/config/default.toml" || \
        user_file_exists "$TARGET_HOME/.wrangler/config/default.toml" || \
        [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
         SERVICE_STATUS[wrangler]="configured"

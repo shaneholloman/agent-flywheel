@@ -83,6 +83,16 @@ done
 # Output Functions
 # ============================================================
 
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}" # escape backslashes
+    s="${s//\"/\\\"}" # escape quotes
+    s="${s//$'\n'/\\n}" # escape newlines
+    s="${s//$'\r'/\\r}" # escape CR
+    s="${s//$'\t'/\\t}" # escape tabs
+    printf '%s' "$s"
+}
+
 log_check() {
     local status="$1"
     local message="$2"
@@ -90,8 +100,8 @@ log_check() {
 
     if [[ "$JSON_OUTPUT" == "true" ]]; then
         # Escape quotes in message and detail for JSON
-        message="${message//\"/\\\"}"
-        detail="${detail//\"/\\\"}"
+        message="$(json_escape "$message")"
+        detail="$(json_escape "$detail")"
         RESULTS+=("{\"status\":\"$status\",\"message\":\"$message\",\"detail\":\"$detail\"}")
     elif [[ "$QUIET" != "true" ]]; then
         case "$status" in
@@ -191,16 +201,15 @@ check_memory() {
 
 check_disk() {
     local free_kb
-    free_kb=$(df --output=avail / 2>/dev/null | tail -1) || free_kb=""
-
-    if [[ -z "$free_kb" ]]; then
-        # Fallback for systems without --output support (macOS, older Linux)
-        # On macOS, df shows 512-byte blocks, so use -k for KB
-        if [[ "$(uname)" == "Darwin" ]]; then
-            free_kb=$(df -k / | awk 'NR==2 {print $4}')
-        else
-            free_kb=$(df / | awk 'NR==2 {print $4}')
-        fi
+    # Use -P for POSIX output (header + one line per FS), awk column 4 is usually Available
+    # Tail -1 to get the data line
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # macOS df -k -P
+        free_kb=$(df -k -P / | tail -1 | awk '{print $4}')
+    else
+        # Linux df -P (often implies 1K blocks, but verify)
+        # Using -k ensures 1K blocks
+        free_kb=$(df -k -P / | tail -1 | awk '{print $4}')
     fi
 
     # Handle non-numeric or empty values
@@ -293,13 +302,14 @@ check_apt_lock() {
     fi
 
     # Check for active apt processes
-    if pgrep -x "apt|apt-get|dpkg" &>/dev/null; then
+    # Use -f to match against full command line for safer detection
+    if pgrep -f "(apt|apt-get|dpkg)" >/dev/null 2>&1; then
         warn "APT process running" "Another package operation in progress"
         return
     fi
 
     # Check for unattended-upgrades
-    if pgrep -x "unattended-upgr" &>/dev/null; then
+    if pgrep -f "unattended-upgr" >/dev/null 2>&1; then
         warn "unattended-upgrades running" "May cause apt conflicts; consider: sudo systemctl stop unattended-upgrades"
         return
     fi

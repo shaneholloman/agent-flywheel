@@ -231,7 +231,12 @@ _run_lesson() {
     local lesson_title
     lesson_title=$(_get_lesson_title "$idx")
 
-    _show_lesson "$idx"
+    # If show lesson fails (file not found), return immediately
+    # Do not show the completion menu
+    if ! _show_lesson "$idx"; then
+        read -r -p "Press Enter to return to menu..." || true
+        return 1
+    fi
 
     echo ""
     echo -e "${CYAN}------------------------------------------------------------${NC}"

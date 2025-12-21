@@ -126,7 +126,8 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
   };
 
   const checkCodex = (): AuthStatus => {
-    const authPath = path.join(homedir, '.codex', 'auth.json');
+    const codexHome = deps.env.CODEX_HOME ?? path.join(homedir, '.codex');
+    const authPath = path.join(codexHome, 'auth.json');
     if (!deps.existsSync(authPath)) {
       return { authenticated: false };
     }
@@ -141,8 +142,19 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
     if (deps.env.GOOGLE_API_KEY) {
       return { authenticated: true, details: 'via GOOGLE_API_KEY' };
     }
+    if (deps.env.GEMINI_API_KEY) {
+      return { authenticated: true, details: 'via GEMINI_API_KEY' };
+    }
     const credPath = path.join(homedir, '.config', 'gemini', 'credentials.json');
     if (deps.existsSync(credPath)) {
+      return { authenticated: true };
+    }
+    const legacyConfigPath = path.join(homedir, '.gemini', 'config');
+    if (deps.existsSync(legacyConfigPath)) {
+      return { authenticated: true };
+    }
+    const adcPath = path.join(homedir, '.config', 'gcloud', 'application_default_credentials.json');
+    if (deps.existsSync(adcPath)) {
       return { authenticated: true };
     }
     return { authenticated: false };
@@ -226,6 +238,9 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
   };
 
   const checkWrangler = (): AuthStatus => {
+    if (deps.env.CLOUDFLARE_API_TOKEN) {
+      return { authenticated: true, details: 'via CLOUDFLARE_API_TOKEN' };
+    }
     if (deps.commandExists('wrangler')) {
       const output = runCommand('wrangler whoami');
       if (output) {
@@ -238,7 +253,7 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
     }
 
     const configPaths = [
-      path.join(homedir, '.config', '.wrangler', 'config', 'default.toml'),
+      path.join(homedir, '.config', 'wrangler', 'config', 'default.toml'),
       path.join(homedir, '.wrangler', 'config', 'default.toml'),
     ];
     for (const configPath of configPaths) {

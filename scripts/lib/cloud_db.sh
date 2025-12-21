@@ -113,7 +113,11 @@ _cloud_get_codename() {
     if [[ -f /etc/os-release ]]; then
         # shellcheck disable=SC1091
         source /etc/os-release
-        echo "${VERSION_CODENAME:-noble}"
+        local codename="${VERSION_CODENAME:-noble}"
+        case "$codename" in
+            oracular|plucky) codename="noble" ;;
+        esac
+        echo "$codename"
     else
         echo "noble"  # Default to Ubuntu 24.04
     fi
@@ -443,22 +447,34 @@ install_all_cloud_db() {
 
     # PostgreSQL (unless skipped)
     if [[ "${SKIP_POSTGRES:-false}" != "true" ]]; then
-        install_postgresql
-        configure_postgresql
+        if ! install_postgresql; then
+            log_warn "PostgreSQL install failed"
+            return 1
+        fi
+        if ! configure_postgresql; then
+            log_warn "PostgreSQL configuration failed"
+            return 1
+        fi
     else
         log_detail "Skipping PostgreSQL (SKIP_POSTGRES=true)"
     fi
 
     # Vault (unless skipped)
     if [[ "${SKIP_VAULT:-false}" != "true" ]]; then
-        install_vault
+        if ! install_vault; then
+            log_warn "Vault install failed"
+            return 1
+        fi
     else
         log_detail "Skipping Vault (SKIP_VAULT=true)"
     fi
 
     # Cloud CLIs (unless skipped)
     if [[ "${SKIP_CLOUD:-false}" != "true" ]]; then
-        install_cloud_clis
+        if ! install_cloud_clis; then
+            log_warn "Cloud CLI install failed"
+            return 1
+        fi
     else
         log_detail "Skipping cloud CLIs (SKIP_CLOUD=true)"
     fi
