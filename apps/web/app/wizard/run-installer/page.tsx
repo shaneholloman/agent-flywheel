@@ -127,7 +127,7 @@ export default function RunInstallerPage() {
             Fully transparent &amp; open source
           </p>
           <p className="text-[12px] leading-relaxed text-muted-foreground sm:text-[13px]">
-            This script only runs on <strong className="text-foreground/80">your VPS</strong>—not your local computer.
+            This script only runs on <strong className="text-foreground/80">your VPS</strong>, not your local computer.
             You can inspect every line before running it:
           </p>
           <div className="flex flex-wrap gap-2">

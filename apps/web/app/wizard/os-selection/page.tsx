@@ -191,7 +191,7 @@ export default function OSSelectionPage() {
         <p className="text-sm text-muted-foreground">
           <span className="font-medium text-foreground">Tip:</span>{" "}
           {hasDetection ? (
-            <>We guessed your OS from your browser. If that&apos;s wrong, pick the other option—otherwise just hit Continue.</>
+            <>We guessed your OS from your browser. If that&apos;s wrong, pick the other option. Otherwise just hit Continue.</>
           ) : (
             <>If you&apos;re on a phone/tablet, pick the computer you&apos;ll use for the next steps (Mac or Windows).</>
           )}

@@ -96,7 +96,7 @@ export default function GenerateSSHKeyPage() {
             Your keys never leave your computer
           </p>
           <p className="text-[12px] leading-relaxed text-muted-foreground sm:text-[13px]">
-            These commands run <strong className="text-foreground/80">entirely on your machine</strong>—this website cannot see, access, or store your SSH keys.
+            These commands run <strong className="text-foreground/80">entirely on your machine</strong>. This website cannot see, access, or store your SSH keys.
             We&apos;re just showing you what to type. The{" "}
             <a
               href="https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup"

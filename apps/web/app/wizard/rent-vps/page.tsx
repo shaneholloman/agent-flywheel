@@ -241,7 +241,7 @@ export default function RentVPSPage() {
             <p className="text-[13px] leading-relaxed text-[oklch(0.65_0.02_260)] sm:text-sm">
               I&apos;m Jeffrey Emanuel, and I have <span className="font-medium text-[oklch(0.75_0.02_260)]">zero financial relationship</span> with
               Contabo, OVH, or any cloud provider. No affiliate links, no kickbacks, no sponsored content.
-              I recommend these because I use them myself—they offer beefy machines (48GB+ RAM) at
+              I recommend these because I use them myself. They offer beefy machines (48GB+ RAM) at
               a fraction of what AWS, GCP, or Azure charge. On those big providers, equivalent specs
               would cost <span className="font-medium text-[oklch(0.75_0.02_260)]">3-5× more</span>.
             </p>
@@ -295,7 +295,7 @@ export default function RentVPSPage() {
             </ul>
             <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-3">
               <p className="text-sm text-muted-foreground">
-                <strong>Just get 64GB.</strong> You&apos;re spending $400+/month on AI subscriptions—the
+                <strong>Just get 64GB.</strong> You&apos;re spending $400+/month on AI subscriptions, so the
                 extra $14-20/month for 64GB vs 48GB is noise. Don&apos;t bottleneck a $400+/month
                 investment to save $20. The headroom matters when you&apos;re running 15+ agents
                 plus databases, build tools, and language servers.
@@ -305,7 +305,7 @@ export default function RentVPSPage() {
 
           <GuideSection title="The Reality of VPS Performance">
             <p className="mb-3 text-sm text-muted-foreground">
-              A VPS isn&apos;t a dedicated machine—it&apos;s a slice of a larger physical server shared
+              A VPS isn&apos;t a dedicated machine. It&apos;s a slice of a larger physical server shared
               with other customers. Understanding this helps you set realistic expectations:
             </p>
             <ul className="space-y-3 text-sm">
@@ -317,11 +317,11 @@ export default function RentVPSPage() {
               <li>
                 <strong>Overselling is common:</strong> Providers bet that not everyone uses their
                 full allocation simultaneously. When you&apos;re sleeping, they effectively reuse that
-                capacity. This is how they offer low prices—and why performance can be inconsistent.
+                capacity. This is how they offer low prices, and why performance can be inconsistent.
               </li>
               <li>
                 <strong>Dedicated servers exist:</strong> If you want guaranteed, consistent performance,
-                bare-metal dedicated servers are available—but they cost 3-10× more. For most users,
+                bare-metal dedicated servers are available, but they cost 3-10× more. For most users,
                 VPS is the right price/performance tradeoff.
               </li>
             </ul>
@@ -349,12 +349,12 @@ export default function RentVPSPage() {
                 </p>
               </div>
               <div className="rounded-lg border border-border/50 bg-card/50 p-3">
-                <p className="font-medium text-foreground">GPT Pro ($200/month) — Critical for Planning</p>
+                <p className="font-medium text-foreground">GPT Pro ($200/month): Critical for Planning</p>
                 <p className="text-sm text-muted-foreground">
                   Access to GPT 5.2 Pro with Extended Thinking in the ChatGPT webapp. This is
                   <strong> the key to making this approach work</strong>: you use it to write,
                   revise, and iterate on comprehensive plan documents in markdown. Everything
-                  depends on having an extremely detailed, granular plan—which you then convert
+                  depends on having an extremely detailed, granular plan, which you then convert
                   into trackable tasks using <Jargon term="beads">Beads</Jargon>. The extended thinking capability is unmatched
                   for this kind of strategic planning work.
                 </p>
@@ -373,7 +373,7 @@ export default function RentVPSPage() {
             <div className="mt-4 rounded-lg border border-[oklch(0.65_0.12_30/0.3)] bg-[oklch(0.65_0.12_30/0.08)] p-3">
               <p className="text-sm text-muted-foreground">
                 <strong>⚠️ Realistic minimum investment:</strong> VPS (~$26-56/month) + Claude Max ($200/month) + GPT Pro ($200/month) = <strong>~$426-456/month</strong>.
-                The $20/month Claude Pro tier does <em>not</em> have enough capacity for agentic workflows—you&apos;ll
+                The $20/month Claude Pro tier does <em>not</em> have enough capacity for agentic workflows; you&apos;ll
                 hit rate limits almost immediately. Claude Max is required for execution, and GPT Pro&apos;s extended
                 thinking is essential for creating the detailed plan documents that make this approach work.
                 <br /><br />
@@ -489,7 +489,7 @@ export default function RentVPSPage() {
                 <code className="rounded bg-muted px-1">gh</code> CLI for easy GitHub access.
               </li>
               <li>
-                <strong>Open-source = free everything.</strong> Public repos, unlimited Actions, GitHub Pages—all free.
+                <strong>Open-source = free everything.</strong> Public repos, unlimited Actions, GitHub Pages, all free.
               </li>
               <li>
                 <strong>Private projects:</strong> Free tier works for individuals. Teams or heavy CI/CD may need
@@ -500,7 +500,7 @@ export default function RentVPSPage() {
 
           <GuideTip>
             <strong>TL;DR:</strong> Get Contabo <strong>Cloud VPS 50</strong> (64GB RAM, 16 vCPU, ~$56/month US).
-            Don&apos;t overthink it—64GB is the right choice when you&apos;re investing $400+/month in AI subscriptions.
+            Don&apos;t overthink it. 64GB is the right choice when you&apos;re investing $400+/month in AI subscriptions.
             Contabo can take up to an hour to provision (usually minutes); OVH is typically faster.
           </GuideTip>
 
