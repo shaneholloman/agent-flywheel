@@ -79,6 +79,7 @@ ehthumbs.db
 .beads/cache/
 .beads/*.log
 .beads/*.sock
+.beads/*.sock.*
 
 # ----- Local testing artifacts -----
 tests/vm/.vagrant/
