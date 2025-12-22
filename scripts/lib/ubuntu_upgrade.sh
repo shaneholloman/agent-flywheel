@@ -812,7 +812,7 @@ echo -e "${C}║${N}                                                            
 echo -e "${C}╠══════════════════════════════════════════════════════════════╣${N}"
 echo -e "${C}║${N}  ${B}MONITOR PROGRESS:${N}                                           ${C}║${N}"
 echo -e "${C}║${N}                                                              ${C}║${N}"
-echo -e "${C}║${N}  ${G}acfs continue${N}                         (easy: view progress) ${C}║${N}"
+echo -e "${C}║${N}  ${G}/var/lib/acfs/check_status.sh${N}        (status summary)  ${C}║${N}"
 echo -e "${C}║${N}  ${D}tail -f /var/log/acfs/upgrade_resume.log${N}    (detailed log) ${C}║${N}"
 echo -e "${C}║${N}                                                              ${C}║${N}"
 echo -e "${C}╚══════════════════════════════════════════════════════════════╝${N}"

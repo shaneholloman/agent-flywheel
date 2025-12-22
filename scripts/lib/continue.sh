@@ -74,17 +74,16 @@ get_state_value() {
         return 1
     fi
 
-    if command -v jq &>/dev/null; then
-        jq -r "$key // empty" "$state_file" 2>/dev/null
-    else
-        return 1
-    fi
+    command -v jq &>/dev/null || return 1
+
+    # Never crash on jq errors (schema drift / partial state files during boot).
+    jq -r "$key" "$state_file" 2>/dev/null || true
 }
 
 # Get current phase info
 get_current_phase() {
     local phase
-    phase=$(get_state_value '.current_phase.id // .current_phase // empty')
+    phase=$(get_state_value '.current_phase.id? // .current_phase // empty')
     if [[ -n "$phase" ]]; then
         echo "$phase"
     else
@@ -105,19 +104,32 @@ get_current_step() {
 
 # Get installation status
 get_install_status() {
-    local status
-    status=$(get_state_value '.status // empty')
-    if [[ -n "$status" ]]; then
-        echo "$status"
-    else
-        echo "unknown"
+    local failed_phase current_phase finalize_completed
+    failed_phase=$(get_state_value '.failed_phase // empty')
+    if [[ -n "$failed_phase" ]] && [[ "$failed_phase" != "null" ]]; then
+        echo "failed"
+        return 0
     fi
+
+    current_phase=$(get_state_value '.current_phase // empty')
+    if [[ -n "$current_phase" ]] && [[ "$current_phase" != "null" ]]; then
+        echo "running"
+        return 0
+    fi
+
+    finalize_completed=$(get_state_value '(.completed_phases // []) | index("finalize") != null')
+    if [[ "$finalize_completed" == "true" ]]; then
+        echo "complete"
+        return 0
+    fi
+
+    echo "unknown"
 }
 
 # Get Ubuntu upgrade status
 get_upgrade_status() {
     local stage
-    stage=$(get_state_value '.ubuntu_upgrade.stage // empty')
+    stage=$(get_state_value '.ubuntu_upgrade.current_stage // empty')
     if [[ -n "$stage" ]]; then
         echo "$stage"
     else
@@ -131,7 +143,7 @@ get_active_log() {
     upgrade_stage=$(get_upgrade_status)
 
     # If upgrade is in progress, show upgrade log
-    if [[ -n "$upgrade_stage" ]] && [[ "$upgrade_stage" != "complete" ]] && [[ "$upgrade_stage" != "skipped" ]]; then
+    if [[ -n "$upgrade_stage" ]] && [[ "$upgrade_stage" != "completed" ]]; then
         if [[ -f "$ACFS_UPGRADE_LOG" ]]; then
             echo "$ACFS_UPGRADE_LOG"
             return 0
@@ -194,7 +206,7 @@ show_status() {
     # Show upgrade status if relevant
     local upgrade_stage
     upgrade_stage=$(get_upgrade_status)
-    if [[ -n "$upgrade_stage" ]] && [[ "$upgrade_stage" != "complete" ]] && [[ "$upgrade_stage" != "skipped" ]]; then
+    if [[ -n "$upgrade_stage" ]] && [[ "$upgrade_stage" != "completed" ]]; then
         echo -e "  ${BOLD}Ubuntu:${NC} Upgrade stage: ${YELLOW}$upgrade_stage${NC}"
     fi
 

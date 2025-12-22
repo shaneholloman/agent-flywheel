@@ -124,6 +124,7 @@ print_acfs_help() {
     echo "  doctor [options]    Check system health and tool status"
     echo "    --json            Output results as JSON"
     echo "    --deep            Run functional tests (auth, connections)"
+    echo "  continue [options]  View installation/upgrade progress"
     echo "  update [options]    Update ACFS tools to latest versions"
     echo "  services-setup      Configure AI agents and cloud services"
     echo "  session <command>   Export/import/share agent sessions"
@@ -1514,6 +1515,24 @@ main() {
     case "$subcmd" in
         doctor|check)
             shift
+            ;;
+        continue|progress)
+            shift
+            local continue_script=""
+            if [[ -f "$HOME/.acfs/scripts/lib/continue.sh" ]]; then
+                continue_script="$HOME/.acfs/scripts/lib/continue.sh"
+            elif [[ -f "$SCRIPT_DIR/continue.sh" ]]; then
+                continue_script="$SCRIPT_DIR/continue.sh"
+            elif [[ -f "$SCRIPT_DIR/../scripts/lib/continue.sh" ]]; then
+                continue_script="$SCRIPT_DIR/../scripts/lib/continue.sh"
+            fi
+
+            if [[ -n "$continue_script" ]]; then
+                exec bash "$continue_script" "$@"
+            fi
+
+            echo "Error: continue.sh not found" >&2
+            return 1
             ;;
         session)
             shift

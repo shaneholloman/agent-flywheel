@@ -76,18 +76,21 @@ MOTD_SCRIPT
 echo -e "\${C}║\${N}  \${Y}Error:\${N} ${error_msg}"
 MOTD_ERROR
 
-    cat >> "$motd_file" << 'MOTD_FOOTER'
-echo -e "${C}║${N}                                                              ${C}║${N}"
-echo -e "${C}║${N}  ${B}TO RETRY:${N}                                                   ${C}║${N}"
-echo -e "${C}║${N}    curl -fsSL https://bit.ly/acfs-install | bash -s -- --yes ${C}║${N}"
-echo -e "${C}║${N}                                                              ${C}║${N}"
-echo -e "${C}║${N}  ${B}TO VIEW LOGS:${N}                                               ${C}║${N}"
-echo -e "${C}║${N}    acfs continue                                             ${C}║${N}"
-echo -e "${C}║${N}    cat /var/log/acfs/upgrade_resume.log                      ${C}║${N}"
-echo -e "${C}║${N}                                                              ${C}║${N}"
-echo -e "${C}╚══════════════════════════════════════════════════════════════╝${N}"
-echo ""
-MOTD_FOOTER
+	    cat >> "$motd_file" << 'MOTD_FOOTER'
+	echo -e "${C}║${N}                                                              ${C}║${N}"
+	echo -e "${C}║${N}  ${B}TO RETRY (AFTER FIXING):${N}                                    ${C}║${N}"
+	echo -e "${C}║${N}    sudo systemctl enable --now acfs-upgrade-resume            ${C}║${N}"
+	echo -e "${C}║${N}                                                              ${C}║${N}"
+	echo -e "${C}║${N}  ${B}TO CHECK STATUS:${N}                                            ${C}║${N}"
+	echo -e "${C}║${N}    /var/lib/acfs/check_status.sh                              ${C}║${N}"
+	echo -e "${C}║${N}                                                              ${C}║${N}"
+	echo -e "${C}║${N}  ${B}TO VIEW LOGS:${N}                                               ${C}║${N}"
+	echo -e "${C}║${N}    journalctl -u acfs-upgrade-resume -f                       ${C}║${N}"
+	echo -e "${C}║${N}    cat /var/log/acfs/upgrade_resume.log                       ${C}║${N}"
+	echo -e "${C}║${N}                                                              ${C}║${N}"
+	echo -e "${C}╚══════════════════════════════════════════════════════════════╝${N}"
+	echo ""
+	MOTD_FOOTER
 
     chmod +x "$motd_file"
 }
@@ -206,26 +209,9 @@ export ACFS_STATE_FILE="${ACFS_RESUME_DIR}/state.json"
 
 current_stage=""
 if [[ -f "$ACFS_STATE_FILE" ]] && command -v jq &>/dev/null; then
-    current_stage=$(jq -r '.ubuntu_upgrade.stage // "unknown"' "$ACFS_STATE_FILE" 2>/dev/null) || current_stage="unknown"
+    current_stage=$(jq -r '.ubuntu_upgrade.current_stage // "unknown"' "$ACFS_STATE_FILE" 2>/dev/null) || current_stage="unknown"
 fi
 log "Current stage from state file: $current_stage"
-
-# Handle pre_upgrade_reboot stage specially
-if [[ "$current_stage" == "pre_upgrade_reboot" ]]; then
-    log "Pre-upgrade reboot completed. Relaunching installer to continue..."
-
-    upgrade_update_motd "Pre-upgrade reboot complete. Starting Ubuntu upgrade..." 2>/dev/null || true
-
-    if launch_continue_script; then
-        log "=== Pre-Upgrade Reboot Resume Complete ==="
-        exit 0
-    else
-        log_error "No continue_install.sh found"
-        cleanup_service
-        update_motd_failure "continue_install.sh missing"
-        exit 1
-    fi
-fi
 
 # Ensure non-LTS upgrades are permitted
 ubuntu_enable_normal_releases || true
