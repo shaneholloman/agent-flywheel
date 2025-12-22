@@ -824,7 +824,7 @@ print_execution_plan() {
 # Related beads: agentic_coding_flywheel_setup-545
 
 run_preflight_checks() {
-    log_step "0/10" "Running pre-flight validation..."
+    log_step "0/9" "Running pre-flight validation..."
 
     local preflight_script=""
 
@@ -866,7 +866,7 @@ run_preflight_checks() {
         exit 1
     fi
 
-    log_success "[0/10] Pre-flight validation passed"
+    log_success "[0/9] Pre-flight validation passed"
     echo ""
 }
 
@@ -1334,6 +1334,9 @@ init_target_paths() {
 
     log_detail "Target user: $TARGET_USER"
     log_detail "Target home: $TARGET_HOME"
+
+    # Export for generated installers (run via subshells).
+    export TARGET_USER TARGET_HOME ACFS_HOME ACFS_STATE_FILE
 }
 
 validate_target_user() {
@@ -1442,7 +1445,7 @@ run_ubuntu_upgrade_phase() {
         return 0
     fi
 
-    log_step "-1/10" "Ubuntu Auto-Upgrade"
+    log_step "-1/9" "Ubuntu Auto-Upgrade"
     # Format path for display (e.g., "24.10 → 25.04 → 25.10")
     local upgrade_path_display
     upgrade_path_display=$(echo "$upgrade_path" | tr '\n' ' ' | sed 's/ $//; s/ / → /g')
@@ -1522,7 +1525,7 @@ run_ubuntu_upgrade_phase() {
 
 ensure_base_deps() {
     set_phase "base_deps" "Base Dependencies" 1
-    log_step "1/10" "Checking base dependencies..."
+    log_step "0/9" "Checking base dependencies..."
 
     if acfs_use_generated_category "base"; then
         log_detail "Using generated installers for base (phase 1)"
@@ -1553,7 +1556,7 @@ ensure_base_deps() {
 # ============================================================
 normalize_user() {
     set_phase "normalize_user" "User Normalization" 2
-    log_step "2/10" "Normalizing user account..."
+    log_step "1/9" "Normalizing user account..."
 
     if [[ $EUID -eq 0 ]] && type -t prompt_ssh_key &>/dev/null; then
         if ! prompt_ssh_key; then
@@ -1609,11 +1612,11 @@ normalize_user() {
 # ============================================================
 setup_filesystem() {
     set_phase "setup_filesystem" "Filesystem Setup" 3
-    log_step "3/10" "Setting up filesystem..."
+    log_step "2/9" "Setting up filesystem..."
 
-    if acfs_use_generated_category "base"; then
-        log_detail "Using generated installers for base (phase 3)"
-        acfs_run_generated_category_phase "base" "3" || return 1
+    if acfs_use_generated_category "filesystem"; then
+        log_detail "Using generated installers for filesystem (phase 3)"
+        acfs_run_generated_category_phase "filesystem" "3" || return 1
         log_success "Filesystem setup complete"
         return 0
     fi
@@ -1652,7 +1655,7 @@ setup_filesystem() {
 # ============================================================
 setup_shell() {
     set_phase "setup_shell" "Shell Setup" 4
-    log_step "4/10" "Setting up shell..."
+    log_step "3/9" "Setting up shell..."
 
     if acfs_use_generated_category "shell"; then
         log_detail "Using generated installers for shell (phase 4)"
@@ -1793,11 +1796,37 @@ install_github_cli() {
 
 install_cli_tools() {
     set_phase "install_cli_tools" "CLI Tools" 5
-    log_step "5/10" "Installing CLI tools..."
+    log_step "4/9" "Installing CLI tools..."
+
+    local used_generated_cli=false
+    local used_generated_network=false
 
     if acfs_use_generated_category "cli"; then
         log_detail "Using generated installers for cli (phase 5)"
         acfs_run_generated_category_phase "cli" "5" || return 1
+        used_generated_cli=true
+    fi
+
+    if acfs_use_generated_category "network"; then
+        log_detail "Using generated installers for network (phase 5)"
+        acfs_run_generated_category_phase "network" "5" || return 1
+        used_generated_network=true
+    fi
+
+    if [[ "$used_generated_cli" == "true" ]]; then
+        if [[ "$used_generated_network" != "true" ]]; then
+            # Preserve legacy Tailscale install when network isn't generated yet.
+            if command -v tailscale &>/dev/null; then
+                log_detail "Tailscale already installed"
+            else
+                log_detail "Installing Tailscale..."
+                if try_step "Installing Tailscale" install_tailscale; then
+                    log_success "Tailscale installed"
+                else
+                    log_warn "Tailscale installation failed (optional, continuing)"
+                fi
+            fi
+        fi
         log_success "CLI tools installed"
         return 0
     fi
@@ -1887,7 +1916,9 @@ install_cli_tools() {
     try_step "Adding $TARGET_USER to docker group" $SUDO usermod -aG docker "$TARGET_USER" || true
 
     # Tailscale VPN for secure remote access (bt5)
-    if command -v tailscale &>/dev/null; then
+    if [[ "$used_generated_network" == "true" ]]; then
+        log_detail "Tailscale handled by generated network installers"
+    elif command -v tailscale &>/dev/null; then
         log_detail "Tailscale already installed"
     else
         log_detail "Installing Tailscale..."
@@ -1971,7 +2002,7 @@ install_languages_legacy_tools() {
 
 install_languages() {
     set_phase "install_languages" "Language Runtimes" 6
-    log_step "6/10" "Installing language runtimes..."
+    log_step "5/9" "Installing language runtimes..."
 
     local ran_any=false
 
@@ -2005,7 +2036,7 @@ install_languages() {
 # ============================================================
 install_agents() {
     set_phase "install_agents" "Coding Agents" 7
-    log_step "7/10" "Installing coding agents..."
+    log_step "6/9" "Installing coding agents..."
 
     if acfs_use_generated_category "agents"; then
         log_detail "Using generated installers for agents (phase 7)"
@@ -2155,7 +2186,7 @@ install_cloud_db_legacy_cloud() {
 
 install_cloud_db() {
     set_phase "install_cloud_db" "Cloud & Database Tools" 8
-    log_step "8/10" "Installing cloud & database tools..."
+    log_step "7/9" "Installing cloud & database tools..."
 
     local codename="noble"
     if [[ -f /etc/os-release ]]; then
@@ -2215,7 +2246,7 @@ binary_installed() {
 
 install_stack() {
     set_phase "install_stack" "Dicklesworthstone Stack" 9
-    log_step "9/10" "Installing Dicklesworthstone stack..."
+    log_step "8/9" "Installing Dicklesworthstone stack..."
 
     if acfs_use_generated_category "stack"; then
         log_detail "Using generated installers for stack (phase 9)"
@@ -2296,7 +2327,7 @@ install_stack() {
 # ============================================================
 finalize() {
     set_phase "finalize" "Final Wiring" 10
-    log_step "10/10" "Finalizing installation..."
+    log_step "9/9" "Finalizing installation..."
 
     if acfs_use_generated_category "acfs"; then
         log_detail "Using generated installers for acfs (phase 10)"
@@ -2389,8 +2420,13 @@ finalize() {
         "TARGET_USER='$TARGET_USER' TARGET_HOME='$TARGET_HOME' '$ACFS_HOME/scripts/services-setup.sh' --install-claude-guard --yes" || \
         log_warn "Claude Git Safety Guard installation failed (optional)"
 
-    # Create state file
-    cat > "$ACFS_STATE_FILE" << EOF
+    # Legacy state file (only if state.sh is unavailable)
+    if type -t state_load &>/dev/null; then
+        if [[ -f "$ACFS_STATE_FILE" ]]; then
+            $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_STATE_FILE" || true
+        fi
+    else
+        cat > "$ACFS_STATE_FILE" << EOF
 {
   "version": "$ACFS_VERSION",
   "installed_at": "$(date -Iseconds)",
@@ -2403,7 +2439,8 @@ finalize() {
   "completed_phases": [1, 2, 3, 4, 5, 6, 7, 8, 9]
 }
 EOF
-    $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_STATE_FILE"
+        $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_STATE_FILE"
+    fi
 
     log_success "Installation complete!"
 }
@@ -2497,7 +2534,7 @@ run_smoke_test() {
     # 5) bun, uv, cargo, go available
     local missing_lang=()
     [[ -x "$TARGET_HOME/.bun/bin/bun" ]] || missing_lang+=("bun")
-    [[ -x "$TARGET_HOME/.local/bin/uv" ]] || missing_lang+=("uv")
+    [[ -x "$TARGET_HOME/.local/bin/uv" || -x "$TARGET_HOME/.cargo/bin/uv" ]] || missing_lang+=("uv")
     [[ -x "$TARGET_HOME/.cargo/bin/cargo" ]] || missing_lang+=("cargo")
     command_exists go || missing_lang+=("go")
     if [[ ${#missing_lang[@]} -eq 0 ]]; then
@@ -2511,9 +2548,9 @@ run_smoke_test() {
 
     # 6) claude, codex, gemini commands exist
     local missing_agents=()
-    [[ -x "$TARGET_HOME/.bun/bin/claude" ]] || missing_agents+=("claude")
-    [[ -x "$TARGET_HOME/.bun/bin/codex" ]] || missing_agents+=("codex")
-    [[ -x "$TARGET_HOME/.bun/bin/gemini" ]] || missing_agents+=("gemini")
+    [[ -x "$TARGET_HOME/.local/bin/claude" || -x "$TARGET_HOME/.bun/bin/claude" ]] || missing_agents+=("claude")
+    [[ -x "$TARGET_HOME/.bun/bin/codex" || -x "$TARGET_HOME/.local/bin/codex" ]] || missing_agents+=("codex")
+    [[ -x "$TARGET_HOME/.bun/bin/gemini" || -x "$TARGET_HOME/.local/bin/gemini" ]] || missing_agents+=("gemini")
     if [[ ${#missing_agents[@]} -eq 0 ]]; then
         echo "✅ Agents: claude, codex, gemini" >&2
         ((critical_passed += 1))

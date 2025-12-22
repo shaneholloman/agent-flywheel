@@ -64,7 +64,7 @@ declare -a MANIFEST_CHECKS=(
     "users.ubuntu.1	Ensure ubuntu user + passwordless sudo + ssh keys	id ubuntu	required"
     "users.ubuntu.2	Ensure ubuntu user + passwordless sudo + ssh keys	sudo -n true	required"
     "base.filesystem.1	Create workspace and ACFS directories	test -d /data/projects	required"
-    "base.filesystem.2	Create workspace and ACFS directories	test -d ~/.acfs	required"
+    "base.filesystem.2	Create workspace and ACFS directories	test -d \"\${TARGET_HOME:-/home/ubuntu}/.acfs\"	required"
     "shell.zsh	Zsh shell package	zsh --version	required"
     "shell.omz.1	Oh My Zsh + Powerlevel10k + plugins + ACFS config	test -d ~/.oh-my-zsh	required"
     "shell.omz.2	Oh My Zsh + Powerlevel10k + plugins + ACFS config	test -f ~/.acfs/zsh/acfs.zshrc	required"

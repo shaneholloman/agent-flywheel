@@ -73,12 +73,14 @@ modules:
       command: "test -d /data/projects && test -d ~/.acfs"
     install:
       - mkdir -p /data/projects /data/cache
-      - chown -R ubuntu:ubuntu /data
+      - chown -R "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" /data
+      - mkdir -p "${TARGET_HOME:-/home/ubuntu}/.acfs"
+      - chown -R "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" "${TARGET_HOME:-/home/ubuntu}/.acfs"
     verify:
       - test -d /data/projects
-      - test -d ~/.acfs
+      - test -d "${TARGET_HOME:-/home/ubuntu}/.acfs"
     notes:
-      - "~/.acfs directories created by target_user shell init"
+      - "~/.acfs created during filesystem phase"
 
   # ============================================================
   # PHASE 4: Shell setup (zsh + oh-my-zsh + p10k)

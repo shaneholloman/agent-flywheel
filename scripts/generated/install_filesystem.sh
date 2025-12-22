@@ -74,13 +74,35 @@ INSTALL_BASE_FILESYSTEM
         fi
     fi
     if [[ "${DRY_RUN:-false}" == "true" ]]; then
-        log_info "dry-run: install: chown -R ubuntu:ubuntu /data (root)"
+        log_info "dry-run: install: chown -R \"\${TARGET_USER:-ubuntu}:\${TARGET_USER:-ubuntu}\" /data (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
-chown -R ubuntu:ubuntu /data
+chown -R "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" /data
 INSTALL_BASE_FILESYSTEM
         then
-            log_error "base.filesystem: install command failed: chown -R ubuntu:ubuntu /data"
+            log_error "base.filesystem: install command failed: chown -R \"\${TARGET_USER:-ubuntu}:\${TARGET_USER:-ubuntu}\" /data"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: mkdir -p \"\${TARGET_HOME:-/home/ubuntu}/.acfs\" (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
+mkdir -p "${TARGET_HOME:-/home/ubuntu}/.acfs"
+INSTALL_BASE_FILESYSTEM
+        then
+            log_error "base.filesystem: install command failed: mkdir -p \"\${TARGET_HOME:-/home/ubuntu}/.acfs\""
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: install: chown -R \"\${TARGET_USER:-ubuntu}:\${TARGET_USER:-ubuntu}\" \"\${TARGET_HOME:-/home/ubuntu}/.acfs\" (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
+chown -R "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" "${TARGET_HOME:-/home/ubuntu}/.acfs"
+INSTALL_BASE_FILESYSTEM
+        then
+            log_error "base.filesystem: install command failed: chown -R \"\${TARGET_USER:-ubuntu}:\${TARGET_USER:-ubuntu}\" \"\${TARGET_HOME:-/home/ubuntu}/.acfs\""
             return 1
         fi
     fi
@@ -98,13 +120,13 @@ INSTALL_BASE_FILESYSTEM
         fi
     fi
     if [[ "${DRY_RUN:-false}" == "true" ]]; then
-        log_info "dry-run: verify: test -d ~/.acfs (root)"
+        log_info "dry-run: verify: test -d \"\${TARGET_HOME:-/home/ubuntu}/.acfs\" (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
-test -d ~/.acfs
+test -d "${TARGET_HOME:-/home/ubuntu}/.acfs"
 INSTALL_BASE_FILESYSTEM
         then
-            log_error "base.filesystem: verify failed: test -d ~/.acfs"
+            log_error "base.filesystem: verify failed: test -d \"\${TARGET_HOME:-/home/ubuntu}/.acfs\""
             return 1
         fi
     fi

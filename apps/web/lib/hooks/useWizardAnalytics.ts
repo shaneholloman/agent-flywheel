@@ -11,6 +11,7 @@ import {
   trackFunnelStepComplete,
   trackFunnelDropoff,
 } from '@/lib/analytics';
+import { TOTAL_STEPS } from '@/lib/wizardSteps';
 
 interface UseWizardAnalyticsOptions {
   step: WizardStep;
@@ -27,7 +28,7 @@ export function useWizardAnalytics({
   step,
   stepNumber,
   stepTitle,
-  totalSteps = 12,
+  totalSteps = TOTAL_STEPS,
 }: UseWizardAnalyticsOptions) {
   const startTime = useRef<number>(0);
   const hasTrackedView = useRef<boolean>(false);
