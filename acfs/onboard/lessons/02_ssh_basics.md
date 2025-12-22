@@ -12,9 +12,21 @@ It's an encrypted tunnel between your laptop and this server.
 
 ---
 
-## The SSH Command
+## How You Got Here: The Two-Step Connect
 
-From your **laptop** (not here), you connected with:
+Your VPS connection happened in two stages:
+
+### Stage 1: Password Login (During Setup)
+When you first created your VPS, you connected as root with a password:
+
+```bash
+ssh root@YOUR_SERVER_IP
+```
+
+This let you run the ACFS installer.
+
+### Stage 2: Key-Based Login (Now)
+The installer copied your SSH key, so now you connect securely:
 
 ```bash
 ssh -i ~/.ssh/acfs_ed25519 ubuntu@YOUR_SERVER_IP
@@ -22,8 +34,8 @@ ssh -i ~/.ssh/acfs_ed25519 ubuntu@YOUR_SERVER_IP
 
 Breaking it down:
 - `ssh` - the command
-- `-i ~/.ssh/acfs_ed25519` - your private key
-- `ubuntu` - the username on the VPS
+- `-i ~/.ssh/acfs_ed25519` - your private key (the installer set this up)
+- `ubuntu` - your regular user account (safer than root)
 - `@YOUR_SERVER_IP` - the server address
 
 ---
@@ -39,11 +51,13 @@ No worries! SSH connections drop sometimes. Just reconnect:
 
 ## SSH Keys vs Passwords
 
-You're using **key-based authentication**:
+You're now using **key-based authentication**:
 - Your **private key** stays on your laptop (`~/.ssh/acfs_ed25519`)
 - Your **public key** is on the VPS (`~/.ssh/authorized_keys`)
 
 This is more secure than passwords and lets you connect without typing anything.
+
+**Why we started with a password:** VPS providers give you root access with a password. The installer then sets up key-based login and disables password access for better security.
 
 ---
 
@@ -79,6 +93,25 @@ Answer these:
 1. Where does your private key live? (`~/.ssh/acfs_ed25519` on your laptop)
 2. What happens if SSH drops? (Reconnect; tmux saves your work)
 3. What's the quick way to reconnect? (Use an alias)
+
+---
+
+## Practice This Now
+
+Try these commands to confirm your SSH setup is working:
+
+```bash
+# Check your current user (should say "ubuntu")
+whoami
+
+# Check how long you've been connected
+w
+
+# View the public keys authorized to access this account
+cat ~/.ssh/authorized_keys
+```
+
+When you see your public key (starts with `ssh-ed25519`), you know the setup worked!
 
 ---
 

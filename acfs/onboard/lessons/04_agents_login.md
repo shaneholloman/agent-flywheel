@@ -126,6 +126,25 @@ gmi "Hello! Please confirm you're working."
 
 ---
 
+## Practice This Now
+
+Let's verify your agents are ready:
+
+```bash
+# Check which agents are installed
+which claude codex gemini
+
+# Check your agent credential backups
+caam list
+
+# If you haven't logged in yet, start with Claude:
+claude auth login
+```
+
+**Pro tip:** If you set up your accounts during the wizard (Step 7: Set Up Accounts), you already have the credentials ready—just run the login commands!
+
+---
+
 ## Next
 
 Now let's learn NTM - the tool that orchestrates all these agents:
