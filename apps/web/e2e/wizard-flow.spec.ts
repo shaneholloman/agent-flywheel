@@ -378,7 +378,7 @@ test.describe("Navigation", () => {
 
     // Mobile header should show step indicator (text spans elements, so check each part)
     await expect(page.locator('text="Step"').first()).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('text="of 10"').first()).toBeVisible();
+    await expect(page.locator('text="of 13"').first()).toBeVisible();
 
     // Mobile navigation buttons should be visible at bottom (Back and Next)
     const bottomNav = page.locator(".bottom-nav-safe");
