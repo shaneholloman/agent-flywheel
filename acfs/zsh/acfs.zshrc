@@ -15,6 +15,13 @@ if [[ -n "$SSH_CONNECTION" ]]; then
   }
 fi
 
+# --- Terminal type fallback (Ghostty, Kitty, etc.) ---
+# Fall back to xterm-256color if current $TERM is unknown to the system.
+# This fixes "unknown terminal type" errors with modern terminals like Ghostty.
+if [[ -n "$TERM" ]] && ! infocmp "$TERM" &>/dev/null; then
+  export TERM="xterm-256color"
+fi
+
 # --- Paths (early) ---
 export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/.cargo/bin:$PATH"
