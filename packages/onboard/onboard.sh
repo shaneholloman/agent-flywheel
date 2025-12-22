@@ -423,8 +423,8 @@ show_auth_flow() {
             status=$(get_auth_status_code "$service")
 
             if [[ $status -ne 2 ]]; then
-                ((total++))
-                [[ $status -eq 0 ]] && ((authed++))
+                ((total += 1))
+                [[ $status -eq 0 ]] && ((authed += 1))
             fi
 
             printf "  %s  %-15s %s\n" "$status_icon" "$name" "${DIM}$desc${NC}"
