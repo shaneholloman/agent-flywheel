@@ -61,6 +61,7 @@ declare -a MANIFEST_CHECKS=(
     "base.system.1	Base packages + sane defaults	curl --version	required"
     "base.system.2	Base packages + sane defaults	git --version	required"
     "base.system.3	Base packages + sane defaults	jq --version	required"
+    "base.system.4	Base packages + sane defaults	gpg --version	required"
     "users.ubuntu.1	Ensure ubuntu user + passwordless sudo + ssh keys	id ubuntu	required"
     "users.ubuntu.2	Ensure ubuntu user + passwordless sudo + ssh keys	sudo -n true	required"
     "base.filesystem.1	Create workspace and ACFS directories	test -d /data/projects	required"

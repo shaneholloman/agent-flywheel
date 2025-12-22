@@ -1224,25 +1224,32 @@ install_asset() {
 run_as_target() {
     local user="$TARGET_USER"
 
+    # Environment variables to set for target user commands
+    # UV_NO_CONFIG prevents uv from looking for config in /root when running via sudo
+    local env_vars="UV_NO_CONFIG=1"
+
     # Already the target user
     if [[ "$(whoami)" == "$user" ]]; then
-        "$@"
+        env $env_vars "$@"
         return $?
     fi
 
-    # Preferred: sudo
+    # Preferred: sudo with login shell simulation (-i)
+    # This sets HOME and changes to the user's home directory,
+    # matching the behavior of 'su - user' for consistent CWD
     if command_exists sudo; then
-        sudo -u "$user" -H "$@"
+        sudo -i -u "$user" env $env_vars -- "$@"
         return $?
     fi
 
     # Fallbacks (root-only typically)
     if command_exists runuser; then
-        runuser -u "$user" -- "$@"
+        # runuser -l is the login shell variant
+        runuser -l "$user" -c "export $env_vars; $(printf '%q ' "$@")"
         return $?
     fi
 
-    su - "$user" -c "$(printf '%q ' "$@")"
+    su - "$user" -c "export $env_vars; $(printf '%q ' "$@")"
 }
 
 # ============================================================

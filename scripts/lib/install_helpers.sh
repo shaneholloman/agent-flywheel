@@ -538,34 +538,50 @@ acfs_apply_legacy_skips() {
 # Command execution helpers (heredoc-friendly)
 # ------------------------------------------------------------
 
+# Common paths for user-installed tools (added to PATH for verification)
+# This ensures tools installed in user directories are findable
+_acfs_user_paths() {
+    echo "\$HOME/.local/bin:\$HOME/.cargo/bin:\$HOME/.bun/bin:\$HOME/.atuin/bin:\$HOME/go/bin"
+}
+
 _run_shell_with_strict_mode() {
     local cmd="$1"
+    local path_prefix
+    path_prefix="$(_acfs_user_paths)"
+
+    # UV_NO_CONFIG prevents uv from looking for config in /root when running via sudo
+    local env_setup="export PATH=\"$path_prefix:\$PATH\" UV_NO_CONFIG=1"
 
     if [[ -n "$cmd" ]]; then
-        bash -lc "set -euo pipefail; $cmd"
+        bash -lc "$env_setup; set -euo pipefail; $cmd"
         return $?
     fi
 
     # stdin mode (supports heredocs/pipes)
-    bash -lc 'set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | bash -s'
+    bash -lc "$env_setup; set -euo pipefail; (printf '%s\n' 'set -euo pipefail'; cat) | bash -s"
 }
 
 # Run a shell string (or stdin) as TARGET_USER
 run_as_target_shell() {
     local cmd="${1:-}"
+    local path_prefix
+    path_prefix="$(_acfs_user_paths)"
 
     if ! declare -f run_as_target >/dev/null 2>&1; then
         log_error "run_as_target_shell requires run_as_target"
         return 1
     fi
 
+    # UV_NO_CONFIG prevents uv from looking for config in /root when running via sudo
+    local env_setup="export PATH=\"$path_prefix:\$PATH\" UV_NO_CONFIG=1"
+
     if [[ -n "$cmd" ]]; then
-        run_as_target bash -lc "set -euo pipefail; $cmd"
+        run_as_target bash -lc "$env_setup; set -euo pipefail; $cmd"
         return $?
     fi
 
     # stdin mode
-    run_as_target bash -lc 'set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | bash -s'
+    run_as_target bash -lc "$env_setup; set -euo pipefail; (printf '%s\n' 'set -euo pipefail'; cat) | bash -s"
 }
 
 # Run a runner (bash, sh) with args as TARGET_USER, passing stdin

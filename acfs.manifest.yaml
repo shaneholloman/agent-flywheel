@@ -28,11 +28,12 @@ modules:
       command: "command -v curl && command -v git && command -v jq"
     install:
       - apt-get update -y
-      - apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential
+      - apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential gnupg lsb-release
     verify:
       - curl --version
       - git --version
       - jq --version
+      - gpg --version
 
   # ============================================================
   # PHASE 2: User normalization (ORCHESTRATION-ONLY)

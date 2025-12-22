@@ -74,13 +74,13 @@ INSTALL_BASE_SYSTEM
         fi
     fi
     if [[ "${DRY_RUN:-false}" == "true" ]]; then
-        log_info "dry-run: install: apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential (root)"
+        log_info "dry-run: install: apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential gnupg lsb-release (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_SYSTEM'
-apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential
+apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential gnupg lsb-release
 INSTALL_BASE_SYSTEM
         then
-            log_error "base.system: install command failed: apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential"
+            log_error "base.system: install command failed: apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential gnupg lsb-release"
             return 1
         fi
     fi
@@ -116,6 +116,17 @@ jq --version
 INSTALL_BASE_SYSTEM
         then
             log_error "base.system: verify failed: jq --version"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run: verify: gpg --version (root)"
+    else
+        if ! run_as_root_shell <<'INSTALL_BASE_SYSTEM'
+gpg --version
+INSTALL_BASE_SYSTEM
+        then
+            log_error "base.system: verify failed: gpg --version"
             return 1
         fi
     fi
