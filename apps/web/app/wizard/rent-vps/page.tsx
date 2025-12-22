@@ -259,17 +259,14 @@ export default function RentVPSPage() {
       <SimplerGuide>
         <div className="space-y-6">
           <GuideExplain term="VPS (Virtual Private Server)">
-            A VPS is like renting a computer that lives in a data center somewhere
-            in the world. It runs 24/7, even when your laptop is closed.
-            <br /><br />
-            Think of it like renting an apartment: you don&apos;t own the building,
-            but you have your own private space to use however you want.
+            A dedicated server in a data center that runs 24/7, even when your laptop is closed.
+            You get root access and full control.
             <br /><br />
             <strong>Why do you need one?</strong>
             <br />
             AI coding assistants work best on a dedicated server that&apos;s always on.
             Running them on your laptop would drain your battery and slow everything down.
-            With a VPS, your AI assistants can work even when you&apos;re asleep!
+            With a VPS, your AI assistants can work even when you&apos;re asleep.
           </GuideExplain>
 
           <GuideSection title="Why 64GB RAM?">

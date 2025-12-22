@@ -675,8 +675,7 @@ export default function LaunchOnboardingPage() {
             </p>
             <p className="mt-3">
               <strong>The solution:</strong> <Jargon term="tmux">tmux</Jargon> creates &quot;sessions&quot; that keep
-              running on the VPS even when you disconnect. Think of it like leaving a TV playing in another room
-              — it keeps going whether you&apos;re watching or not.
+              running on the VPS even when you disconnect. Your processes continue regardless of your connection state.
             </p>
             <p className="mt-3">
               <strong>NTM</strong> (Named Tmux Manager) makes tmux easier. Instead of cryptic commands,

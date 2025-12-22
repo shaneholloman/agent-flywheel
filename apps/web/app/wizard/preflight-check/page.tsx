@@ -210,8 +210,7 @@ export default function PreflightCheckPage() {
       <SimplerGuide>
         <div className="space-y-6">
           <GuideExplain term="What is a pre-flight check?">
-            It&apos;s a quick checklist that confirms your VPS is ready before the big install.
-            Think of it like making sure your suitcase is packed before a trip.
+            A quick diagnostic that confirms your VPS meets the requirements before the full install.
           </GuideExplain>
 
           <GuideSection title="Step-by-Step">
