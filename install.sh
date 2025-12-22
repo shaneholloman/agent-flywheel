@@ -627,6 +627,11 @@ detect_environment() {
         source "$ACFS_LIB_DIR/install_helpers.sh"
     fi
 
+    if [[ -f "$ACFS_LIB_DIR/user.sh" ]]; then
+        # shellcheck source=scripts/lib/user.sh
+        source "$ACFS_LIB_DIR/user.sh"
+    fi
+
     # Source state management for resume/progress tracking (mjt.5.8)
     if [[ -f "$ACFS_LIB_DIR/state.sh" ]]; then
         # shellcheck source=scripts/lib/state.sh
@@ -1549,6 +1554,12 @@ ensure_base_deps() {
 normalize_user() {
     set_phase "normalize_user" "User Normalization" 2
     log_step "2/10" "Normalizing user account..."
+
+    if [[ $EUID -eq 0 ]] && type -t prompt_ssh_key &>/dev/null; then
+        if ! prompt_ssh_key; then
+            log_warn "SSH key prompt failed or was skipped; continuing"
+        fi
+    fi
 
     if acfs_use_generated_category "users"; then
         log_detail "Using generated installers for users (phase 2)"

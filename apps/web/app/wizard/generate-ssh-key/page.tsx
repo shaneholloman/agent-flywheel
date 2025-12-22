@@ -145,9 +145,9 @@ export default function GenerateSSHKeyPage() {
       </div>
 
       {/* Important note */}
-      <AlertCard variant="warning" title="Keep your public key handy">
-        You&apos;ll paste this in the next step when setting up your VPS.
-        Copy it somewhere safe like a notes app.
+      <AlertCard variant="warning" title="Save your public key for later">
+        You&apos;ll paste this <strong>during installation</strong>, not when creating the VPS.
+        Save it somewhere safe like a notes app—you&apos;ll need it later!
       </AlertCard>
 
       {/* Troubleshooting */}
@@ -277,7 +277,8 @@ export default function GenerateSSHKeyPage() {
 
               <GuideStep number={3} title="Save it somewhere safe">
                 Open a notes app (like Notes on Mac, or Notepad on Windows) and paste your
-                public key there. You&apos;ll need it in the next step when setting up your VPS.
+                public key there. You&apos;ll need it later when running the installer (not
+                when creating the VPS—we&apos;ll use a password for that).
               </GuideStep>
             </div>
           </GuideSection>
@@ -317,7 +318,7 @@ export default function GenerateSSHKeyPage() {
       {/* Continue button */}
       <div className="flex justify-end pt-4">
         <Button onClick={handleContinue} disabled={isNavigating} size="lg" disableMotion>
-          {isNavigating ? "Loading..." : "I copied my public key"}
+          {isNavigating ? "Loading..." : "I saved my public key"}
         </Button>
       </div>
     </div>

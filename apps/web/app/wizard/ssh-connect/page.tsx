@@ -30,19 +30,6 @@ interface TroubleshootingItem {
 
 const TROUBLESHOOTING: TroubleshootingItem[] = [
   {
-    error: "Permission denied (publickey)",
-    causes: [
-      "SSH key wasn't added to the VPS during creation",
-      "Using the wrong SSH key file",
-      "Key file permissions are too open",
-    ],
-    solutions: [
-      "Check your VPS provider's control panel - is your SSH key listed?",
-      "Make sure you're using the acfs_ed25519 key file",
-      "On Mac/Linux: run chmod 600 ~/.ssh/acfs_ed25519",
-    ],
-  },
-  {
     error: "Connection refused",
     causes: [
       "VPS is still starting up",
@@ -66,6 +53,19 @@ const TROUBLESHOOTING: TroubleshootingItem[] = [
       "Double-check the IP address in your provider's control panel",
       "Try pinging the IP: ping YOUR_IP",
       "Check if your VPS is running in the control panel",
+    ],
+  },
+  {
+    error: "Permission denied",
+    causes: [
+      "Wrong password",
+      "Password authentication might be disabled",
+      "Trying wrong username",
+    ],
+    solutions: [
+      "Double-check the password from your provider",
+      "Some providers email the password - check your inbox",
+      "Make sure you're using 'root' as the username",
     ],
   },
   {
@@ -170,10 +170,12 @@ export default function SSHConnectPage() {
     );
   }
 
-  const sshCommand = `ssh -i ~/.ssh/acfs_ed25519 ubuntu@${vpsIP}`;
-  const sshCommandWindows = `ssh -i $HOME\\.ssh\\acfs_ed25519 ubuntu@${vpsIP}`;
-  const sshCommandRoot = `ssh -i ~/.ssh/acfs_ed25519 root@${vpsIP}`;
-  const sshCommandRootWindows = `ssh -i $HOME\\.ssh\\acfs_ed25519 root@${vpsIP}`;
+  // Password-first flow: connect as root with password
+  const sshCommand = `ssh root@${vpsIP}`;
+  const sshCommandWindows = `ssh root@${vpsIP}`;
+  // Fallback if provider uses ubuntu user
+  const sshCommandUbuntu = `ssh ubuntu@${vpsIP}`;
+  const sshCommandUbuntuWindows = `ssh ubuntu@${vpsIP}`;
 
   return (
     <div className="space-y-8">
@@ -209,44 +211,48 @@ export default function SSHConnectPage() {
         <CommandCard
           command={sshCommand}
           windowsCommand={sshCommandWindows}
-          description="Connect as ubuntu user"
+          description="Connect as root with password"
           showCheckbox
-          persistKey="ssh-connect-ubuntu"
+          persistKey="ssh-connect-root"
         />
       </div>
 
-      {/* Host key prompt */}
-      <AlertCard variant="warning" title="First-time connection prompt">
-        You&apos;ll see a message about &quot;authenticity of host&quot;.
-        Type <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">yes</code> and press
-        Enter. This is normal for first-time connections.
+      {/* Password prompt */}
+      <AlertCard variant="warning" title="You'll be asked for your password">
+        <p className="mb-2">
+          First, you&apos;ll see a message about &quot;authenticity of host&quot;.
+          Type <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">yes</code> and press Enter.
+        </p>
+        <p>
+          Then enter the root password you set during VPS creation (or received via email).
+          <strong className="block mt-1">Note: The password won&apos;t appear as you type - that&apos;s normal!</strong>
+        </p>
       </AlertCard>
 
-      {/* Fallback to root */}
+      {/* Fallback to ubuntu */}
       <div className="space-y-3">
         <h3 className="font-semibold">
-          If &quot;ubuntu&quot; doesn&apos;t work, try root:
+          If &quot;root&quot; doesn&apos;t work, try ubuntu:
         </h3>
         <p className="text-sm text-muted-foreground">
-          Some providers use &quot;root&quot; as the default user instead of
-          &quot;ubuntu&quot;. If you get &quot;Permission denied&quot; with
-          ubuntu, try this:
+          Some providers disable root login. If you get &quot;Permission denied&quot; with
+          root, try connecting as ubuntu:
         </p>
         <CommandCard
-          command={sshCommandRoot}
-          windowsCommand={sshCommandRootWindows}
-          description="Connect as root user (fallback)"
+          command={sshCommandUbuntu}
+          windowsCommand={sshCommandUbuntuWindows}
+          description="Connect as ubuntu user (fallback)"
         />
       </div>
 
       {/* Success indicator */}
       <OutputPreview title="You're connected when you see:">
         <p className="text-[oklch(0.72_0.19_145)]">
-          ubuntu@vps:~$ <span className="animate-pulse">_</span>
+          root@vps:~# <span className="animate-pulse">_</span>
         </p>
         <p className="mt-2 text-muted-foreground">
           You should see a prompt with your username and &quot;vps&quot; or
-          the server hostname.
+          the server hostname. The &quot;#&quot; means you&apos;re logged in as root.
         </p>
       </OutputPreview>
 
@@ -312,12 +318,20 @@ export default function SSHConnectPage() {
                 and press <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">Enter</kbd>.
               </GuideStep>
 
-              <GuideStep number={6} title="You're connected!">
+              <GuideStep number={6} title="Enter your password">
+                Now it will ask for your password. Type the password you set during VPS
+                creation (or the one your provider emailed you).
+                <br /><br />
+                <strong>Important:</strong> The password won&apos;t show as you type—no dots
+                or asterisks. Just type it and press Enter. This is normal security behavior!
+              </GuideStep>
+
+              <GuideStep number={7} title="You're connected!">
                 If successful, you&apos;ll see a new prompt like:
                 <code className="mt-2 block overflow-x-auto rounded bg-muted px-3 py-2 font-mono text-sm">
-                  ubuntu@vps:~$
+                  root@vps:~#
                 </code>
-                The &quot;ubuntu@vps&quot; part means you&apos;re now controlling the VPS!
+                The &quot;root@vps&quot; part means you&apos;re now controlling the VPS!
                 Everything you type from now on runs on the VPS, not your laptop.
               </GuideStep>
             </div>
@@ -330,8 +344,8 @@ export default function SSHConnectPage() {
             </p>
             <ul className="space-y-2">
               <li>
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ubuntu@</code>
-                is your username on the VPS
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">root@</code>
+                is your username on the VPS (you&apos;re the admin!)
               </li>
               <li>
                 <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">vps</code>
@@ -342,8 +356,8 @@ export default function SSHConnectPage() {
                 means you&apos;re in your &quot;home&quot; folder
               </li>
               <li>
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">$</code>
-                means the terminal is ready for your next command
+                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">#</code>
+                means you&apos;re logged in as root (vs <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">$</code> for regular users)
               </li>
             </ul>
           </GuideSection>
@@ -355,10 +369,10 @@ export default function SSHConnectPage() {
           </GuideTip>
 
           <GuideCaution>
-            <strong>&quot;Permission denied&quot; error?</strong> This usually means your SSH key
-            wasn&apos;t added to the VPS correctly. Go back to your VPS provider&apos;s control
-            panel and make sure your public key is added. Then try the &quot;root&quot; command
-            shown above as a fallback.
+            <strong>&quot;Permission denied&quot; error?</strong> Double-check your password.
+            Some providers email the password instead of letting you set it—check your inbox.
+            If you&apos;re trying root and it doesn&apos;t work, try the &quot;ubuntu&quot;
+            command shown above.
           </GuideCaution>
 
           <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">

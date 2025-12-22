@@ -22,8 +22,9 @@ import {
 import { Jargon } from "@/components/jargon";
 
 const CHECKLIST_ITEMS = [
-  { id: "ubuntu", label: "Selected Ubuntu 25.10 (or newest Ubuntu available)" },
-  { id: "ssh", label: "Pasted my SSH public key" },
+  { id: "ubuntu", label: "Selected Ubuntu 24.04+ (25.10 preferred)" },
+  { id: "region", label: "Picked a region close to me" },
+  { id: "password", label: "Set a root password (or received one via email)" },
   { id: "created", label: "Created the VPS and waited for it to start" },
   { id: "copied-ip", label: "Copied the IP address" },
 ] as const;
@@ -84,9 +85,9 @@ const PROVIDER_GUIDES = [
       "Go to contabo.com/en/vps and pick a plan with at least 16GB RAM (32GB ideal)",
       'Click "Configure" and select your preferred region (US or EU)',
       'Under "Image", select Ubuntu 25.10 (or newest available)',
+      'Set a root password when prompted (save it - you\'ll need it once)',
       "Complete checkout (servers activate within minutes)",
       'Go to "Your services" > "VPS control" to find your IP address',
-      'Click "Manage" on your VPS, then "SSH keys" to add your public key',
     ],
   },
   {
@@ -94,7 +95,9 @@ const PROVIDER_GUIDES = [
     steps: [
       'Click "Order" on VPS Comfort (16GB) or VPS Elite (32GB)',
       'Under "Image", select Ubuntu 25.10 (or latest)',
-      'Under "SSH Key", click "Add a key" and paste your public key',
+      "Pick the data center/region closest to you",
+      'Choose "Password" authentication (skip SSH key section)',
+      "Set a strong root password and save it",
       "Complete the order (activation is usually instant)",
       "Copy the IP address from your control panel",
     ],
@@ -179,7 +182,7 @@ export default function CreateVPSPage() {
           </div>
         </div>
         <p className="text-muted-foreground">
-          Launch your <Jargon term="vps">VPS</Jargon> and attach your <Jargon term="ssh">SSH</Jargon> key. Follow the checklist below.
+          Launch your <Jargon term="vps">VPS</Jargon> with password authentication. Follow the checklist below.
         </p>
       </div>
 
@@ -253,6 +256,12 @@ export default function CreateVPSPage() {
               It&apos;s like knowing someone&apos;s phone number so you can call them.
             </GuideExplain>
 
+            <GuideTip>
+              <strong>Why password first?</strong> Adding SSH keys in the provider website is
+              confusing and easy to mess up. Instead, we connect once with a password, then
+              the installer sets up your SSH key the right way.
+            </GuideTip>
+
             <GuideSection title="Detailed Steps for Creating Your VPS">
               <div className="space-y-4">
                 <GuideStep number={1} title="Log into your VPS provider">
@@ -289,15 +298,17 @@ export default function CreateVPSPage() {
                   </em>
                 </GuideStep>
 
-                <GuideStep number={5} title="Add your SSH key">
-                  This is VERY important! Look for a section called &quot;SSH Keys&quot; or
-                  &quot;Authentication&quot;.
+                <GuideStep number={5} title="Set a root password">
+                  Look for a section called &quot;Authentication&quot; or &quot;Password&quot;.
                   <ul className="mt-2 list-disc space-y-1 pl-5">
-                    <li>Click &quot;Add SSH Key&quot; or &quot;Add Key&quot;</li>
-                    <li>Give it a name like &quot;My Laptop&quot; or &quot;Agent Flywheel Key&quot;</li>
-                    <li><strong>Paste your public key</strong> (the text you copied earlier that starts with ssh-ed25519)</li>
-                    <li>Click Save or Add</li>
+                    <li>If asked about SSH keys, <strong>skip that section</strong></li>
+                    <li>Choose &quot;Password&quot; authentication</li>
+                    <li>Set a strong root password</li>
+                    <li><strong>Save this password!</strong> You&apos;ll need it once to connect</li>
                   </ul>
+                  <p className="mt-2 text-xs italic">
+                    Some providers email you a password instead - that&apos;s fine too!
+                  </p>
                 </GuideStep>
 
                 <GuideStep number={6} title="Choose your plan size">
@@ -337,9 +348,9 @@ export default function CreateVPSPage() {
             </GuideTip>
 
             <GuideCaution>
-              <strong>Make sure you added your SSH key!</strong> If you skip this step,
-              you won&apos;t be able to connect to your VPS. Go back and add it before
-              continuing.
+              <strong>Save your password!</strong> You&apos;ll need it once to connect
+              for the first time. After that, the installer will set up SSH key access
+              so you won&apos;t need the password anymore.
             </GuideCaution>
           </div>
         </SimplerGuide>

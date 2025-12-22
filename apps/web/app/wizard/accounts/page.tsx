@@ -13,6 +13,8 @@ import {
   Wrench,
   Sparkles,
   Terminal,
+  Zap,
+  ChevronDown,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -33,9 +35,12 @@ import {
   SERVICES,
   CATEGORY_NAMES,
   PRIORITY_NAMES,
+  TIER_NAMES,
   getGoogleSsoServices,
+  groupByTier,
   type Service,
   type ServiceCategory,
+  type ServiceTier,
 } from "@/lib/services";
 import { TrackedLink } from "@/components/tracked-link";
 

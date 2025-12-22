@@ -7,6 +7,7 @@
 
 export type ServiceCategory = 'access' | 'agent' | 'cloud' | 'devtools';
 export type ServicePriority = 'strongly-recommended' | 'recommended' | 'optional';
+export type ServiceTier = 'essential' | 'recommended' | 'optional';
 
 export interface Service {
   /** Unique identifier, matches manifest module id where applicable */
@@ -26,6 +27,12 @@ export interface Service {
 
   /** Priority tier for ordering */
   priority: ServicePriority;
+
+  /** Account setup tier for the wizard */
+  tier: ServiceTier;
+
+  /** Sort order within a tier */
+  sortOrder: number;
 
   /** One-line description */
   shortDescription: string;
@@ -64,6 +71,8 @@ export const SERVICES: Service[] = [
     logo: '/logos/tailscale.svg',
     category: 'access',
     priority: 'strongly-recommended',
+    tier: 'optional',
+    sortOrder: 1,
     shortDescription: 'Zero-config VPN for secure remote access',
     whyNeeded: 'Access your VPS from anywhere without exposing ports. SSH over private network, no firewall needed.',
     signupUrl: 'https://login.tailscale.com/start',
@@ -83,6 +92,8 @@ export const SERVICES: Service[] = [
     logo: '/logos/anthropic.svg',
     category: 'agent',
     priority: 'strongly-recommended',
+    tier: 'essential',
+    sortOrder: 2,
     shortDescription: 'Primary AI coding agent',
     whyNeeded: 'Claude Code is your main AI pair programmer. Understands context, writes code, explains concepts.',
     signupUrl: 'https://claude.ai/',
@@ -99,6 +110,8 @@ export const SERVICES: Service[] = [
     logo: '/logos/openai.svg',
     category: 'agent',
     priority: 'recommended',
+    tier: 'recommended',
+    sortOrder: 1,
     shortDescription: 'OpenAI coding agent (requires ChatGPT Pro)',
     whyNeeded: 'Secondary AI agent. Different model = different perspectives. Requires ChatGPT Pro subscription.',
     signupUrl: 'https://chat.openai.com/',
@@ -116,6 +129,8 @@ export const SERVICES: Service[] = [
     logo: '/logos/google.svg',
     category: 'agent',
     priority: 'optional',
+    tier: 'recommended',
+    sortOrder: 2,
     shortDescription: 'Google AI coding agent',
     whyNeeded: 'Third AI option. Native Google integration. Good for Google Cloud projects.',
     signupUrl: 'https://accounts.google.com/',
@@ -133,11 +148,14 @@ export const SERVICES: Service[] = [
     logo: '/logos/github.svg',
     category: 'devtools',
     priority: 'strongly-recommended',
+    tier: 'essential',
+    sortOrder: 1,
     shortDescription: 'Code hosting and version control',
     whyNeeded: 'Store your code, collaborate, use GitHub Actions for CI/CD. Essential for any developer.',
     signupUrl: 'https://github.com/signup',
     supportsGoogleSso: false, // Email-based, but can link Google email
     alternativeAuth: ['email'],
+    postInstallCommand: 'gh auth login',
     installedByAcfs: false, // Just needs git config
     docsUrl: 'https://docs.github.com/',
   },
@@ -150,6 +168,8 @@ export const SERVICES: Service[] = [
     logo: '/logos/vercel.svg',
     category: 'cloud',
     priority: 'recommended',
+    tier: 'optional',
+    sortOrder: 2,
     shortDescription: 'Frontend deployment platform',
     whyNeeded: 'Deploy Next.js, React, and static sites with zero config. Git push = live site.',
     signupUrl: 'https://vercel.com/signup',
@@ -166,6 +186,8 @@ export const SERVICES: Service[] = [
     logo: '/logos/supabase.svg',
     category: 'cloud',
     priority: 'optional',
+    tier: 'optional',
+    sortOrder: 3,
     shortDescription: 'Postgres database + auth + realtime',
     whyNeeded: 'Firebase alternative with real Postgres. Great for MVPs and full apps alike.',
     signupUrl: 'https://supabase.com/dashboard',
@@ -182,6 +204,8 @@ export const SERVICES: Service[] = [
     logo: '/logos/cloudflare.svg',
     category: 'cloud',
     priority: 'optional',
+    tier: 'optional',
+    sortOrder: 4,
     shortDescription: 'CDN, DNS, Workers, and more',
     whyNeeded: 'Free CDN, DNS management, edge computing. Great for performance and DDoS protection.',
     signupUrl: 'https://dash.cloudflare.com/sign-up',
@@ -200,6 +224,27 @@ export function getServicesByCategory(category: ServiceCategory): Service[] {
 
 export function getServicesByPriority(priority: ServicePriority): Service[] {
   return SERVICES.filter((s) => s.priority === priority);
+}
+
+export function getServicesByTier(tier: ServiceTier): Service[] {
+  return SERVICES.filter((s) => s.tier === tier);
+}
+
+/** Group services by tier for the accounts wizard */
+export function groupByTier(): Record<ServiceTier, Service[]> {
+  const groups: Record<ServiceTier, Service[]> = {
+    essential: [],
+    recommended: [],
+    optional: [],
+  };
+  for (const service of SERVICES) {
+    groups[service.tier].push(service);
+  }
+  // Sort by sortOrder within each tier
+  for (const tier of Object.keys(groups) as ServiceTier[]) {
+    groups[tier].sort((a, b) => a.sortOrder - b.sortOrder);
+  }
+  return groups;
 }
 
 export function getGoogleSsoServices(): Service[] {
@@ -221,6 +266,12 @@ export const CATEGORY_NAMES: Record<ServiceCategory, string> = {
 /** Priority display names */
 export const PRIORITY_NAMES: Record<ServicePriority, string> = {
   'strongly-recommended': 'Strongly Recommended',
+  recommended: 'Recommended',
+  optional: 'Optional',
+};
+
+export const TIER_NAMES: Record<ServiceTier, string> = {
+  essential: 'Essential',
   recommended: 'Recommended',
   optional: 'Optional',
 };

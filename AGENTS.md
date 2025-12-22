@@ -115,24 +115,7 @@ agentic_coding_flywheel_setup/
 │
 ├── scripts/
 │   ├── lib/                      # Installer library functions
-│   │   ├── logging.sh
-│   │   ├── os_detect.sh
-│   │   ├── apt.sh
-│   │   ├── user.sh
-│   │   ├── zsh.sh
-│   │   ├── tmux.sh
-│   │   ├── node_bun.sh
-│   │   ├── python_uv.sh
-│   │   ├── rust_go.sh
-│   │   ├── tools_install.sh
-│   │   └── doctor.sh
-│   ├── providers/                # VPS provider guides
-│   │   ├── ovh.md
-│   │   ├── contabo.md
-│   │   └── hetzner.md
-│   └── sync/
-│       ├── sync_ntm_palette.sh   # Vendors NTM command palette
-│       └── sync_versions.sh
+│   └── providers/                # VPS provider guides
 │
 └── tests/
     └── vm/
