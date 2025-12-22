@@ -114,7 +114,7 @@ graph LR
 ACFS includes a **step-by-step wizard website** at [agent-flywheel.com](https://agent-flywheel.com) that guides complete beginners through:
 1. Installing a terminal on their local machine
 2. Generating SSH keys (for secure access later)
-3. Renting a VPS from providers like OVH, Contabo, or Hetzner
+3. Renting a VPS from providers like OVH or Contabo
 4. Connecting via SSH with a password (initial setup)
 5. Running the installer (which sets up key-based access)
 6. Reconnecting securely with your SSH key
@@ -924,7 +924,7 @@ The wizard guides beginners through a **10-step journey** from "I have a laptop"
 | 1 | **Choose Your OS** | Select Mac or Windows (auto-detected) |
 | 2 | **Install Terminal** | Windows Terminal or Homebrew instructions |
 | 3 | **Generate SSH Key** | Create ed25519 key for VPS access |
-| 4 | **Rent a VPS** | Links to OVH, Contabo, Hetzner with pricing |
+| 4 | **Rent a VPS** | Links to OVH and Contabo with pricing |
 | 5 | **Create VPS Instance** | Checklist for VPS setup with SSH key |
 | 6 | **SSH Connect** | First connection with troubleshooting tips |
 | 7 | **Run Installer** | The `curl \| bash` one-liner |
@@ -2628,7 +2628,7 @@ Installation times vary by VPS provider and network conditions. Here are typical
 | Disk I/O | Medium | SSD/NVMe preferred |
 | CPU cores | Medium | More cores = faster compilation |
 | RAM | Low | 4GB is sufficient |
-| Provider | Variable | Hetzner typically fastest |
+| Provider | Variable | OVH and Contabo offer excellent value |
 
 ### Resume Performance
 

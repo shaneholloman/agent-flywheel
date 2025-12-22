@@ -63,10 +63,6 @@ Different VPS providers use different default usernames.
 |----------|-----------------|
 | OVH | `ubuntu` |
 | Contabo | `root` |
-| Hetzner | `root` |
-| DigitalOcean | `root` |
-| Linode | `root` |
-| Vultr | `root` |
 
 **Fix:** Try the correct username:
 ```bash
