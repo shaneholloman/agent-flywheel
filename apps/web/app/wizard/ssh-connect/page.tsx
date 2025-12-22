@@ -187,7 +187,7 @@ export default function SSHConnectPage() {
           </div>
           <div>
             <h1 className="bg-gradient-to-r from-foreground via-foreground to-muted-foreground bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
-              <Jargon term="ssh">SSH</Jargon> into your <Jargon term="vps">VPS</Jargon>
+              <Jargon term="ssh" gradientHeading>SSH</Jargon> into your <Jargon term="vps" gradientHeading>VPS</Jargon>
             </h1>
             <p className="text-sm text-muted-foreground">
               ~1 min

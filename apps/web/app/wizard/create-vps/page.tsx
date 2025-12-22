@@ -174,7 +174,7 @@ export default function CreateVPSPage() {
           </div>
           <div>
             <h1 className="bg-gradient-to-r from-foreground via-foreground to-muted-foreground bg-clip-text text-2xl font-bold tracking-tight text-transparent sm:text-3xl">
-              Create your <Jargon term="vps">VPS</Jargon> instance
+              Create your <Jargon term="vps" gradientHeading>VPS</Jargon> instance
             </h1>
             <p className="text-sm text-muted-foreground">
               ~5 min

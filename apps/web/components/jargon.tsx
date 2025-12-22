@@ -24,6 +24,11 @@ interface JargonProps {
   children?: ReactNode;
   /** Optional: additional class names */
   className?: string;
+  /**
+   * When true, applies gradient text styling to match h1/h2 gradient headings.
+   * Use this when Jargon is placed inside a heading with `text-transparent bg-clip-text` gradient.
+   */
+  gradientHeading?: boolean;
 }
 
 /**
@@ -33,7 +38,7 @@ interface JargonProps {
  * - Mobile: Shows bottom sheet on tap
  * - Styled with dotted underline to indicate interactivity
  */
-export function Jargon({ term, children, className }: JargonProps) {
+export function Jargon({ term, children, className, gradientHeading }: JargonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [tooltipLayout, setTooltipLayout] = useState<{
@@ -198,6 +203,8 @@ export function Jargon({ term, children, className }: JargonProps) {
           "hover:decoration-primary/60 hover:text-primary/90",
           // Focus state for accessibility
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm",
+          // Gradient heading mode: applies gradient text styling to match surrounding h1/h2
+          gradientHeading && "bg-gradient-to-r from-foreground via-foreground to-muted-foreground bg-clip-text text-transparent",
           className
         )}
         aria-label={`Learn about ${jargonData.term}`}
