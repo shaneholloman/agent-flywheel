@@ -40,7 +40,7 @@ export interface Service {
   /** Whether this service requires a paid subscription to be usable */
   requiresSubscription?: boolean;
 
-  /** Short note shown as a badge (e.g., "Requires Claude Pro ($20/mo)") */
+  /** Short note shown as a badge (e.g., "Requires Claude Max ($200/mo)") */
   subscriptionNote?: string;
 
   /** Why this service matters for vibe coding */
