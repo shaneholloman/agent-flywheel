@@ -2110,6 +2110,24 @@ source "$HOME/.acfs/zsh/acfs.zshrc"
 EOF
     try_step "Setting .zshrc ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zshrc" || return 1
 
+    # Ensure ~/.local/bin is in PATH for bash login shells (used by installers)
+    # This prevents warnings from tools like Claude's installer that check PATH
+    local user_profile="$TARGET_HOME/.profile"
+    local profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+    if [[ ! -f "$user_profile" ]]; then
+        # Create new .profile
+        echo "# ~/.profile: executed by bash for login shells" > "$user_profile"
+        echo "" >> "$user_profile"
+        echo "# User binary paths" >> "$user_profile"
+        echo "$profile_path_line" >> "$user_profile"
+        $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_profile"
+    elif ! grep -q '\.local/bin' "$user_profile" 2>/dev/null; then
+        # Append to existing .profile
+        echo "" >> "$user_profile"
+        echo "# Added by ACFS - user binary paths" >> "$user_profile"
+        echo "$profile_path_line" >> "$user_profile"
+    fi
+
     # Set zsh as default shell for target user
     local current_shell
     current_shell=$(getent passwd "$TARGET_USER" | cut -d: -f7)
@@ -2209,7 +2227,7 @@ install_cli_tools() {
     else
         log_detail "Installing gum for glamorous shell scripts"
         try_step "Creating apt keyrings directory" $SUDO mkdir -p /etc/apt/keyrings || true
-        try_step_eval "Adding Charm apt key" "acfs_curl https://repo.charm.sh/apt/gpg.key | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null" || true
+        try_step_eval "Adding Charm apt key" "curl -fsSL https://repo.charm.sh/apt/gpg.key | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null" || true
         try_step_eval "Adding Charm apt repo" "printf 'Types: deb\nURIs: https://repo.charm.sh/apt/\nSuites: *\nComponents: *\nSigned-By: /etc/apt/keyrings/charm.gpg\n' | $SUDO tee /etc/apt/sources.list.d/charm.sources > /dev/null" || true
         try_step "Updating apt cache" $SUDO apt-get update -y || true
         if try_step "Installing gum" $SUDO apt-get install -y gum 2>/dev/null; then
@@ -2495,7 +2513,7 @@ install_cloud_db_legacy_db() {
         log_detail "Installing PostgreSQL 18 (PGDG repo, codename=$codename)"
         try_step "Creating apt keyrings for PostgreSQL" $SUDO mkdir -p /etc/apt/keyrings || true
 
-        if ! try_step_eval "Adding PostgreSQL apt key" "acfs_curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/postgresql.gpg 2>/dev/null"; then
+        if ! try_step_eval "Adding PostgreSQL apt key" "curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/postgresql.gpg 2>/dev/null"; then
             log_warn "PostgreSQL: failed to install signing key (skipping)"
         else
             try_step_eval "Adding PostgreSQL apt repo" "echo 'deb [signed-by=/etc/apt/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main' | $SUDO tee /etc/apt/sources.list.d/pgdg.list > /dev/null" || true
@@ -2542,7 +2560,7 @@ install_cloud_db_legacy_tools() {
         log_detail "Installing Vault (HashiCorp repo, codename=$codename)"
         try_step "Creating apt keyrings for Vault" $SUDO mkdir -p /etc/apt/keyrings || true
 
-        if ! try_step_eval "Adding HashiCorp apt key" "acfs_curl https://apt.releases.hashicorp.com/gpg | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/hashicorp.gpg 2>/dev/null"; then
+        if ! try_step_eval "Adding HashiCorp apt key" "curl -fsSL https://apt.releases.hashicorp.com/gpg | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/hashicorp.gpg 2>/dev/null"; then
             log_warn "Vault: failed to install signing key (skipping)"
         else
             try_step_eval "Adding HashiCorp apt repo" "echo 'deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com ${codename} main' | $SUDO tee /etc/apt/sources.list.d/hashicorp.list > /dev/null" || true
