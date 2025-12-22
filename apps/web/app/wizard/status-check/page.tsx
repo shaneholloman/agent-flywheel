@@ -11,6 +11,7 @@ import {
   Cloud,
   Wrench,
   BookOpen,
+  Laptop,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -175,6 +176,26 @@ export default function StatusCheckPage() {
           </div>
         </div>
 
+        {/* Headless auth flow explanation */}
+        <AlertCard variant="info" icon={Laptop} title="Authentication on a Headless Server">
+          <div className="space-y-2">
+            <p>
+              Your VPS doesn&apos;t have a web browser, so authentication works differently:
+            </p>
+            <ol className="list-decimal list-inside space-y-1 text-sm">
+              <li>Run a login command below (like <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">claude</code>)</li>
+              <li>The terminal will display a URL and possibly a code</li>
+              <li><strong>Copy that URL and open it in your laptop&apos;s browser</strong></li>
+              <li>Complete the login in your browser</li>
+              <li>Return to your terminal — it should confirm success</li>
+            </ol>
+            <p className="mt-2 text-xs text-muted-foreground">
+              If you see &quot;Opening browser...&quot; but nothing happens, that&apos;s normal!
+              Just copy the URL shown and open it manually on your laptop.
+            </p>
+          </div>
+        </AlertCard>
+
         {/* Auth commands grouped by category */}
         {(["access", "agent", "cloud"] as const).map((category) => {
           const services = authServices[category];
@@ -204,11 +225,6 @@ export default function StatusCheckPage() {
             </div>
           );
         })}
-
-        <p className="text-xs text-muted-foreground">
-          Each command opens a browser window for authentication. Complete the login,
-          then return to your terminal.
-        </p>
       </div>
 
       {/* Troubleshooting */}
