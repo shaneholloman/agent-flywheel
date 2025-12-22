@@ -44,7 +44,7 @@ installers:
 
   ubs:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/master/install.sh"
-    sha256: "6d7e21d9f756dcef263091d6cf396b7ec3dec6db69a2a3a533c3073097673185"
+    sha256: "0a2591c9a52ad003a4dcee8f3098af67b122b019a68eb3f03f37cd8021675198"
 
   slb:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/simultaneous_launch_button/main/scripts/install.sh"
