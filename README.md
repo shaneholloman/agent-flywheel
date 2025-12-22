@@ -2598,15 +2598,6 @@ ACFS is actively developed. Here's what's coming:
 - [ ] **Agent marketplace**: Pre-configured agent personalities and workflows
 - [ ] **Enterprise features**: SSO, audit logging, compliance
 
-### Contributing Ideas
-
-Have ideas for ACFS? File an issue on GitHub or check the beads:
-
-```bash
-bd list --status=open  # See current work items
-bd ready               # See what's ready to work on
-```
-
 ---
 
 ## Performance Benchmarks
