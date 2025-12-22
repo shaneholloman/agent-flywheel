@@ -2918,6 +2918,12 @@ main() {
             local phase_display="$2"
             local phase_func="$3"
             local phase_num="${phase_display%%/*}"
+            local phase_name="${phase_display#*/[0-9] }"  # Extract name after "X/Y "
+
+            # Show progress header before running phase
+            if type -t show_progress_header &>/dev/null; then
+                show_progress_header "$phase_num" 9 "$phase_name" "$installation_start_time"
+            fi
 
             if type -t run_phase &>/dev/null; then
                 if ! run_phase "$phase_id" "$phase_display" "$phase_func"; then

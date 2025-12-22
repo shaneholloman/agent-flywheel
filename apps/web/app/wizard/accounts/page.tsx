@@ -52,19 +52,18 @@ const CATEGORY_ICONS: Record<ServiceCategory, React.ReactNode> = {
   devtools: <Wrench className="h-5 w-5" />,
 };
 
-// Group services by category
-function groupByCategory(): Record<ServiceCategory, Service[]> {
-  const groups: Record<ServiceCategory, Service[]> = {
-    access: [],
-    agent: [],
-    devtools: [],
-    cloud: [],
-  };
-  for (const service of SERVICES) {
-    groups[service.category].push(service);
-  }
-  return groups;
-}
+// Tier icons and colors
+const TIER_ICONS: Record<ServiceTier, React.ReactNode> = {
+  essential: <Zap className="h-5 w-5" />,
+  recommended: <Sparkles className="h-5 w-5" />,
+  optional: <Cloud className="h-5 w-5" />,
+};
+
+const TIER_DESCRIPTIONS: Record<ServiceTier, string> = {
+  essential: "You need these to start using the system",
+  recommended: "Add these after your first project",
+  optional: "Set these up when you need them",
+};
 
 // Priority badge colors - uses PRIORITY_NAMES from services.ts
 function getPriorityBadge(priority: Service["priority"]) {
@@ -221,14 +220,12 @@ export default function AccountsPage() {
     router.push(withCurrentSearch("/wizard/preflight-check"));
   }, [router, markComplete]);
 
-  const groupedServices = groupByCategory();
-  const categoryOrder: ServiceCategory[] = ["access", "agent", "devtools", "cloud"];
+  const tierGroups = groupByTier();
+  const tierOrder: ServiceTier[] = ["essential", "recommended", "optional"];
 
-  // Count strongly recommended services that are checked
-  const stronglyRecommended = SERVICES.filter(
-    (s) => s.priority === "strongly-recommended"
-  );
-  const stronglyRecommendedChecked = stronglyRecommended.filter((s) =>
+  // Count essential services that are checked
+  const essentialServices = tierGroups.essential;
+  const essentialChecked = essentialServices.filter((s) =>
     checkedServices.has(s.id)
   );
 
@@ -264,10 +261,10 @@ export default function AccountsPage() {
       <div className="rounded-xl border border-border/50 bg-card/50 p-4">
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">
-            Strongly recommended accounts:
+            Essential accounts:
           </span>
           <span className="font-medium">
-            {stronglyRecommendedChecked.length} / {stronglyRecommended.length}
+            {essentialChecked.length} / {essentialServices.length}
           </span>
         </div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
@@ -275,8 +272,8 @@ export default function AccountsPage() {
             className="h-full bg-[oklch(0.72_0.19_145)] transition-all"
             style={{
               width: `${
-                stronglyRecommended.length > 0
-                  ? (stronglyRecommendedChecked.length / stronglyRecommended.length) * 100
+                essentialServices.length > 0
+                  ? (essentialChecked.length / essentialServices.length) * 100
                   : 0
               }%`,
             }}
@@ -284,20 +281,59 @@ export default function AccountsPage() {
         </div>
       </div>
 
-      {/* Service categories */}
-      {categoryOrder.map((category) => {
-        const services = groupedServices[category];
+      {/* Service tiers */}
+      {tierOrder.map((tier) => {
+        const services = tierGroups[tier];
         if (services.length === 0) return null;
 
-        return (
-          <div key={category} className="space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                {CATEGORY_ICONS[category]}
+        const isEssential = tier === "essential";
+        const tierLabel = TIER_NAMES[tier];
+        const tierDesc = TIER_DESCRIPTIONS[tier];
+
+        // Essential tier is always expanded, others are collapsible
+        if (isEssential) {
+          return (
+            <div key={tier} className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[oklch(0.72_0.19_145/0.2)] text-[oklch(0.72_0.19_145)]">
+                  {TIER_ICONS[tier]}
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold">{tierLabel}</h2>
+                  <p className="text-sm text-muted-foreground">{tierDesc}</p>
+                </div>
               </div>
-              <h2 className="text-lg font-semibold">{CATEGORY_NAMES[category]}</h2>
+              <div className="space-y-3">
+                {services.map((service) => (
+                  <ServiceCard
+                    key={service.id}
+                    service={service}
+                    isChecked={checkedServices.has(service.id)}
+                    onToggle={() => handleToggle(service.id)}
+                  />
+                ))}
+              </div>
             </div>
-            <div className="space-y-3">
+          );
+        }
+
+        // Recommended and Optional are collapsible
+        return (
+          <details key={tier} className="group">
+            <summary className="flex cursor-pointer items-center gap-2 rounded-lg border border-border/50 bg-card/30 p-3 transition-colors hover:bg-card/50 [&::-webkit-details-marker]:hidden">
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                {TIER_ICONS[tier]}
+              </div>
+              <div className="flex-1">
+                <h2 className="text-base font-semibold">{tierLabel}</h2>
+                <p className="text-sm text-muted-foreground">{tierDesc}</p>
+              </div>
+              <span className="text-sm text-muted-foreground">
+                {services.filter((s) => checkedServices.has(s.id)).length} / {services.length}
+              </span>
+            </summary>
+            <div className="mt-4 space-y-3 pl-6">
               {services.map((service) => (
                 <ServiceCard
                   key={service.id}
@@ -307,7 +343,7 @@ export default function AccountsPage() {
                 />
               ))}
             </div>
-          </div>
+          </details>
         );
       })}
 

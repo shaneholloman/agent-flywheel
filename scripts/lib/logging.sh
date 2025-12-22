@@ -111,6 +111,81 @@ fi
 # Associative array for timer tracking (avoids eval)
 declare -gA ACFS_TIMERS=()
 
+# ============================================================
+# Progress Display (for multi-phase installations)
+# ============================================================
+
+# Show installation progress header with visual progress bar
+# Usage: show_progress_header $current_phase $total_phases $phase_name $start_time
+if ! declare -f show_progress_header >/dev/null; then
+    show_progress_header() {
+        local current="$1"
+        local total="$2"
+        local name="$3"
+        local start_time="${4:-0}"
+
+        # Calculate percentage
+        local percent=$((current * 100 / total))
+
+        # Calculate elapsed time
+        local elapsed=0
+        if [[ "$start_time" -gt 0 ]]; then
+            elapsed=$(($(date +%s) - start_time))
+        fi
+        local elapsed_min=$((elapsed / 60))
+        local elapsed_sec=$((elapsed % 60))
+
+        # Build progress bar (20 chars)
+        local filled=$((percent / 5))
+        local empty=$((20 - filled))
+        local bar=""
+        for ((i=0; i<filled; i++)); do bar+="█"; done
+        for ((i=0; i<empty; i++)); do bar+="░"; done
+
+        # Truncate name if too long (max 40 chars)
+        local display_name="$name"
+        if [[ ${#display_name} -gt 40 ]]; then
+            display_name="${display_name:0:37}..."
+        fi
+
+        # Print progress header
+        echo "" >&2
+        echo "╔═══════════════════════════════════════════════════════════════╗" >&2
+        printf "║  Progress: [%s] %3d%%  (%d of %d phases)          ║\n" \
+               "$bar" "$percent" "$current" "$total" >&2
+        printf "║  Current:  %-51s ║\n" "$display_name" >&2
+        printf "║  Elapsed:  %dm %02ds                                           ║\n" \
+               "$elapsed_min" "$elapsed_sec" >&2
+        echo "╚═══════════════════════════════════════════════════════════════╝" >&2
+        echo "" >&2
+    }
+fi
+
+# Show installation completion message
+# Usage: show_completion $total_phases $total_seconds
+if ! declare -f show_completion >/dev/null; then
+    show_completion() {
+        local total="$1"
+        local total_seconds="${2:-0}"
+        local min=$((total_seconds / 60))
+        local sec=$((total_seconds % 60))
+
+        echo "" >&2
+        echo "╔═══════════════════════════════════════════════════════════════╗" >&2
+        echo "║              ✓ Installation Complete!                         ║" >&2
+        echo "╠═══════════════════════════════════════════════════════════════╣" >&2
+        printf "║  Total time: %dm %02ds                                          ║\n" "$min" "$sec" >&2
+        printf "║  Phases completed: %d/%d                                       ║\n" "$total" "$total" >&2
+        echo "║                                                               ║" >&2
+        echo "║  NEXT STEPS:                                                  ║" >&2
+        echo "║  1. Type 'exit' to disconnect                                 ║" >&2
+        echo "║  2. Reconnect: ssh -i ~/.ssh/acfs_ed25519 ubuntu@YOUR_IP      ║" >&2
+        echo "║  3. Start coding: type 'cc' for Claude Code                   ║" >&2
+        echo "╚═══════════════════════════════════════════════════════════════╝" >&2
+        echo "" >&2
+    }
+fi
+
 # Start a timed operation (for performance tracking)
 # Usage: timer_start "operation_name"
 if ! declare -f timer_start >/dev/null; then
