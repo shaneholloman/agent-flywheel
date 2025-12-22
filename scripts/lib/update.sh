@@ -433,7 +433,7 @@ check_apt_lock() {
     fi
 
     # Check for apt/apt-get processes
-    if pgrep -x 'apt|apt-get|dpkg' &>/dev/null; then
+    if pgrep -x 'apt' &>/dev/null || pgrep -x 'apt-get' &>/dev/null || pgrep -x 'dpkg' &>/dev/null; then
         log_item "fail" "apt locked" "apt/dpkg process running"
         log_to_file "APT lock detected: apt/dpkg process already running"
         if [[ "$ABORT_ON_FAILURE" == "true" ]]; then

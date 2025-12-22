@@ -801,7 +801,7 @@ check_cloud() {
                 ;;
         esac
     else
-        check "network.tailscale" "Tailscale" "skip" "not installed" "Optional VPN for secure remote access"
+        check "network.tailscale" "Tailscale" "warn" "not installed (optional)" "Install: curl -fsSL https://tailscale.com/install.sh | sh"
     fi
 
     blank_line
