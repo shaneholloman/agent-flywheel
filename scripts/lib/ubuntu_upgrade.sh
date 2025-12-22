@@ -1104,7 +1104,7 @@ ubuntu_show_upgrade_warning() {
 ║                                                                  ║
 ║  Current version:  Ubuntu $current
 ║  Target version:   Ubuntu $target
-║  Upgrade path:     $(echo "$path" | tr '\n' ' ')
+║  Upgrade path:     $current → $(echo "$path" | tr '\n' ' ' | sed 's/ / → /g; s/ → $//')
 ║  Estimated time:   ~${estimated_time} minutes
 ║                                                                  ║
 ╠══════════════════════════════════════════════════════════════════╣
