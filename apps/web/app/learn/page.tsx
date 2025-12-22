@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import {
+  Book,
   BookOpen,
   Check,
   ChevronRight,
   Clock,
   GraduationCap,
   Home,
+  List,
   Lock,
   Play,
   Terminal,
@@ -274,6 +276,30 @@ export default function LearnDashboard() {
                 <div className="font-medium">NTM Commands</div>
                 <div className="text-sm text-muted-foreground">
                   Session management reference
+                </div>
+              </div>
+            </Link>
+            <Link
+              href="/learn/commands"
+              className="flex items-center gap-3 rounded-lg border border-border/50 p-4 transition-colors hover:border-primary/40 hover:bg-primary/5"
+            >
+              <List className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <div className="font-medium">Command Reference</div>
+                <div className="text-sm text-muted-foreground">
+                  Searchable list of key commands
+                </div>
+              </div>
+            </Link>
+            <Link
+              href="/learn/glossary"
+              className="flex items-center gap-3 rounded-lg border border-border/50 p-4 transition-colors hover:border-primary/40 hover:bg-primary/5"
+            >
+              <Book className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <div className="font-medium">Glossary</div>
+                <div className="text-sm text-muted-foreground">
+                  Definitions for all jargon terms
                 </div>
               </div>
             </Link>
