@@ -9,6 +9,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import Link from "next/link";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence, springs } from "@/components/motion";
 import { X, Lightbulb } from "lucide-react";
@@ -233,7 +234,7 @@ export function Jargon({ term, children, className }: JargonProps) {
               onMouseEnter={handleMouseEnter}
               onMouseLeave={handleMouseLeave}
             >
-              <TooltipContent term={jargonData} />
+              <TooltipContent term={jargonData} termKey={term} />
             </motion.div>
           )}
         </AnimatePresence>,
@@ -302,7 +303,9 @@ export function Jargon({ term, children, className }: JargonProps) {
 /**
  * Desktop tooltip content
  */
-function TooltipContent({ term }: { term: JargonTerm }) {
+function TooltipContent({ term, termKey }: { term: JargonTerm; termKey: string }) {
+  const glossaryHref = `/glossary#${encodeURIComponent(termKey)}`;
+
   return (
     <div className="space-y-2">
       {/* Term header */}
@@ -330,6 +333,16 @@ function TooltipContent({ term }: { term: JargonTerm }) {
       <p className="text-[11px] text-muted-foreground/60">
         Hover or focus to learn more
       </p>
+
+      <Link
+        href={glossaryHref}
+        className={cn(
+          "inline-block text-[11px] font-medium text-primary underline-offset-4 hover:underline",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
+        )}
+      >
+        Open in glossary →
+      </Link>
     </div>
   );
 }
@@ -338,6 +351,8 @@ function TooltipContent({ term }: { term: JargonTerm }) {
  * Mobile bottom sheet content
  */
 function SheetContent({ term, termKey }: { term: JargonTerm; termKey: string }) {
+  const glossaryHref = `/glossary#${encodeURIComponent(termKey)}`;
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -406,6 +421,18 @@ function SheetContent({ term, termKey }: { term: JargonTerm; termKey: string }) 
             </div>
           </div>
         )}
+
+        <div className="pt-2">
+          <Link
+            href={glossaryHref}
+            className={cn(
+              "inline-block text-sm font-medium text-primary underline-offset-4 hover:underline",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background rounded-sm"
+            )}
+          >
+            View in glossary →
+          </Link>
+        </div>
       </div>
     </div>
   );
