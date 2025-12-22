@@ -676,7 +676,7 @@ test.describe("No localStorage (query-only resilience)", () => {
 // =============================================================================
 // STEP 7: RUN INSTALLER - Individual Tests
 // =============================================================================
-test.describe("Step 7: Run Installer Page", () => {
+test.describe("Step 9: Run Installer Page", () => {
   test.beforeEach(async ({ page }) => {
     // Set up prerequisite state for step 7
     await setupWizardState(page, { os: "mac", ip: "192.168.1.100" });
@@ -728,9 +728,9 @@ test.describe("Step 7: Run Installer Page", () => {
     await expect(page.locator("h1").first()).toBeVisible({ timeout: TIMEOUTS.PAGE_LOAD });
 
     // Click the continue button
-    await page.click('button:has-text("finished")');
+    await page.click('button:has-text("Installation finished")');
 
-    // Should navigate to step 8
+    // Should navigate to step 10 (reconnect-ubuntu)
     await expect(page).toHaveURL(urlPathWithOptionalQuery("/wizard/reconnect-ubuntu"));
   });
 
@@ -744,9 +744,9 @@ test.describe("Step 7: Run Installer Page", () => {
 });
 
 // =============================================================================
-// STEP 8: RECONNECT UBUNTU - Individual Tests
+// STEP 10: RECONNECT UBUNTU - Individual Tests
 // =============================================================================
-test.describe("Step 8: Reconnect Ubuntu Page", () => {
+test.describe("Step 10: Reconnect Ubuntu Page", () => {
   test.beforeEach(async ({ page }) => {
     await setupWizardState(page, { os: "mac", ip: "192.168.1.100" });
   });
@@ -791,26 +791,26 @@ test.describe("Step 8: Reconnect Ubuntu Page", () => {
     await expect(skipButton).toBeVisible();
   });
 
-  test("should navigate to status-check when Skip button is clicked", async ({ page }) => {
+  test("should navigate to verify-key-connection when Skip button is clicked", async ({ page }) => {
     await page.goto("/wizard/reconnect-ubuntu");
     await expect(page.locator("h1").first()).toBeVisible({ timeout: TIMEOUTS.LOADING_SPINNER });
 
     // Click the skip button
     await page.click('button:has-text("Skip")');
 
-    // Should navigate to step 9
-    await expect(page).toHaveURL(urlPathWithOptionalQuery("/wizard/status-check"));
+    // Should navigate to step 11 (verify-key-connection)
+    await expect(page).toHaveURL(urlPathWithOptionalQuery("/wizard/verify-key-connection"));
   });
 
-  test("should navigate to status-check on main continue button", async ({ page }) => {
+  test("should navigate to verify-key-connection on main continue button", async ({ page }) => {
     await page.goto("/wizard/reconnect-ubuntu");
     await expect(page.locator("h1").first()).toBeVisible({ timeout: TIMEOUTS.LOADING_SPINNER });
 
     // Click the main continue button
-    await page.click('button:has-text("connected as ubuntu")');
+    await page.click('button:has-text("I\'m connected as ubuntu")');
 
-    // Should navigate to step 9
-    await expect(page).toHaveURL(urlPathWithOptionalQuery("/wizard/status-check"));
+    // Should navigate to step 11 (verify-key-connection)
+    await expect(page).toHaveURL(urlPathWithOptionalQuery("/wizard/verify-key-connection"));
   });
 
   test("should redirect to create-vps when IP is missing", async ({ page }) => {
@@ -834,7 +834,7 @@ test.describe("Step 8: Reconnect Ubuntu Page", () => {
 // =============================================================================
 // STEP 9: STATUS CHECK - Individual Tests
 // =============================================================================
-test.describe("Step 9: Status Check Page", () => {
+test.describe("Step 12: Status Check Page", () => {
   test.beforeEach(async ({ page }) => {
     await setupWizardState(page, { os: "mac", ip: "192.168.1.100" });
   });
@@ -887,9 +887,9 @@ test.describe("Step 9: Status Check Page", () => {
     await expect(page.locator("h1").first()).toBeVisible({ timeout: TIMEOUTS.PAGE_LOAD });
 
     // Click continue
-    await page.click('button:has-text("Everything looks good")');
+    await page.click('button:has-text("Everything looks good!")');
 
-    // Should navigate to step 10
+    // Should navigate to step 13 (launch-onboarding)
     await expect(page).toHaveURL(urlPathWithOptionalQuery("/wizard/launch-onboarding"));
   });
 });
@@ -897,7 +897,7 @@ test.describe("Step 9: Status Check Page", () => {
 // =============================================================================
 // STEP 10: LAUNCH ONBOARDING - Individual Tests
 // =============================================================================
-test.describe("Step 10: Launch Onboarding Page", () => {
+test.describe("Step 13: Launch Onboarding Page", () => {
   test.beforeEach(async ({ page }) => {
     await setupWizardState(page, { os: "mac", ip: "192.168.1.100" });
   });
