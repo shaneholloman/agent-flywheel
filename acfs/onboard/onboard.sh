@@ -111,6 +111,14 @@ _render_progress_bar() {
     local total=$2
     local width=${3:-20}
 
+    # Guard against division by zero
+    if [[ $total -eq 0 ]]; then
+        local bar=""
+        for ((i=0; i<width; i++)); do bar+="░"; done
+        echo -e "${GREEN}${bar}${NC}"
+        return
+    fi
+
     local filled=$((current * width / total))
     [[ $filled -gt $width ]] && filled=$width
     local empty=$((width - filled))
@@ -446,16 +454,17 @@ _run_lesson() {
         case "$choice" in
             "Mark as completed and continue")
                 _mark_completed "$idx"
-                echo -e "${GREEN}Lesson $((idx + 1)) completed!${NC}"
-                sleep 1
 
-                # Auto-advance to next lesson if available
-                local next=$((idx + 1))
-                if (( next < ${#LESSONS[@]} )); then
-                    _run_lesson "$next"
+                # Show celebration screen
+                if _show_celebration "$idx"; then
+                    # Return 0 means go to menu
+                    return 0
                 else
-                    echo -e "${GREEN}${BOLD}Congratulations! You've completed all lessons!${NC}"
-                    sleep 2
+                    # Return 1 means continue to next lesson
+                    local next=$((idx + 1))
+                    if (( next < ${#LESSONS[@]} )); then
+                        _run_lesson "$next"
+                    fi
                 fi
                 ;;
             "View lesson again")
@@ -477,15 +486,17 @@ _run_lesson() {
         case "$choice" in
             c|C)
                 _mark_completed "$idx"
-                echo -e "${GREEN}Lesson $((idx + 1)) completed!${NC}"
-                sleep 1
 
-                local next=$((idx + 1))
-                if (( next < ${#LESSONS[@]} )); then
-                    _run_lesson "$next"
+                # Show celebration screen
+                if _show_celebration "$idx"; then
+                    # Return 0 means go to menu
+                    return 0
                 else
-                    echo -e "${GREEN}${BOLD}Congratulations! You've completed all lessons!${NC}"
-                    sleep 2
+                    # Return 1 means continue to next lesson
+                    local next=$((idx + 1))
+                    if (( next < ${#LESSONS[@]} )); then
+                        _run_lesson "$next"
+                    fi
                 fi
                 ;;
             r|R)
