@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { PartyPopper, BookOpen, ExternalLink, Sparkles, ArrowRight, GraduationCap, Terminal, RefreshCw, FolderPlus, FolderOpen } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { CommandCard } from "@/components/command-card";
+import { AlertCard } from "@/components/alert-card";
 import { markStepComplete, setCompletedSteps, TOTAL_STEPS } from "@/lib/wizardSteps";
 import { trackConversion } from "@/lib/analytics";
 import { Button } from "@/components/ui/button";
@@ -133,6 +134,57 @@ export default function LaunchOnboardingPage() {
         </p>
       </div>
 
+      {/* Powerlevel10k Configuration Warning */}
+      <AlertCard variant="warning" title="First login: You may see a configuration wizard">
+        <div className="space-y-2 text-sm">
+          <p>
+            When you first connect to your VPS after installation, you might see the{" "}
+            <strong className="text-foreground">Powerlevel10k configuration wizard</strong> — a colorful
+            terminal setup screen.
+          </p>
+          <p className="text-muted-foreground">
+            <strong className="text-foreground">Don&apos;t worry, this is optional!</strong> You can press{" "}
+            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">q</kbd> to skip it, or follow
+            the prompts to customize your terminal appearance. ACFS already configured sensible defaults,
+            so skipping is perfectly fine.
+          </p>
+        </div>
+      </AlertCard>
+
+      {/* Important: Authenticate Your AI Tools First */}
+      <Card className="border-[oklch(0.78_0.16_75/0.3)] bg-[oklch(0.78_0.16_75/0.08)] p-6">
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Sparkles className="h-6 w-6 text-[oklch(0.78_0.16_75)]" />
+            <h2 className="text-xl font-semibold">First: Authenticate Your AI Tools</h2>
+          </div>
+          <p className="text-muted-foreground">
+            <strong className="text-foreground">Before using AI coding assistants, you need to authenticate them.</strong>{" "}
+            This is a one-time setup that links your subscriptions:
+          </p>
+          <div className="space-y-3">
+            <div className="flex gap-3">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[oklch(0.78_0.16_75)] text-[oklch(0.15_0.02_75)] font-bold text-sm">1</div>
+              <div>
+                <p className="font-medium">Claude Code</p>
+                <CommandCard command="claude" description="Opens a URL in your terminal — copy it and open in your laptop's browser to log in" />
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[oklch(0.78_0.16_75)] text-[oklch(0.15_0.02_75)] font-bold text-sm">2</div>
+              <div>
+                <p className="font-medium">Codex CLI (if using OpenAI)</p>
+                <CommandCard command="codex" description="Similar authentication flow for OpenAI's Codex CLI" />
+              </div>
+            </div>
+          </div>
+          <GuideTip>
+            After authenticating, you can use the shortcuts: <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">cc</code> for Claude Code,{" "}
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">cx</code> for Codex CLI.
+          </GuideTip>
+        </div>
+      </Card>
+
       {/* Learning Hub CTA - Primary */}
       <Card className="border-primary/20 bg-primary/5 p-6">
         <div className="space-y-4">
@@ -230,7 +282,7 @@ export default function LaunchOnboardingPage() {
                   <div className="flex items-center gap-1.5">
                     <kbd className="rounded bg-muted px-2 py-1 font-mono text-sm">Ctrl</kbd>
                     <span className="text-muted-foreground">+</span>
-                    <kbd className="rounded bg-muted px-2 py-1 font-mono text-sm">B</kbd>
+                    <kbd className="rounded bg-muted px-2 py-1 font-mono text-sm">A</kbd>
                     <span className="text-muted-foreground mx-1">then</span>
                     <kbd className="rounded bg-muted px-2 py-1 font-mono text-sm">D</kbd>
                   </div>
