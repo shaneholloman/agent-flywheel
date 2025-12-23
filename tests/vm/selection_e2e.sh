@@ -82,7 +82,9 @@ test_print_plan_does_not_mutate_state() {
     local temp_home
     temp_home=$(mktemp -d)
 
-    ACFS_HOME="$temp_home" bash "$REPO_ROOT/install.sh" --print-plan >/dev/null 2>&1 || true
+    # ACFS_HOME points to the ~/.acfs directory (not $HOME), so keep the path consistent
+    # with install.sh behavior when overriding it for tests.
+    ACFS_HOME="$temp_home/.acfs" bash "$REPO_ROOT/install.sh" --print-plan >/dev/null 2>&1 || true
 
     if [[ ! -f "$temp_home/.acfs/state.json" ]]; then
         pass "$name"
