@@ -273,6 +273,13 @@ export default function GenerateSSHKeyPage() {
                     <p className="mt-2 text-sm text-muted-foreground">
                       <strong className="text-foreground">→ Just press Enter!</strong> The path is already set by our command.
                     </p>
+                    <div className="mt-2 rounded border border-border/30 bg-muted/20 p-2 text-xs text-muted-foreground">
+                      <strong className="text-foreground">What this means:</strong> The path shown (like{" "}
+                      <code className="rounded bg-muted px-1 py-0.5 font-mono">/Users/you/.ssh/acfs_ed25519</code>) is where your
+                      key files will be saved. The <code className="rounded bg-muted px-1 py-0.5 font-mono">.ssh</code> folder
+                      is a standard location for SSH keys on all computers. Our command already specifies this path, so
+                      just press Enter to confirm it.
+                    </div>
                   </div>
 
                   <div>
@@ -283,6 +290,12 @@ export default function GenerateSSHKeyPage() {
                     <p className="mt-2 text-sm text-muted-foreground">
                       <strong className="text-foreground">→ Press Enter without typing anything.</strong> Leave it empty.
                     </p>
+                    <div className="mt-2 rounded border border-border/30 bg-muted/20 p-2 text-xs text-muted-foreground">
+                      <strong className="text-foreground">Why no passphrase?</strong> A passphrase would add an extra password
+                      you&apos;d have to type every time you connect. For a development VPS that you control, this extra
+                      security isn&apos;t necessary and would slow you down. Your private key file itself is already secure
+                      because it never leaves your computer.
+                    </div>
                   </div>
 
                   <div>
@@ -297,7 +310,7 @@ export default function GenerateSSHKeyPage() {
                 </div>
 
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Note: Not using a passphrase is fine for this purpose. It keeps things simple.
+                  <strong>Summary:</strong> Press Enter three times total. The command we provided handles all the important settings.
                 </p>
               </GuideStep>
 
