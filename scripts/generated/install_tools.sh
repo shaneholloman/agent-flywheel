@@ -84,14 +84,30 @@ install_tools_atuin() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "tools.atuin: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'sh' '-s'; then
                             install_success=true
+                        else
+                            log_error "tools.atuin: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "tools.atuin: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "tools.atuin: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "tools.atuin: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "tools.atuin: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
@@ -144,14 +160,30 @@ install_tools_zoxide() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "tools.zoxide: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'sh' '-s'; then
                             install_success=true
+                        else
+                            log_error "tools.zoxide: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "tools.zoxide: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "tools.zoxide: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "tools.zoxide: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "tools.zoxide: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required

@@ -84,14 +84,30 @@ install_stack_ntm() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.ntm: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s'; then
                             install_success=true
+                        else
+                            log_error "stack.ntm: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.ntm: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.ntm: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "stack.ntm: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "stack.ntm: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
@@ -142,12 +158,23 @@ install_stack_mcp_agent_mail() {
             if acfs_security_init; then
                 if declare -p KNOWN_INSTALLERS 2>/dev/null | grep -q 'declare -A'; then
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.mcp_agent_mail: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
+                else
+                    log_error "stack.mcp_agent_mail: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "stack.mcp_agent_mail: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
-            if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-                log_error "Missing verified installer URL/checksum for stack.mcp_agent_mail"
+            if [[ -z "$url" ]]; then
+                log_error "stack.mcp_agent_mail: KNOWN_INSTALLERS[$tool] not found"
+                false
+            fi
+            if [[ -z "$expected_sha256" ]]; then
+                log_error "stack.mcp_agent_mail: checksum for '$tool' not found"
                 false
             fi
 
@@ -214,14 +241,30 @@ install_stack_ultimate_bug_scanner() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.ultimate_bug_scanner: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s' '--' '--easy-mode'; then
                             install_success=true
+                        else
+                            log_error "stack.ultimate_bug_scanner: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.ultimate_bug_scanner: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.ultimate_bug_scanner: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "stack.ultimate_bug_scanner: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "stack.ultimate_bug_scanner: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
@@ -284,14 +327,30 @@ install_stack_beads_viewer() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.beads_viewer: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s'; then
                             install_success=true
+                        else
+                            log_error "stack.beads_viewer: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.beads_viewer: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.beads_viewer: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "stack.beads_viewer: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "stack.beads_viewer: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
@@ -344,14 +403,30 @@ install_stack_cass() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.cass: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s' '--' '--easy-mode' '--verify'; then
                             install_success=true
+                        else
+                            log_error "stack.cass: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.cass: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.cass: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "stack.cass: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "stack.cass: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
@@ -404,14 +479,30 @@ install_stack_cm() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.cm: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s' '--' '--easy-mode' '--verify'; then
                             install_success=true
+                        else
+                            log_error "stack.cm: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.cm: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.cm: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "stack.cm: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "stack.cm: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
@@ -474,14 +565,30 @@ install_stack_caam() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.caam: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s'; then
                             install_success=true
+                        else
+                            log_error "stack.caam: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.caam: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.caam: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "stack.caam: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "stack.caam: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required

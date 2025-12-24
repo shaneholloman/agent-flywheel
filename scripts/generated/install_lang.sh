@@ -84,14 +84,30 @@ install_lang_bun() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "lang.bun: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s'; then
                             install_success=true
+                        else
+                            log_error "lang.bun: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "lang.bun: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "lang.bun: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "lang.bun: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "lang.bun: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
@@ -144,14 +160,30 @@ install_lang_uv() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "lang.uv: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'sh' '-s'; then
                             install_success=true
+                        else
+                            log_error "lang.uv: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "lang.uv: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "lang.uv: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "lang.uv: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "lang.uv: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
@@ -204,14 +236,30 @@ install_lang_rust() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "lang.rust: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'sh' '-s' '--' '-y' '--default-toolchain' 'nightly'; then
                             install_success=true
+                        else
+                            log_error "lang.rust: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "lang.rust: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "lang.rust: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "lang.rust: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "lang.rust: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
@@ -309,14 +357,30 @@ install_lang_nvm() {
 
                     # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
-                    expected_sha256="$(get_checksum "$tool")" || expected_sha256=""
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "lang.nvm: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
                         if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s'; then
                             install_success=true
+                        else
+                            log_error "lang.nvm: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "lang.nvm: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "lang.nvm: checksum for '$tool' not found"
                         fi
                     fi
+                else
+                    log_error "lang.nvm: KNOWN_INSTALLERS array not available"
                 fi
+            else
+                log_error "lang.nvm: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
             # No unverified fallback: verified install is required
