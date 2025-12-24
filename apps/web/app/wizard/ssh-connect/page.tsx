@@ -6,6 +6,7 @@ import { Terminal, ChevronDown, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CommandCard } from "@/components/command-card";
 import { AlertCard, OutputPreview } from "@/components/alert-card";
+import { TwoComputersExplainer } from "@/components/connection-check";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { markStepComplete } from "@/lib/wizardSteps";
@@ -199,6 +200,9 @@ export default function SSHConnectPage() {
         </p>
       </div>
 
+      {/* Two Computers Mental Model - CRITICAL for beginners */}
+      <TwoComputersExplainer />
+
       {/* IP confirmation */}
       <AlertCard variant="info" icon={Terminal}>
         Connecting to:{" "}
@@ -236,6 +240,7 @@ export default function SSHConnectPage() {
           command={sshCommand}
           windowsCommand={sshCommandWindows}
           description="Connect as root with password"
+          runLocation="local"
           showCheckbox
           persistKey="ssh-connect-root"
         />
@@ -294,6 +299,7 @@ export default function SSHConnectPage() {
           command={sshCommandUbuntu}
           windowsCommand={sshCommandUbuntuWindows}
           description="Connect as ubuntu user (fallback)"
+          runLocation="local"
         />
       </div>
 
@@ -317,6 +323,7 @@ export default function SSHConnectPage() {
         <CommandCard
           command="hostname"
           description="Show this computer's name"
+          runLocation="vps"
         />
         <OutputPreview title="You should see something like:">
           <p className="text-[oklch(0.72_0.19_145)]">vps-12345</p>

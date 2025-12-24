@@ -2,13 +2,15 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ShieldCheck, AlertTriangle, Terminal } from "lucide-react";
+import { ShieldCheck, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CommandCard } from "@/components/command-card";
 import { AlertCard, OutputPreview, DetailsSection } from "@/components/alert-card";
+import { ConnectionCheck } from "@/components/connection-check";
 import { markStepComplete } from "@/lib/wizardSteps";
 import { useWizardAnalytics } from "@/lib/hooks/useWizardAnalytics";
+import { useVPSIP } from "@/lib/userPreferences";
 import { withCurrentSearch } from "@/lib/utils";
 import {
   SimplerGuide,
@@ -57,6 +59,7 @@ const TROUBLESHOOTING = [
 
 export default function PreflightCheckPage() {
   const router = useRouter();
+  const [vpsIP] = useVPSIP();
   const [ackPassed, setAckPassed] = useState(false);
   const [ackFailed, setAckFailed] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
@@ -67,6 +70,8 @@ export default function PreflightCheckPage() {
     stepNumber: 8,
     stepTitle: "Pre-Flight Check",
   });
+
+  const displayIP = vpsIP || "YOUR_VPS_IP";
 
   const canContinue = ackPassed || ackFailed;
 
@@ -108,6 +113,9 @@ export default function PreflightCheckPage() {
         </p>
       </div>
 
+      {/* CRITICAL: Connection check */}
+      <ConnectionCheck vpsIP={displayIP} showExplainer showWhereAmI />
+
       {/* Why this matters */}
       <AlertCard variant="info" icon={ShieldCheck} title="Fast safety check">
         This quick scan validates OS, disk space, network access, and APT locks.
@@ -120,6 +128,7 @@ export default function PreflightCheckPage() {
         <CommandCard
           command={PREFLIGHT_COMMAND}
           description="ACFS pre-flight validation"
+          runLocation="vps"
           showCheckbox
           persistKey="preflight-check"
         />
@@ -234,10 +243,6 @@ export default function PreflightCheckPage() {
         </div>
       </SimplerGuide>
 
-      {/* Quick jump to SSH if needed */}
-      <AlertCard variant="tip" icon={Terminal} title="Not connected to your VPS?">
-        Go back to the <Jargon term="ssh">SSH</Jargon> step and connect first.
-      </AlertCard>
     </div>
   );
 }

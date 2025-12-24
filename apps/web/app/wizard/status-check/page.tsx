@@ -17,6 +17,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { CommandCard } from "@/components/command-card";
 import { AlertCard, OutputPreview } from "@/components/alert-card";
+import { WhereAmICheck } from "@/components/connection-check";
 import { markStepComplete } from "@/lib/wizardSteps";
 import {
   SERVICES,
@@ -155,6 +156,9 @@ export default function StatusCheckPage() {
           </p>
         </div>
       </AlertCard>
+
+      {/* Where Am I? Check */}
+      <WhereAmICheck />
 
       {/* Doctor command */}
       <div className="space-y-4">
