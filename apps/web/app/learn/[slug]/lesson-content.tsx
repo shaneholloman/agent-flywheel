@@ -230,6 +230,13 @@ export function LessonContent({ lesson, content }: Props) {
         return;
       }
 
+      // If the keyboard shortcuts overlay is open, treat any key press as "close"
+      // to match the UI text and prevent accidental navigation.
+      if (showKeyboardHint) {
+        setShowKeyboardHint(false);
+        return;
+      }
+
       switch (e.key) {
         case "ArrowLeft":
         case "h": // vim-style
@@ -256,7 +263,7 @@ export function LessonContent({ lesson, content }: Props) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [prevLesson, nextLesson, isCompleted, handleMarkComplete, router]);
+  }, [prevLesson, nextLesson, isCompleted, handleMarkComplete, router, showKeyboardHint]);
 
   return (
     <div className="relative min-h-screen bg-background">
