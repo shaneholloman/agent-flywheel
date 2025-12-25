@@ -4,7 +4,7 @@
 installers:
   zoxide:
     url: "https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh"
-    sha256: "c5d94701cfdd87d19f3989c1239e921d4ff95d4c0742b16beca061618c937bf0"
+    sha256: "2282ab73d26e63c6730e450dff7eced45fd638a160ff6127f272d86ced6f4f93"
 
   cass:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh"
