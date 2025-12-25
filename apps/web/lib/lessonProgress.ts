@@ -149,10 +149,18 @@ export const LESSONS: Lesson[] = [
   {
     id: 15,
     slug: "real-world-case-study",
-    title: "Real-World Case Study",
+    title: "Case Study: cass-memory",
     description: "Build a complex project in one day with agent swarms",
     duration: "15 min",
     file: "15_real_world_case_study.md",
+  },
+  {
+    id: 16,
+    slug: "slb-case-study",
+    title: "Case Study: SLB",
+    description: "From tweet to working tool in one evening",
+    duration: "12 min",
+    file: "16_slb_case_study.md",
   },
 ];
 
