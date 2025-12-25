@@ -106,7 +106,7 @@ export default function RunInstallerPage() {
       </AlertCard>
 
       {/* CRITICAL: SSH Key Prompt Warning */}
-      <AlertCard variant="destructive" title="WATCH FOR: SSH Key Prompt">
+      <AlertCard variant="error" title="WATCH FOR: SSH Key Prompt">
         <div className="space-y-3">
           <p>
             <strong>Early in the installation</strong>, you&apos;ll see a prompt asking for your SSH public key:

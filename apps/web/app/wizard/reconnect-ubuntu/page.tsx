@@ -156,7 +156,7 @@ export default function ReconnectUbuntuPage() {
           />
 
           {/* Common mistake: using wrong credentials */}
-          <AlertCard variant="destructive" title="Getting 'Permission denied' or asked for password?">
+          <AlertCard variant="error" title="Getting 'Permission denied' or asked for password?">
             <div className="space-y-2 text-sm">
               <p>This means one of two things:</p>
               <ol className="list-decimal list-inside space-y-1 mt-2">

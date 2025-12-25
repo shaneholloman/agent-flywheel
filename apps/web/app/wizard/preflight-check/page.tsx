@@ -133,7 +133,7 @@ export default function PreflightCheckPage() {
       </AlertCard>
 
       {/* Windows-specific warning - CRITICAL for confused users */}
-      <AlertCard variant="destructive" icon={AlertTriangle} title="Windows users: Common mistake!">
+      <AlertCard variant="error" icon={AlertTriangle} title="Windows users: Common mistake!">
         <div className="space-y-2">
           <p>
             If you paste this command and see errors like <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">&apos;bash&apos; is not recognized</code> or
