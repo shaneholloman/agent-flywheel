@@ -39,7 +39,7 @@ const agents: AgentInfo[] = [
     examples: [
       { command: "cc", description: "Start interactive REPL session" },
       { command: 'cc "fix the authentication bug in auth.ts"', description: "Direct prompt with task" },
-      { command: "cc --continue", description: "Resume last session" },
+      { command: "claude --continue", description: "Continue most recent session" },
       { command: "/compact", description: "Compress context (type inside cc session)" },
       { command: 'cc "review this PR" --print', description: "Output-only mode (no REPL)" },
     ],
@@ -47,7 +47,7 @@ const agents: AgentInfo[] = [
       "Use /compact when context gets full",
       "Start with cc for quick sessions",
       "Combine with ultrathink prompts for complex reasoning",
-      "Use --continue to resume where you left off",
+      "Use claude --continue to continue your last session",
     ],
   },
   {

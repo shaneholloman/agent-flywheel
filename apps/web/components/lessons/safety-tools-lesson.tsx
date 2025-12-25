@@ -226,7 +226,7 @@ export function SafetyToolsLesson() {
         <CommandList
           commands={[
             {
-              command: "caam ls [tool]",
+              command: "caam list [tool]",
               description: "List saved profiles (claude, codex, gemini)",
             },
             {
@@ -342,7 +342,7 @@ $ claude "continue the project"
           <QuickRefCard
             title="CAAM"
             commands={[
-              "caam ls [tool]",
+              "caam list [tool]",
               "caam backup <tool> <email>",
               "caam activate <tool> <email>",
               "caam status [tool]",
