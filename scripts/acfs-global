@@ -35,7 +35,7 @@ read_target_user_from_state_file() {
     fi
 
     if [[ -n "$target_user" ]] && is_valid_username "$target_user"; then
-        printf '%s' "$target_user"
+        printf '%s\n' "$target_user"
         return 0
     fi
 
@@ -46,40 +46,31 @@ read_target_user_from_state_file() {
 detect_target_user() {
     local state_candidate
 
-    if [[ -n "${ACFS_STATE_FILE:-}" ]]; then
-        if read_target_user_from_state_file "$ACFS_STATE_FILE"; then
-            echo ""
-            return 0
-        fi
-        echo "ubuntu"
+    if [[ -n "${ACFS_STATE_FILE:-}" ]] && read_target_user_from_state_file "$ACFS_STATE_FILE"; then
         return 0
     fi
 
-    # 1) Upgrade/resume state file (root-owned)
-    if read_target_user_from_state_file "/var/lib/acfs/state.json"; then
-        echo ""
-        return 0
-    fi
-
-    # 2) Current user's installed state (when invoked as the target user)
+    # 1) Current user's installed state (works when invoked as the target user)
     if read_target_user_from_state_file "$HOME/.acfs/state.json"; then
-        echo ""
         return 0
     fi
 
-    # 3) Common default target user
+    # 2) Common default target user
     if read_target_user_from_state_file "/home/ubuntu/.acfs/state.json"; then
-        echo ""
         return 0
     fi
 
-    # 4) Scan for an installed state file under /home/*
+    # 3) Scan for an installed state file under /home/*
     for state_candidate in /home/*/.acfs/state.json; do
         if read_target_user_from_state_file "$state_candidate"; then
-            echo ""
             return 0
         fi
     done
+
+    # 4) Upgrade/resume state file (root-owned, may remain after upgrades)
+    if read_target_user_from_state_file "/var/lib/acfs/state.json"; then
+        return 0
+    fi
 
     echo "ubuntu"
 }
