@@ -193,11 +193,11 @@ function RelatedToolCard({ toolId }: { toolId: ToolId }) {
 }
 
 interface Props {
-  params: { tool: string };
+  params: Promise<{ tool: string }>;
 }
 
-export default function ToolCardPage({ params }: Props) {
-  const { tool } = params;
+export default async function ToolCardPage({ params }: Props) {
+  const { tool } = await params;
   const doc = TOOLS[tool as ToolId];
 
   if (!doc) {
