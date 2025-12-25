@@ -64,5 +64,5 @@ installers:
 
   ohmyzsh:
     url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
-    sha256: "ce0b7c94aa04d8c7a8137e45fe5c4744e3947871f785fd58117c480c1bf49352"
+    sha256: "a16d27b2ec373e48aa5b3ca3b119f11f0c89abefde8846352c4acc79940f6ec5"
 

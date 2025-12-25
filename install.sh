@@ -2936,6 +2936,11 @@ finalize() {
     try_step "Setting acfs ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs" || return 1
     try_step "Linking acfs command" run_as_target ln -sf "$ACFS_HOME/bin/acfs" "$TARGET_HOME/.local/bin/acfs" || return 1
 
+    # Install global acfs wrapper (works for root and all users)
+    # This wrapper finds the target user from state and runs acfs as that user
+    try_step "Installing global acfs wrapper" install_asset "scripts/acfs-global" "/usr/local/bin/acfs" || return 1
+    try_step "Setting global acfs permissions" $SUDO chmod 755 "/usr/local/bin/acfs" || return 1
+
     # Install Claude destructive-command guard hook automatically.
     #
     # This is especially important because ACFS config includes "dangerous mode"
