@@ -104,10 +104,6 @@ export function PromptEngineeringLesson() {
             phrase="systematically and meticulously and intelligently"
             effect="Emphasizes both process and quality"
           />
-          <IntensityExample
-            phrase="Use ultrathink"
-            effect="Explicit extended thinking request"
-          />
         </div>
 
         <div className="mt-6">
@@ -120,7 +116,7 @@ export function PromptEngineeringLesson() {
 with fresh eyes to find any obvious bugs, problems,
 errors, issues, silly mistakes, etc. and then
 systematically and meticulously and intelligently
-correct them. Use ultrathink."`}
+correct them."`}
           />
         </div>
 
@@ -129,6 +125,17 @@ correct them. Use ultrathink."`}
             These aren&apos;t filler words. They&apos;re{" "}
             <strong>calibration signals</strong> that tell the model to allocate
             more reasoning depth to the task.
+          </TipBox>
+        </div>
+
+        <div className="mt-6">
+          <TipBox variant="tip">
+            <strong>Claude Code feature:</strong> The word{" "}
+            <strong>ultrathink</strong> is a specific Claude Code directive that
+            tells the system to allocate significantly more thinking tokens. While
+            it&apos;s a tool-level feature in Claude Code, using intensity words like
+            &quot;think deeply&quot; or &quot;reason carefully&quot; can help other
+            agents/models allocate more attention to complex tasks as well.
           </TipBox>
         </div>
       </Section>
