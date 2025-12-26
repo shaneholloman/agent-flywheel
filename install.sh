@@ -2076,11 +2076,35 @@ normalize_user() {
         fi
     fi
 
-    # Copy SSH keys from root if running as root
+    # Ensure root's SSH keys are present for the target user (do not overwrite existing keys)
     if [[ $EUID -eq 0 ]] && [[ -f /root/.ssh/authorized_keys ]]; then
-        log_detail "Copying SSH keys to $TARGET_USER"
+        log_detail "Syncing SSH keys to $TARGET_USER"
         try_step "Creating .ssh directory" $SUDO mkdir -p "$TARGET_HOME/.ssh" || return 1
-        try_step "Copying SSH authorized_keys" $SUDO cp /root/.ssh/authorized_keys "$TARGET_HOME/.ssh/" || return 1
+
+        # Basic hardening: refuse to follow symlinks as root.
+        if [[ -L "$TARGET_HOME/.ssh" ]]; then
+            log_error "Refusing to manage SSH keys: $TARGET_HOME/.ssh is a symlink"
+            return 1
+        fi
+        if [[ -L "$TARGET_HOME/.ssh/authorized_keys" ]]; then
+            log_error "Refusing to manage SSH keys: $TARGET_HOME/.ssh/authorized_keys is a symlink"
+            return 1
+        fi
+
+        try_step "Ensuring authorized_keys exists" $SUDO touch "$TARGET_HOME/.ssh/authorized_keys" || return 1
+        # shellcheck disable=SC2016  # Variables expand inside the bash -c script, not here.
+        try_step "Merging SSH authorized_keys" bash -c '
+            set -euo pipefail
+            src="/root/.ssh/authorized_keys"
+            dst="$1"
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                [[ -n "$line" ]] || continue
+                if grep -Fxq "$line" "$dst" 2>/dev/null; then
+                    continue
+                fi
+                printf "%s\n" "$line" >> "$dst"
+            done < "$src"
+        ' -- "$TARGET_HOME/.ssh/authorized_keys" || return 1
         try_step "Setting SSH directory ownership" $SUDO chown -R "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.ssh" || return 1
         try_step "Setting SSH directory permissions" $SUDO chmod 700 "$TARGET_HOME/.ssh" || return 1
         try_step "Setting authorized_keys permissions" $SUDO chmod 600 "$TARGET_HOME/.ssh/authorized_keys" || return 1
@@ -3688,13 +3712,28 @@ main() {
         exit 0
     fi
 
-    # Handle --reset-state: just delete state file and exit
+    # Handle --reset-state: move state file aside and exit
     if [[ "$RESET_STATE_ONLY" == "true" ]]; then
         echo "Resetting ACFS state..." >&2
         local state_file="${ACFS_HOME:-/home/${TARGET_USER}/.acfs}/state.json"
         if [[ -f "$state_file" ]]; then
-            rm -f "$state_file"
-            echo "State file deleted: $state_file" >&2
+            if type -t state_backup_and_remove &>/dev/null; then
+                local state_dir
+                state_dir="$(dirname "$state_file")"
+                if ! ACFS_HOME="$state_dir" ACFS_STATE_FILE="$state_file" state_backup_and_remove; then
+                    echo "ERROR: Failed to move state file out of the way: $state_file" >&2
+                    exit 1
+                fi
+            else
+                local backup_file
+                backup_file="${state_file}.backup.$(date +%Y%m%d_%H%M%S)"
+                if mv "$state_file" "$backup_file" 2>/dev/null; then
+                    echo "Moved state file aside: $backup_file" >&2
+                else
+                    echo "ERROR: Failed to move state file out of the way: $state_file" >&2
+                    exit 1
+                fi
+            fi
         else
             echo "No state file found at: $state_file" >&2
         fi

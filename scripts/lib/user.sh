@@ -138,16 +138,43 @@ migrate_ssh_keys() {
 
     log_detail "Migrating SSH keys from $source_keys"
 
-    # Create .ssh directory for target user
-    $SUDO mkdir -p "$ACFS_TARGET_HOME/.ssh"
+    local ssh_dir="$ACFS_TARGET_HOME/.ssh"
 
-    # Copy authorized_keys
-    $SUDO cp "$source_keys" "$ACFS_TARGET_HOME/.ssh/authorized_keys"
+    # Basic hardening: refuse to follow symlinks when writing keys.
+    if [[ -e "$ssh_dir" ]] && [[ -L "$ssh_dir" ]]; then
+        log_error "Refusing to manage SSH keys: $ssh_dir is a symlink"
+        return 1
+    fi
+
+    # Create .ssh directory for target user
+    $SUDO mkdir -p "$ssh_dir"
+
+    # Merge authorized_keys (do not overwrite existing keys)
+    local target_keys="$ssh_dir/authorized_keys"
+    if [[ -e "$target_keys" ]] && [[ -L "$target_keys" ]]; then
+        log_error "Refusing to manage SSH keys: $target_keys is a symlink"
+        return 1
+    fi
+    if ! $SUDO touch "$target_keys" 2>/dev/null; then
+        log_error "Failed to create: $target_keys"
+        return 1
+    fi
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] || continue
+        if $SUDO grep -Fxq "$line" "$target_keys" 2>/dev/null; then
+            continue
+        fi
+        if ! printf '%s\n' "$line" | $SUDO tee -a "$target_keys" >/dev/null; then
+            log_error "Failed to append SSH key to: $target_keys"
+            return 1
+        fi
+    done < "$source_keys"
 
     # Fix permissions
     $SUDO chown -R "$target:$target" "$ACFS_TARGET_HOME/.ssh"
     $SUDO chmod 700 "$ACFS_TARGET_HOME/.ssh"
-    $SUDO chmod 600 "$ACFS_TARGET_HOME/.ssh/authorized_keys"
+    $SUDO chmod 600 "$target_keys"
 
     log_success "SSH keys migrated to $target"
 }
