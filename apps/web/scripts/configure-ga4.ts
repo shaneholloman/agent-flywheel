@@ -11,8 +11,15 @@
  */
 
 import { AnalyticsAdminServiceClient } from '@google-analytics/admin';
+import type { google } from '@google-analytics/admin/build/protos/protos';
 
 const PROPERTY_ID = '517085078';
+
+// Type-safe error message extraction
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
 const PROPERTY_NAME = `properties/${PROPERTY_ID}`;
 
 // Initialize the client (uses ADC automatically)
@@ -79,7 +86,7 @@ async function getExistingCustomDimensions(): Promise<Set<string>> {
         existing.add(dim.parameterName);
       }
     }
-  } catch (error) {
+  } catch {
     console.log('Note: Could not fetch existing dimensions (might not have permission)');
   }
   return existing;
@@ -96,7 +103,7 @@ async function getExistingCustomMetrics(): Promise<Set<string>> {
         existing.add(metric.parameterName);
       }
     }
-  } catch (error) {
+  } catch {
     console.log('Note: Could not fetch existing metrics (might not have permission)');
   }
   return existing;
@@ -128,12 +135,13 @@ async function createCustomDimensions() {
       });
       console.log(`  ✅ ${dim.name}`);
       created++;
-    } catch (error: any) {
-      if (error.message?.includes('already exists')) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      if (message.includes('already exists')) {
         console.log(`  ⏭️  ${dim.name} (already exists)`);
         skipped++;
       } else {
-        console.log(`  ❌ ${dim.name}: ${error.message}`);
+        console.log(`  ❌ ${dim.name}: ${message}`);
       }
     }
   }
@@ -168,12 +176,13 @@ async function createCustomMetrics() {
       });
       console.log(`  ✅ ${metric.name}`);
       created++;
-    } catch (error: any) {
-      if (error.message?.includes('already exists')) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      if (message.includes('already exists')) {
         console.log(`  ⏭️  ${metric.name} (already exists)`);
         skipped++;
       } else {
-        console.log(`  ❌ ${metric.name}: ${error.message}`);
+        console.log(`  ❌ ${metric.name}: ${message}`);
       }
     }
   }
@@ -209,12 +218,13 @@ async function markConversionEvents() {
       });
       console.log(`  ✅ ${eventName}`);
       marked++;
-    } catch (error: any) {
-      if (error.message?.includes('already exists') || error.message?.includes('ALREADY_EXISTS')) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      if (message.includes('already exists') || message.includes('ALREADY_EXISTS')) {
         console.log(`  ⏭️  ${eventName} (already a conversion)`);
         skipped++;
       } else {
-        console.log(`  ❌ ${eventName}: ${error.message}`);
+        console.log(`  ❌ ${eventName}: ${message}`);
       }
     }
   }
@@ -374,16 +384,17 @@ async function createAudiences() {
     try {
       await adminClient.createAudience({
         parent: PROPERTY_NAME,
-        audience: audience as any,
+        audience: audience as google.analytics.admin.v1alpha.IAudience,
       });
       console.log(`  ✅ ${audience.displayName}`);
       created++;
-    } catch (error: any) {
-      if (error.message?.includes('already exists') || error.message?.includes('ALREADY_EXISTS')) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      if (message.includes('already exists') || message.includes('ALREADY_EXISTS')) {
         console.log(`  ⏭️  ${audience.displayName} (already exists)`);
         skipped++;
       } else {
-        console.log(`  ❌ ${audience.displayName}: ${error.message}`);
+        console.log(`  ❌ ${audience.displayName}: ${message}`);
       }
     }
   }
@@ -433,8 +444,8 @@ async function main() {
     await printSummary();
 
     console.log('\n✅ GA4 configuration complete!\n');
-  } catch (error: any) {
-    console.error('\n❌ Configuration failed:', error.message);
+  } catch (error: unknown) {
+    console.error('\n❌ Configuration failed:', getErrorMessage(error));
     console.error('\nMake sure you have:');
     console.error('1. Run: gcloud auth application-default login');
     console.error('2. Enabled the Google Analytics Admin API in your GCP project');
