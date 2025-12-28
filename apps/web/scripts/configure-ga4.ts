@@ -72,6 +72,7 @@ const CUSTOM_DIMENSIONS = [
 
   // Time tracking
   { name: 'time_from_previous_step_seconds', scope: 'EVENT', description: 'Seconds since previous step' },
+  { name: 'time_from_previous_lesson_seconds', scope: 'EVENT', description: 'Seconds since previous lesson' },
   // Note: time_on_step_seconds is defined as a metric (not dimension) since it's a numeric value
 ];
 
@@ -79,6 +80,8 @@ const CUSTOM_DIMENSIONS = [
 const CUSTOM_METRICS = [
   { name: 'time_on_step_seconds', scope: 'EVENT', description: 'Time spent on wizard step in seconds', measurementUnit: 'SECONDS' },
   { name: 'time_on_lesson_seconds', scope: 'EVENT', description: 'Time spent on lesson in seconds', measurementUnit: 'SECONDS' },
+  // NOTE: time_from_previous_seconds is registered but not currently used in analytics.ts
+  // The code sends time_from_previous_step_seconds and time_from_previous_lesson_seconds (as dimensions) instead
   { name: 'time_from_previous_seconds', scope: 'EVENT', description: 'Time since previous step/lesson', measurementUnit: 'SECONDS' },
   { name: 'total_funnel_time_seconds', scope: 'EVENT', description: 'Total time in funnel', measurementUnit: 'SECONDS' },
 ];
