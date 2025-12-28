@@ -27,11 +27,22 @@ const PROPERTY_NAME = `properties/${PROPERTY_ID}`;
 const adminClient = new AnalyticsAdminServiceClient();
 
 // Custom dimensions to create
+// NOTE: Parameter names must EXACTLY match what the analytics.ts code sends in events
 const CUSTOM_DIMENSIONS = [
-  // Wizard tracking
-  { name: 'wizard_step', scope: 'EVENT', description: 'Current wizard step name (e.g., os_selection, rent_vps)' },
-  { name: 'wizard_step_number', scope: 'EVENT', description: 'Wizard step number (1-13)' },
-  { name: 'wizard_step_title', scope: 'EVENT', description: 'Human-readable wizard step title' },
+  // Wizard/Funnel step tracking - these match the actual event parameters
+  { name: 'step_number', scope: 'EVENT', description: 'Step number (1-13 for wizard)' },
+  { name: 'step_name', scope: 'EVENT', description: 'Step name (e.g., os_selection, rent_vps)' },
+  { name: 'step_title', scope: 'EVENT', description: 'Human-readable step title' },
+  { name: 'previous_step', scope: 'EVENT', description: 'Previous step number' },
+  { name: 'is_new_max_step', scope: 'EVENT', description: 'Whether this is furthest step reached' },
+  { name: 'total_steps', scope: 'EVENT', description: 'Total number of steps in funnel' },
+  { name: 'progress_percentage', scope: 'EVENT', description: 'Progress through funnel (0-100%)' },
+  { name: 'completed_steps_count', scope: 'EVENT', description: 'Number of steps completed' },
+
+  // Legacy wizard dimensions (kept for backwards compatibility)
+  { name: 'wizard_step', scope: 'EVENT', description: '[Legacy] Current wizard step name' },
+  { name: 'wizard_step_number', scope: 'EVENT', description: '[Legacy] Wizard step number' },
+  { name: 'wizard_step_title', scope: 'EVENT', description: '[Legacy] Human-readable wizard step title' },
 
   // Lesson tracking
   { name: 'lesson_id', scope: 'EVENT', description: 'Lesson ID (0-19)' },
@@ -43,6 +54,7 @@ const CUSTOM_DIMENSIONS = [
   { name: 'funnel_source', scope: 'USER', description: 'Traffic source when funnel started' },
   { name: 'funnel_medium', scope: 'USER', description: 'Traffic medium when funnel started' },
   { name: 'funnel_campaign', scope: 'USER', description: 'Campaign when funnel started' },
+  { name: 'milestone', scope: 'EVENT', description: 'Funnel milestone name' },
 
   // Progress tracking
   { name: 'completion_percentage', scope: 'EVENT', description: 'Progress through funnel (0-100%)' },
@@ -55,6 +67,10 @@ const CUSTOM_DIMENSIONS = [
   { name: 'selected_os', scope: 'USER', description: 'OS selected in wizard (mac/windows/linux)' },
   { name: 'vps_provider', scope: 'USER', description: 'VPS provider selected' },
   { name: 'terminal_app', scope: 'USER', description: 'Terminal application selected' },
+
+  // Time tracking
+  { name: 'time_from_previous_step_seconds', scope: 'EVENT', description: 'Seconds since previous step' },
+  { name: 'time_on_step_seconds', scope: 'EVENT', description: 'Seconds spent on this step' },
 ];
 
 // Custom metrics to create
