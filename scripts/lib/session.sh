@@ -301,7 +301,11 @@ sanitize_content() {
     # We intentionally do this as a separate pass because we need capture groups
     # in the replacement to keep the key/delimiter/quotes.
     local kv_pattern
-    kv_pattern="([\"']?)(password|secret|api_key|apikey|auth_token|access_token)([\"']?)([[:space:]]*[:=][[:space:]]*)([\"']?)[^[:space:]\"']{8,}([\"']?)"
+    # Stop before common trailing delimiters so we don't swallow surrounding syntax like `}`, `,`, `;`, etc.
+    #
+    # Note: To include a literal `]` in a bracket expression portably, it must appear first.
+    # Also exclude `[` so we don't partially match already-redacted values like "[REDACTED]".
+    kv_pattern="([\"']?)(password|secret|api_key|apikey|auth_token|access_token)([\"']?)([[:space:]]*[:=][[:space:]]*)([\"']?)[^][[:space:]\"'}),;[]{8,}([\"']?)"
     local next_kv_result
     if next_kv_result=$(printf '%s' "$result" | sed -E "s/${kv_pattern}/\\1\\2\\3\\4\\5[REDACTED]\\6/${sed_flags}" 2>/dev/null); then
         result="$next_kv_result"
@@ -378,12 +382,12 @@ def sanitize_string:
         gsub("xoxb-[a-zA-Z0-9-]+"; "[REDACTED]") |
         gsub("xoxp-[a-zA-Z0-9-]+"; "[REDACTED]") |
         gsub("AKIA[A-Z0-9]{16}"; "[REDACTED]") |
-        gsub("(?i)password[\"\\s:=]+[\"']?[^\\s\"']{8,}[\"']?"; "[REDACTED]") |
-        gsub("(?i)secret[\"\\s:=]+[\"']?[^\\s\"']{8,}[\"']?"; "[REDACTED]") |
-        gsub("(?i)api_key[\"\\s:=]+[\"']?[^\\s\"']{8,}[\"']?"; "[REDACTED]") |
-        gsub("(?i)apikey[\"\\s:=]+[\"']?[^\\s\"']{8,}[\"']?"; "[REDACTED]") |
-        gsub("(?i)auth_token[\"\\s:=]+[\"']?[^\\s\"']{8,}[\"']?"; "[REDACTED]") |
-        gsub("(?i)access_token[\"\\s:=]+[\"']?[^\\s\"']{8,}[\"']?"; "[REDACTED]")
+        gsub("(?i)password[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "[REDACTED]") |
+        gsub("(?i)secret[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "[REDACTED]") |
+        gsub("(?i)api_key[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "[REDACTED]") |
+        gsub("(?i)apikey[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "[REDACTED]") |
+        gsub("(?i)auth_token[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "[REDACTED]") |
+        gsub("(?i)access_token[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "[REDACTED]")
 JQ_BASE
 
     local jq_filter_optional=""
