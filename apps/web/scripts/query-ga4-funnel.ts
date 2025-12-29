@@ -32,7 +32,7 @@ function safeParseInt(value: string | undefined | null): number | null {
     return null;
   }
   const parsed = parseInt(value, 10);
-  return isNaN(parsed) ? null : parsed;
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 async function queryWizardFunnel(): Promise<FunnelStep[]> {
