@@ -266,8 +266,8 @@ state_write_atomic() {
         sync "$temp_file" 2>/dev/null || sync 2>/dev/null || true
     fi
 
-    # Set appropriate permissions before moving (readable by user, readable by group/others)
-    chmod 644 "$temp_file" 2>/dev/null || true
+    # Set appropriate permissions before moving (state may include failure context; keep it owner-only).
+    chmod 600 "$temp_file" 2>/dev/null || true
 
     # Atomic rename: on POSIX filesystems, rename() is guaranteed atomic
     # when source and target are on the same filesystem
