@@ -4077,7 +4077,8 @@ main() {
             local phase_display="$2"
             local phase_func="$3"
             local phase_num="${phase_display%%/*}"
-            local phase_name="${phase_display#*/[0-9] }"  # Extract name after "X/Y "
+            # Extract name after the leading "X/Y " prefix (robust to multi-digit totals).
+            local phase_name="${phase_display#* }"
 
             # Show progress header before running phase
             if type -t show_progress_header &>/dev/null; then

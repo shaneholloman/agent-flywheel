@@ -75,14 +75,33 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
   const deps: AuthCheckDeps = { ...defaultDeps, ...overrides };
   const homedir = deps.homedir();
 
-  const runCommand = (command: string): string | null => {
+  const runCommand = (
+    command: string,
+    options: { allowStderrFallback?: boolean } = {},
+  ): string | null => {
     try {
       const output = deps.execSync(command, {
         encoding: 'utf-8',
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 5000,
       });
-      return output.trim();
+      const trimmed = output.trim();
+      if (trimmed) return trimmed;
+
+      // Some CLIs (notably `gh auth status`) write human output to stderr.
+      // Only fall back to stderr capture when stdout is empty to avoid breaking
+      // JSON parsing for commands that emit JSON on stdout.
+      if (options.allowStderrFallback) {
+        const mergedOutput = deps.execSync(`${command} 2>&1`, {
+          encoding: 'utf-8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 5000,
+        });
+        const mergedTrimmed = mergedOutput.trim();
+        return mergedTrimmed ? mergedTrimmed : null;
+      }
+
+      return null;
     } catch {
       return null;
     }
@@ -157,7 +176,7 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
 
   const checkGitHub = (): AuthStatus => {
     if (deps.commandExists('gh')) {
-      const output = runCommand('gh auth status -h github.com');
+      const output = runCommand('gh auth status -h github.com', { allowStderrFallback: true });
       if (output && output.includes('Logged in to')) {
         const match = output.match(/Logged in to .* as ([^\s]+)/i);
         return { authenticated: true, details: match?.[1] };
