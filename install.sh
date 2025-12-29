@@ -3823,6 +3823,15 @@ main() {
     fi
 
     if [[ -z "${SCRIPT_DIR:-}" ]]; then
+        # Resolve ACFS_REF to a specific commit SHA early to prevent mixed-ref installs.
+        # Without this, we could download a tarball for one commit and later fetch commit metadata
+        # (or resume scripts) from a newer commit if the branch/tag moves mid-install.
+        fetch_commit_sha
+        if [[ -n "${ACFS_COMMIT_SHA_FULL:-}" ]]; then
+            ACFS_REF="$ACFS_COMMIT_SHA_FULL"
+            ACFS_RAW="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/${ACFS_REF}"
+            export ACFS_REF ACFS_RAW
+        fi
         bootstrap_repo_archive
     fi
 

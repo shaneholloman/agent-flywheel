@@ -18,8 +18,12 @@ if ! declare -f log_fatal &>/dev/null; then
     log_step() { echo "[$1] $2" >&2; }
 fi
 
-# Ensure SUDO is set
-: "${SUDO:=sudo}"
+# Ensure SUDO is set (empty string for root, "sudo" otherwise)
+if [[ $EUID -eq 0 ]]; then
+    SUDO=""
+else
+    : "${SUDO:=sudo}"
+fi
 
 ZSH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
