@@ -2851,13 +2851,20 @@ install_cloud_db_legacy_db() {
     elif command_exists psql; then
         log_detail "PostgreSQL already installed ($(psql --version 2>/dev/null | head -1 || echo 'psql'))"
     else
-        log_detail "Installing PostgreSQL 18 (PGDG repo, codename=$codename)"
+        # PGDG may lag behind new Ubuntu codenames (e.g. 25.10) - fall back to noble (24.04 LTS) when needed.
+        local pgdg_codename="$codename"
+        if command_exists curl && ! curl -sfI "https://apt.postgresql.org/pub/repos/apt/dists/${codename}-pgdg/Release" >/dev/null 2>&1; then
+            pgdg_codename="noble"
+            log_detail "PGDG repo unavailable for $codename, using $pgdg_codename"
+        fi
+
+        log_detail "Installing PostgreSQL 18 (PGDG repo, codename=$pgdg_codename)"
         try_step "Creating apt keyrings for PostgreSQL" $SUDO mkdir -p /etc/apt/keyrings || true
 
         if ! try_step_eval "Adding PostgreSQL apt key" "set -o pipefail; if curl --help all 2>/dev/null | grep -q -- '--proto'; then curl --proto '=https' --proto-redir '=https' -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc; else curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc; fi | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/postgresql.gpg 2>/dev/null"; then
             log_warn "PostgreSQL: failed to install signing key (skipping)"
         else
-            try_step_eval "Adding PostgreSQL apt repo" "echo 'deb [signed-by=/etc/apt/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main' | $SUDO tee /etc/apt/sources.list.d/pgdg.list > /dev/null" || true
+            try_step_eval "Adding PostgreSQL apt repo" "echo 'deb [signed-by=/etc/apt/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt ${pgdg_codename}-pgdg main' | $SUDO tee /etc/apt/sources.list.d/pgdg.list > /dev/null" || true
 
             try_step "Updating apt cache for PostgreSQL" $SUDO apt-get update -y || log_warn "PostgreSQL: apt-get update failed (continuing)"
 
