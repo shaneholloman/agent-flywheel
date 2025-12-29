@@ -44,11 +44,6 @@ DESTRUCTIVE_PATTERNS = [
     (r"git reset --hard", "Destroys all uncommitted modifications and staging"),
     (r"git reset --merge", "Can destroy uncommitted changes during merge"),
 
-    # Git: Clean untracked files
-    # Matches -f, -xf, -df, -fd, --force, etc.
-    # Note: Dry runs (-n) are not matched by this pattern.
-    (r"git clean\b.*(?:-[a-z]*f|--force)", "Permanently removes untracked files"),
-
     # Git: Dangerous branch operations
     (r"git branch -D", "Force-deletes branch bypassing merge safety checks"),
 
@@ -346,6 +341,81 @@ def _check_git_force_push(command: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _check_git_clean(command: str) -> tuple[bool, str]:
+    """Block git clean that deletes files (force without dry-run)."""
+    reason = "Permanently removes untracked files"
+
+    if _has_shell_operators(command):
+        if not re.search(r"\bgit\b[^\n]*\bclean\b", command, re.IGNORECASE):
+            return False, ""
+        if re.search(r"(?:\s--dry-run\b|\s-[^\s\n]*n[^\s\n]*)", command, re.IGNORECASE):
+            return False, ""
+        if re.search(r"(?:\s--force\b|\s-[^\n]*f)", command, re.IGNORECASE):
+            return True, reason
+        return False, ""
+
+    tokens = _try_shlex_split(command)
+    if not tokens:
+        if re.search(r"\bgit\b[^\n]*\bclean\b", command, re.IGNORECASE) and re.search(
+            r"(?:\s--force\b|\s-[^\n]*f)", command, re.IGNORECASE
+        ):
+            if not re.search(r"(?:\s--dry-run\b|\s-[^\s\n]*n[^\s\n]*)", command, re.IGNORECASE):
+                return True, reason
+        return False, ""
+
+    core = _strip_common_wrappers(tokens)
+    if len(core) < 2:
+        return False, ""
+    if _basename(core[0]) != "git":
+        return False, ""
+
+    # Skip common git global options to find the subcommand (e.g., `git -C repo clean ...`).
+    i = 1
+    while i < len(core):
+        t = core[i]
+        if t == "--":
+            i += 1
+            break
+        if not t.startswith("-"):
+            break
+        i += 1
+        if t in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"):
+            if i < len(core):
+                i += 1
+
+    if i >= len(core) or core[i] != "clean":
+        return False, ""
+
+    args = core[i + 1 :]
+    has_force = False
+    has_dry_run = False
+    end_of_options = False
+
+    for t in args:
+        if end_of_options:
+            continue
+        if t == "--":
+            end_of_options = True
+            continue
+        if t == "--dry-run" or t == "-n":
+            has_dry_run = True
+            continue
+        if t == "--force":
+            has_force = True
+            continue
+        if t.startswith("--"):
+            continue
+        if t.startswith("-") and t != "-":
+            flags = t[1:]
+            has_force = has_force or ("f" in flags)
+            has_dry_run = has_dry_run or ("n" in flags)
+            continue
+
+    if has_force and not has_dry_run:
+        return True, reason
+    return False, ""
+
+
 def check_destructive(command: str) -> tuple[bool, str]:
     """
     Check if command matches a destructive pattern.
@@ -368,6 +438,10 @@ def check_destructive(command: str) -> tuple[bool, str]:
             return True, reason
 
         blocked, reason = _check_git_force_push(candidate)
+        if blocked:
+            return True, reason
+
+        blocked, reason = _check_git_clean(candidate)
         if blocked:
             return True, reason
 

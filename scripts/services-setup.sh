@@ -219,9 +219,10 @@ check_vercel_status() {
 }
 
 check_supabase_status() {
-    local supabase_bin="$TARGET_HOME/.bun/bin/supabase"
+    local supabase_bin
+    supabase_bin="$(find_user_bin "supabase" 2>/dev/null || true)"
 
-    if [[ ! -x "$supabase_bin" ]]; then
+    if [[ -z "$supabase_bin" || ! -x "$supabase_bin" ]]; then
         SERVICE_STATUS[supabase]="not_installed"
         return
     fi
@@ -762,9 +763,10 @@ Press Enter to launch 'vercel login'..."
 }
 
 setup_supabase() {
-    local supabase_bin="$TARGET_HOME/.bun/bin/supabase"
+    local supabase_bin
+    supabase_bin="$(find_user_bin "supabase" 2>/dev/null || true)"
 
-    if [[ ! -x "$supabase_bin" ]]; then
+    if [[ -z "$supabase_bin" || ! -x "$supabase_bin" ]]; then
         gum_error "Supabase CLI not installed. Run the main installer first."
         return 1
     fi
