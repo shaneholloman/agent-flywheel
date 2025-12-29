@@ -85,59 +85,70 @@ def _strip_common_wrappers(tokens: list[str]) -> list[str]:
     This is intentionally conservative and only handles the most common cases.
     If parsing gets ambiguous, we fall back to regex-based blocking.
     """
-    i = 0
+    def strip_once(current: list[str]) -> list[str]:
+        i = 0
 
-    # Strip leading inline environment assignments (e.g., FOO=1 BAR=2 cmd ...).
-    # This is common in agent-run commands and would otherwise bypass checks.
-    while i < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i]):
-        i += 1
-
-    # Strip leading `env VAR=...` assignments.
-    if i < len(tokens) and _basename(tokens[i]) == "env":
-        i += 1
-        while i < len(tokens):
-            t = tokens[i]
-            if t == "--":
-                i += 1
-                break
-            if t.startswith("-"):
-                i += 1
-                continue
-            if "=" in t and not t.startswith("="):
-                i += 1
-                continue
-            break
-
-    # Strip a single leading `sudo ...` wrapper.
-    if i < len(tokens) and _basename(tokens[i]) == "sudo":
-        i += 1
-        while i < len(tokens):
-            t = tokens[i]
-            if t == "--":
-                i += 1
-                break
-            if not t.startswith("-"):
-                break
+        # Strip leading inline environment assignments (e.g., FOO=1 BAR=2 cmd ...).
+        # This is common in agent-run commands and would otherwise bypass checks.
+        while i < len(current) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", current[i]):
             i += 1
-            # Options that take a parameter.
-            if t in ("-u", "-g", "-h", "-p", "-r", "-t", "-C"):
-                if i < len(tokens):
+
+        # Strip leading `env VAR=...` assignments.
+        if i < len(current) and _basename(current[i]) == "env":
+            i += 1
+            while i < len(current):
+                t = current[i]
+                if t == "--":
                     i += 1
+                    break
+                if t.startswith("-"):
+                    i += 1
+                    continue
+                if "=" in t and not t.startswith("="):
+                    i += 1
+                    continue
+                break
 
-    # Strip a single leading `command ...` / `builtin ...` wrapper.
-    # These are common ways to bypass simplistic checks.
-    if i < len(tokens) and _basename(tokens[i]) in ("command", "builtin"):
-        i += 1
-        while i < len(tokens):
-            t = tokens[i]
-            if t == "--":
-                i += 1
-                break
-            if not t.startswith("-"):
-                break
+        # Strip a single leading `sudo ...` wrapper.
+        if i < len(current) and _basename(current[i]) == "sudo":
             i += 1
+            while i < len(current):
+                t = current[i]
+                if t == "--":
+                    i += 1
+                    break
+                if not t.startswith("-"):
+                    break
+                i += 1
+                # Options that take a parameter.
+                if t in ("-u", "-g", "-h", "-p", "-r", "-t", "-C"):
+                    if i < len(current):
+                        i += 1
 
-    return tokens[i:]
+        # Strip a single leading `command ...` / `builtin ...` wrapper.
+        # These are common ways to bypass simplistic checks.
+        if i < len(current) and _basename(current[i]) in ("command", "builtin"):
+            i += 1
+            while i < len(current):
+                t = current[i]
+                if t == "--":
+                    i += 1
+                    break
+                if not t.startswith("-"):
+                    break
+                i += 1
+
+        return current[i:]
+
+    core = tokens
+    # Unwrap repeatedly to handle nested combinations like `sudo env ...` or
+    # `command sudo env ...` which would otherwise bypass checks.
+    for _ in range(10):
+        stripped = strip_once(core)
+        if stripped == core:
+            break
+        core = stripped
+    return core
 
 
 def _unwrap_shell_c_command(command: str) -> str | None:
@@ -187,8 +198,6 @@ def _check_rm_recursive_force(command: str) -> tuple[bool, str]:
     Allowed prefixes:
     - /tmp/
     - /var/tmp/
-    - $TMPDIR/
-    - ${TMPDIR}/
     """
     # For compound commands we can't reliably prove safety, so we conservatively
     # block any recursive+force deletion.
@@ -259,7 +268,11 @@ def _check_rm_recursive_force(command: str) -> tuple[bool, str]:
     if not args:
         return True, "Recursive forced deletion (rm with -r/-f) without any target path"
 
-    safe_prefixes = ("/tmp/", "/var/tmp/", "$TMPDIR/", "${TMPDIR}/")
+    # Intentionally do not treat $TMPDIR/${TMPDIR} as "safe" here. TMPDIR is
+    # often unset on Linux (making "$TMPDIR/foo" expand to "/foo"), and it can
+    # be overridden in ways that are hard to safely reason about pre-exec (e.g.,
+    # via nested shells).
+    safe_prefixes = ("/tmp/", "/var/tmp/")
     for path in args:
         if not any(path.startswith(prefix) for prefix in safe_prefixes):
             return True, "Recursive forced deletion (rm -rf) outside temporary directories"
