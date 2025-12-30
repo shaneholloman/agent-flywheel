@@ -648,8 +648,11 @@ ubuntu_do_upgrade() {
     chmod 755 "$upgrade_work_dir" 2>/dev/null || true
     log_detail "Running do-release-upgrade from: $upgrade_work_dir"
 
+    # Force a safe umask in the upgrader subprocess. Some environments run with a
+    # restrictive root umask (e.g. 0077), which can cause `_apt` permission
+    # errors while fetching release artifacts.
     local upgrade_result=0
-    if ! (cd "$upgrade_work_dir" && do-release-upgrade -f DistUpgradeViewNonInteractive); then
+    if ! (cd "$upgrade_work_dir" && umask 022 && do-release-upgrade -f DistUpgradeViewNonInteractive); then
         log_error "do-release-upgrade failed"
         upgrade_result=1
     fi
