@@ -458,19 +458,47 @@ Press Enter to install the guard..."
         gum_detail "Installing Claude Git Safety Guard (noninteractive)"
     fi
 
-    mkdir -p "$hooks_dir"
+    # Safety: refuse to follow symlinks under ~/.claude.
+    # This prevents writing outside $TARGET_HOME when invoked as root.
+    if [[ -L "$settings_dir" ]]; then
+        gum_error "Refusing to operate: $settings_dir is a symlink"
+        return 1
+    fi
+    if [[ -e "$settings_dir" && ! -d "$settings_dir" ]]; then
+        gum_error "Refusing to operate: $settings_dir exists and is not a directory"
+        return 1
+    fi
+    if [[ -L "$hooks_dir" ]]; then
+        gum_error "Refusing to operate: $hooks_dir is a symlink"
+        return 1
+    fi
+    if [[ -e "$hooks_dir" && ! -d "$hooks_dir" ]]; then
+        gum_error "Refusing to operate: $hooks_dir exists and is not a directory"
+        return 1
+    fi
+    if [[ -L "$guard_path_py" || -L "$guard_path_sh" || -L "$settings_file" ]]; then
+        gum_error "Refusing to operate: one or more ~/.claude paths are symlinks"
+        return 1
+    fi
+
+    # If older runs left root-owned files, fix ownership before writing as $TARGET_USER.
+    if [[ "$(whoami)" == "root" ]]; then
+        chown -hR "$TARGET_USER:$TARGET_USER" "$settings_dir" 2>/dev/null || true
+    fi
+
+    run_as_user mkdir -p "$hooks_dir"
 
     # Prefer Python implementation if available
     local installed_guard="$guard_path_sh"
     
     if [[ -f "$source_py" ]] && command -v python3 &>/dev/null; then
         gum_detail "Installing Python implementation..."
-        cp "$source_py" "$guard_path_py"
-        chmod +x "$guard_path_py"
+        run_as_user cp -- "$source_py" "$guard_path_py"
+        run_as_user chmod +x "$guard_path_py"
         installed_guard="$guard_path_py"
     else
         gum_detail "Installing Bash implementation (fallback)..."
-        cat > "$guard_path_sh" << 'EOF'
+        cat << 'EOF' | run_as_user tee "$guard_path_sh" >/dev/null
 #!/usr/bin/env bash
 #
 # git_safety_guard.sh
@@ -578,12 +606,12 @@ fi
 
 exit 0
 EOF
-        chmod +x "$guard_path_sh"
+        run_as_user chmod +x "$guard_path_sh"
     fi
 
     # Create or merge settings.json
     if [[ ! -f "$settings_file" ]]; then
-        cat > "$settings_file" <<EOF
+        run_as_user tee "$settings_file" >/dev/null <<EOF
 {
   "hooks": {
     "PreToolUse": [
@@ -601,41 +629,46 @@ EOF
         local tmp
         if command -v jq &>/dev/null; then
             # Create temp file in the same directory for atomic replacement (cross-device mv can fail).
-            tmp="$(mktemp "${settings_dir}/.acfs_services.XXXXXX" 2>/dev/null)" || tmp=""
+            tmp="$(run_as_user mktemp "${settings_dir}/.acfs_services.XXXXXX" 2>/dev/null || true)"
             if [[ -z "$tmp" ]]; then
                 gum_warn "Could not update $settings_file automatically (mktemp failed)"
                 gum_detail "Manually add this hook command:"
                 gum_detail "  $installed_guard"
-            elif jq --arg cmd "$installed_guard" '
-              .hooks = (.hooks // {}) |
-              .hooks.PreToolUse = (.hooks.PreToolUse // []) |
-              if (.hooks.PreToolUse | type) != "array" then
-                .hooks.PreToolUse = []
-              else .
-              end |
-              if ( [ .hooks.PreToolUse[]? | .hooks[]? | select(.type=="command") | .command ] | index($cmd) ) != null then
-                .
-              else
-	                ( [ .hooks.PreToolUse | to_entries[] | select(.value.matcher=="Bash") | (.key | tonumber) ] | first ) as $bashKey |
-	                if $bashKey == null then
-	                  .hooks.PreToolUse += [{ "matcher":"Bash", "hooks":[ { "type":"command", "command":$cmd } ] }]
-	                else
-	                  .hooks.PreToolUse[$bashKey].hooks = ((.hooks.PreToolUse[$bashKey].hooks // []) | if type=="array" then . else [] end) |
-	                  .hooks.PreToolUse[$bashKey].hooks += [{ "type":"command", "command":$cmd }]
-	                end
-              end
-            ' "$settings_file" > "$tmp" 2>/dev/null; then
-                mv -- "$tmp" "$settings_file" 2>/dev/null || {
-                    rm -f -- "$tmp" 2>/dev/null || true
-                    gum_warn "Could not update $settings_file automatically (mv failed)"
+            else
+                local jq_program
+                jq_program="$(cat <<'JQ'
+.hooks = (.hooks // {}) |
+.hooks.PreToolUse = (.hooks.PreToolUse // []) |
+if (.hooks.PreToolUse | type) != "array" then
+  .hooks.PreToolUse = []
+else .
+end |
+if ( [ .hooks.PreToolUse[]? | .hooks[]? | select(.type=="command") | .command ] | index($cmd) ) != null then
+  .
+else
+  ( [ .hooks.PreToolUse | to_entries[] | select(.value.matcher=="Bash") | (.key | tonumber) ] | first ) as $bashKey |
+  if $bashKey == null then
+    .hooks.PreToolUse += [{ "matcher":"Bash", "hooks":[ { "type":"command", "command":$cmd } ] }]
+  else
+    .hooks.PreToolUse[$bashKey].hooks = ((.hooks.PreToolUse[$bashKey].hooks // []) | if type=="array" then . else [] end) |
+    .hooks.PreToolUse[$bashKey].hooks += [{ "type":"command", "command":$cmd }]
+  end
+end
+JQ
+)"
+                if run_as_user jq --arg cmd "$installed_guard" "$jq_program" "$settings_file" 2>/dev/null | run_as_user tee "$tmp" >/dev/null; then
+                    run_as_user mv -- "$tmp" "$settings_file" 2>/dev/null || {
+                        run_as_user rm -f -- "$tmp" 2>/dev/null || true
+                        gum_warn "Could not update $settings_file automatically (mv failed)"
+                        gum_detail "Manually add this hook command:"
+                        gum_detail "  $installed_guard"
+                    }
+                else
+                    run_as_user rm -f -- "$tmp" 2>/dev/null || true
+                    gum_warn "Could not update $settings_file automatically (invalid JSON?)"
                     gum_detail "Manually add this hook command:"
                     gum_detail "  $installed_guard"
-                }
-            else
-                rm -f -- "$tmp" 2>/dev/null || true
-                gum_warn "Could not update $settings_file automatically (invalid JSON?)"
-                gum_detail "Manually add this hook command:"
-                gum_detail "  $installed_guard"
+                fi
             fi
         else
             gum_warn "jq not found; cannot update $settings_file automatically"
