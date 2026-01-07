@@ -56,6 +56,7 @@ EOF
     echo -e "  ${TUI_SUCCESS}${BOX_CHECK}${TUI_NC} Project directory: $project_dir"
     echo -e "  ${TUI_SUCCESS}${BOX_CHECK}${TUI_NC} Git repository initialized"
     echo -e "  ${TUI_SUCCESS}${BOX_CHECK}${TUI_NC} README.md"
+    echo -e "  ${TUI_SUCCESS}${BOX_CHECK}${TUI_NC} .gitignore"
 
     if [[ "$(state_get "enable_agents")" == "true" ]]; then
         echo -e "  ${TUI_SUCCESS}${BOX_CHECK}${TUI_NC} AGENTS.md for AI assistants"
