@@ -1298,38 +1298,53 @@ check_postgres_connection() {
 # Related: bead azw
 # Fixed: Try current user first before postgres user (pg_roles is readable by any authenticated user)
 # Fixed: Provide actionable fix message (createuser, not systemctl status)
+# Fixed: Use parameterized queries to prevent SQL injection (ACFS_TARGET_USER is passed via -v)
 check_postgres_role() {
     # Skip if not installed
     if ! command -v psql &>/dev/null; then
         return  # Already reported in connection check
     fi
 
+    # Validate target user - PostgreSQL identifiers must match this pattern
+    # SECURITY: Prevents SQL injection by validating input before use
+    local target_user="${ACFS_TARGET_USER:-}"
+    if [[ -z "$target_user" ]]; then
+        check "deep.db.postgres_role" "PostgreSQL role check" "warn" "ACFS_TARGET_USER not set"
+        return
+    fi
+    if [[ ! "$target_user" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+        check "deep.db.postgres_role" "PostgreSQL role check" "fail" "invalid username format"
+        return
+    fi
+
     # Try to check if target user role exists
     # pg_roles view is readable by any authenticated user - no superuser required
+    # SECURITY: Use psql -v to pass variable and :'var' syntax for safe interpolation
     local role_check
     local connect_success=false
+    local sql_query="SELECT 1 FROM pg_roles WHERE rolname=:'target_user'"
 
     # Try connecting as current user first (mirrors check_postgres_connection behavior)
     # This works when pg_hba.conf allows peer auth for local users
-    if role_check=$(timeout 5 psql -w -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ACFS_TARGET_USER}'" 2>/dev/null); then
+    if role_check=$(timeout 5 psql -w -tAc "$sql_query" -v target_user="$target_user" 2>/dev/null); then
         connect_success=true
     # Try localhost with postgres user as fallback
-    elif role_check=$(timeout 5 psql -w -h localhost -U postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ACFS_TARGET_USER}'" 2>/dev/null); then
+    elif role_check=$(timeout 5 psql -w -h localhost -U postgres -tAc "$sql_query" -v target_user="$target_user" 2>/dev/null); then
         connect_success=true
     # Try unix socket with postgres user as last resort
-    elif role_check=$(timeout 5 psql -w -h /var/run/postgresql -U postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${ACFS_TARGET_USER}'" 2>/dev/null); then
+    elif role_check=$(timeout 5 psql -w -h /var/run/postgresql -U postgres -tAc "$sql_query" -v target_user="$target_user" 2>/dev/null); then
         connect_success=true
     fi
 
     if [[ "$connect_success" == "true" ]]; then
         if [[ "$role_check" == "1" ]]; then
-            check "deep.db.postgres_role" "PostgreSQL ${ACFS_TARGET_USER} role" "pass" "role exists"
+            check "deep.db.postgres_role" "PostgreSQL $target_user role" "pass" "role exists"
         else
-            check "deep.db.postgres_role" "PostgreSQL ${ACFS_TARGET_USER} role" "warn" "role missing" "sudo -u postgres createuser -s ${ACFS_TARGET_USER}"
+            check "deep.db.postgres_role" "PostgreSQL $target_user role" "warn" "role missing" "sudo -u postgres createuser -s $target_user"
         fi
     else
         # Connection failed - provide actionable fix
-        check "deep.db.postgres_role" "PostgreSQL ${ACFS_TARGET_USER} role" "warn" "could not verify (connection failed)" "sudo -u postgres createuser -s ${ACFS_TARGET_USER}"
+        check "deep.db.postgres_role" "PostgreSQL $target_user role" "warn" "could not verify (connection failed)" "sudo -u postgres createuser -s $target_user"
     fi
 }
 
