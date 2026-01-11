@@ -628,7 +628,10 @@ main() {
 
     # Create directory
     mkdir -p "$project_dir"
-    cd "$project_dir"
+    cd "$project_dir" || {
+        echo -e "${RED}Error: Failed to enter project directory: $project_dir${NC}" >&2
+        exit 1
+    }
 
     # Initialize git if not already
     if [[ ! -d .git ]]; then

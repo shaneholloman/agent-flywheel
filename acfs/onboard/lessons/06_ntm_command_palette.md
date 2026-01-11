@@ -107,14 +107,17 @@ Create a simple diagram if helpful.
 
 ## Customizing The Palette
 
-You can add your own prompts:
+You can add your own prompts. NTM looks for custom palettes in:
 
 ```bash
-# Location of custom prompts
-~/.acfs/palette/custom/
+# Primary location
+~/.config/ntm/command_palette.md
+
+# Or in your project directory
+./command_palette.md
 ```
 
-Create `.md` files with your prompts, and they'll appear in the palette.
+Create a markdown file with your prompts, and they'll appear in the palette.
 
 ---
 
