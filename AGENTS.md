@@ -703,14 +703,14 @@ DCG (Destructive Command Guard) is a Claude Code hook that **blocks dangerous gi
 
 **Commands:**
 ```bash
-dcg test "rm -rf /" --explain     # Test if command would be blocked + why
-dcg doctor                        # Check DCG health and hook registration
-dcg doctor --fix                  # Auto-fix common issues
-dcg packs --enabled               # List enabled protection packs
-dcg pack database.postgresql      # Show pack details and patterns
-dcg install                       # Register hook with Claude Code
-dcg uninstall                     # Remove hook (keeps binary)
-dcg uninstall --purge             # Full removal (binary + config)
+dcg test "<cmd>" [--explain]          # Test if a command would be blocked
+dcg packs [--enabled] [--verbose]     # List packs
+dcg pack <pack-id> [--patterns]       # Pack details + match patterns
+dcg allow-once <code>                 # One-time bypass code
+dcg allow <rule-id> --reason "..."    # Add allowlist entry (project/user)
+dcg doctor [--fix] [--format json]    # Health check + auto-fix
+dcg install [--force]                 # Register Claude Code hook
+dcg uninstall [--purge]               # Remove hook (and optionally binary/config)
 ```
 
 **Auto-Blocked Commands:**
@@ -739,12 +739,20 @@ git push --force-with-lease    # Safe force push variant
 - Ask the user to run the command manually if truly needed
 - Consider safer alternatives (git stash, --force-with-lease)
 
-**Configuration (optional):**
+**Configuration:**
+- Config file: `~/.config/dcg/config.toml`
+- Pack categories: `database.*`, `containers.*`, `kubernetes.*`, `cloud.*`, `infrastructure.*`, `system.*`, `package_managers`
 ```toml
 # ~/.config/dcg/config.toml
 [packs]
-enabled = ["database.postgresql", "containers.docker"]
+enabled = ["database.postgresql", "containers.docker", "kubernetes"]
 ```
+- Allowlist management: `dcg allow <rule-id> --reason "..." --project <path>` (or `--user`)
+
+**Common Scenarios:**
+- **Blocked command** → Read the reason, prefer the safer alternative, or use `dcg allow-once <code>`.
+- **Hook missing after updates** → `dcg install --force`.
+- **Need to disable** → `dcg uninstall` (or `dcg uninstall --purge` for full removal).
 
 **Troubleshooting:**
 

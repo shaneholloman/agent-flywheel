@@ -168,7 +168,7 @@ flowchart TB
     Commands["Commands<br/>acfs doctor / acfs update / acfs services-setup / onboard"]
     Tools["Installed tools<br/>bun/uv/rust/go + tmux/rg/gh + vault + ..."]
     Agents["Agent CLIs<br/>claude / codex / gemini"]
-    Stack["Stack tools<br/>ntm / mcp_agent_mail / ubs / bv / cass / cm / caam / slb"]
+    Stack["Stack tools<br/>ntm / mcp_agent_mail / ubs / bv / cass / cm / caam / slb / dcg / ru"]
   end
 
   %% Website guidance flow
@@ -595,7 +595,7 @@ acfs-update --yes --quiet    # Automated/CI mode with minimal output
 | **Agents** | Codex, Gemini | `bun install -g @latest` |
 | **Cloud** | Wrangler, Vercel | `bun install -g @latest` |
 | **Cloud** | Supabase | GitHub release tarball (sha256 checksums) |
-| **Stack** | ntm, slb, ubs, etc. | Re-run upstream installers |
+| **Stack** | ntm, slb, ubs, dcg, ru, etc. | Re-run upstream installers |
 
 ### Options
 
@@ -801,7 +801,7 @@ Guides you through:
 - **GitHub CLI**: `gh auth login`
 - **Cloud CLIs**: Wrangler, Supabase, Vercel authentication
 
-Also offers to install the optional **Claude Code guard hook** that blocks destructive commands like `rm -rf /`.
+Also offers to install **DCG (Destructive Command Guard)**, a Claude Code hook that blocks destructive commands like `rm -rf /`.
 
 ### `acfs continue` — Upgrade Progress
 
@@ -856,7 +856,7 @@ The [Command Reference](https://agent-flywheel.com/learn/commands) documents eve
 | **Search** | `rg`, `fd`, `sg`, `fzf` |
 | **Git** | `lg`, `gh`, `git-lfs` |
 | **System** | `z`, `bat`, `lsd`, `atuin`, `tmux` |
-| **Stack** | `ntm`, `bv`, `am`, `cass`, `cm`, `ubs`, `slb`, `caam` |
+| **Stack** | `ntm`, `bv`, `am`, `cass`, `cm`, `ubs`, `slb`, `caam`, `dcg`, `ru` |
 | **Languages** | `bun`, `uv`, `cargo`, `go` |
 | **Cloud** | `wrangler`, `supabase`, `vercel`, `vault` |
 
@@ -2679,7 +2679,7 @@ ACFS isn't just a collection of tools—it's a **carefully curated system** wher
 ├─────────────────┤         ├─────────────────┤         ├─────────────────┤
 │ • zsh + p10k    │────────▶│ • Claude Code   │────────▶│ • Agent Mail    │
 │ • tmux          │         │ • Codex CLI     │         │ • NTM           │
-│ • Modern CLI    │         │ • Gemini CLI    │         │ • SLB           │
+│ • Modern CLI    │         │ • Gemini CLI    │         │ • SLB + DCG     │
 │ • Language VMs  │         │                 │         │ • Beads Viewer  │
 └─────────────────┘         └─────────────────┘         └─────────────────┘
          │                             │                             │
@@ -2698,6 +2698,7 @@ Every tool in ACFS earns its place through **concrete productivity gains**:
 | **NTM** | Organized sessions | One command spawns 10 agents in named windows |
 | **Agent Mail** | Message passing | Agents coordinate without conflicts |
 | **SLB** | Two-person rule | Dangerous operations require confirmation |
+| **DCG** | Command guardrails | Blocks destructive commands before execution |
 | **Beads Viewer** | Task tracking | Agents can see project state, avoid rework |
 | **atuin** | Shell history | Search commands across sessions, share patterns |
 | **zoxide** | Smart cd | `z proj` beats `cd ~/projects/my-long-name` |
@@ -2711,12 +2712,12 @@ A single agent with basic tooling is useful. Three agents with:
 - Coordination via Agent Mail
 - Orchestration via NTM
 - Safety guardrails via SLB
-- Optional Claude Code guard hook (blocks destructive commands)
+- DCG guard hook (blocks destructive commands before execution)
 - Task visibility via Beads
 
 ...can accomplish in one day what would take a solo developer a week.
 
-Tip: run `acfs services-setup` to configure logins, and optionally install the Claude destructive-command guard hook.
+Tip: run `acfs services-setup` to configure logins, and enable DCG for destructive-command protection.
 
 **This is the flywheel effect in action.** Better tools → more capable agents → more code shipped → better understanding of what tools are needed → better tools.
 
@@ -2967,7 +2968,7 @@ Without coordination, multiple agents cause chaos:
 │                         AGENT COORDINATION LAYER                           │
 │                                                                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
-│  │ Agent Mail  │  │    NTM      │  │    SLB      │  │   Beads     │       │
+│  │ Agent Mail  │  │    NTM      │  │  SLB + DCG  │  │   Beads     │       │
 │  │ (Messaging) │  │ (Sessions)  │  │ (Safety)    │  │ (Tasks)     │       │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘       │
 │         │                │                │                │               │

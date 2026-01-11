@@ -6,6 +6,7 @@ import {
   Cpu,
   Mail,
   Shield,
+  ShieldAlert,
   Search,
   Brain,
   LayoutDashboard,
@@ -216,6 +217,24 @@ caam activate claude backup-account`,
               ],
               example: `ru sync -j4                  # Parallel sync
 ru agent-sweep --dry-run    # Preview AI commits`,
+            }}
+          />
+
+          <ToolCard
+            {...{
+              number: 10,
+              name: "DCG",
+              subtitle: "Pre-Execution Guard",
+              command: "dcg",
+              icon: <ShieldAlert className="h-5 w-5" />,
+              gradient: "from-red-500/20 to-rose-500/20",
+              useCases: [
+                "Blocks dangerous commands before execution",
+                "Protects git, filesystem, and databases",
+                "Automatic - no manual calls needed",
+              ],
+              example: `dcg test "rm -rf /" --explain  # Test if blocked
+dcg doctor                     # Check status`,
             }}
           />
         </div>
@@ -568,6 +587,7 @@ function FlywheelEffectList() {
     { tool: "CASS", effect: "remembers what worked" },
     { tool: "CM", effect: "distills reusable patterns" },
     { tool: "UBS", effect: "catches more issues" },
+    { tool: "DCG", effect: "blocks before damage happens" },
     { tool: "Agent Mail", effect: "improves coordination" },
     { tool: "NTM", effect: "sessions become more effective" },
   ];
