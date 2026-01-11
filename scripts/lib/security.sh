@@ -106,11 +106,30 @@ acfs_curl_with_retry_and_sentinel() {
 
 # Checksums file location.
 # Prefer the repo-root checksums.yaml based on this script's location.
+# Security: Always use absolute paths to prevent path traversal attacks.
 DEFAULT_CHECKSUMS_FILE="$SECURITY_SCRIPT_DIR/../../checksums.yaml"
+
+# Resolve to absolute path to prevent working directory manipulation
 if [[ -r "$DEFAULT_CHECKSUMS_FILE" ]]; then
+    # Use realpath if available, otherwise use cd/pwd to get absolute path
+    if command -v realpath &>/dev/null; then
+        DEFAULT_CHECKSUMS_FILE="$(realpath "$DEFAULT_CHECKSUMS_FILE")"
+    else
+        DEFAULT_CHECKSUMS_FILE="$(cd "$(dirname "$DEFAULT_CHECKSUMS_FILE")" && pwd)/$(basename "$DEFAULT_CHECKSUMS_FILE")"
+    fi
     CHECKSUMS_FILE="${CHECKSUMS_FILE:-$DEFAULT_CHECKSUMS_FILE}"
 else
-    CHECKSUMS_FILE="${CHECKSUMS_FILE:-checksums.yaml}"
+    # If default not found and CHECKSUMS_FILE not set, use absolute path to repo root
+    # Never fall back to relative path as it could be manipulated
+    if [[ -z "${CHECKSUMS_FILE:-}" ]]; then
+        # Try to find checksums.yaml relative to ACFS_REPO_ROOT if available
+        if [[ -n "${ACFS_REPO_ROOT:-}" && -r "${ACFS_REPO_ROOT}/checksums.yaml" ]]; then
+            CHECKSUMS_FILE="${ACFS_REPO_ROOT}/checksums.yaml"
+        else
+            # No checksums file found - will be handled at verification time
+            CHECKSUMS_FILE=""
+        fi
+    fi
 fi
 
 # Known installer URLs and their expected checksums

@@ -244,7 +244,13 @@ upgrade_codex_cli() {
     fi
 
     log_detail "Upgrading Codex CLI..."
-    _agent_run_as_user "\"$bun_bin\" install -g --trust $CODEX_PACKAGE" && log_success "Codex CLI upgraded"
+    if _agent_run_as_user "\"$bun_bin\" install -g --trust $CODEX_PACKAGE"; then
+        log_success "Codex CLI upgraded"
+        return 0
+    else
+        log_warn "Codex CLI upgrade failed"
+        return 1
+    fi
 }
 
 # ============================================================
@@ -369,7 +375,13 @@ upgrade_gemini_cli() {
     fi
 
     log_detail "Upgrading Gemini CLI..."
-    _agent_run_as_user "\"$bun_bin\" install -g --trust $GEMINI_PACKAGE" && log_success "Gemini CLI upgraded"
+    if _agent_run_as_user "\"$bun_bin\" install -g --trust $GEMINI_PACKAGE"; then
+        log_success "Gemini CLI upgraded"
+        return 0
+    else
+        log_warn "Gemini CLI upgrade failed"
+        return 1
+    fi
 }
 
 # ============================================================
@@ -490,14 +502,32 @@ get_agent_versions() {
 # ============================================================
 
 # Upgrade all agents to latest versions
+# Returns: 0 if all succeeded, 1 if any failed
 upgrade_all_agents() {
     log_detail "Upgrading all coding agents..."
 
-    upgrade_claude_code
-    upgrade_codex_cli
-    upgrade_gemini_cli
+    local failed=0
 
-    log_success "All coding agents upgraded"
+    if ! upgrade_claude_code; then
+        ((failed++))
+    fi
+    if ! upgrade_codex_cli; then
+        ((failed++))
+    fi
+    if ! upgrade_gemini_cli; then
+        ((failed++))
+    fi
+
+    if ((failed == 0)); then
+        log_success "All coding agents upgraded"
+        return 0
+    elif ((failed == 3)); then
+        log_error "All agent upgrades failed"
+        return 1
+    else
+        log_warn "Some agent upgrades failed ($failed of 3)"
+        return 1
+    fi
 }
 
 # ============================================================
