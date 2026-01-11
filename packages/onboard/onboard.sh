@@ -802,7 +802,7 @@ show_menu_basic() {
     echo -e "${BOLD}Choose a lesson:${NC}"
     echo ""
 
-    for i in {0..8}; do
+    for i in {0..10}; do
         echo -e "  $(format_lesson "$i")"
     done
 
@@ -812,7 +812,7 @@ show_menu_basic() {
     echo -e "  ${DIM}[s] Show status${NC}"
     # Show certificate option only when all lessons complete
     local all_complete=true
-    for i in {0..8}; do
+    for i in {0..10}; do
         is_completed "$i" || { all_complete=false; break; }
     done
     if [[ "$all_complete" == "true" ]]; then
@@ -821,12 +821,12 @@ show_menu_basic() {
     echo -e "  ${DIM}[q] Quit${NC}"
     echo ""
 
-    local prompt_opts="1-9, a, r, s, q"
-    [[ "$all_complete" == "true" ]] && prompt_opts="1-9, a, r, s, t, q"
+    local prompt_opts="1-11, a, r, s, q"
+    [[ "$all_complete" == "true" ]] && prompt_opts="1-11, a, r, s, t, q"
     read -rp "$(echo -e "${CYAN}Choose [$prompt_opts]:${NC} ")" choice
 
     case "$choice" in
-        [1-9]) echo "$choice" ;;
+        [1-9]|1[01]) echo "$choice" ;;
         a|A) echo "a" ;;
         r|R) echo "r" ;;
         s|S) echo "s" ;;
@@ -892,7 +892,7 @@ show_celebration() {
             "$(gum style --foreground "$ACFS_MUTED" 'You learned:')" \
             "$summary_text" \
             "" \
-            "$(gum style --foreground "$ACFS_ACCENT" "Progress: $((idx + 1))/9 lessons")"
+            "$(gum style --foreground "$ACFS_ACCENT" "Progress: $((idx + 1))/11 lessons")"
 
         sleep 2
     else
@@ -913,7 +913,7 @@ show_celebration() {
         fi
 
         echo ""
-        echo -e "${CYAN}Progress: $((idx + 1))/9 lessons${NC}"
+        echo -e "${CYAN}Progress: $((idx + 1))/11 lessons${NC}"
         echo ""
         sleep 2
     fi
@@ -939,7 +939,7 @@ show_completion_certificate() {
             "" \
             "$(gum style --foreground "$ACFS_SUCCESS" --bold '🏆 ACFS Onboarding Complete! 🏆')" \
             "" \
-            "$(gum style --foreground "$ACFS_PINK" "You have successfully completed all 9 lessons")" \
+            "$(gum style --foreground "$ACFS_PINK" "You have successfully completed all 11 lessons")" \
             "$(gum style --foreground "$ACFS_PINK" "of the Agentic Coding Flywheel Setup tutorial.")" \
             "" \
             "$(gum style --foreground "$ACFS_TEAL" "Skills Mastered:")" \
@@ -964,7 +964,7 @@ show_completion_certificate() {
         echo ""
         echo -e "${GREEN}${BOLD}         🏆 ACFS Onboarding Complete! 🏆${NC}"
         echo ""
-        echo -e "  You have successfully completed all 9 lessons"
+        echo -e "  You have successfully completed all 11 lessons"
         echo -e "  of the Agentic Coding Flywheel Setup tutorial."
         echo ""
         echo -e "${CYAN}${BOLD}  Skills Mastered:${NC}"
@@ -1004,7 +1004,7 @@ show_lesson() {
     if has_gum; then
         # Build progress dots
         local dots=""
-        for ((i = 0; i < 9; i++)); do
+        for ((i = 0; i < 11; i++)); do
             if is_completed "$i"; then
                 dots+="$(gum style --foreground "$ACFS_SUCCESS" "●") "
             elif [[ $i -eq $idx ]]; then
@@ -1041,7 +1041,7 @@ $(gum style --foreground "$ACFS_PINK" --bold "${LESSON_TITLES[$idx]}")"
         local -a nav_items=()
         nav_items+=("📋 [m] Menu")
         [[ $idx -gt 0 ]] && nav_items+=("⬅️  [p] Previous")
-        [[ $idx -lt 8 ]] && nav_items+=("➡️  [n] Next")
+        [[ $idx -lt 10 ]] && nav_items+=("➡️  [n] Next")
         nav_items+=("✅ [c] Mark complete")
         nav_items+=("👋 [q] Quit")
 
@@ -1060,7 +1060,7 @@ $(gum style --foreground "$ACFS_PINK" --bold "${LESSON_TITLES[$idx]}")"
                 fi
                 ;;
             *"[n]"*)
-                if [[ $idx -lt 8 ]]; then
+                if [[ $idx -lt 10 ]]; then
                     set_current $((idx + 1))
                     show_lesson $((idx + 1))
                     return $?
@@ -1069,7 +1069,7 @@ $(gum style --foreground "$ACFS_PINK" --bold "${LESSON_TITLES[$idx]}")"
             *"[c]"*)
                 mark_completed "$idx"
                 show_celebration "$idx"
-                if [[ $idx -lt 8 ]]; then
+                if [[ $idx -lt 10 ]]; then
                     show_lesson $((idx + 1))
                     return $?
                 else
@@ -1087,7 +1087,7 @@ $(gum style --foreground "$ACFS_PINK" --bold "${LESSON_TITLES[$idx]}")"
         if [[ $idx -gt 0 ]]; then
             nav_options+="  [p] Previous"
         fi
-        if [[ $idx -lt 8 ]]; then
+        if [[ $idx -lt 10 ]]; then
             nav_options+="  [n] Next"
         fi
         nav_options+="  [c] Mark complete  [q] Quit"
@@ -1107,7 +1107,7 @@ $(gum style --foreground "$ACFS_PINK" --bold "${LESSON_TITLES[$idx]}")"
                     fi
                     ;;
                 n|N)
-                    if [[ $idx -lt 8 ]]; then
+                    if [[ $idx -lt 10 ]]; then
                         set_current $((idx + 1))
                         show_lesson $((idx + 1))
                         return $?
@@ -1116,7 +1116,7 @@ $(gum style --foreground "$ACFS_PINK" --bold "${LESSON_TITLES[$idx]}")"
                 c|C)
                     mark_completed "$idx"
                     show_celebration "$idx"
-                    if [[ $idx -lt 8 ]]; then
+                    if [[ $idx -lt 10 ]]; then
                         show_lesson $((idx + 1))
                         return $?
                     else
@@ -1137,7 +1137,7 @@ show_status() {
     print_header
 
     local completed_count=0
-    for i in {0..8}; do
+    for i in {0..10}; do
         if is_completed "$i"; then
             ((completed_count += 1))
         fi
@@ -1158,13 +1158,13 @@ show_status() {
             --border-foreground "$ACFS_ACCENT" \
             --padding "1 2" \
             --margin "0 0 1 0" \
-            "$(gum style --foreground "$ACFS_PINK" --bold "📊 Progress: $completed_count/9 lessons")
+            "$(gum style --foreground "$ACFS_PINK" --bold "📊 Progress: $completed_count/11 lessons")
 
 $(gum style --foreground "$ACFS_PRIMARY" "$bar") $(gum style --foreground "$ACFS_SUCCESS" --bold "$percent%")"
 
         # Lesson list with styled status
         echo ""
-        for i in {0..8}; do
+        for i in {0..10}; do
             local status_icon status_color
             if is_completed "$i"; then
                 status_icon="✓"
