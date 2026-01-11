@@ -195,7 +195,8 @@ EOF
             skip "Interactive mode requires TTY"
         fi
         # If it failed for other reasons, that's a real failure
-        assert_failure "Unexpected error: $output"
+        printf 'Unexpected non-TTY error (status=%d): %s\n' "$status" "$output" >&2
+        return 1
     fi
 }
 
