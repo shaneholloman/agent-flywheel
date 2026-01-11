@@ -159,6 +159,11 @@ jobs:
       - name: Run install helpers tests
         run: bash scripts/lib/test_install_helpers.sh
 
+      - name: Run RU integration tests
+        run: |
+          bash scripts/tests/test_ru_update.sh
+          bash scripts/tests/test_ru_doctor.sh
+
   test-installer:
     name: Test installer (Ubuntu ${{ matrix.ubuntu }}, mode ${{ matrix.mode }})
     runs-on: ubuntu-latest
@@ -230,6 +235,7 @@ jobs:
           su - ubuntu -c "zsh -ic 'slb --help'"
           su - ubuntu -c "zsh -ic 'dcg --version'"
           su - ubuntu -c "zsh -ic 'dcg doctor'"
+          su - ubuntu -c "zsh -ic 'ru --version'"
           su - ubuntu -c "zsh -ic 'onboard --help'"
           su - ubuntu -c "zsh -ic 'claude --version'"
           su - ubuntu -c "zsh -ic 'codex --version'"
