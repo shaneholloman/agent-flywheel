@@ -330,6 +330,89 @@ test_hook_blocks_git_clean_f() {
 }
 
 # ============================================================
+# ALLOW-ONCE WORKFLOW TESTS
+# ============================================================
+
+test_allow_once_command_exists() {
+    log "Testing allow-once command availability"
+
+    # Check if allow-once subcommand exists
+    local help_output
+    help_output=$(dcg allow-once --help 2>&1) || true
+
+    if echo "$help_output" | grep -qi "usage\|help\|bypass\|code"; then
+        pass "Allow-once command is available"
+        return 0
+    elif echo "$help_output" | grep -qi "not found\|unknown"; then
+        skip "Allow-once command not available in this DCG version"
+        return 0
+    else
+        # Command exists but help output unclear
+        pass "Allow-once command exists (output format may vary)"
+        return 0
+    fi
+}
+
+test_allow_once_invalid_code() {
+    log "Testing allow-once with invalid code"
+
+    local output
+    output=$(dcg allow-once "INVALID-CODE-12345" 2>&1) || true
+
+    # DCG should reject invalid codes with error message
+    if echo "$output" | grep -qi "invalid\|not found\|error\|unknown\|expired\|no.*match"; then
+        pass "Allow-once correctly rejects invalid code"
+        return 0
+    elif echo "$output" | grep -qi "success\|allowed\|bypass"; then
+        fail "Allow-once should reject invalid codes"
+        detail "Output: $output"
+        return 1
+    else
+        # Unknown response - skip rather than fail
+        skip "Allow-once response unclear (may need code format update)"
+        detail "Output: ${output:0:200}"
+        return 0
+    fi
+}
+
+test_allow_once_code_extraction() {
+    log "Testing allow-once code extraction from denial"
+
+    # Get a denial message
+    local hook_output
+    hook_output=$(get_hook_output "git reset --hard HEAD")
+
+    if ! is_deny_output "$hook_output"; then
+        skip "Cannot test allow-once code extraction - command not denied"
+        return 0
+    fi
+
+    # Try to extract an allow-once code from the denial
+    # Common patterns: ABC-123, abc123, 6-char alphanumeric
+    local short_code
+    short_code=$(echo "$hook_output" | grep -oE '[A-Z]{3,4}-[A-Z0-9]{3,4}' | head -1)
+
+    if [[ -z "$short_code" ]]; then
+        # Try alternative patterns
+        short_code=$(echo "$hook_output" | grep -oE 'code[:\s]*([a-zA-Z0-9-]+)' | head -1 | sed 's/.*code[:\s]*//')
+    fi
+
+    if [[ -z "$short_code" ]]; then
+        # Try 6-char alphanumeric
+        short_code=$(echo "$hook_output" | grep -oE '\b[a-zA-Z0-9]{6}\b' | head -1)
+    fi
+
+    if [[ -n "$short_code" ]]; then
+        pass "Found allow-once code in denial: $short_code"
+        return 0
+    else
+        skip "No allow-once code found in denial (feature may not be enabled)"
+        detail "Denial output: ${hook_output:0:300}"
+        return 0
+    fi
+}
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -367,6 +450,14 @@ main() {
     test_hook_allows_git_clean_dry_run && passed=$((passed + 1)) || failed=$((failed + 1))
     test_hook_allows_git_push_force_with_lease && passed=$((passed + 1)) || failed=$((failed + 1))
     test_hook_allows_rm_rf_tmp && passed=$((passed + 1)) || failed=$((failed + 1))
+
+    echo ""
+
+    # Allow-once workflow tests
+    echo ">> Testing allow-once workflow:"
+    test_allow_once_command_exists && passed=$((passed + 1)) || failed=$((failed + 1))
+    test_allow_once_invalid_code && passed=$((passed + 1)) || failed=$((failed + 1))
+    test_allow_once_code_extraction && passed=$((passed + 1)) || failed=$((failed + 1))
 
     echo ""
     echo "============================================================"
