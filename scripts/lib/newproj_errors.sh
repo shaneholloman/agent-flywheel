@@ -373,8 +373,9 @@ try_create_directory() {
     fi
 
     # Try to create the directory
-    if ! mkdir -p "$dir" 2>/dev/null; then
-        local errno=$?
+    mkdir -p "$dir" 2>/dev/null
+    local errno=$?
+    if [[ $errno -ne 0 ]]; then
         log_error "Failed to create directory: $dir (errno: $errno)" 2>/dev/null || true
 
         # Try to diagnose the error
@@ -407,8 +408,9 @@ try_git_init() {
         return 0
     fi
 
-    if ! git -C "$dir" init 2>/dev/null; then
-        local errno=$?
+    git -C "$dir" init 2>/dev/null
+    local errno=$?
+    if [[ $errno -ne 0 ]]; then
         log_error "git init failed in $dir (errno: $errno)" 2>/dev/null || true
         show_error_with_recovery "git_init" "Failed to initialize git repository"
         return $errno
@@ -439,8 +441,9 @@ try_bd_init() {
         return 0
     fi
 
-    if ! (cd "$dir" && bd init 2>/dev/null); then
-        local errno=$?
+    (cd "$dir" && bd init 2>/dev/null)
+    local errno=$?
+    if [[ $errno -ne 0 ]]; then
         log_warn "bd init failed in $dir (errno: $errno)" 2>/dev/null || true
         echo -e "${NEWPROJ_YELLOW}Warning: Failed to initialize beads. You can run 'bd init' later.${NEWPROJ_NC}"
         return 0  # Graceful degradation - not fatal
@@ -470,8 +473,9 @@ try_write_file() {
     fi
 
     # Write the file
-    if ! printf '%s' "$content" > "$file" 2>/dev/null; then
-        local errno=$?
+    printf '%s' "$content" > "$file" 2>/dev/null
+    local errno=$?
+    if [[ $errno -ne 0 ]]; then
         log_error "Failed to write file: $file (errno: $errno)" 2>/dev/null || true
         show_error_with_recovery "write" "Failed to write file: $file"
         return $errno
