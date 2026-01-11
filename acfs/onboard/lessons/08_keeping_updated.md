@@ -170,17 +170,13 @@ Recommendations:
 
 ---
 
-## Congratulations!
+## Next
 
-You've completed the ACFS onboarding.
+Learn about managing multiple repositories with Repo Updater:
 
-You now have:
-- A fully configured development VPS
-- Three powerful coding agents
-- A complete coordination toolstack
-- The knowledge to use it all
-
-**Go build something amazing!**
+```bash
+onboard 9
+```
 
 ---
 

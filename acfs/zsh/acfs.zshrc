@@ -103,10 +103,18 @@ else
   alias l='ls -CF'
 fi
 
-command -v bat &>/dev/null && alias cat='bat'
-command -v batcat &>/dev/null && alias cat='batcat'
-command -v fd &>/dev/null && alias find='fd'
-command -v fdfind &>/dev/null && alias find='fdfind'
+# Prefer bat over batcat (Debian/Ubuntu names it batcat)
+if command -v bat &>/dev/null; then
+  alias cat='bat'
+elif command -v batcat &>/dev/null; then
+  alias cat='batcat'
+fi
+# Prefer fd over fdfind (Debian/Ubuntu names it fdfind)
+if command -v fd &>/dev/null; then
+  alias find='fd'
+elif command -v fdfind &>/dev/null; then
+  alias find='fdfind'
+fi
 command -v rg &>/dev/null && alias grep='rg'
 command -v dust &>/dev/null && alias du='dust'
 command -v btop &>/dev/null && alias top='btop'

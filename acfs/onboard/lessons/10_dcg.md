@@ -76,3 +76,20 @@ Use this sparingly and only when you understand the risk.
 - **UBS**: Quality checks before commits
 - **Mail**: Coordinate on safety decisions
 
+---
+
+## Congratulations!
+
+You've completed the ACFS onboarding.
+
+You now have:
+- A fully configured development VPS
+- Three powerful coding agents
+- A complete coordination toolstack
+- The knowledge to use it all
+
+**Go build something amazing!**
+
+---
+
+*Run `acfs doctor` to verify your setup, then start your first project with `cc`!*
