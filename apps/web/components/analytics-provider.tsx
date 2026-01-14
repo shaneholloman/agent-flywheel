@@ -106,17 +106,8 @@ function AnalyticsTracker() {
       safeSetItem('acfs_first_visit', new Date().toISOString());
     }
 
-    // Track enhanced session start
+    // Track enhanced session start (includes visit counting and user properties)
     trackSessionStart();
-
-    // Track returning vs new user
-    const visitCount = parseInt(safeGetItem('acfs_visit_count') || '0', 10) + 1;
-    safeSetItem('acfs_visit_count', visitCount.toString());
-
-    setUserProperties({
-      visit_count: visitCount,
-      is_returning_user: visitCount > 1,
-    });
   }, [gaId]);
 
   // Scroll depth tracking
