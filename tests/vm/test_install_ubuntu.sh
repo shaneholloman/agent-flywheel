@@ -28,6 +28,7 @@ Options:
   --ubuntu <version>   Ubuntu tag (e.g. 24.04, 25.04). Repeatable.
   --all                Run on 24.04 and 25.04.
   --mode <mode>        Install mode: vibe or safe (default: vibe).
+  --strict             Enable strict installer mode (checksum mismatches fail).
   --help               Show help.
 
 Examples:
@@ -53,6 +54,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 declare -a ubuntus=()
 MODE="vibe"
+STRICT=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ubuntu)
@@ -73,6 +75,10 @@ while [[ $# -gt 0 ]]; do
           ;;
       esac
       shift 2
+      ;;
+    --strict)
+      STRICT=true
+      shift
       ;;
     --help)
       usage
@@ -104,6 +110,7 @@ run_one() {
   docker run --rm -t \
     -e DEBIAN_FRONTEND=noninteractive \
     -e ACFS_TEST_MODE="$MODE" \
+    -e ACFS_TEST_STRICT="$STRICT" \
     -e ACFS_CHECKSUMS_REF="${ACFS_CHECKSUMS_REF:-}" \
     -e ACFS_REF="${ACFS_REF:-}" \
     -v "${REPO_ROOT}:/repo:ro" \
@@ -117,7 +124,12 @@ run_one() {
       bash /repo/tests/vm/selection_checks.sh
 
       cd /repo
-      bash install.sh --yes --mode "${ACFS_TEST_MODE}"
+      STRICT_FLAG=""
+      if [[ "${ACFS_TEST_STRICT}" == "true" ]]; then
+        STRICT_FLAG="--strict"
+      fi
+
+      bash install.sh --yes --mode "${ACFS_TEST_MODE}" ${STRICT_FLAG}
 
       su - ubuntu -c "zsh -ic '\''acfs doctor'\''"
       su - ubuntu -c "zsh -ic '\''test -f ~/.acfs/VERSION'\''"

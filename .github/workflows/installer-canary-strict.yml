@@ -1,0 +1,120 @@
+name: Installer Canary (Strict)
+
+on:
+  schedule:
+    - cron: "15 4 * * *" # 4:15 AM UTC nightly
+  workflow_dispatch:
+    inputs:
+      ubuntu:
+        description: "Ubuntu version: 24.04, 25.04, or all"
+        default: "all"
+        required: true
+      mode:
+        description: "Install mode: vibe or safe"
+        default: "vibe"
+        required: true
+
+jobs:
+  strict-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run strict installer canary
+        id: canary
+        continue-on-error: true
+        env:
+          ACFS_CHECKSUMS_REF: main
+        run: |
+          set -o pipefail
+          chmod +x ./tests/vm/test_install_ubuntu.sh
+
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            ./tests/vm/test_install_ubuntu.sh --all --mode "vibe" --strict 2>&1 | tee canary.log
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.ubuntu }}" == "all" ]]; then
+            ./tests/vm/test_install_ubuntu.sh --all --mode "${{ inputs.mode }}" --strict 2>&1 | tee canary.log
+          else
+            ./tests/vm/test_install_ubuntu.sh --ubuntu "${{ inputs.ubuntu }}" --mode "${{ inputs.mode }}" --strict 2>&1 | tee canary.log
+          fi
+
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect checksum mismatch
+        id: detect
+        if: steps.canary.outputs.exit_code != '0'
+        run: |
+          if grep -Eqi "checksum mismatch" canary.log; then
+            echo "checksum_mismatch=true" >> "$GITHUB_OUTPUT"
+            grep -En "checksum mismatch|Security error" canary.log | head -n 40 > checksum_excerpt.txt
+          else
+            echo "checksum_mismatch=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload canary log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strict-canary-log
+          path: canary.log
+
+      - name: Open issue on checksum mismatch
+        if: steps.detect.outputs.checksum_mismatch == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const excerpt = fs.existsSync('checksum_excerpt.txt')
+              ? fs.readFileSync('checksum_excerpt.txt', 'utf8')
+              : 'No excerpt available.';
+            const title = '🚨 Installer checksum mismatch detected (strict canary)';
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open'
+            });
+            const existing = issues.find(i => i.title === title);
+            const body = [
+              'Strict canary install failed due to checksum mismatch.',
+              '',
+              `- Workflow: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `- Commit: ${context.sha}`,
+              `- Runner: ${context.runner?.name || 'github-hosted'}`,
+              '',
+              'Excerpt:',
+              '```',
+              excerpt.trim(),
+              '```',
+              '',
+              'Next steps:',
+              '1) Review upstream installer changes',
+              '2) Update checksums with: `./scripts/lib/security.sh --update-checksums`',
+              '3) Verify with: `./scripts/lib/security.sh --verify`',
+              '4) Commit updated checksums.yaml'
+            ].join('\n');
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['security', 'checksum-mismatch']
+              });
+            }
+
+      - name: Fail job if canary failed
+        if: steps.canary.outputs.exit_code != '0'
+        run: |
+          echo "Strict canary failed. See canary.log artifact for details."
+          exit 1

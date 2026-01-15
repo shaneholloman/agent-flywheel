@@ -611,17 +611,23 @@ ubuntu_do_upgrade() {
     # Validate detected version is reasonable
     if [[ -n "$expected_next_version" ]] && [[ "$next_version" != "$expected_next_version" ]]; then
         # Convert versions to comparable numbers (24.10 -> 2410)
-        local expected_num detected_num
+        local expected_num detected_num current_num
         expected_num="${expected_next_version//./}"
         detected_num="${next_version//./}"
+        current_num="$(ubuntu_get_version_number)"
 
         if [[ "$detected_num" -gt "$expected_num" ]]; then
             # Skipping an EOL release (e.g., 24.10 EOL, jumping to 25.04) - OK
             log_warn "Skipping EOL release: expected $expected_next_version, upgrading to $next_version"
         elif [[ "$detected_num" -lt "$expected_num" ]]; then
-            # Going backwards - not OK
-            log_error "Unexpected downgrade target: $next_version (expected $expected_next_version)"
-            return 1
+            # Check if it's still an upgrade from current
+            if [[ "$detected_num" -gt "$current_num" ]]; then
+                log_warn "Target version $next_version is lower than expected $expected_next_version, but is a valid upgrade from current. Proceeding."
+            else
+                # Going backwards or staying same - not OK
+                log_error "Unexpected downgrade/same target: $next_version (current: $(ubuntu_get_version_string), expected: $expected_next_version)"
+                return 1
+            fi
         fi
     fi
 

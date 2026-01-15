@@ -1,0 +1,63 @@
+name: Release Gate - Checksums
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  verify-checksums:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify checksums against upstream
+        id: verify
+        run: |
+          chmod +x ./scripts/lib/security.sh
+          set +e
+          ./scripts/lib/security.sh --verify --json > verify.json 2> verify-errors.log
+          exit_code=$?
+          set -e
+          echo "exit_code=${exit_code}" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Release Gate: checksums verification" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f verify.json ]] && jq empty verify.json 2>/dev/null; then
+            mismatches=$(jq '.mismatches | length' verify.json)
+            errors=$(jq '.errors | length' verify.json)
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Mismatches: ${mismatches}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Errors: ${errors}" >> "$GITHUB_STEP_SUMMARY"
+            if [[ "$mismatches" -gt 0 ]]; then
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "### Mismatched installers" >> "$GITHUB_STEP_SUMMARY"
+              jq -r '.mismatches[] | "- " + .name + " (" + (.url // "unknown") + ")"' verify.json >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Verification output missing or invalid JSON." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Fail if verification failed
+        if: steps.verify.outputs.exit_code != '0'
+        run: |
+          echo "::error::Checksum verification failed. Release/tag is blocked."
+          echo ""
+          echo "To update checksums:"
+          echo "  1) Review upstream installer changes"
+          echo "  2) Run: ./scripts/lib/security.sh --update-checksums"
+          echo "  3) Run: ./scripts/lib/security.sh --verify"
+          echo "  4) Commit updated checksums.yaml"
+          echo ""
+          if [[ -f verify-errors.log ]]; then
+            echo "Verification errors:"
+            cat verify-errors.log
+          fi
+          exit 1
