@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-01-14T12:08:10+00:00
+# checksums.yaml - Auto-generated 2026-01-15T22:04:45+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -18,22 +18,6 @@ installers:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/scripts/install.sh"
     sha256: "9cc8832efa1305221911043a6cc7fe12683e07b56e4fca7a03d3f6081e81a69d"
 
-  ms:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/install.sh"
-    sha256: "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed"
-
-  apr:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/automated_plan_reviser_pro/main/install.sh"
-    sha256: "eb4626ccca58be2a9278c893618b13655c6f0805b7ee98f6a3127cf5f64a6eba"
-
-  pt:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/process_triage/master/install.sh"
-    sha256: "904d75288a5e15647ce63336d00ed8a7ce736510a15a7298548d0805f0d6a5d8"
-
-  xf:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/xf/main/install.sh"
-    sha256: "50d5d9dcbd0b839544b38ac9cc61a85375d92452f956c3a269b8d3566c767e3d"
-
   dcg:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/destructive_command_guard/main/install.sh"
     sha256: "34979289f40a42f593246638da4d9a949401bf5c2423073e799ae3996f2922c6"
@@ -52,7 +36,7 @@ installers:
 
   uv:
     url: "https://astral.sh/uv/install.sh"
-    sha256: "10fb1f54d56f3eb60622006797339d4ea0bfda9b358d07db635f73cf89f7094c"
+    sha256: "09ace6a888bd5941b5d44f1177a9a8a6145552ec8aa81c51b1b57ff73e6b9e18"
 
   ntm:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/ntm/main/install.sh"
