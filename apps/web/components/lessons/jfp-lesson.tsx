@@ -38,7 +38,7 @@ export function JfpLesson() {
           copy, and install prompts directly as Claude Code skills.
         </Paragraph>
         <Paragraph>
-          The CLI and website share the same prompt library—use whichever interface fits your
+          The CLI and website share the same prompt library, so use whichever interface fits your
           workflow. Prompts are organized into bundles and workflows for complex use cases.
         </Paragraph>
 

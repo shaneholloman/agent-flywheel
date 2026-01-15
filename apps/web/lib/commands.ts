@@ -274,7 +274,7 @@ export const COMMANDS: CommandRef[] = [
   {
     name: "jfp",
     fullName: "JeffreysPrompts CLI",
-    description: "Battle-tested prompt library - browse, copy, install as Claude Code skills.",
+    description: "Battle-tested prompt library with one-click skill install.",
     category: "stack",
     example: "jfp install idea-wizard",
     aliases: ["jeffreysprompts"],

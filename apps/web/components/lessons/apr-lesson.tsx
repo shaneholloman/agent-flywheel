@@ -39,7 +39,7 @@ export function AprLesson() {
         </Paragraph>
         <Paragraph>
           Early rounds fix architectural issues, middle rounds refine structure, later rounds
-          polish abstractions—similar to numerical optimization settling into a minimum.
+          polish abstractions. The process resembles numerical optimization settling into a minimum.
         </Paragraph>
 
         <div className="mt-8">

@@ -34,7 +34,7 @@ export function XfLesson() {
       <Section title="What Is XF?" icon={<Archive className="h-5 w-5" />} delay={0.1}>
         <Paragraph>
           <Highlight>XF</Highlight> provides blazingly fast full-text search across your personal
-          X/Twitter archive—tweets, likes, DMs, and Grok conversations. Built with Tantivy, it
+          X/Twitter archive: tweets, likes, DMs, and Grok conversations. Built with Tantivy, it
           delivers sub-millisecond queries with hybrid BM25 and semantic search.
         </Paragraph>
         <Paragraph>

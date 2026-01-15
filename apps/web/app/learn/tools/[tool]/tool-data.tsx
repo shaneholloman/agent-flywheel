@@ -214,7 +214,7 @@ export const TOOLS: Record<ToolId, ToolCard> = {
   apr: {
     id: "apr",
     title: "Automated Plan Reviser",
-    tagline: "Automated iterative spec refinement - 15+ AI review rounds without manual copy-paste",
+    tagline: "Automated iterative spec refinement with 15+ AI review rounds",
     icon: <Wrench className="h-8 w-8" aria-hidden="true" />,
     gradient: "from-teal-500/20 via-cyan-500/20 to-teal-500/20",
     glowColor: "rgba(45,212,191,0.4)",
@@ -226,7 +226,7 @@ export const TOOLS: Record<ToolId, ToolCard> = {
   jfp: {
     id: "jfp",
     title: "JeffreysPrompts",
-    tagline: "Battle-tested prompt library for AI agents - browse, copy, install as Claude Code skills",
+    tagline: "Battle-tested prompt library for AI agents with one-click skill install",
     icon: <GraduationCap className="h-8 w-8" aria-hidden="true" />,
     gradient: "from-amber-500/20 via-yellow-500/20 to-amber-500/20",
     glowColor: "rgba(245,158,11,0.4)",
@@ -250,7 +250,7 @@ export const TOOLS: Record<ToolId, ToolCard> = {
   xf: {
     id: "xf",
     title: "X Archive Search",
-    tagline: "Blazingly fast local search across your X/Twitter archive - tweets, DMs, likes, and Grok chats",
+    tagline: "Blazingly fast local search across your X/Twitter archive",
     icon: <Search className="h-8 w-8" aria-hidden="true" />,
     gradient: "from-slate-500/20 via-gray-500/20 to-slate-500/20",
     glowColor: "rgba(148,163,184,0.4)",

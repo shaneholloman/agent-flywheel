@@ -33,7 +33,7 @@ apr --help
 
 # The Basic Workflow
 
-APR works with Markdown plan files. Here's the typical flow:
+APR works with Markdown plan files. The typical flow looks like this:
 
 1. Generate an initial plan (from Claude Code or write it yourself)
 2. Run `apr refine` to improve it

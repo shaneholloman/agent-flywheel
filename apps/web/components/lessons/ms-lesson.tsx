@@ -40,7 +40,7 @@ export function MsLesson() {
         </Paragraph>
         <Paragraph>
           It combines BM25 lexical matching with deterministic hash embeddings for hybrid semantic
-          search—no external APIs required. Skills can come from hand-written files, CASS session
+          search. No external APIs required. Skills can come from hand-written files, CASS session
           mining, or bundle imports.
         </Paragraph>
 
