@@ -93,7 +93,7 @@ acfs_security_init() {
 }
 
 # Category: stack
-# Modules: 10
+# Modules: 11
 
 # Named tmux manager (agent cockpit)
 install_stack_ntm() {
@@ -252,6 +252,94 @@ install_stack_mcp_agent_mail() {
     log_info "Attach with: tmux attach -t acfs-services"
 
     log_success "stack.mcp_agent_mail installed"
+}
+
+# Local-first skill management for agents (ms)
+install_stack_meta_skill() {
+    local module_id="stack.meta_skill"
+    acfs_require_contract "module:${module_id}" || return 1
+    log_step "Installing stack.meta_skill"
+
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verified installer: stack.meta_skill"
+    else
+        if ! {
+            # Try security-verified install (no unverified fallback; fail closed)
+            local install_success=false
+
+            if acfs_security_init; then
+                # Check if KNOWN_INSTALLERS is available as an associative array (declare -A)
+                # The grep ensures we specifically have an associative array, not just any variable
+                if declare -p KNOWN_INSTALLERS 2>/dev/null | grep -q 'declare -A'; then
+                    local tool="ms"
+                    local url=""
+                    local expected_sha256=""
+
+                    # Safe access with explicit empty default
+                    url="${KNOWN_INSTALLERS[$tool]:-}"
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.meta_skill: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
+
+                    if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
+                        if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s' '--' '--easy-mode'; then
+                            install_success=true
+                        else
+                            log_error "stack.meta_skill: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.meta_skill: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.meta_skill: checksum for '$tool' not found"
+                        fi
+                    fi
+                else
+                    log_error "stack.meta_skill: KNOWN_INSTALLERS array not available"
+                fi
+            else
+                log_error "stack.meta_skill: acfs_security_init failed - check security.sh and checksums.yaml"
+            fi
+
+            # Verified install is required - no fallback
+            if [[ "$install_success" = "true" ]]; then
+                true
+            else
+                log_error "Verified install failed for stack.meta_skill"
+                false
+            fi
+        }; then
+            log_error "stack.meta_skill: verified installer failed"
+            return 1
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: ms --version (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_META_SKILL'
+ms --version
+INSTALL_STACK_META_SKILL
+        then
+            log_error "stack.meta_skill: verify failed: ms --version"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify (optional): ms doctor --json (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_META_SKILL'
+ms doctor --json
+INSTALL_STACK_META_SKILL
+        then
+            log_warn "Optional verify failed: stack.meta_skill"
+        fi
+    fi
+
+    log_success "stack.meta_skill installed"
 }
 
 # UBS bug scanning (easy-mode)
@@ -898,6 +986,7 @@ install_stack() {
     log_section "Installing stack modules"
     install_stack_ntm
     install_stack_mcp_agent_mail
+    install_stack_meta_skill
     install_stack_ultimate_bug_scanner
     install_stack_beads_viewer
     install_stack_cass

@@ -145,6 +145,8 @@ declare -a MANIFEST_CHECKS=(
     "cloud.vercel	Vercel CLI	vercel --version	required"
     "stack.ntm	Named tmux manager (agent cockpit)	ntm --help	required"
     "stack.mcp_agent_mail	Like gmail for coding agents; MCP HTTP server + token; installs beads tools	command -v am	required"
+    "stack.meta_skill.1	Local-first skill management for agents (ms)	ms --version	required"
+    "stack.meta_skill.2	Local-first skill management for agents (ms)	ms doctor --json	optional"
     "stack.ultimate_bug_scanner.1	UBS bug scanning (easy-mode)	ubs --help	required"
     "stack.ultimate_bug_scanner.2	UBS bug scanning (easy-mode)	ubs doctor	optional"
     "stack.beads_viewer	bv TUI for Beads tasks	bv --help || bv --version	required"

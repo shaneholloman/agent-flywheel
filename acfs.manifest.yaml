@@ -897,6 +897,29 @@ modules:
       - "Runs in tmux session 'acfs-services' to prevent blocking installer"
       - "Server accessible at http://127.0.0.1:8765 after install"
 
+  - id: stack.meta_skill
+    description: Local-first skill management for agents (ms)
+    category: stack
+    phase: 9
+    run_as: target_user
+    optional: false
+    enabled_by_default: true
+    tags: [recommended, agent-skills]
+    dependencies:
+      - lang.rust
+      - lang.uv
+    installed_check:
+      run_as: target_user
+      command: "command -v ms"
+    verified_installer:
+      tool: ms
+      runner: bash
+      args: ["--easy-mode"]
+    install: []
+    verify:
+      - ms --version
+      - ms doctor --json || true
+
   - id: stack.ultimate_bug_scanner
     description: UBS bug scanning (easy-mode)
     category: stack

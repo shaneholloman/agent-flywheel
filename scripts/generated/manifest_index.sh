@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="c36c792a06e4c6ed3b45413945726cbe23a50f00602481dbd49266e735ab4ec8"
+ACFS_MANIFEST_SHA256="053335ed541dc0b4baabbedcdd0147dfdbf09d6fe4d3fb68c4effaac4986112c"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -35,6 +35,7 @@ ACFS_MODULES_IN_ORDER=(
   "cloud.vercel"
   "stack.ntm"
   "stack.mcp_agent_mail"
+  "stack.meta_skill"
   "stack.ultimate_bug_scanner"
   "stack.beads_viewer"
   "stack.cass"
@@ -78,6 +79,7 @@ declare -gA ACFS_MODULE_PHASE=(
   [cloud.vercel]="8"
   [stack.ntm]="9"
   [stack.mcp_agent_mail]="9"
+  [stack.meta_skill]="9"
   [stack.ultimate_bug_scanner]="9"
   [stack.beads_viewer]="9"
   [stack.cass]="9"
@@ -121,6 +123,7 @@ declare -gA ACFS_MODULE_DEPS=(
   [cloud.vercel]="lang.bun"
   [stack.ntm]="cli.modern"
   [stack.mcp_agent_mail]="lang.bun,lang.uv,cli.modern"
+  [stack.meta_skill]="lang.rust,lang.uv"
   [stack.ultimate_bug_scanner]="lang.bun,lang.uv,tools.ast_grep"
   [stack.beads_viewer]="lang.go"
   [stack.cass]="lang.rust,lang.uv"
@@ -164,6 +167,7 @@ declare -gA ACFS_MODULE_FUNC=(
   [cloud.vercel]="install_cloud_vercel"
   [stack.ntm]="install_stack_ntm"
   [stack.mcp_agent_mail]="install_stack_mcp_agent_mail"
+  [stack.meta_skill]="install_stack_meta_skill"
   [stack.ultimate_bug_scanner]="install_stack_ultimate_bug_scanner"
   [stack.beads_viewer]="install_stack_beads_viewer"
   [stack.cass]="install_stack_cass"
@@ -207,6 +211,7 @@ declare -gA ACFS_MODULE_CATEGORY=(
   [cloud.vercel]="cloud"
   [stack.ntm]="stack"
   [stack.mcp_agent_mail]="stack"
+  [stack.meta_skill]="stack"
   [stack.ultimate_bug_scanner]="stack"
   [stack.beads_viewer]="stack"
   [stack.cass]="stack"
@@ -250,6 +255,7 @@ declare -gA ACFS_MODULE_TAGS=(
   [cloud.vercel]="optional,cloud"
   [stack.ntm]="recommended"
   [stack.mcp_agent_mail]="recommended,tmux-spawn"
+  [stack.meta_skill]="recommended,agent-skills"
   [stack.ultimate_bug_scanner]="recommended"
   [stack.beads_viewer]="recommended"
   [stack.cass]="recommended"
@@ -293,6 +299,7 @@ declare -gA ACFS_MODULE_DEFAULT=(
   [cloud.vercel]="0"
   [stack.ntm]="1"
   [stack.mcp_agent_mail]="1"
+  [stack.meta_skill]="1"
   [stack.ultimate_bug_scanner]="1"
   [stack.beads_viewer]="1"
   [stack.cass]="1"

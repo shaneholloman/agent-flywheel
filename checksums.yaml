@@ -18,6 +18,10 @@ installers:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/scripts/install.sh"
     sha256: "9cc8832efa1305221911043a6cc7fe12683e07b56e4fca7a03d3f6081e81a69d"
 
+  ms:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/install.sh"
+    sha256: "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed"
+
   dcg:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/destructive_command_guard/main/install.sh"
     sha256: "34979289f40a42f593246638da4d9a949401bf5c2423073e799ae3996f2922c6"

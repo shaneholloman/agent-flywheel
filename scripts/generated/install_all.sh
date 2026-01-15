@@ -151,6 +151,7 @@ install_all() {
     log_section "Category: stack"
     install_stack_ntm
     install_stack_mcp_agent_mail
+    install_stack_meta_skill
     install_stack_ultimate_bug_scanner
     install_stack_beads_viewer
     install_stack_cass
