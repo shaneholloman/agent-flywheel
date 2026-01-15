@@ -200,6 +200,14 @@ export const LESSONS: Lesson[] = [
     duration: "8 min",
     file: "21_dcg.md",
   },
+  {
+    id: 22,
+    slug: "meta-skill",
+    title: "Meta Skill: Local Skills",
+    description: "Manage and share Claude Code skills locally",
+    duration: "10 min",
+    file: "22_meta_skill.md",
+  },
 ];
 
 /** Total number of lessons */
