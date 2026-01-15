@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persister";
 import { useState, useEffect, type ReactNode } from "react";
+import { wizardStepsKeys } from "../lib/wizardSteps";
+import { userPreferencesKeys } from "../lib/userPreferences";
 
 function makeQueryClient() {
   return new QueryClient({
@@ -65,7 +67,29 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     return (
       <PersistQueryClientProvider
         client={queryClient}
-        persistOptions={{ persister }}
+        persistOptions={{
+          persister,
+          dehydrateOptions: {
+            shouldDehydrateQuery: (query) => {
+              const queryKey = query.queryKey;
+              // Exclude wizard steps (manually persisted to separate key)
+              if (
+                queryKey[0] === wizardStepsKeys.completedSteps[0] &&
+                queryKey[1] === wizardStepsKeys.completedSteps[1]
+              ) {
+                return false;
+              }
+              // Exclude detected OS (fast, client-only, no need to persist)
+              if (
+                queryKey[0] === userPreferencesKeys.detectedOS[0] &&
+                queryKey[1] === userPreferencesKeys.detectedOS[1]
+              ) {
+                return false;
+              }
+              return true;
+            },
+          },
+        }}
       >
         {children}
       </PersistQueryClientProvider>

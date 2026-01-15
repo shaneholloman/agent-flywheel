@@ -951,6 +951,44 @@ update_rust() {
     log_to_file "Installed toolchains: $toolchains"
 }
 
+update_cargo_tools() {
+    log_section "Cargo Tools"
+
+    if [[ "$UPDATE_RUNTIME" != "true" ]]; then
+        log_item "skip" "Cargo tools" "disabled via --no-runtime / category selection"
+        return 0
+    fi
+
+    local cargo_bin="$HOME/.cargo/bin/cargo"
+    if [[ ! -x "$cargo_bin" ]]; then
+        log_item "skip" "Cargo tools" "cargo not found"
+        return 0
+    fi
+
+    # Tools to update via cargo install
+    # Format: package_name|binary_name
+    local tools=("ast-grep|sg" "lsd|lsd" "du-dust|dust" "tealdeer|tldr")
+
+    for entry in "${tools[@]}"; do
+        local tool="${entry%|*}"
+        local binary_name="${entry#*|}"
+
+        if ! command -v "$binary_name" &>/dev/null && [[ ! -x "$HOME/.cargo/bin/$binary_name" ]]; then
+            continue
+        fi
+
+        capture_version_before "$binary_name"
+        
+        # force is required to update existing install with cargo
+        # Use run_cmd to log and handle errors
+        run_cmd "Update $tool" "$cargo_bin" install "$tool" --locked --force
+
+        if capture_version_after "$binary_name"; then
+             [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[$binary_name]}" "${VERSION_AFTER[$binary_name]}"
+        fi
+    done
+}
+
 update_uv() {
     log_section "Python Tools (uv)"
 
@@ -1714,6 +1752,7 @@ main() {
     update_agents
     update_cloud
     update_rust
+    update_cargo_tools
     update_uv
     update_go
     update_shell
