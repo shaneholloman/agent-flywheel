@@ -317,7 +317,7 @@ state_write_atomic() {
     # never for system state under /var/lib/acfs.
     if [[ $EUID -eq 0 ]] && [[ -n "${TARGET_USER:-}" ]] && [[ "$TARGET_USER" != "root" ]]; then
         local target_home="${TARGET_HOME:-/home/${TARGET_USER}}"
-        if [[ -n "$target_home" ]] && [[ "$target_home" != "/" ]] && [[ "$target_home" == /* ]] && [[ "$file_path" == "$target_home/"* ]]; then
+        if [[ -n "$target_home" ]] && [[ "$target_home" != "/" ]] && [[ "$target_home" == /* ]] && [[ "$temp_file" == "$target_home/"* ]]; then
             local target_group=""
             if command -v id &>/dev/null; then
                 target_group="$(id -gn "$TARGET_USER" 2>/dev/null || true)"
@@ -356,6 +356,39 @@ state_write_atomic() {
     fi
 
     return 0
+}
+
+# ============================================================
+# Locking
+# ============================================================
+
+# Acquire a lock for the state file
+# Usage: _state_acquire_lock
+# Returns: 0 on success, 1 on timeout
+_state_acquire_lock() {
+    local state_file
+    state_file="$(state_get_file)"
+    local lock_dir="${state_file}.lock"
+    local retries=50  # 5 seconds total
+
+    # Ensure parent directory exists (state_init does this, but good to be safe)
+    mkdir -p "$(dirname "$state_file")" 2>/dev/null
+
+    while ! mkdir "$lock_dir" 2>/dev/null; do
+        [[ $retries -eq 0 ]] && return 1
+        ((retries--))
+        sleep 0.1
+    done
+    return 0
+}
+
+# Release the lock
+# Usage: _state_release_lock
+_state_release_lock() {
+    local state_file
+    state_file="$(state_get_file)"
+    local lock_dir="${state_file}.lock"
+    rmdir "$lock_dir" 2>/dev/null || true
 }
 
 # Load existing state file
@@ -417,6 +450,741 @@ state_get() {
     fi
 }
 
+# ============================================================
+# Convenience Functions for install.sh Integration
+# ============================================================
+
+# Initialize state for a new or resumed installation
+# Usage: init_installation_state
+# Returns: 0 on success, 1 if state is corrupted/incompatible
+init_installation_state() {
+    local state_file
+    state_file="$(state_get_file)"
+
+    # Check for existing state
+    if [[ -f "$state_file" ]]; then
+        state_check_version
+        local check_result=$?
+
+        case $check_result in
+            0)
+                # State is current version, load it
+                return 0
+                ;;
+            2)
+                # Legacy v1 state - needs migration decision
+                return 2
+                ;;
+            *)
+                # Corrupted or unknown - needs fresh start
+                return 1
+                ;;
+        esac
+    fi
+
+    # No state file - initialize fresh
+    state_init
+}
+
+# Check if we're resuming a previous installation
+# Usage: is_resume_installation
+# Returns: 0 if resuming, 1 if fresh install
+is_resume_installation() {
+    local state_file
+    state_file="$(state_get_file)"
+
+    if [[ ! -f "$state_file" ]]; then
+        return 1
+    fi
+
+    # Check if any phases are completed
+    if command -v jq &>/dev/null; then
+        local state
+        if state=$(state_load 2>/dev/null); then
+            local completed_count
+            completed_count=$(echo "$state" | jq -r '.completed_phases | length')
+            [[ "$completed_count" -gt 0 ]]
+            return $?
+        fi
+    fi
+
+    return 1
+}
+
+# Get the total number of phases
+get_total_phases() {
+    echo "${#ACFS_PHASE_IDS[@]}"
+}
+
+# Get the count of completed phases
+get_completed_phase_count() {
+    if ! command -v jq &>/dev/null; then
+        echo "0"
+        return
+    fi
+
+    local state
+    if state=$(state_load 2>/dev/null); then
+        echo "$state" | jq -r '.completed_phases | length'
+    else
+        echo "0"
+    fi
+}
+
+# Get the next phase that needs to run
+# Usage: get_next_pending_phase
+# Outputs: Phase ID or empty if all complete
+get_next_pending_phase() {
+    for phase_id in "${ACFS_PHASE_IDS[@]}"; do
+        if ! state_should_skip_phase "$phase_id"; then
+            echo "$phase_id"
+            return 0
+        fi
+    done
+    echo ""
+}
+
+# ============================================================
+# Resume Confirmation (bead 4xi)
+# ============================================================
+# When ACFS detects a previous incomplete installation, this function
+# determines whether to resume, start fresh, or abort.
+#
+# Design Decision: Silent Resume by Default
+# ------------------------------------------
+# Users who run ./install.sh on a partially-installed system generally
+# WANT to resume. Forcing an interactive prompt every time creates friction,
+# especially for agentic workflows that run non-interactively.
+#
+# Behavior:
+#   - Default (no flags, no TTY): Silent resume with status message
+#   - --resume flag: Explicit resume intent, no prompt
+#   - --force-reinstall flag: Fresh install, wipe state
+#   - --interactive flag + TTY: Show prompt for user choice
+#
+# CLI Flags (set these before calling confirm_resume):
+#   ACFS_FORCE_RESUME=true      - Force resume without prompts
+#   ACFS_FORCE_REINSTALL=true   - Force fresh install
+#   ACFS_INTERACTIVE=true       - Enable interactive prompts
+# ============================================================
+
+# Confirm whether to resume a previous installation
+#
+# Usage: confirm_resume
+#
+# Returns:
+#   0 - Resume (continue from last completed phase)
+#   1 - Fresh install (wipe state and start over)
+#   2 - Abort (exit installation)
+#
+# Side effects:
+#   - May move state file to a timestamped backup if fresh install chosen
+#   - Prints status messages to stderr
+#
+# Related: agentic_coding_flywheel_setup-4xi
+confirm_resume() {
+    local state_file
+    state_file="$(state_get_file)"
+
+    # If no state file, nothing to resume - proceed with fresh install
+    if [[ ! -f "$state_file" ]]; then
+        return 1
+    fi
+
+    # Load state to extract resume info
+    local state
+    if ! state=$(state_load 2>/dev/null); then
+        # State file exists but can't be loaded (corrupted?)
+        _confirm_resume_log_warn "State file exists but is unreadable. Starting fresh."
+        if ! state_backup_and_remove; then
+            _confirm_resume_log_warn "Failed to move unreadable state file out of the way. Aborting."
+            return 2
+        fi
+        return 1
+    fi
+
+    # Check for completed phases
+    local completed_count
+    if command -v jq &>/dev/null; then
+        completed_count=$(echo "$state" | jq -r '.completed_phases | length')
+    else
+        completed_count=0
+    fi
+
+    # If no phases completed, nothing to resume
+    if [[ "$completed_count" -eq 0 ]]; then
+        return 1
+    fi
+
+    # Extract resume info
+    local last_phase="" started_at="" failed_phase="" mode=""
+    if command -v jq &>/dev/null; then
+        # Get the last completed phase
+        last_phase=$(echo "$state" | jq -r '.completed_phases[-1] // "unknown"')
+        started_at=$(echo "$state" | jq -r '.started_at // "unknown"')
+        failed_phase=$(echo "$state" | jq -r '.failed_phase // empty')
+        mode=$(echo "$state" | jq -r '.mode // "unknown"')
+    fi
+
+    local last_phase_name="${ACFS_PHASE_NAMES[$last_phase]:-$last_phase}"
+    local total_phases="${#ACFS_PHASE_IDS[@]}"
+
+    # Handle explicit CLI flags first (these override everything)
+    if [[ "${ACFS_FORCE_REINSTALL:-}" == "true" ]]; then
+        _confirm_resume_log_info "Force reinstall requested. Wiping state..."
+        if ! state_backup_and_remove; then
+            _confirm_resume_log_warn "Failed to move state file out of the way. Aborting."
+            return 2
+        fi
+        return 1
+    fi
+
+    if [[ "${ACFS_FORCE_RESUME:-}" == "true" ]]; then
+        _confirm_resume_log_info "Resuming installation from: $last_phase_name"
+        _confirm_resume_log_info "Progress: $completed_count/$total_phases phases completed"
+        return 0
+    fi
+
+    # Default behavior: silent resume with status
+    # Show clear status so user knows what's happening
+    echo "" >&2
+    _confirm_resume_log_info "Previous installation detected"
+    _confirm_resume_log_info "  Started: $started_at"
+    _confirm_resume_log_info "  Mode: $mode"
+    _confirm_resume_log_info "  Progress: $completed_count/$total_phases phases"
+    _confirm_resume_log_info "  Last completed: $last_phase_name"
+
+    if [[ -n "$failed_phase" && "$failed_phase" != "null" ]]; then
+        local failed_name="${ACFS_PHASE_NAMES[$failed_phase]:-$failed_phase}"
+        _confirm_resume_log_warn "  Previous failure at: $failed_name"
+    fi
+
+    # Only prompt if --interactive was requested and we have a controlling TTY.
+    if [[ "${ACFS_INTERACTIVE:-}" == "true" ]] && (exec 3<>/dev/tty) 2>/dev/null; then
+        echo "" >&2
+        echo "Options:" >&2
+        echo "  [R] Resume from $last_phase_name (default)" >&2
+        echo "  [F] Fresh install (wipe state)" >&2
+        echo "  [A] Abort" >&2
+        echo "" >&2
+
+        local choice
+        if [[ "${HAS_GUM:-false}" == "true" ]] && command -v gum &>/dev/null; then
+            # Use gum for nicer selection (render UI to the controlling TTY; capture selection on stdout).
+            choice=$(gum choose "Resume" "Fresh install" "Abort" < /dev/tty 2> /dev/tty) || choice="Resume"
+            case "$choice" in
+                "Fresh install")
+                    _confirm_resume_log_info "Starting fresh install..."
+                    if ! state_backup_and_remove; then
+                        _confirm_resume_log_warn "Failed to move state file out of the way. Aborting."
+                        return 2
+                    fi
+                    return 1
+                    ;;
+                "Abort")
+                    _confirm_resume_log_info "Installation aborted."
+                    return 2
+                    ;;
+                *)
+                    _confirm_resume_log_info "Resuming installation..."
+                    return 0
+                    ;;
+            esac
+        else
+            # Fallback to read prompt
+            if [[ -t 0 ]]; then
+                read -r -p "Choice [R/f/a]: " choice
+            else
+                read -r -p "Choice [R/f/a]: " choice < /dev/tty
+            fi
+            case "${choice,,}" in
+                f|fresh)
+                    _confirm_resume_log_info "Starting fresh install..."
+                    if ! state_backup_and_remove; then
+                        _confirm_resume_log_warn "Failed to move state file out of the way. Aborting."
+                        return 2
+                    fi
+                    return 1
+                    ;;
+                a|abort)
+                    _confirm_resume_log_info "Installation aborted."
+                    return 2
+                    ;;
+                *)
+                    _confirm_resume_log_info "Resuming installation..."
+                    return 0
+                    ;;
+            esac
+        fi
+    fi
+
+    # Non-interactive: silent resume (default behavior)
+    echo "" >&2
+    _confirm_resume_log_info "Resuming installation (use --force-reinstall for fresh start)"
+    echo "" >&2
+    return 0
+}
+
+# Helper: Log info message for confirm_resume
+_confirm_resume_log_info() {
+    local msg="$1"
+    if [[ "${HAS_GUM:-false}" == "true" ]] && command -v gum &>/dev/null; then
+        gum style --foreground "#89b4fa" "$msg" >&2
+    else
+        echo -e "\033[0;34m$msg\033[0m" >&2
+    fi
+}
+
+# Helper: Log warning message for confirm_resume
+_confirm_resume_log_warn() {
+    local msg="$1"
+    if [[ "${HAS_GUM:-false}" == "true" ]] && command -v gum &>/dev/null; then
+        gum style --foreground "#f9e2af" "$msg" >&2
+    else
+        echo -e "\033[0;33m$msg\033[0m" >&2
+    fi
+}
+
+# Parse CLI flags and set resume/reinstall globals
+# Usage: parse_resume_flags "$@"
+# Sets: ACFS_FORCE_RESUME, ACFS_FORCE_REINSTALL, ACFS_INTERACTIVE
+#
+# Flags recognized:
+#   --resume           Force resume without prompts
+#   --force-reinstall  Force fresh install, wipe state
+#   --interactive      Enable interactive prompts
+parse_resume_flags() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --resume)
+                export ACFS_FORCE_RESUME=true
+                ;;
+            --force-reinstall)
+                export ACFS_FORCE_REINSTALL=true
+                ;;
+            --interactive)
+                export ACFS_INTERACTIVE=true
+                ;;
+        esac
+        shift
+    done
+}
+
+# ============================================================
+# Ubuntu Upgrade State Tracking
+# ============================================================
+# These functions track multi-reboot Ubuntu upgrade progress.
+# The upgrade state is stored in a separate section of state.json
+# to keep it isolated from installation phase state.
+#
+# Schema v3 adds the ubuntu_upgrade section:
+# {
+#   "ubuntu_upgrade": {
+#     "enabled": true,
+#     "started_at": "2025-01-15T10:00:00Z",
+#     "original_version": "24.04",
+#     "target_version": "25.10",
+#     "upgrade_path": ["25.04", "25.10"],
+#     "current_stage": "upgrading",
+#     "completed_upgrades": [
+#       {"from": "24.04", "to": "25.04", "completed_at": "..."}
+#     ],
+#     "current_upgrade": {"from": "25.04", "to": "25.10", "started_at": "..."},
+#     "needs_reboot": false,
+#     "resume_after_reboot": true,
+#     "last_error": null
+#   }
+# }
+#
+# Related beads: agentic_coding_flywheel_setup-2yd
+# ============================================================
+
+# Initialize upgrade state when starting an upgrade sequence
+# Usage: state_upgrade_init <original_version> <target_version> <upgrade_path_json>
+# Example: state_upgrade_init "24.04" "25.10" '["25.04", "25.10"]'
+state_upgrade_init() {
+    local original_version="$1"
+    local target_version="$2"
+    local upgrade_path="$3"  # JSON array string
+
+    if ! command -v jq &>/dev/null; then
+        echo "Error: jq is required for state_upgrade_init" >&2
+        return 1
+    fi
+
+    local now
+    now="$(date -Iseconds)"
+
+    # Load current state
+    local state
+    state=$(state_load) || return 1
+
+    # Use jq --arg to safely escape all variables (prevent JSON injection)
+    local new_state
+    new_state=$(echo "$state" | jq \
+        --arg now "$now" \
+        --arg orig "$original_version" \
+        --arg target "$target_version" \
+        --argjson path "$upgrade_path" \
+        '
+        .ubuntu_upgrade = {
+            "enabled": true,
+            "started_at": $now,
+            "original_version": $orig,
+            "target_version": $target,
+            "upgrade_path": $path,
+            "current_stage": "initializing",
+            "completed_upgrades": [],
+            "current_upgrade": null,
+            "needs_reboot": false,
+            "resume_after_reboot": false,
+            "last_error": null
+        }
+    ') || return 1
+
+    state_save "$new_state"
+}
+
+# Mark current upgrade step as starting
+# Usage: state_upgrade_start <from_version> <to_version>
+state_upgrade_start() {
+    local from_version="$1"
+    local to_version="$2"
+
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    local now
+    now="$(date -Iseconds)"
+
+    # Load current state
+    local state
+    state=$(state_load) || return 1
+
+    # Use jq --arg to safely escape all variables (prevent JSON injection)
+    local new_state
+    new_state=$(echo "$state" | jq \
+        --arg now "$now" \
+        --arg from "$from_version" \
+        --arg to "$to_version" \
+        '
+        .ubuntu_upgrade.current_stage = "upgrading" |
+        .ubuntu_upgrade.current_upgrade = {
+            "from": $from,
+            "to": $to,
+            "started_at": $now
+        }
+    ') || return 1
+
+    state_save "$new_state"
+}
+
+# Mark current upgrade step as completed
+# Usage: state_upgrade_complete <to_version>
+state_upgrade_complete() {
+    local to_version="$1"
+
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    local state
+    state=$(state_load) || return 1
+
+    local now
+    now="$(date -Iseconds)"
+
+    # Move current_upgrade to completed_upgrades
+    local from_version
+    from_version=$(echo "$state" | jq -r '.ubuntu_upgrade.current_upgrade.from // ""')
+
+    # Use jq --arg to safely escape all variables (prevent JSON injection)
+    local new_state
+    new_state=$(echo "$state" | jq \
+        --arg now "$now" \
+        --arg from "$from_version" \
+        --arg to "$to_version" \
+        '
+        .ubuntu_upgrade.completed_upgrades += [{
+            "from": $from,
+            "to": $to,
+            "completed_at": $now
+        }] |
+        .ubuntu_upgrade.current_upgrade = null |
+        .ubuntu_upgrade.current_stage = "step_complete"
+    ') || return 1
+
+    state_save "$new_state"
+}
+
+# Mark that system needs reboot before continuing
+# Usage: state_upgrade_needs_reboot
+state_upgrade_needs_reboot() {
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    state_update "
+        .ubuntu_upgrade.needs_reboot = true |
+        .ubuntu_upgrade.resume_after_reboot = true |
+        .ubuntu_upgrade.current_stage = \"awaiting_reboot\"
+    "
+}
+
+# Clear reboot flags after successful resume
+# Usage: state_upgrade_resumed
+state_upgrade_resumed() {
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    state_update "
+        .ubuntu_upgrade.needs_reboot = false |
+        .ubuntu_upgrade.current_stage = \"resumed\"
+    "
+}
+
+# Check if upgrade sequence is complete
+# Usage: state_upgrade_is_complete
+# Returns: 0 if complete, 1 if not complete or not upgrading
+state_upgrade_is_complete() {
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    local state
+    state=$(state_load) || return 1
+
+    # Check if ubuntu_upgrade section exists and is enabled
+    local enabled
+    enabled=$(echo "$state" | jq -r '.ubuntu_upgrade.enabled // false')
+    if [[ "$enabled" != "true" ]]; then
+        return 1  # Not in upgrade mode
+    fi
+
+    # Check if current stage is completed
+    local stage
+    stage=$(echo "$state" | jq -r '.ubuntu_upgrade.current_stage // ""')
+    if [[ "$stage" == "completed" ]]; then
+        return 0
+    fi
+
+    # Check if all upgrades in path are completed
+    local path_count completed_count
+    path_count=$(echo "$state" | jq -r '.ubuntu_upgrade.upgrade_path | length')
+    completed_count=$(echo "$state" | jq -r '.ubuntu_upgrade.completed_upgrades | length')
+
+    if [[ "$completed_count" -ge "$path_count" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Get current upgrade stage
+# Usage: state_upgrade_get_stage
+# Outputs: not_started | initializing | upgrading | awaiting_reboot | resumed | step_complete | completed | error
+state_upgrade_get_stage() {
+    if ! command -v jq &>/dev/null; then
+        echo "not_started"
+        return 0
+    fi
+
+    local state
+    if ! state=$(state_load 2>/dev/null); then
+        echo "not_started"
+        return 0
+    fi
+
+    local enabled
+    enabled=$(echo "$state" | jq -r '.ubuntu_upgrade.enabled // false')
+    if [[ "$enabled" != "true" ]]; then
+        echo "not_started"
+        return 0
+    fi
+
+    local stage
+    stage=$(echo "$state" | jq -r '.ubuntu_upgrade.current_stage // "not_started"')
+    echo "$stage"
+}
+
+# Record an error during upgrade
+# Usage: state_upgrade_set_error <error_message>
+state_upgrade_set_error() {
+    local error_msg="$1"
+
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    # Use jq's --arg for proper JSON escaping (handles quotes, backslashes, newlines)
+    local state
+    state=$(state_load) || return 1
+
+    local new_state
+    if ! new_state=$(echo "$state" | jq --arg err "$error_msg" '
+        .ubuntu_upgrade.last_error = $err |
+        .ubuntu_upgrade.current_stage = "error"
+    '); then
+        return 1
+    fi
+
+    state_save "$new_state"
+}
+
+# Mark upgrade sequence as fully completed
+# Usage: state_upgrade_mark_complete
+state_upgrade_mark_complete() {
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    local now
+    now="$(date -Iseconds)"
+
+    state_update "
+        .ubuntu_upgrade.current_stage = \"completed\" |
+        .ubuntu_upgrade.completed_at = \"$now\" |
+        .ubuntu_upgrade.needs_reboot = false |
+        .ubuntu_upgrade.resume_after_reboot = false
+    "
+}
+
+# Clean up upgrade state after completion
+# Usage: state_upgrade_cleanup
+# This removes the ubuntu_upgrade section entirely
+state_upgrade_cleanup() {
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    state_update "del(.ubuntu_upgrade)"
+}
+
+# Check if we're in the middle of an upgrade
+# Usage: state_upgrade_in_progress
+# Returns: 0 if upgrade is in progress, 1 if not
+state_upgrade_in_progress() {
+    local stage
+    stage=$(state_upgrade_get_stage)
+
+    case "$stage" in
+        initializing|upgrading|awaiting_reboot|resumed|step_complete)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Get the next version to upgrade to
+# Usage: state_upgrade_get_next_version
+# Outputs: next version string or empty if no more upgrades
+state_upgrade_get_next_version() {
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
+    local state
+    state=$(state_load) || return 1
+
+    local completed_count
+    completed_count=$(echo "$state" | jq -r '.ubuntu_upgrade.completed_upgrades | length')
+
+    # Get the next item in upgrade_path based on completed count
+    echo "$state" | jq -r ".ubuntu_upgrade.upgrade_path[$completed_count] // empty"
+}
+
+# Get upgrade progress summary
+# Usage: state_upgrade_get_progress
+# Outputs: JSON object with progress info
+state_upgrade_get_progress() {
+    if ! command -v jq &>/dev/null; then
+        echo '{"error": "jq required"}'
+        return 1
+    fi
+
+    local state
+    if ! state=$(state_load 2>/dev/null); then
+        echo '{"error": "no state"}'
+        return 1
+    fi
+
+    echo "$state" | jq '
+        {
+            enabled: (.ubuntu_upgrade.enabled // false),
+            stage: (.ubuntu_upgrade.current_stage // "not_started"),
+            original: (.ubuntu_upgrade.original_version // null),
+            target: (.ubuntu_upgrade.target_version // null),
+            completed_count: ((.ubuntu_upgrade.completed_upgrades // []) | length),
+            total_count: ((.ubuntu_upgrade.upgrade_path // []) | length),
+            needs_reboot: (.ubuntu_upgrade.needs_reboot // false),
+            last_error: (.ubuntu_upgrade.last_error // null)
+        }
+    '
+}
+
+# Print upgrade status for user display
+# Usage: state_upgrade_print_status
+state_upgrade_print_status() {
+    if ! command -v jq &>/dev/null; then
+        echo "Upgrade status unavailable (jq required)"
+        return 1
+    fi
+
+    local state
+    if ! state=$(state_load 2>/dev/null); then
+        echo "No upgrade in progress"
+        return 0
+    fi
+
+    local enabled
+    enabled=$(echo "$state" | jq -r '.ubuntu_upgrade.enabled // false')
+    if [[ "$enabled" != "true" ]]; then
+        echo "No upgrade in progress"
+        return 0
+    fi
+
+    local original target stage completed_count total_count
+    original=$(echo "$state" | jq -r '.ubuntu_upgrade.original_version')
+    target=$(echo "$state" | jq -r '.ubuntu_upgrade.target_version')
+    stage=$(echo "$state" | jq -r '.ubuntu_upgrade.current_stage')
+    completed_count=$(echo "$state" | jq -r '.ubuntu_upgrade.completed_upgrades | length')
+    total_count=$(echo "$state" | jq -r '.ubuntu_upgrade.upgrade_path | length')
+
+    echo "=== Ubuntu Upgrade Status ==="
+    echo "Original: $original → Target: $target"
+    echo "Progress: $completed_count/$total_count upgrades completed"
+    echo "Stage: $stage"
+
+    # Show completed upgrades
+    if [[ "$completed_count" -gt 0 ]]; then
+        echo ""
+        echo "Completed upgrades:"
+        echo "$state" | jq -r '.ubuntu_upgrade.completed_upgrades[] | "  ✓ \(.from) → \(.to)"'
+    fi
+
+    # Show current upgrade if any
+    local current
+    current=$(echo "$state" | jq -r '.ubuntu_upgrade.current_upgrade // empty')
+    if [[ -n "$current" ]]; then
+        local from to
+        from=$(echo "$state" | jq -r '.ubuntu_upgrade.current_upgrade.from')
+        to=$(echo "$state" | jq -r '.ubuntu_upgrade.current_upgrade.to')
+        echo ""
+        echo "Current upgrade: $from → $to"
+    fi
+
+    # Show error if any
+    local error
+    error=$(echo "$state" | jq -r '.ubuntu_upgrade.last_error // empty')
+    if [[ -n "$error" ]]; then
+        echo ""
+        echo "Last error: $error"
+    fi
+}
 # Save/update the state file
 # Usage: state_save <json_content>
 # Returns: 0 on success, 1 on failure
@@ -453,17 +1221,24 @@ state_update() {
         return 1
     fi
 
+    if ! _state_acquire_lock; then
+        return 1
+    fi
+
     local state
     if ! state=$(state_load); then
+        _state_release_lock
         return 1
     fi
 
     local new_state
     if ! new_state=$(echo "$state" | jq "$jq_expr"); then
+        _state_release_lock
         return 1
     fi
 
     state_save "$new_state"
+    _state_release_lock
 }
 
 # ============================================================
@@ -480,9 +1255,16 @@ state_phase_start() {
         return 1
     fi
 
+    if ! _state_acquire_lock; then
+        return 1
+    fi
+
     # Use jq --arg to safely handle steps with quotes/backslashes.
     local state
-    state=$(state_load) || return 1
+    if ! state=$(state_load); then
+        _state_release_lock
+        return 1
+    fi
 
     local start_time
     start_time=$(date +%s)
@@ -496,7 +1278,7 @@ state_phase_start() {
             .failed_phase = null |
             .failed_step = null |
             .failed_error = null
-        ') || return 1
+        ') || { _state_release_lock; return 1; }
     else
         new_state=$(echo "$state" | jq --arg phase "$phase_id" --argjson start "$start_time" '
             .current_phase = $phase |
@@ -505,10 +1287,11 @@ state_phase_start() {
             .failed_phase = null |
             .failed_step = null |
             .failed_error = null
-        ') || return 1
+        ') || { _state_release_lock; return 1; }
     fi
 
     state_save "$new_state"
+    _state_release_lock
 }
 
 # Update the current step within a phase
@@ -520,16 +1303,25 @@ state_step_update() {
         return 1
     fi
 
+    if ! _state_acquire_lock; then
+        return 1
+    fi
+
     # Use jq's --arg for proper JSON escaping
     local state
-    state=$(state_load) || return 1
+    if ! state=$(state_load); then
+        _state_release_lock
+        return 1
+    fi
 
     local new_state
     if ! new_state=$(echo "$state" | jq --arg step "$step" '.current_step = $step'); then
+        _state_release_lock
         return 1
     fi
 
     state_save "$new_state"
+    _state_release_lock
 }
 
 # Mark a phase as completed
@@ -541,8 +1333,15 @@ state_phase_complete() {
         return 1
     fi
 
+    if ! _state_acquire_lock; then
+        return 1
+    fi
+
     local state
-    state=$(state_load) || return 1
+    if ! state=$(state_load); then
+        _state_release_lock
+        return 1
+    fi
 
     # Calculate duration if start time was recorded
     local start_time duration
@@ -572,10 +1371,12 @@ state_phase_complete() {
         .current_step = null |
         del(.phase_start_time)
     '); then
+        _state_release_lock
         return 1
     fi
 
     state_save "$new_state"
+    _state_release_lock
 }
 
 # Mark a phase as failed
@@ -589,9 +1390,16 @@ state_phase_fail() {
         return 1
     fi
 
+    if ! _state_acquire_lock; then
+        return 1
+    fi
+
     # Use jq's --arg for proper JSON escaping (handles quotes, backslashes, newlines)
     local state
-    state=$(state_load) || return 1
+    if ! state=$(state_load); then
+        _state_release_lock
+        return 1
+    fi
 
     local new_state
     if ! new_state=$(echo "$state" | jq \
@@ -604,10 +1412,12 @@ state_phase_fail() {
         .current_phase = null |
         .current_step = null
     '); then
+        _state_release_lock
         return 1
     fi
 
     state_save "$new_state"
+    _state_release_lock
 }
 
 # Mark a phase as skipped
@@ -618,8 +1428,12 @@ state_phase_skip() {
     # Best-effort: never abort the installer if we can't persist skip metadata.
     command -v jq &>/dev/null || return 0
 
+    if ! _state_acquire_lock; then
+        return 0
+    fi
+
     local state
-    state=$(state_load 2>/dev/null) || return 0
+    state=$(state_load 2>/dev/null) || { _state_release_lock; return 0; }
 
     local new_state
     new_state=$(echo "$state" | jq --arg phase "$phase_id" '
@@ -628,9 +1442,10 @@ state_phase_skip() {
           (.skipped_phases // []) as $phases |
           if ($phases | index($phase)) == null then $phases + [$phase] else $phases end
         )
-    ' 2>/dev/null) || return 0
+    ' 2>/dev/null) || { _state_release_lock; return 0; }
 
     state_save "$new_state" 2>/dev/null || true
+    _state_release_lock
     return 0
 }
 
@@ -642,8 +1457,12 @@ state_tool_skip() {
     # Best-effort: never abort the installer if we can't persist skip metadata.
     command -v jq &>/dev/null || return 0
 
+    if ! _state_acquire_lock; then
+        return 0
+    fi
+
     local state
-    state=$(state_load 2>/dev/null) || return 0
+    state=$(state_load 2>/dev/null) || { _state_release_lock; return 0; }
 
     local new_state
     new_state=$(echo "$state" | jq --arg tool "$tool" '
@@ -652,9 +1471,10 @@ state_tool_skip() {
           (.skipped_tools // []) as $tools |
           if ($tools | index($tool)) == null then $tools + [$tool] else $tools end
         )
-    ' 2>/dev/null) || return 0
+    ' 2>/dev/null) || { _state_release_lock; return 0; }
 
     state_save "$new_state" 2>/dev/null || true
+    _state_release_lock
     return 0
 }
 
@@ -2025,10 +2845,10 @@ state_upgrade_get_progress() {
     fi
 
     local state
-    state=$(state_load) || {
+    if ! state=$(state_load 2>/dev/null); then
         echo '{"error": "no state"}'
         return 1
-    }
+    fi
 
     echo "$state" | jq '
         {
