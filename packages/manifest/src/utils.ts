@@ -193,10 +193,11 @@ export function sortModulesByInstallOrder(manifest: Manifest): Module[] {
   const visiting = new Set<string>(); // For cycle detection
 
   function visit(moduleId: string): void {
+    // console.log(`Visiting ${moduleId}, stack: ${[...visiting].join(' -> ')}`);
     if (visited.has(moduleId)) return;
     if (visiting.has(moduleId)) {
-      // Cycle detected, skip (validation should catch this)
-      return;
+      // Cycle detected, throw error
+      throw new Error(`Dependency cycle detected: ${moduleId} depends on itself (directly or indirectly). Stack: ${[...visiting].join(' -> ')} -> ${moduleId}`);
     }
 
     visiting.add(moduleId);
@@ -204,6 +205,7 @@ export function sortModulesByInstallOrder(manifest: Manifest): Module[] {
     const module = getModuleById(manifest, moduleId);
     if (!module) {
       // Module not found (should be caught by validation, but handle gracefully)
+      visiting.delete(moduleId);
       return;
     }
 

@@ -236,16 +236,6 @@ function buildVerifiedInstallerPipe(module: Module): string {
   const parts: string[] = [vi.runner];
   const args = vi.args ?? [];
 
-  // SECURITY: Use proper shell quoting to prevent command injection.
-  // Special-case bash/sh when piping script content: ensure stdin is used and
-  // keep script args after a `--` separator.
-  if (!['bash', 'sh'].includes(vi.runner)) {
-    for (const arg of args) {
-      parts.push(shellQuoteVerifiedInstallerArg(arg));
-    }
-    return parts.join(' ');
-  }
-
   // No args: `echo ... | bash` / `echo ... | sh` already reads from stdin.
   if (args.length === 0) {
     return parts.join(' ');
