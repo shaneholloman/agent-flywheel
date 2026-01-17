@@ -166,6 +166,8 @@ declare -a MANIFEST_CHECKS=(
     "stack.dcg.1	Destructive Command Guard - Claude Code hook blocking dangerous git/fs commands	dcg --version	required"
     "stack.dcg.2	Destructive Command Guard - Claude Code hook blocking dangerous git/fs commands	settings=\"\$HOME/.claude/settings.json\"\\nalt_settings=\"\$HOME/.config/claude/settings.json\"\\nif [[ -f \"\$settings\" ]]; then\\n  grep -q \"dcg\" \"\$settings\"\\nelif [[ -f \"\$alt_settings\" ]]; then\\n  grep -q \"dcg\" \"\$alt_settings\"\\nelse\\n  exit 1\\nfi	required"
     "stack.ru	Repo Updater - multi-repo sync + AI-driven commit automation	ru --version	required"
+    "stack.srps.1	System Resource Protection Script - ananicy-cpp rules + TUI monitor for responsive dev workstations	sysmoni --version || sysmoni --help	required"
+    "stack.srps.2	System Resource Protection Script - ananicy-cpp rules + TUI monitor for responsive dev workstations	systemctl is-active ananicy-cpp	required"
     "utils.giil	Get Image from Internet Link - download cloud images for visual debugging	giil --help || giil --version	required"
     "utils.csctf	Chat Shared Conversation to File - convert AI share links to Markdown/HTML	csctf --help || csctf --version	required"
     "utils.xf	xf - Ultra-fast X/Twitter archive search with Tantivy	xf --help || xf --version	required"

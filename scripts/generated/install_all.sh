@@ -166,6 +166,7 @@ install_all() {
     install_stack_slb
     install_stack_dcg
     install_stack_ru
+    install_stack_srps
     log_section "Category: tools"
     install_utils_giil
     install_utils_csctf

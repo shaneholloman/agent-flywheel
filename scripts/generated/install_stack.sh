@@ -93,7 +93,7 @@ acfs_security_init() {
 }
 
 # Category: stack
-# Modules: 14
+# Modules: 15
 
 # Named tmux manager (agent cockpit)
 install_stack_ntm() {
@@ -1238,6 +1238,110 @@ INSTALL_STACK_RU
     log_success "stack.ru installed"
 }
 
+# System Resource Protection Script - ananicy-cpp rules + TUI monitor for responsive dev workstations
+install_stack_srps() {
+    local module_id="stack.srps"
+    acfs_require_contract "module:${module_id}" || return 1
+    log_step "Installing stack.srps"
+
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verified installer: stack.srps"
+    else
+        if ! {
+            # Try security-verified install (no unverified fallback; fail closed)
+            local install_success=false
+
+            if acfs_security_init; then
+                # Check if KNOWN_INSTALLERS is available as an associative array (declare -A)
+                # The grep ensures we specifically have an associative array, not just any variable
+                if declare -p KNOWN_INSTALLERS 2>/dev/null | grep -q 'declare -A'; then
+                    local tool="srps"
+                    local url=""
+                    local expected_sha256=""
+
+                    # Safe access with explicit empty default
+                    url="${KNOWN_INSTALLERS[$tool]:-}"
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.srps: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
+
+                    if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
+                        if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s' '--' '--install'; then
+                            install_success=true
+                        else
+                            log_error "stack.srps: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.srps: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.srps: checksum for '$tool' not found"
+                        fi
+                    fi
+                else
+                    log_error "stack.srps: KNOWN_INSTALLERS array not available"
+                fi
+            else
+                log_error "stack.srps: acfs_security_init failed - check security.sh and checksums.yaml"
+            fi
+
+            # Verified install is required - no fallback
+            if [[ "$install_success" = "true" ]]; then
+                true
+            else
+                log_error "Verified install failed for stack.srps"
+                false
+            fi
+        }; then
+            log_warn "stack.srps: verified installer failed"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "stack.srps" "verified installer failed"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "stack.srps"
+            fi
+            return 0
+        fi
+    fi
+
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: sysmoni --version || sysmoni --help (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_SRPS'
+sysmoni --version || sysmoni --help
+INSTALL_STACK_SRPS
+        then
+            log_warn "stack.srps: verify failed: sysmoni --version || sysmoni --help"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "stack.srps" "verify failed: sysmoni --version || sysmoni --help"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "stack.srps"
+            fi
+            return 0
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: systemctl is-active ananicy-cpp (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_SRPS'
+systemctl is-active ananicy-cpp
+INSTALL_STACK_SRPS
+        then
+            log_warn "stack.srps: verify failed: systemctl is-active ananicy-cpp"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "stack.srps" "verify failed: systemctl is-active ananicy-cpp"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "stack.srps"
+            fi
+            return 0
+        fi
+    fi
+
+    log_success "stack.srps installed"
+}
+
 # Install all stack modules
 install_stack() {
     log_section "Installing stack modules"
@@ -1255,6 +1359,7 @@ install_stack() {
     install_stack_slb
     install_stack_dcg
     install_stack_ru
+    install_stack_srps
 }
 
 # Run if executed directly

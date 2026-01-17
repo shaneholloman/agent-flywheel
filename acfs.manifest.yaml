@@ -1257,6 +1257,34 @@ modules:
     verify:
       - ru --version
 
+  - id: stack.srps
+    description: System Resource Protection Script - ananicy-cpp rules + TUI monitor for responsive dev workstations
+    category: stack
+    phase: 9
+    run_as: target_user
+    optional: true
+    enabled_by_default: true
+    tags: [recommended, system-health]
+    dependencies:
+      - base.system
+      - lang.go
+    installed_check:
+      run_as: target_user
+      command: "command -v sysmoni && systemctl is-active ananicy-cpp >/dev/null 2>&1"
+    verified_installer:
+      tool: srps
+      runner: bash
+      args: ["--install"]
+      fallback_url: "https://raw.githubusercontent.com/Dicklesworthstone/system_resource_protection_script/main/install.sh"
+    install: []
+    verify:
+      - sysmoni --version || sysmoni --help
+      - systemctl is-active ananicy-cpp
+    notes:
+      - "Installs ananicy-cpp with curated rules for compilers, browsers, IDEs"
+      - "Provides sysmoni TUI for live resource monitoring"
+      - "Auto-deprioritizes heavy workloads to keep system responsive"
+
   # ============================================================
   # PHASE 9B: Utilities (giil, csctf)
   # ============================================================

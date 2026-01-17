@@ -62,6 +62,10 @@ installers:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/repo_updater/main/install.sh"
     sha256: "9a9f4cb42a1e801c36acc761ea513fef92c237fab6f56bbe5dae5cf7c27da51e"
 
+  srps:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/system_resource_protection_script/main/install.sh"
+    sha256: "82b97151d9aa7254ddf3515f11b9f5c8918028fff0ee53c27a15e840e9fac68f"
+
   nvm:
     url: "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh"
     sha256: "abdb525ee9f5b48b34d8ed9fc67c6013fb0f659712e401ecd88ab989b3af8f53"

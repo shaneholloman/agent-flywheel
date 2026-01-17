@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="d776ce230838a8ba6ed56cf396d75a34e9ec635a753bafa3304913e47d628c80"
+ACFS_MANIFEST_SHA256="418a410b887432f967dc292830f98d08b8b454002bdc48f3f71ebe52119b5aff"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -49,6 +49,7 @@ ACFS_MODULES_IN_ORDER=(
   "stack.slb"
   "stack.dcg"
   "stack.ru"
+  "stack.srps"
   "utils.giil"
   "utils.csctf"
   "utils.xf"
@@ -99,6 +100,7 @@ declare -gA ACFS_MODULE_PHASE=(
   [stack.slb]="9"
   [stack.dcg]="9"
   [stack.ru]="9"
+  [stack.srps]="9"
   [utils.giil]="9"
   [utils.csctf]="9"
   [utils.xf]="9"
@@ -149,6 +151,7 @@ declare -gA ACFS_MODULE_DEPS=(
   [stack.slb]="lang.go"
   [stack.dcg]="agents.claude"
   [stack.ru]="cli.modern,stack.ntm"
+  [stack.srps]="base.system,lang.go"
   [utils.giil]="base.system"
   [utils.csctf]="base.system"
   [utils.xf]="lang.rust"
@@ -199,6 +202,7 @@ declare -gA ACFS_MODULE_FUNC=(
   [stack.slb]="install_stack_slb"
   [stack.dcg]="install_stack_dcg"
   [stack.ru]="install_stack_ru"
+  [stack.srps]="install_stack_srps"
   [utils.giil]="install_utils_giil"
   [utils.csctf]="install_utils_csctf"
   [utils.xf]="install_utils_xf"
@@ -249,6 +253,7 @@ declare -gA ACFS_MODULE_CATEGORY=(
   [stack.slb]="stack"
   [stack.dcg]="stack"
   [stack.ru]="stack"
+  [stack.srps]="stack"
   [utils.giil]="tools"
   [utils.csctf]="tools"
   [utils.xf]="tools"
@@ -299,6 +304,7 @@ declare -gA ACFS_MODULE_TAGS=(
   [stack.slb]="optional"
   [stack.dcg]="recommended,safety"
   [stack.ru]="recommended"
+  [stack.srps]="recommended,system-health"
   [utils.giil]="utility"
   [utils.csctf]="utility"
   [utils.xf]="utility,search"
@@ -349,6 +355,7 @@ declare -gA ACFS_MODULE_DEFAULT=(
   [stack.slb]="1"
   [stack.dcg]="1"
   [stack.ru]="1"
+  [stack.srps]="1"
   [utils.giil]="1"
   [utils.csctf]="1"
   [utils.xf]="0"
