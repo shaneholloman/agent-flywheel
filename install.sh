@@ -3202,7 +3202,14 @@ install_agents_phase() {
 
     # Codex CLI (install as target user)
     log_detail "Installing Codex CLI for $TARGET_USER"
-    try_step "Installing Codex CLI" run_as_target "$bun_bin" install -g --trust @openai/codex@latest || true
+    try_step "Installing Codex CLI" run_as_target bash -c '
+        set -euo pipefail
+        bun_bin="$1"
+        if ! "$bun_bin" install -g --trust @openai/codex@latest; then
+            echo "WARN: Codex CLI latest tag install failed; retrying @openai/codex" >&2
+            "$bun_bin" install -g --trust @openai/codex
+        fi
+    ' _ "$bun_bin" || true
 
     # Create wrapper script that uses bun as runtime (avoids node PATH issues)
     local codex_bin_local="$TARGET_HOME/.local/bin/codex"

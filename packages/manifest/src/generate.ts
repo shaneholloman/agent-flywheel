@@ -338,6 +338,15 @@ function encodeDoctorCommand(cmd: string): string {
     .replace(/\r?\n/g, '\\n');
 }
 
+/**
+ * Sanitize a string for use in a bash comment.
+ * Replaces newlines and other control characters with spaces to prevent
+ * breaking the generated script structure.
+ */
+function sanitizeForBashComment(str: string): string {
+  return str.replace(/[\r\n\t]+/g, ' ').trim();
+}
+
 function indentLines(lines: string[], spaces: number): string[] {
   const pad = ' '.repeat(spaces);
   return lines.map((line) => (line.length === 0 ? line : `${pad}${line}`));
@@ -926,7 +935,7 @@ function generateCategoryScript(manifest: Manifest, category: ModuleCategory): s
   // Generate individual install functions
   for (const module of sortedModules) {
     const funcName = toFunctionName(module.id);
-    lines.push(`# ${module.description}`);
+    lines.push(`# ${sanitizeForBashComment(module.description)}`);
     lines.push(`${funcName}() {`);
     lines.push(`    local module_id="${module.id}"`);
     lines.push('    acfs_require_contract "module:${module_id}" || return 1');

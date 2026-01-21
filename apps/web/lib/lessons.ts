@@ -222,7 +222,7 @@ export const LESSONS: Lesson[] = [
     title: "JFP: Prompt Library",
     description: "Discover and install curated prompts as Claude Code skills",
     duration: "6 min",
-    file: "12_jfp.md",
+    file: "24_jfp.md",
   },
   {
     id: 25,

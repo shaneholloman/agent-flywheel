@@ -942,8 +942,17 @@ update_agents() {
 
     # Codex CLI via bun (--trust allows postinstall scripts)
     if cmd_exists codex || [[ "$FORCE_MODE" == "true" ]]; then
+        local codex_bin_local="$HOME/.local/bin/codex"
+        local codex_bin_bun="$HOME/.bun/bin/codex"
+
         capture_version_before "codex"
         run_cmd_bun_with_retry "Codex CLI" "$bun_bin" install -g --trust @openai/codex@latest
+
+        if [[ ! -x "$codex_bin_local" && ! -x "$codex_bin_bun" ]]; then
+            log_item "warn" "Codex CLI" "latest tag failed; retrying @openai/codex"
+            run_cmd_bun_with_retry "Codex CLI (fallback)" "$bun_bin" install -g --trust @openai/codex
+        fi
+
         # Show version change without double-counting
         if capture_version_after "codex"; then
             [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[codex]}" "${VERSION_AFTER[codex]}"

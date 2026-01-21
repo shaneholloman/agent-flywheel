@@ -646,7 +646,11 @@ modules:
     install:
       # Install via bun, then create wrapper that uses bun as runtime (faster than node)
       # Use --trust to allow postinstall scripts
-      - ~/.bun/bin/bun install -g --trust @openai/codex@latest
+      - |
+        if ! ~/.bun/bin/bun install -g --trust @openai/codex@latest; then
+          echo "WARN: Codex CLI latest tag install failed; retrying @openai/codex" >&2
+          ~/.bun/bin/bun install -g --trust @openai/codex
+        fi
       - |
         mkdir -p ~/.local/bin
         cat > ~/.local/bin/codex << 'WRAPPER'
