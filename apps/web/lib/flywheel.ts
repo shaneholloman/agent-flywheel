@@ -951,6 +951,55 @@ Key capabilities:
       "curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/automated_plan_reviser_pro/main/install.sh | bash --easy-mode",
     language: "Bash",
   },
+  {
+    id: "jfp",
+    name: "JeffreysPrompts CLI",
+    shortName: "JFP",
+    href: "https://jeffreysprompts.com",
+    icon: "Sparkles",
+    color: "from-pink-500 to-rose-600",
+    tagline: "Battle-tested prompts as installable Claude Code skills",
+    description:
+      "Official CLI for jeffreysprompts.com - browse curated prompts and install them as Claude Code skills with one command.",
+    deepDescription: `JFP connects your terminal directly to jeffreysprompts.com - a curated collection
+of battle-tested AI coding prompts organized by use case. Instead of writing prompts from scratch
+or copying them manually, JFP installs them directly to your Claude Code skills folder.
+
+The prompts on jeffreysprompts.com are real-world patterns extracted from thousands of hours
+of AI-assisted coding sessions. They cover everything from exploration and planning to
+review and execution workflows.
+
+Key capabilities:
+- Browse prompts by category (exploration, review, planning, execution)
+- One-command skill installation: jfp install <prompt-name>
+- Offline browsing of downloaded prompts
+- MCP server mode for agent integration: jfp serve
+- JSON output for programmatic access: jfp --json list`,
+    connectsTo: ["ms", "apr", "cm"],
+    connectionDescriptions: {
+      ms: "JFP downloads from remote, MS manages local - together they're your complete skill system",
+      apr: "Downloaded prompts can be refined into comprehensive specifications via APR",
+      cm: "Effective prompts become retrievable memories for future sessions",
+    },
+    stars: 120,
+    features: [
+      "One-command prompt installation to Claude Code skills",
+      "Curated prompt categories: exploration, review, planning, execution",
+      "MCP server mode for agent integration",
+      "Offline browsing of installed prompts",
+      "JSON output for programmatic access",
+      "Built-in update command",
+    ],
+    cliCommands: [
+      "jfp install <prompt>",
+      "jfp list",
+      "jfp search <query>",
+      "jfp serve",
+    ],
+    installCommand:
+      "git clone https://github.com/Dicklesworthstone/jeffreysprompts.com.git ~/.local/share/jeffreysprompts.com && cd ~/.local/share/jeffreysprompts.com && bun install && bun run build:cli && cp jfp ~/.local/bin/",
+    language: "TypeScript/Bun",
+  },
 ];
 
 // ============================================================

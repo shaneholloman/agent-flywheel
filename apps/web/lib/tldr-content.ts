@@ -752,6 +752,53 @@ export const tldrFlywheelTools: TldrFlywheelTool[] = [
       "Iterative requirement refinement",
     ],
   },
+  {
+    id: "jfp",
+    name: "JeffreysPrompts CLI",
+    shortName: "JFP",
+    href: "https://jeffreysprompts.com",
+    icon: "Sparkles",
+    color: "from-pink-500 to-rose-600",
+    category: "supporting",
+    stars: 120,
+    whatItDoes:
+      "Official CLI for jeffreysprompts.com - browse, search, and install battle-tested prompts as Claude Code skills with one command.",
+    whyItsUseful:
+      "Instead of writing prompts from scratch, install proven patterns. JFP connects to jeffreysprompts.com to discover prompts categorized by use case, then installs them directly to your Claude Code skills folder.",
+    implementationHighlights: [
+      "TypeScript/Bun compiled to standalone binary",
+      "Direct integration with Claude Code skills system",
+      "MCP server mode for agent integration",
+      "Offline browsing of downloaded prompts",
+    ],
+    synergies: [
+      {
+        toolId: "ms",
+        description: "JFP downloads remote prompts, MS manages local skills - they complement each other",
+      },
+      {
+        toolId: "apr",
+        description: "Downloaded prompts can be refined into comprehensive specs via APR",
+      },
+      {
+        toolId: "cm",
+        description: "Effective prompts become retrievable memories",
+      },
+    ],
+    techStack: ["TypeScript", "Bun", "Claude Code Skills API"],
+    keyFeatures: [
+      "One-command skill installation",
+      "Browsable prompt categories",
+      "Claude Code skills integration",
+      "MCP server for agent access",
+    ],
+    useCases: [
+      "Bootstrapping a new project with proven prompts",
+      "Discovering prompts for specific domains",
+      "Sharing effective prompts across teams",
+      "Building a personal prompt library",
+    ],
+  },
 ];
 
 export const tldrPageData = {
