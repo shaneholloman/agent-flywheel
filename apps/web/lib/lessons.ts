@@ -202,7 +202,7 @@ export const LESSONS: Lesson[] = [
   },
   {
     id: 22,
-    slug: "meta-skill",
+    slug: "ms",
     title: "Meta Skill: Local Skills",
     description: "Manage and share Claude Code skills locally",
     duration: "10 min",
@@ -223,6 +223,30 @@ export const LESSONS: Lesson[] = [
     description: "Discover and install curated prompts as Claude Code skills",
     duration: "6 min",
     file: "12_jfp.md",
+  },
+  {
+    id: 25,
+    slug: "apr",
+    title: "APR: Automated Plan Reviser",
+    description: "AI-powered iterative specification refinement",
+    duration: "8 min",
+    file: "25_apr.md",
+  },
+  {
+    id: 26,
+    slug: "pt",
+    title: "PT: Process Triage",
+    description: "Intelligent process management with Bayesian scoring",
+    duration: "6 min",
+    file: "26_pt.md",
+  },
+  {
+    id: 27,
+    slug: "xf",
+    title: "XF: X Archive Search",
+    description: "Blazingly fast search across your X/Twitter archive",
+    duration: "6 min",
+    file: "27_xf.md",
   },
 ];
 

@@ -44,3 +44,6 @@ playwright-ga4-session/
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# eslint cache
+.eslintcache
