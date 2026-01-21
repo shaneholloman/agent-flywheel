@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-01-21T08:51:27+00:00
+# checksums.yaml - Auto-generated 2026-01-21T17:53:24+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -46,10 +46,6 @@ installers:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/automated_plan_reviser_pro/main/install.sh"
     sha256: "eb4626ccca58be2a9278c893618b13655c6f0805b7ee98f6a3127cf5f64a6eba"
 
-  jfp:
-    url: "https://jeffreysprompts.com/install-cli.sh"
-    sha256: "97db629240b4065349e63601f05cd483fcec4b1e16008e986d6eed3c3a0367b7"
-
   uv:
     url: "https://astral.sh/uv/install.sh"
     sha256: "09ace6a888bd5941b5d44f1177a9a8a6145552ec8aa81c51b1b57ff73e6b9e18"
@@ -72,7 +68,7 @@ installers:
 
   caam:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_account_manager/main/install.sh"
-    sha256: "5008f34d657c3ee702d274a6c4888a2c3bb32bf3ac2a47fc6981957cee488f23"
+    sha256: "b63bfa2c0e7fdaf7ffc5ca52c656f8aa97dc4e5a0829b43ad2a1b5754ab69f14"
 
   ubs:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/master/install.sh"
@@ -105,3 +101,4 @@ installers:
   ohmyzsh:
     url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
     sha256: "ce0b7c94aa04d8c7a8137e45fe5c4744e3947871f785fd58117c480c1bf49352"
+
