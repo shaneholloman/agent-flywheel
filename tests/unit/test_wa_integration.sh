@@ -108,7 +108,7 @@ test_wa_status() {
 
     # Try status command
     local output exit_code
-    output=$(wa status 2>&1) || true
+    output=$(wa status 2>&1)
     exit_code=$?
 
     if [[ $exit_code -eq 0 ]] || [[ "$output" =~ (connected|running|status|WezTerm|not running|no sessions) ]]; then
@@ -181,20 +181,12 @@ main() {
     log ""
 
     # Test 1 determines if we can run other tests
-    if test_wa_binary; then
-        test_wa_version
-        test_wa_help
-        test_wa_list
-        test_wa_status
-        test_wa_doctor
-    else
-        # Skip all other tests if binary not found
-        test_wa_version
-        test_wa_help
-        test_wa_list
-        test_wa_status
-        test_wa_doctor
-    fi
+    test_wa_binary
+    test_wa_version
+    test_wa_help
+    test_wa_list
+    test_wa_status
+    test_wa_doctor
 
     print_summary
 }

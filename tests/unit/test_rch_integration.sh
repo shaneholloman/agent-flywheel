@@ -59,7 +59,7 @@ test_rch_status() {
     log "Test 4: rch status..."
     # rch status may return empty output with exit code 0 when no active jobs
     local output exit_code
-    output=$(rch status 2>&1) || true
+    output=$(rch status 2>&1)
     exit_code=$?
     if [[ $exit_code -eq 0 ]]; then
         if [[ -z "$output" ]]; then

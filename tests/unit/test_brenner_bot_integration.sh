@@ -122,7 +122,7 @@ test_brenner_status() {
 
     # Try status command
     local output exit_code
-    output=$("$BRENNER_BIN" status 2>&1) || true
+    output=$("$BRENNER_BIN" status 2>&1)
     exit_code=$?
 
     if [[ $exit_code -eq 0 ]] || [[ "$output" =~ (status|running|session|research|no sessions) ]]; then
