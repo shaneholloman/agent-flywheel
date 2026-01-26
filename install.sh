@@ -539,6 +539,76 @@ log_section() {
 }
 
 # ============================================================
+# Log file capture (tee stderr to file)
+# ============================================================
+
+# Initialize log file capture: tee stderr to a timestamped log file.
+# After calling, all stderr output is captured to ACFS_LOG_FILE.
+acfs_log_init() {
+    local log_dir="${1:-${ACFS_HOME:+${ACFS_HOME}/logs}}"
+
+    # Fallback if ACFS_HOME not set or empty
+    if [[ -z "$log_dir" ]]; then
+        log_dir="${ACFS_LOG_DIR:-/var/log/acfs}"
+    fi
+
+    # Create log directory
+    mkdir -p "$log_dir" 2>/dev/null || return 1
+
+    ACFS_LOG_FILE="${log_dir}/install-$(date +%Y%m%d_%H%M%S).log"
+    export ACFS_LOG_FILE
+
+    # Write log header
+    {
+        printf '=== ACFS Install Log ===\n'
+        printf 'Started: %s\n' "$(date -Iseconds)"
+        printf 'Version: %s\n' "${ACFS_VERSION:-unknown}"
+        printf 'User: %s\n' "${TARGET_USER:-unknown}"
+        printf 'Home: %s\n' "${TARGET_HOME:-unknown}"
+        printf 'Mode: %s\n' "${MODE:-unknown}"
+        printf '========================\n\n'
+    } > "$ACFS_LOG_FILE" 2>/dev/null || return 1
+
+    # Fix ownership so target user can read logs
+    if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+        chown "${TARGET_USER}:${TARGET_USER}" "$log_dir" "$ACFS_LOG_FILE" 2>/dev/null || true
+    fi
+
+    # Tee stderr: all stderr output goes to both terminal and log file.
+    # fd 3 = original stderr (preserved for terminal output).
+    exec 3>&2
+    exec 2> >(tee -a "$ACFS_LOG_FILE" >&3)
+
+    log_detail "Log file: $ACFS_LOG_FILE"
+}
+
+# Close log file capture and restore stderr.
+# Strips ANSI color codes from the log for clean text output.
+acfs_log_close() {
+    # Restore original stderr if fd 3 is open
+    if { true >&3; } 2>/dev/null; then
+        exec 2>&3 3>&-
+    fi
+
+    if [[ -n "${ACFS_LOG_FILE:-}" ]] && [[ -f "$ACFS_LOG_FILE" ]]; then
+        # Strip ANSI escape codes for clean log
+        sed -i $'s/\033\[[0-9;]*m//g' "$ACFS_LOG_FILE" 2>/dev/null || true
+
+        # Append footer
+        {
+            printf '\n========================\n'
+            printf 'Finished: %s\n' "$(date -Iseconds)"
+            printf '========================\n'
+        } >> "$ACFS_LOG_FILE"
+
+        # Fix ownership
+        if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+            chown "${TARGET_USER}:${TARGET_USER}" "$ACFS_LOG_FILE" 2>/dev/null || true
+        fi
+    fi
+}
+
+# ============================================================
 # Error handling
 # ============================================================
 cleanup() {
@@ -552,12 +622,18 @@ cleanup() {
         fi
         log_error ""
         log_error "To debug:"
-        log_error "  1. Check the log: cat $ACFS_LOG_DIR/install.log"
+        if [[ -n "${ACFS_LOG_FILE:-}" ]]; then
+            log_error "  1. Check the log: cat $ACFS_LOG_FILE"
+        else
+            log_error "  1. Check the log: cat $ACFS_LOG_DIR/install.log"
+        fi
         log_error "  2. If installed, run: acfs doctor (try as $TARGET_USER)"
         log_error "     (If you ran the installer as root: sudo -u $TARGET_USER -i bash -lc 'acfs doctor')"
         log_error "  3. Re-run this installer (it's safe to run multiple times)"
         log_error ""
     fi
+    # Finalize log file (restore stderr, strip colors, add footer)
+    acfs_log_close 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -4534,6 +4610,7 @@ main() {
     disable_needrestart_apt_hook  # Prevent apt hangs on Ubuntu 22.04+ (issue #70)
     validate_target_user
     init_target_paths
+    acfs_log_init   # Start capturing stderr to log file (uses ACFS_HOME/logs)
     ensure_ubuntu
 
     # Ensure base dependencies (like jq) are installed before upgrade logic

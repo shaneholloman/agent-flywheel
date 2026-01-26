@@ -4,7 +4,81 @@
 # Provides consistent, colored output for the installer
 # ============================================================
 
-# Prevent multiple sourcing
+# ============================================================
+# Log file capture (always defined, even when basic log funcs
+# are skipped via _ACFS_LOGGING_SH_LOADED guard)
+# ============================================================
+
+# Initialize log file capture: tee stderr to a timestamped log file.
+# Usage: acfs_log_init [log_directory]
+# After calling, all stderr output is captured to ACFS_LOG_FILE.
+# Call acfs_log_close to restore stderr and finalize the log.
+if ! declare -f acfs_log_init >/dev/null 2>&1; then
+    acfs_log_init() {
+        local log_dir="${1:-${ACFS_HOME:+${ACFS_HOME}/logs}}"
+
+        # Fallback if ACFS_HOME not set or empty
+        if [[ -z "$log_dir" ]]; then
+            log_dir="${ACFS_LOG_DIR:-/var/log/acfs}"
+        fi
+
+        # Create log directory
+        mkdir -p "$log_dir" 2>/dev/null || return 1
+
+        ACFS_LOG_FILE="${log_dir}/install-$(date +%Y%m%d_%H%M%S).log"
+        export ACFS_LOG_FILE
+
+        # Write log header
+        {
+            printf '=== ACFS Install Log ===\n'
+            printf 'Started: %s\n' "$(date -Iseconds)"
+            printf 'Version: %s\n' "${ACFS_VERSION:-unknown}"
+            printf 'User: %s\n' "${TARGET_USER:-unknown}"
+            printf 'Home: %s\n' "${TARGET_HOME:-unknown}"
+            printf '========================\n\n'
+        } > "$ACFS_LOG_FILE" 2>/dev/null || return 1
+
+        # Fix ownership so target user can read logs
+        if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+            chown "${TARGET_USER}:${TARGET_USER}" "$log_dir" "$ACFS_LOG_FILE" 2>/dev/null || true
+        fi
+
+        # Tee stderr: all stderr output goes to both terminal and log file.
+        # fd 3 = original stderr (preserved for terminal output).
+        exec 3>&2
+        exec 2> >(tee -a "$ACFS_LOG_FILE" >&3)
+    }
+fi
+
+# Close log file capture and restore stderr.
+# Strips ANSI color codes from the log for clean text output.
+if ! declare -f acfs_log_close >/dev/null 2>&1; then
+    acfs_log_close() {
+        # Restore original stderr if fd 3 is open
+        if { true >&3; } 2>/dev/null; then
+            exec 2>&3 3>&-
+        fi
+
+        if [[ -n "${ACFS_LOG_FILE:-}" ]] && [[ -f "$ACFS_LOG_FILE" ]]; then
+            # Strip ANSI escape codes for clean log
+            sed -i $'s/\033\[[0-9;]*m//g' "$ACFS_LOG_FILE" 2>/dev/null || true
+
+            # Append footer
+            {
+                printf '\n========================\n'
+                printf 'Finished: %s\n' "$(date -Iseconds)"
+                printf '========================\n'
+            } >> "$ACFS_LOG_FILE"
+
+            # Fix ownership
+            if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+                chown "${TARGET_USER}:${TARGET_USER}" "$ACFS_LOG_FILE" 2>/dev/null || true
+            fi
+        fi
+    }
+fi
+
+# Prevent multiple sourcing of basic log functions
 if [[ -n "${_ACFS_LOGGING_SH_LOADED:-}" ]]; then
     return 0
 fi
