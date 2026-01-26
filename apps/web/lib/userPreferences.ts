@@ -10,11 +10,19 @@ import { useCallback, useEffect, useState } from "react";
 import { safeGetItem, safeSetItem } from "./utils";
 
 export type OperatingSystem = "mac" | "windows" | "linux";
+export type InstallMode = "vibe" | "safe";
 
 const OS_KEY = "agent-flywheel-user-os";
 const VPS_IP_KEY = "agent-flywheel-vps-ip";
+const INSTALL_MODE_KEY = "agent-flywheel-install-mode";
+const SSH_USERNAME_KEY = "agent-flywheel-ssh-username";
+const ACFS_REF_KEY = "agent-flywheel-acfs-ref";
+
 const OS_QUERY_KEY = "os";
 const VPS_IP_QUERY_KEY = "ip";
+const INSTALL_MODE_QUERY_KEY = "mode";
+const SSH_USERNAME_QUERY_KEY = "user";
+const ACFS_REF_QUERY_KEY = "ref";
 
 function getQueryParam(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -46,6 +54,9 @@ export const userPreferencesKeys = {
   userOS: ["userPreferences", "os"] as const,
   vpsIP: ["userPreferences", "vpsIP"] as const,
   detectedOS: ["userPreferences", "detectedOS"] as const,
+  installMode: ["userPreferences", "installMode"] as const,
+  sshUsername: ["userPreferences", "sshUsername"] as const,
+  acfsRef: ["userPreferences", "acfsRef"] as const,
 };
 
 /**
@@ -242,4 +253,114 @@ export function useMounted(): boolean {
   }, []);
 
   return mounted;
+}
+
+// --- Install Mode ---
+
+export function getInstallMode(): InstallMode {
+  const fromQuery = getQueryParam(INSTALL_MODE_QUERY_KEY);
+  if (fromQuery === "vibe" || fromQuery === "safe") return fromQuery;
+  const stored = safeGetItem(INSTALL_MODE_KEY);
+  if (stored === "vibe" || stored === "safe") return stored;
+  return "vibe";
+}
+
+export function setInstallMode(mode: InstallMode): boolean {
+  const storedOk = safeSetItem(INSTALL_MODE_KEY, mode);
+  const urlOk = setQueryParam(INSTALL_MODE_QUERY_KEY, mode);
+  return storedOk || urlOk;
+}
+
+export function useInstallMode(): [InstallMode, (mode: InstallMode) => void, boolean] {
+  const [state, setState] = useState<{ mode: InstallMode; loaded: boolean }>({
+    mode: "vibe",
+    loaded: false,
+  });
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage access must happen after mount (SSR-safe)
+    setState({ mode: getInstallMode(), loaded: true });
+  }, []);
+
+  const setMode = useCallback((newMode: InstallMode) => {
+    setInstallMode(newMode);
+    setState({ mode: newMode, loaded: true });
+  }, []);
+
+  return [state.mode, setMode, state.loaded];
+}
+
+// --- SSH Username ---
+
+export function getSSHUsername(): string {
+  const fromQuery = getQueryParam(SSH_USERNAME_QUERY_KEY);
+  if (fromQuery && /^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(fromQuery)) return fromQuery;
+  const stored = safeGetItem(SSH_USERNAME_KEY);
+  if (stored && /^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(stored)) return stored;
+  return "ubuntu";
+}
+
+export function setSSHUsername(username: string): boolean {
+  const trimmed = username.trim();
+  if (!trimmed || !/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(trimmed)) return false;
+  const storedOk = safeSetItem(SSH_USERNAME_KEY, trimmed);
+  const urlOk = setQueryParam(SSH_USERNAME_QUERY_KEY, trimmed === "ubuntu" ? null : trimmed);
+  return storedOk || urlOk;
+}
+
+export function useSSHUsername(): [string, (username: string) => void, boolean] {
+  const [state, setState] = useState<{ username: string; loaded: boolean }>({
+    username: "ubuntu",
+    loaded: false,
+  });
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage access must happen after mount (SSR-safe)
+    setState({ username: getSSHUsername(), loaded: true });
+  }, []);
+
+  const setUsername = useCallback((newUsername: string) => {
+    if (setSSHUsername(newUsername)) {
+      setState({ username: newUsername.trim(), loaded: true });
+    }
+  }, []);
+
+  return [state.username, setUsername, state.loaded];
+}
+
+// --- ACFS Ref (git ref pin) ---
+
+export function getACFSRef(): string | null {
+  const fromQuery = getQueryParam(ACFS_REF_QUERY_KEY);
+  if (fromQuery) return fromQuery;
+  const stored = safeGetItem(ACFS_REF_KEY);
+  return stored || null;
+}
+
+export function setACFSRef(ref: string | null): boolean {
+  const value = ref?.trim() || null;
+  const storedOk = value
+    ? safeSetItem(ACFS_REF_KEY, value)
+    : (safeSetItem(ACFS_REF_KEY, ""), true);
+  const urlOk = setQueryParam(ACFS_REF_QUERY_KEY, value);
+  return storedOk || urlOk;
+}
+
+export function useACFSRef(): [string | null, (ref: string | null) => void, boolean] {
+  const [state, setState] = useState<{ ref: string | null; loaded: boolean }>({
+    ref: null,
+    loaded: false,
+  });
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage access must happen after mount (SSR-safe)
+    setState({ ref: getACFSRef(), loaded: true });
+  }, []);
+
+  const setRef = useCallback((newRef: string | null) => {
+    setACFSRef(newRef);
+    setState({ ref: newRef?.trim() || null, loaded: true });
+  }, []);
+
+  return [state.ref, setRef, state.loaded];
 }

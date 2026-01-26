@@ -20,6 +20,7 @@ import { useWizardAnalytics } from "@/lib/hooks/useWizardAnalytics";
 import { Jargon } from "@/components/jargon";
 import { useVPSIP } from "@/lib/userPreferences";
 import { withCurrentSearch } from "@/lib/utils";
+import { CommandBuilderPanel } from "@/components/command-builder-panel";
 
 // Confetti colors
 const CONFETTI_COLORS = [
@@ -151,6 +152,9 @@ export default function LaunchOnboardingPage() {
           </p>
         </div>
       </AlertCard>
+
+      {/* Personalized command quick-reference */}
+      <CommandBuilderPanel />
 
       {/* Important: Authenticate Your AI Tools First */}
       <Card className="border-[oklch(0.78_0.16_75/0.3)] bg-[oklch(0.78_0.16_75/0.08)] p-6">
