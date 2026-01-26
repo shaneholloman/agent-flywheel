@@ -45,6 +45,12 @@ fi
 # Source gum_ui library if available
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source doctor_fix library for --fix functionality
+if [[ -f "$SCRIPT_DIR/doctor_fix.sh" ]]; then
+    # shellcheck source=doctor_fix.sh
+    source "$SCRIPT_DIR/doctor_fix.sh"
+fi
+
 # Prefer the installed VERSION file when available.
 if [[ -f "$HOME/.acfs/VERSION" ]]; then
     ACFS_VERSION="$(cat "$HOME/.acfs/VERSION" 2>/dev/null || echo "$ACFS_VERSION")"
@@ -87,6 +93,40 @@ elif [[ -f "$HOME/.acfs/scripts/lib/gum_ui.sh" ]]; then
     source "$HOME/.acfs/scripts/lib/gum_ui.sh"
 fi
 
+# ============================================================
+# Manifest-Derived Checks (bd-31ps.5.1)
+# ============================================================
+# Source generated doctor_checks.sh to get MANIFEST_CHECKS array.
+# This provides comprehensive manifest-driven verification for tools
+# not already covered by the bespoke check functions below.
+# ============================================================
+MANIFEST_CHECKS_LOADED=false
+
+# Source at top level (not inside a function) because doctor_checks.sh uses
+# "declare -a MANIFEST_CHECKS=(...)" which bash scopes as local inside a
+# function.  Top-level sourcing keeps the array globally visible.
+_MANIFEST_CHECKS_FILE=""
+if [[ -f "$SCRIPT_DIR/../generated/doctor_checks.sh" ]]; then
+    _MANIFEST_CHECKS_FILE="$SCRIPT_DIR/../generated/doctor_checks.sh"
+elif [[ -f "$HOME/.acfs/scripts/generated/doctor_checks.sh" ]]; then
+    _MANIFEST_CHECKS_FILE="$HOME/.acfs/scripts/generated/doctor_checks.sh"
+fi
+
+if [[ -n "$_MANIFEST_CHECKS_FILE" ]]; then
+    # Save shell options before sourcing (doctor_checks.sh sets -euo pipefail)
+    _MANIFEST_SAVED_OPTS=$(set +o)
+
+    # shellcheck source=/dev/null
+    if source "$_MANIFEST_CHECKS_FILE" 2>/dev/null; then
+        MANIFEST_CHECKS_LOADED=true
+    fi
+
+    # Restore original shell options
+    eval "$_MANIFEST_SAVED_OPTS" 2>/dev/null
+    unset _MANIFEST_SAVED_OPTS
+fi
+unset _MANIFEST_CHECKS_FILE
+
 # Colors (fallback if gum_ui not loaded)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -119,6 +159,11 @@ JSON_CHECKS=()
 # Deep mode - run functional tests beyond binary existence
 # Related: agentic_coding_flywheel_setup-01s
 DEEP_MODE=false
+
+# Fix mode - automatically apply safe fixes
+# Related: bd-31ps.6.2
+FIX_MODE=false
+DRY_RUN_MODE=false
 
 # Caching for deep checks - skip slow operations that recently passed
 # Related: agentic_coding_flywheel_setup-lz1
@@ -514,6 +559,13 @@ check() {
                 ;;
         esac
     fi
+
+    # Dispatch fix if --fix mode is enabled
+    if [[ "$FIX_MODE" == "true" ]] && [[ "$status" != "pass" ]]; then
+        if type -t dispatch_fix &>/dev/null; then
+            dispatch_fix "$id" "$status" "$fix"
+        fi
+    fi
 }
 
 # Try to retrieve a reasonably informative version line for a command without
@@ -902,8 +954,30 @@ check_stack() {
             "Re-run: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/ultimate_bug_scanner/master/install.sh | bash"
     fi
 
-    check_command "stack.bv" "Beads Viewer" "bv" \
-        "Re-run: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh | bash"
+    # Beads Viewer - custom check to detect gcloud 'bv' shadowing
+    if command -v bv &>/dev/null; then
+        local bv_path version
+        bv_path=$(command -v bv)
+        # Check if the resolved bv is gcloud's BigQuery Visualizer
+        if [[ "$bv_path" == *"google-cloud-sdk"* ]]; then
+            check "stack.bv" "Beads Viewer" "fail" "SHADOWED by gcloud bv at $bv_path" \
+                "gcloud's 'bv' (BigQuery) is masking beads_viewer. Fix: Ensure ~/.local/bin is before gcloud in PATH, or re-run installer."
+        else
+            version=$(get_version_line "bv")
+            # Also warn if gcloud's bv exists anywhere in PATH
+            local gcloud_bv
+            gcloud_bv=$(whence -ap bv 2>/dev/null | grep "google-cloud-sdk" | head -1 || true)
+            if [[ -n "$gcloud_bv" ]]; then
+                check "stack.bv" "Beads Viewer ($version)" "warn" "gcloud bv exists at $gcloud_bv (but correctly shadowed)" \
+                    "beads_viewer is correctly prioritized, but gcloud's bv exists. ACFS zshrc handles this."
+            else
+                check "stack.bv" "Beads Viewer ($version)" "pass" "installed"
+            fi
+        fi
+    else
+        check "stack.bv" "Beads Viewer" "fail" "not found" \
+            "Re-run: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh | bash"
+    fi
 
     # CASS - custom check
     if command -v cass &>/dev/null; then
@@ -1009,6 +1083,116 @@ check_stack() {
     check_dcg_hook_status
 
     blank_line
+}
+
+# ============================================================
+# Manifest Supplemental Checks (bd-31ps.5.1)
+# ============================================================
+# Runs manifest-derived checks for tools NOT already covered by the bespoke
+# check functions above.  This fills gaps (lazygit, nvm, apr, jfp, pt, srps,
+# all utils.*, acfs.*, base.system.*) without duplicating bespoke output.
+# ============================================================
+
+# Returns 0 (true) if the given manifest ID is already verified by a bespoke
+# check function; 1 (false) if it needs manifest supplemental coverage.
+_is_bespoke_covered() {
+    local id="$1"
+    case "$id" in
+        # check_identity
+        users.ubuntu.*) return 0 ;;
+        # check_workspace
+        base.filesystem.[12]) return 0 ;;
+        # check_shell
+        shell.*) return 0 ;;
+        # check_core_tools  (cli.modern.* maps to rg, tmux, fzf, gh, etc.)
+        cli.modern.*) return 0 ;;
+        # check_core_tools  (languages)
+        lang.bun|lang.uv|lang.rust.*|lang.go) return 0 ;;
+        # check_shell / check_core_tools  (individual tools)
+        tools.atuin|tools.zoxide|tools.ast_grep|tools.vault) return 0 ;;
+        # check_agents
+        agents.*) return 0 ;;
+        # check_cloud
+        cloud.*|network.*|db.*) return 0 ;;
+        # check_stack  (individual stack entries)
+        stack.ntm|stack.slb|stack.mcp_agent_mail) return 0 ;;
+        stack.ultimate_bug_scanner.*|stack.beads_viewer) return 0 ;;
+        stack.beads_rust.*|stack.cass|stack.cm.*|stack.caam) return 0 ;;
+        stack.dcg.*|stack.ru|stack.meta_skill.*) return 0 ;;
+        stack.brenner_bot|stack.rch|stack.wezterm_automata) return 0 ;;
+    esac
+    return 1
+}
+
+# Extract the manifest module ID from a check ID by stripping trailing ".N".
+# e.g., "stack.automated_plan_reviser.1" → "stack.automated_plan_reviser"
+# e.g., "tools.lazygit" → "tools.lazygit" (no change)
+_manifest_module_id() {
+    local id="$1"
+    if [[ "$id" =~ ^(.+)\.[0-9]+$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "$id"
+    fi
+}
+
+# Run manifest checks that are NOT already covered by bespoke functions.
+# Integrates with the standard check() output (JSON/gum/plain) so the results
+# are indistinguishable from hand-written checks.  Failed checks include a
+# copy-pasteable fix suggestion using `acfs install --only <module>`.
+check_manifest_supplemental() {
+    [[ "$MANIFEST_CHECKS_LOADED" == "true" ]] || return 0
+    [[ ${#MANIFEST_CHECKS[@]} -gt 0 ]] || return 0
+
+    local printed_section=false
+
+    for entry in "${MANIFEST_CHECKS[@]}"; do
+        IFS=$'\t' read -r id desc cmd req_flag <<< "$entry"
+
+        # Skip checks already covered by bespoke functions
+        _is_bespoke_covered "$id" && continue
+
+        # Print section header on first supplemental check
+        if [[ "$printed_section" == "false" ]]; then
+            section "Additional Tools (manifest)"
+            printed_section=true
+        fi
+
+        # Decode printf escapes (\n, \t, \\) embedded by the generator
+        cmd="$(printf '%b' "$cmd")"
+
+        # Build a human-readable label from the check command.
+        # For most entries the first word is the binary name (curl, lazygit, apr).
+        # For shell builtins / operators we fall back to the ID's last segment.
+        local tool_name
+        tool_name="${cmd%% *}"
+        case "$tool_name" in
+            test|"["|grep|export|command|bash|sh|systemctl|"[["*)
+                tool_name="${id%.[0-9]*}"    # strip trailing .N
+                tool_name="${tool_name##*.}" # keep last segment
+                ;;
+            */*)
+                # Path like ~/.bun/bin/bun → basename
+                tool_name="${tool_name##*/}"
+                ;;
+        esac
+
+        # Build per-module fix suggestion for failed/warn checks (bd-31ps.5.2)
+        local module_id
+        module_id=$(_manifest_module_id "$id")
+        local fix="Install: curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --only $module_id"
+
+        # Execute the check command in a subshell
+        if bash -o pipefail -c "$cmd" &>/dev/null; then
+            check "$id" "$tool_name" "pass" "$desc"
+        elif [[ "$req_flag" == "optional" ]]; then
+            check "$id" "$tool_name" "skip" "$desc (optional)"
+        else
+            check "$id" "$tool_name" "fail" "$desc" "$fix"
+        fi
+    done
+
+    [[ "$printed_section" == "true" ]] && blank_line
 }
 
 # ============================================================
@@ -1960,13 +2144,23 @@ main() {
                 NO_CACHE=true
                 shift
                 ;;
+            --fix)
+                FIX_MODE=true
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN_MODE=true
+                shift
+                ;;
             --help|-h)
-                echo "Usage: acfs doctor [--json] [--deep] [--no-cache]"
+                echo "Usage: acfs doctor [--json] [--deep] [--no-cache] [--fix] [--dry-run]"
                 echo ""
                 echo "Options:"
                 echo "  --json      Output results as JSON"
                 echo "  --deep      Run functional tests (auth, connections)"
                 echo "  --no-cache  Skip cache, run all checks fresh"
+                echo "  --fix       Automatically apply safe fixes for failed checks"
+                echo "  --dry-run   Preview fixes without applying (use with --fix)"
                 echo ""
                 echo "By default, doctor runs quick existence checks only."
                 echo "Use --deep for thorough validation including:"
@@ -1977,11 +2171,20 @@ main() {
                 echo "Deep checks are cached for 5 minutes by default."
                 echo "Use --no-cache to force fresh checks."
                 echo ""
+                echo "Fix mode applies safe, reversible fixes for common issues:"
+                echo "  - PATH ordering in shell config"
+                echo "  - Missing ACFS config files"
+                echo "  - Missing symlinks for tools"
+                echo "  - Missing zsh plugins"
+                echo "Use --dry-run to preview fixes before applying."
+                echo ""
                 echo "Examples:"
                 echo "  acfs doctor                   # Quick health check"
                 echo "  acfs doctor --deep            # Full functional tests"
                 echo "  acfs doctor --deep --no-cache # Force fresh deep checks"
                 echo "  acfs doctor --json            # JSON output for tooling"
+                echo "  acfs doctor --fix             # Apply safe fixes"
+                echo "  acfs doctor --fix --dry-run   # Preview fixes"
                 exit 0
                 ;;
             *)
@@ -2019,6 +2222,20 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
         fi
     fi
 
+    # Initialize fix mode if enabled
+    if [[ "$FIX_MODE" == "true" ]]; then
+        if type -t run_doctor_fix &>/dev/null; then
+            if [[ "$DRY_RUN_MODE" == "true" ]]; then
+                run_doctor_fix --dry-run
+            else
+                run_doctor_fix
+            fi
+        else
+            echo "Warning: doctor_fix.sh not loaded, --fix unavailable" >&2
+            FIX_MODE=false
+        fi
+    fi
+
     check_identity
     check_workspace
     check_shell
@@ -2026,6 +2243,7 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
     check_agents
     check_cloud
     check_stack
+    check_manifest_supplemental
     show_skipped_tools
 
     # Run deep checks if --deep flag was provided
@@ -2037,6 +2255,13 @@ $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TE
         print_json
     else
         print_summary
+    fi
+
+    # Finalize fix mode if enabled
+    if [[ "$FIX_MODE" == "true" ]]; then
+        if type -t finalize_doctor_fix &>/dev/null; then
+            finalize_doctor_fix
+        fi
     fi
 
     # Exit with appropriate code
