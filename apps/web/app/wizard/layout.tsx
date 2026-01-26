@@ -6,6 +6,7 @@ import { useCallback, useMemo } from "react";
 import { Terminal, Home, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Stepper, StepperMobile } from "@/components/stepper";
+import { HelpPanel } from "@/components/wizard/HelpPanel";
 import { WIZARD_STEPS, getStepBySlug } from "@/lib/wizardSteps";
 import { useStepValidation } from "@/lib/hooks/useStepValidation";
 import { withCurrentSearch } from "@/lib/utils";
@@ -117,7 +118,8 @@ export default function WizardLayout({
               </div>
               <span className="font-mono text-sm font-bold">Agent Flywheel</span>
             </Link>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <HelpPanel currentStep={currentStep} />
               <Link
                 href="/"
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -136,11 +138,14 @@ export default function WizardLayout({
             <div className="mx-auto max-w-2xl">
               {/* Step title (desktop) */}
               <div className="mb-8 hidden md:block">
-                <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 font-mono text-xs text-primary">
-                    {currentStep}
-                  </span>
-                  <span>Step {currentStep} of {WIZARD_STEPS.length}</span>
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 font-mono text-xs text-primary">
+                      {currentStep}
+                    </span>
+                    <span>Step {currentStep} of {WIZARD_STEPS.length}</span>
+                  </div>
+                  <HelpPanel currentStep={currentStep} />
                 </div>
               </div>
 
