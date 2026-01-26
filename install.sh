@@ -609,6 +609,92 @@ acfs_log_close() {
 }
 
 # ============================================================
+# Install summary JSON (bd-31ps.3.2)
+# ============================================================
+
+# Emit a JSON summary of the install run for downstream tooling.
+# Usage: acfs_summary_emit <status> [total_seconds]
+#   status: "success" or "failure"
+#   total_seconds: total wall-clock time (optional, default 0)
+# Output: ~/.acfs/logs/install_summary_<timestamp>.json
+acfs_summary_emit() {
+    local status="$1"
+    local total_seconds="${2:-0}"
+
+    # Require jq (installed by ensure_base_deps before phases run)
+    command -v jq &>/dev/null || return 1
+
+    local summary_dir="${ACFS_HOME:-/home/${TARGET_USER:?}/.acfs}/logs"
+    mkdir -p "$summary_dir" 2>/dev/null || return 1
+
+    ACFS_SUMMARY_FILE="${summary_dir}/install_summary_$(date +%Y%m%d_%H%M%S).json"
+    export ACFS_SUMMARY_FILE
+
+    # Read phase data from state.json if available
+    local phases_json="[]"
+    local failure_json="null"
+    if [[ -f "${ACFS_STATE_FILE:-}" ]] && command -v jq &>/dev/null; then
+        # Build phases array: [{id, name, duration_seconds}] in completion order
+        phases_json=$(jq -r '
+            (.completed_phases // []) as $completed |
+            (.phase_durations // {}) as $durations |
+            [$completed[] | {id: ., duration_seconds: ($durations[.] // null)}]
+        ' "$ACFS_STATE_FILE" 2>/dev/null) || phases_json="[]"
+
+        # Build failure object if present
+        failure_json=$(jq -r '
+            if .failed_phase != null then
+                {phase: .failed_phase, step: .failed_step, error: .failed_error, resume_hint: "--resume"}
+            else null end
+        ' "$ACFS_STATE_FILE" 2>/dev/null) || failure_json="null"
+    fi
+
+    # Get Ubuntu version
+    local ubuntu_version="unknown"
+    if command -v lsb_release &>/dev/null; then
+        ubuntu_version=$(lsb_release -rs 2>/dev/null) || ubuntu_version="unknown"
+    fi
+
+    # Construct the summary JSON
+    jq -n \
+        --argjson schema_version 1 \
+        --arg status "$status" \
+        --arg timestamp "$(date -Iseconds)" \
+        --argjson total_seconds "$total_seconds" \
+        --arg acfs_version "${ACFS_VERSION:-unknown}" \
+        --arg mode "${MODE:-unknown}" \
+        --arg ubuntu_version "$ubuntu_version" \
+        --arg target_user "${TARGET_USER:-unknown}" \
+        --arg target_home "${TARGET_HOME:-unknown}" \
+        --argjson phases "$phases_json" \
+        --argjson failure "$failure_json" \
+        --arg log_file "${ACFS_LOG_FILE:-}" \
+        '{
+            schema_version: $schema_version,
+            status: $status,
+            timestamp: $timestamp,
+            total_seconds: $total_seconds,
+            environment: {
+                acfs_version: $acfs_version,
+                mode: $mode,
+                ubuntu_version: $ubuntu_version,
+                target_user: $target_user,
+                target_home: $target_home
+            },
+            phases: $phases,
+            failure: $failure,
+            log_file: (if $log_file != "" then $log_file else null end)
+        }' > "$ACFS_SUMMARY_FILE" 2>/dev/null || return 1
+
+    # Fix ownership so target user can read
+    if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+        chown "${TARGET_USER}:${TARGET_USER}" "$ACFS_SUMMARY_FILE" 2>/dev/null || true
+    fi
+
+    log_detail "Summary: $ACFS_SUMMARY_FILE"
+}
+
+# ============================================================
 # Error handling
 # ============================================================
 cleanup() {
@@ -631,6 +717,8 @@ cleanup() {
         log_error "     (If you ran the installer as root: sudo -u $TARGET_USER -i bash -lc 'acfs doctor')"
         log_error "  3. Re-run this installer (it's safe to run multiple times)"
         log_error ""
+        # Emit failure summary (best-effort)
+        acfs_summary_emit "failure" 0 2>/dev/null || true
     fi
     # Finalize log file (restore stderr, strip colors, add footer)
     acfs_log_close 2>/dev/null || true
@@ -4756,6 +4844,9 @@ main() {
         if type -t report_success &>/dev/null; then
             report_success 9 "$total_seconds"
         fi
+
+        # Emit install summary JSON (bd-31ps.3.2)
+        acfs_summary_emit "success" "$total_seconds" 2>/dev/null || true
 
         SMOKE_TEST_FAILED=false
         if ! run_smoke_test; then
