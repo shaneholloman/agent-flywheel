@@ -597,23 +597,23 @@ describe('manifest-web-index.ts barrel exports', () => {
   });
 
   test('re-exports manifestTools', () => {
-    expect(content).toContain("export { manifestTools } from './manifest-tools.js'");
-    expect(content).toContain("export type { ManifestWebTool } from './manifest-tools.js'");
+    expect(content).toContain("export { manifestTools } from './manifest-tools'");
+    expect(content).toContain("export type { ManifestWebTool } from './manifest-tools'");
   });
 
   test('re-exports manifestTldrTools', () => {
-    expect(content).toContain("export { manifestTldrTools } from './manifest-tldr.js'");
-    expect(content).toContain("export type { ManifestTldrTool } from './manifest-tldr.js'");
+    expect(content).toContain("export { manifestTldrTools } from './manifest-tldr'");
+    expect(content).toContain("export type { ManifestTldrTool } from './manifest-tldr'");
   });
 
   test('re-exports manifestCommands', () => {
-    expect(content).toContain("export { manifestCommands } from './manifest-commands.js'");
-    expect(content).toContain("export type { ManifestCommand } from './manifest-commands.js'");
+    expect(content).toContain("export { manifestCommands } from './manifest-commands'");
+    expect(content).toContain("export type { ManifestCommand } from './manifest-commands'");
   });
 
   test('re-exports manifestLessonLinks', () => {
-    expect(content).toContain("export { manifestLessonLinks, lessonSlugByModuleId } from './manifest-lessons-index.js'");
-    expect(content).toContain("export type { ManifestLessonLink } from './manifest-lessons-index.js'");
+    expect(content).toContain("export { manifestLessonLinks, lessonSlugByModuleId } from './manifest-lessons-index'");
+    expect(content).toContain("export type { ManifestLessonLink } from './manifest-lessons-index'");
   });
 });
 

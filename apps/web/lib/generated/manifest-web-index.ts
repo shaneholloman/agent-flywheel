@@ -3,14 +3,14 @@
 // Regenerate: bun run generate (from packages/manifest)
 // ============================================================
 
-export { manifestTools } from './manifest-tools.js';
-export type { ManifestWebTool } from './manifest-tools.js';
+export { manifestTools } from './manifest-tools';
+export type { ManifestWebTool } from './manifest-tools';
 
-export { manifestTldrTools } from './manifest-tldr.js';
-export type { ManifestTldrTool } from './manifest-tldr.js';
+export { manifestTldrTools } from './manifest-tldr';
+export type { ManifestTldrTool } from './manifest-tldr';
 
-export { manifestCommands } from './manifest-commands.js';
-export type { ManifestCommand } from './manifest-commands.js';
+export { manifestCommands } from './manifest-commands';
+export type { ManifestCommand } from './manifest-commands';
 
-export { manifestLessonLinks, lessonSlugByModuleId } from './manifest-lessons-index.js';
-export type { ManifestLessonLink } from './manifest-lessons-index.js';
+export { manifestLessonLinks, lessonSlugByModuleId } from './manifest-lessons-index';
+export type { ManifestLessonLink } from './manifest-lessons-index';

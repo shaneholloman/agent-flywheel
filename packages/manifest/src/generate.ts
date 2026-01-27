@@ -1404,17 +1404,17 @@ function generateWebLessonsIndex(manifest: Manifest): string {
 function generateWebIndex(): string {
   const lines: string[] = [TS_HEADER];
 
-  lines.push("export { manifestTools } from './manifest-tools.js';");
-  lines.push("export type { ManifestWebTool } from './manifest-tools.js';");
+  lines.push("export { manifestTools } from './manifest-tools';");
+  lines.push("export type { ManifestWebTool } from './manifest-tools';");
   lines.push('');
-  lines.push("export { manifestTldrTools } from './manifest-tldr.js';");
-  lines.push("export type { ManifestTldrTool } from './manifest-tldr.js';");
+  lines.push("export { manifestTldrTools } from './manifest-tldr';");
+  lines.push("export type { ManifestTldrTool } from './manifest-tldr';");
   lines.push('');
-  lines.push("export { manifestCommands } from './manifest-commands.js';");
-  lines.push("export type { ManifestCommand } from './manifest-commands.js';");
+  lines.push("export { manifestCommands } from './manifest-commands';");
+  lines.push("export type { ManifestCommand } from './manifest-commands';");
   lines.push('');
-  lines.push("export { manifestLessonLinks, lessonSlugByModuleId } from './manifest-lessons-index.js';");
-  lines.push("export type { ManifestLessonLink } from './manifest-lessons-index.js';");
+  lines.push("export { manifestLessonLinks, lessonSlugByModuleId } from './manifest-lessons-index';");
+  lines.push("export type { ManifestLessonLink } from './manifest-lessons-index';");
   lines.push('');
 
   return lines.join('\n');
