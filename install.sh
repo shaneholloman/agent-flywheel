@@ -1078,6 +1078,22 @@ command_exists() {
     command -v "$1" &>/dev/null
 }
 
+# Interactive yes/no confirmation prompt
+# Returns 0 for yes, 1 for no
+confirm() {
+    local prompt="${1:-Continue?}"
+    local response=""
+
+    if [[ -t 0 ]]; then
+        read -r -p "$prompt [y/N] " response < /dev/tty
+    else
+        # Non-interactive mode - default to no
+        return 1
+    fi
+
+    [[ "$response" =~ ^[Yy]$ ]]
+}
+
 # ============================================================
 # Auto-Fix Handler (bd-19y9.3.4)
 # Dispatches auto-fix actions based on AUTO_FIX_MODE
