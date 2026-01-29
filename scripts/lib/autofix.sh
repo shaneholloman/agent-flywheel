@@ -781,7 +781,14 @@ acfs_undo_command() {
             --all) all=true; shift ;;
             --list) list_only=true; shift ;;
             --verify) verify_only=true; shift ;;
-            --category) category="$2"; shift 2 ;;
+            --category)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    log_error "--category requires a value"
+                    return 1
+                fi
+                category="$2"
+                shift 2
+                ;;
             chg_*) change_ids+=("$1"); shift ;;
             *) log_error "Unknown option: $1"; return 1 ;;
         esac

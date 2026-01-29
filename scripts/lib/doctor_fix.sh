@@ -557,7 +557,14 @@ run_doctor_fix() {
             --dry-run) DOCTOR_FIX_DRY_RUN=true; shift ;;
             --yes) DOCTOR_FIX_YES=true; shift ;;
             --prompt) DOCTOR_FIX_PROMPT=true; shift ;;
-            --only) only_categories="$2"; shift 2 ;;
+            --only)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    echo "Error: --only requires a category value" >&2
+                    return 1
+                fi
+                only_categories="$2"
+                shift 2
+                ;;
             *) shift ;;
         esac
     done

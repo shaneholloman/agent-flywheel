@@ -69,6 +69,10 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --output)
+            if [[ -z "${2:-}" || "$2" == -* ]]; then
+                log_error "--output requires a file path"
+                exit 1
+            fi
             OUTPUT_FILE="$2"
             shift 2
             ;;
