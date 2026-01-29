@@ -35,6 +35,17 @@ _ACFS_INFO_SH_LOADED=1
 # ACFS home directory
 ACFS_HOME="${ACFS_HOME:-$HOME/.acfs}"
 
+# Source output formatting library (for TOON support)
+_INFO_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${_INFO_SCRIPT_DIR}/output.sh" ]]; then
+    # shellcheck source=output.sh
+    source "${_INFO_SCRIPT_DIR}/output.sh"
+fi
+
+# Global format options (set by argument parsing)
+_INFO_OUTPUT_FORMAT=""
+_INFO_SHOW_STATS=false
+
 # ============================================================
 # Color Constants (for terminal output)
 # ============================================================
@@ -468,7 +479,8 @@ info_render_json() {
     skipped_tools_json="$(_info_json_escape "$skipped_tools")"
     next_lesson_json="$(_info_json_escape "$next_lesson")"
 
-    cat <<EOF
+    local json_output
+    json_output=$(cat <<EOF
 {
   "system": {
     "hostname": "$hostname_json",
@@ -500,6 +512,17 @@ info_render_json() {
   ]
 }
 EOF
+)
+
+    # Use output formatting library if available
+    if type -t acfs_format_output &>/dev/null; then
+        local resolved_format
+        resolved_format=$(acfs_resolve_format "$_INFO_OUTPUT_FORMAT")
+        acfs_format_output "$json_output" "$resolved_format" "$_INFO_SHOW_STATS"
+    else
+        # Fallback: direct JSON output
+        printf '%s\n' "$json_output"
+    fi
 }
 
 # ============================================================
@@ -643,12 +666,30 @@ EOF
 
 info_main() {
     local output_mode="terminal"
+    _INFO_OUTPUT_FORMAT=""
+    _INFO_SHOW_STATS=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json|-j)
                 output_mode="json"
+                ;;
+            --format|-f)
+                shift
+                _INFO_OUTPUT_FORMAT="$1"
+                output_mode="json"  # --format implies structured output
+                ;;
+            --format=*)
+                _INFO_OUTPUT_FORMAT="${1#*=}"
+                output_mode="json"
+                ;;
+            --toon|-t)
+                _INFO_OUTPUT_FORMAT="toon"
+                output_mode="json"
+                ;;
+            --stats)
+                _INFO_SHOW_STATS=true
                 ;;
             --html|-H)
                 output_mode="html"
@@ -662,10 +703,13 @@ info_main() {
                 echo "Display ACFS environment information."
                 echo ""
                 echo "Options:"
-                echo "  --json, -j     Output as JSON"
-                echo "  --html, -H     Output as self-contained HTML"
-                echo "  --minimal, -m  Show only essentials"
-                echo "  --help, -h     Show this help"
+                echo "  --json, -j         Output as JSON"
+                echo "  --format <fmt>     Output format: json or toon (env: ACFS_OUTPUT_FORMAT, TOON_DEFAULT_FORMAT)"
+                echo "  --toon, -t         Shorthand for --format toon"
+                echo "  --stats            Show token savings statistics (JSON vs TOON bytes)"
+                echo "  --html, -H         Output as self-contained HTML"
+                echo "  --minimal, -m      Show only essentials"
+                echo "  --help, -h         Show this help"
                 return 0
                 ;;
             *)
