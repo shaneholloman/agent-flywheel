@@ -8,7 +8,7 @@ installers:
 
   rano:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/rano/main/install.sh"
-    sha256: "696a4e60d39a3b11a822e529e59da36ff99b9201297a15c5ae9803f94d5f4cac"
+    sha256: "ebeadeb8975bbf821d8c4b34584274a409648ce90d50c0898e5739b99697e6f1"
 
   srps:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/system_resource_protection_script/main/install.sh"
@@ -76,7 +76,7 @@ installers:
 
   ms:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
-    sha256: "4939d3fc134aa2bae4d7b60081170b63b0e855de033ca4eb9759e68e393c7d5c"
+    sha256: "013b8f4dc4c52a4da49e3d011a9f2bd185202d8329af8dae666a1b99f3171181"
 
   cm:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh"
@@ -84,7 +84,7 @@ installers:
 
   rch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/master/install.sh"
-    sha256: "f3efc19ad00401c6aa3d055aafa738e5845ed692757ab59d42dbfcae4b4a81a9"
+    sha256: "85df586c025260ad3a75a11f44a40314c30f3f6aaeed728d7d76927bb9d1fce4"
 
   caam:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_account_manager/main/install.sh"
@@ -124,7 +124,7 @@ installers:
 
   br:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh"
-    sha256: "2351e3dacac264eee5c3b06f62bda750be4f45d95b3df6444127bb4323e6e19e"
+    sha256: "3daa013c4d6748cf30ce4b9124c90a7dffcd705763ca3759ac0f8d78c4af189a"
 
   brenner_bot:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/brenner_bot/main/install.sh"
