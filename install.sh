@@ -1118,6 +1118,11 @@ confirm() {
     local prompt="${1:-Continue?}"
     local response=""
 
+    # In --yes mode, auto-accept all prompts (fixes non-TTY curl|bash failure)
+    if [[ "${YES_MODE:-false}" == "true" ]]; then
+        return 0
+    fi
+
     if [[ -t 0 ]]; then
         read -r -p "$prompt [y/N] " response < /dev/tty
     else
