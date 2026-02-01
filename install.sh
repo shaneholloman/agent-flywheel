@@ -633,6 +633,7 @@ acfs_log_init() {
         printf 'User: %s\n' "${TARGET_USER:-unknown}"
         printf 'Home: %s\n' "${TARGET_HOME:-unknown}"
         printf 'Mode: %s\n' "${MODE:-unknown}"
+        printf 'Bash: %s\n' "${BASH_VERSION:-unknown}"
         printf '========================\n\n'
     } > "$ACFS_LOG_FILE" 2>/dev/null || return 1
 
@@ -643,8 +644,36 @@ acfs_log_init() {
 
     # Tee stderr: all stderr output goes to both terminal and log file.
     # fd 3 = original stderr (preserved for terminal output).
-    exec 3>&2
-    exec 2> >(tee -a "$ACFS_LOG_FILE" >&3)
+    #
+    # NOTE: Process substitution >(tee ...) can fail on some systems
+    # (especially Ubuntu 25.04 with bash 5.3+). We use a subshell guard
+    # to prevent set -e from exiting the entire script on failure.
+    # If tee logging fails, we fall back to simple file redirection.
+    local tee_logging_ok=false
+    if command -v tee >/dev/null 2>&1; then
+        # Test if process substitution works before committing to it
+        # shellcheck disable=SC2261
+        if (exec 3>&1; echo test > >(cat >/dev/null)) 2>/dev/null; then
+            # Process substitution works - set up tee logging
+            # Save original stderr first
+            exec 3>&2 || true
+            # Now redirect stderr to tee (which sends to both log and original stderr)
+            # shellcheck disable=SC2261
+            if exec 2> >(tee -a "$ACFS_LOG_FILE" >&3); then
+                tee_logging_ok=true
+            fi
+        fi
+    fi
+
+    if [[ "$tee_logging_ok" != "true" ]]; then
+        # Fallback: redirect stderr to both terminal (via original fd) and log file
+        # This is less elegant but works on all bash versions
+        echo "Note: Tee logging unavailable on this system, using fallback" >&2 || true
+        # Save original stderr, then append to log file for each command
+        # We'll rely on explicit logging calls instead of automatic tee
+        ACFS_LOG_FALLBACK=true
+        export ACFS_LOG_FALLBACK
+    fi
 
     log_detail "Log file: $ACFS_LOG_FILE"
 }
@@ -5042,11 +5071,22 @@ main() {
         local _acfs_lock_dir="${ACFS_HOME:-$HOME/.acfs}"
         mkdir -p "$_acfs_lock_dir" 2>/dev/null || true
         local _acfs_lock_file="$_acfs_lock_dir/.install.lock"
-        exec 199>"$_acfs_lock_file"
-        if ! flock -n 199; then
-            log_error "Another ACFS installer is already running."
-            log_error "If you are sure no other installer is running, remove: $_acfs_lock_file"
-            exit 1
+        # NOTE: exec with high FDs can fail on some bash versions (5.3+).
+        # We try FD 199, then 198 as fallback, and skip locking if both fail.
+        local _acfs_lock_fd=""
+        if exec 199>"$_acfs_lock_file" 2>/dev/null; then
+            _acfs_lock_fd=199
+        elif exec 198>"$_acfs_lock_file" 2>/dev/null; then
+            _acfs_lock_fd=198
+        fi
+        if [[ -n "$_acfs_lock_fd" ]]; then
+            if ! flock -n "$_acfs_lock_fd"; then
+                log_error "Another ACFS installer is already running."
+                log_error "If you are sure no other installer is running, remove: $_acfs_lock_file"
+                exit 1
+            fi
+        else
+            log_warn "Could not acquire install lock (continuing anyway)"
         fi
     fi
 

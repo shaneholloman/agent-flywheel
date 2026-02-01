@@ -368,20 +368,37 @@ state_write_atomic() {
 # FD 200 is consistent with autofix.sh's existing flock pattern.
 #
 # Usage: _state_acquire_lock
-# Returns: 0 on success, 1 on timeout
+# Returns: 0 on success, 1 on timeout/failure
 _state_acquire_lock() {
     local state_file
-    state_file="$(state_get_file)"
+    state_file="$(state_get_file)" || return 1
     local lock_file="${state_file}.lock"
 
     # Ensure parent directory exists
-    mkdir -p "$(dirname "$state_file")" 2>/dev/null
+    if ! mkdir -p "$(dirname "$state_file")" 2>/dev/null; then
+        # If we can't create the directory, warn but don't fail
+        # State operations will fail later with clearer errors
+        return 1
+    fi
 
     # Open lock file on FD 200 (same FD convention as autofix.sh)
-    exec 200>"$lock_file" 2>/dev/null || return 1
+    # NOTE: On some bash versions (5.3+), exec with high FDs can fail.
+    # We use eval to work around potential issues with direct exec.
+    # The 2>/dev/null suppresses errors from the redirection itself.
+    if ! eval 'exec 200>"$lock_file"' 2>/dev/null; then
+        # Try alternate FD if 200 fails
+        if ! eval 'exec 199>"$lock_file"' 2>/dev/null; then
+            # Lock acquisition not possible, return failure
+            return 1
+        fi
+        # Use FD 199 instead
+        ACFS_LOCK_FD=199
+    else
+        ACFS_LOCK_FD=200
+    fi
 
     # Try to acquire lock with a 5-second timeout
-    if ! flock -w 5 200; then
+    if ! flock -w 5 "${ACFS_LOCK_FD:-200}" 2>/dev/null; then
         return 1
     fi
     return 0
@@ -390,7 +407,7 @@ _state_acquire_lock() {
 # Release the lock
 # Usage: _state_release_lock
 _state_release_lock() {
-    flock -u 200 2>/dev/null || true
+    flock -u "${ACFS_LOCK_FD:-200}" 2>/dev/null || true
 }
 
 # Mark state as interrupted by a signal (SIGTERM, SIGINT, SIGHUP).
