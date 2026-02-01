@@ -3845,11 +3845,11 @@ install_agents_phase() {
         run_as_target mkdir -p "$TARGET_HOME/.local/bin" 2>/dev/null || true
 
         log_detail "Installing Claude Code (native) for $TARGET_USER"
-        try_step "Installing Claude Code (native)" acfs_run_verified_upstream_script_as_target "claude" "bash" stable || true
+        try_step "Installing Claude Code (native)" acfs_run_verified_upstream_script_as_target "claude" "bash" latest || true
 
         if [[ ! -x "$claude_bin_local" && ! -x "$claude_bin_bun" ]]; then
             log_detail "Claude Code not found in standard paths; attempting bun install"
-            try_step "Installing Claude Code (bun)" run_as_target "$bun_bin" install -g --trust @anthropic-ai/claude-code@stable || true
+            try_step "Installing Claude Code (bun)" run_as_target "$bun_bin" install -g --trust @anthropic-ai/claude-code@latest || true
         fi
 
         # Best-effort: if claude landed in ~/.claude/*, link it into ~/.local/bin.
@@ -4326,19 +4326,18 @@ install_stack_phase() {
         if [[ ! -f "$ntm_config_file" ]]; then
             log_detail "Creating NTM config with current model defaults"
             run_as_target mkdir -p "$ntm_config_dir" || true
-            if run_as_target cat > "$ntm_config_file" << 'NTM_CONFIG_EOF'
+            # Write config via tee to ensure proper target user ownership (bd-2od5.2.4)
+            # Using tee avoids redirect-as-root issue with heredoc + run_as_target
+            # Config format fixed for proper [models] section (bd-2od5.2.5)
+            if run_as_target tee "$ntm_config_file" > /dev/null << 'NTM_CONFIG_EOF'
 # NTM Configuration - created by ACFS
 # Updated model defaults for ChatGPT Pro and Gemini accounts
 
-# Codex model - gpt-5.2-codex with xhigh reasoning (works with ChatGPT Pro)
+[models]
+# Default models when no specifier given
+default_claude = "claude-opus-4-5-20251101"
 default_codex = "gpt-5.2-codex"
-codex_reasoning_effort = "xhigh"
-
-# Gemini model - gemini-3 pro preview
 default_gemini = "gemini-3-pro-preview"
-
-# Claude model - Opus 4.5 (most capable)
-default_claude = "claude-opus-4-5"
 NTM_CONFIG_EOF
             then
                 log_success "NTM config created with current model defaults"
