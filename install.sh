@@ -4478,11 +4478,27 @@ NTM_CONFIG_EOF
     fi
 
     # SLB (Simultaneous Launch Button)
+    # The upstream install script calls GitHub API for latest version, which hits rate limits in CI.
+    # We install via .deb package directly to avoid this.
     if binary_installed "slb"; then
         log_detail "SLB already installed"
     else
         log_detail "Installing SLB"
-        try_step "Installing SLB" acfs_run_verified_upstream_script_as_target "slb" "bash" || log_warn "SLB installation may have failed"
+        local slb_version="0.2.0"
+        local slb_arch="amd64"
+        [[ "$(uname -m)" == "aarch64" ]] && slb_arch="arm64"
+        local slb_deb="slb_${slb_version}_linux_${slb_arch}.deb"
+        local slb_url="https://github.com/Dicklesworthstone/slb/releases/download/v${slb_version}/${slb_deb}"
+        local slb_tmp
+        slb_tmp="$(mktemp -d)"
+        if acfs_curl -o "${slb_tmp}/${slb_deb}" "$slb_url" && \
+           $SUDO dpkg -i "${slb_tmp}/${slb_deb}"; then
+            log_success "SLB installed via .deb"
+        else
+            log_warn "SLB .deb install failed, trying upstream script"
+            try_step "Installing SLB (upstream)" acfs_run_verified_upstream_script_as_target "slb" "bash" || log_warn "SLB installation may have failed"
+        fi
+        rm -rf "$slb_tmp"
     fi
 
     # RU (Repo Updater)
