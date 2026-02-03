@@ -91,9 +91,10 @@ function AnimatedTerminal() {
       transition={springs.smooth}
     >
       <div className="terminal-header">
-        <div className="terminal-dot terminal-dot-red" role="img" aria-label="Close window" />
-        <div className="terminal-dot terminal-dot-yellow" role="img" aria-label="Minimize window" />
-        <div className="terminal-dot terminal-dot-green" role="img" aria-label="Maximize window" />
+        {/* Decorative window controls - hidden from screen readers since they're non-functional */}
+        <div className="terminal-dot terminal-dot-red" aria-hidden="true" />
+        <div className="terminal-dot terminal-dot-yellow" aria-hidden="true" />
+        <div className="terminal-dot terminal-dot-green" aria-hidden="true" />
         <span className="ml-3 font-mono text-xs text-muted-foreground">
           ubuntu@vps ~
         </span>
