@@ -653,6 +653,7 @@ confirm_resume() {
     fi
 
     # Extract all resume info in a single jq call (5→1 subprocess spawns)
+    # Note: Uses ASCII Unit Separator (0x1f) as delimiter since bash strips null bytes
     local completed_count=0 last_phase="" started_at="" failed_phase="" mode=""
     if command -v jq &>/dev/null; then
         local extracted
@@ -663,9 +664,9 @@ confirm_resume() {
                 (.started_at // "unknown"),
                 (.failed_phase // ""),
                 (.mode // "unknown")
-            ] | join("\u0000")
+            ] | join("\u001f")
         ')
-        IFS=$'\0' read -r -d '' completed_count last_phase started_at failed_phase mode <<< "$extracted" || true
+        IFS=$'\x1f' read -r completed_count last_phase started_at failed_phase mode <<< "$extracted"
     fi
 
     # If no phases completed, nothing to resume
@@ -1213,6 +1214,7 @@ state_upgrade_print_status() {
     fi
 
     # Extract all fields in a single jq call (11→1 subprocess spawns)
+    # Note: Uses ASCII Unit Separator (0x1f) as delimiter since bash strips null bytes
     local extracted
     extracted=$(echo "$state" | jq -r '
         .ubuntu_upgrade as $u |
@@ -1227,12 +1229,12 @@ state_upgrade_print_status() {
             ($u.current_upgrade.from // ""),
             ($u.current_upgrade.to // ""),
             ($u.last_error // "")
-        ] | join("\u0000")
+        ] | join("\u001f")
     ')
 
-    # Parse null-separated fields
+    # Parse unit-separator-delimited fields
     local enabled original target stage completed_count total_count completed_list current_from current_to error
-    IFS=$'\0' read -r -d '' enabled original target stage completed_count total_count completed_list current_from current_to error <<< "$extracted" || true
+    IFS=$'\x1f' read -r enabled original target stage completed_count total_count completed_list current_from current_to error <<< "$extracted"
 
     if [[ "$enabled" != "true" ]]; then
         echo "No upgrade in progress"
