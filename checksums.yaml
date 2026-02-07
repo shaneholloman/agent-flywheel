@@ -1,10 +1,10 @@
-# checksums.yaml - Auto-generated 2026-02-05T08:23:50+00:00
+# checksums.yaml - Auto-generated 2026-02-07T07:01:17+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
   zoxide:
     url: "https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh"
-    sha256: "c5d94701cfdd87d19f3989c1239e921d4ff95d4c0742b16beca061618c937bf0"
+    sha256: "0c25aed6cce9d56ee0596c9a5df8cbe99ffd0f7a7054de0262234dd268b61404"
 
   rano:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/rano/main/install.sh"
@@ -28,7 +28,7 @@ installers:
 
   mcp_agent_mail:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/scripts/install.sh"
-    sha256: "92fb23cc1ecdfaa30fb351d601125fd48e8c2f6fcea0df7a5ddf48e15e9631e2"
+    sha256: "b3b6c52ba7b63516ab4dcdbe386d8f8fc8c429c8ee6037718c3dc194b3bf74f4"
 
   dcg:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/destructive_command_guard/main/install.sh"
@@ -60,11 +60,11 @@ installers:
 
   uv:
     url: "https://astral.sh/uv/install.sh"
-    sha256: "e10ae0dcd7b12acc506b3fee059f1eddd3288e277d9bdf657dd0261f574f53b4"
+    sha256: "7a0b1e0810e59a27e5b34427f111be5c2420c70697eba086038a637760091ea5"
 
   pt:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/process_triage/master/install.sh"
-    sha256: "536a8f7e2bcf4eddd2ed11b37513c27777515b4951a8ee3534bcf9e64e0e4a9c"
+    sha256: "90439a3779d7a05f5d068a2a2ca45e6346360e73bc28e8219529449e4562192f"
 
   tru:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/toon_rust/master/install.sh"
@@ -84,7 +84,7 @@ installers:
 
   rch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/master/install.sh"
-    sha256: "85df586c025260ad3a75a11f44a40314c30f3f6aaeed728d7d76927bb9d1fce4"
+    sha256: "50bd627e954e9eeadeccaf475432b040f9b6fe3b325d80dbebe86a63fa449030"
 
   caam:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_account_manager/main/install.sh"
