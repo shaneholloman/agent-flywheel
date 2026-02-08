@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="3f916ff31a421aa853dda7a7ea2ae9dc1dd5060eb1c0169dcd92b174be4aba50"
+ACFS_MANIFEST_SHA256="f4aade81dfe78d1af07afd5d8b224ba3ff5e8a75c3926eff37d21a53a95e07d6"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -67,6 +67,7 @@ ACFS_MODULES_IN_ORDER=(
   "acfs.workspace"
   "acfs.onboard"
   "acfs.update"
+  "acfs.nightly"
   "acfs.doctor"
 )
 
@@ -129,6 +130,7 @@ declare -gA ACFS_MODULE_PHASE=(
   [acfs.workspace]="10"
   [acfs.onboard]="10"
   [acfs.update]="10"
+  [acfs.nightly]="10"
   [acfs.doctor]="10"
 )
 
@@ -191,6 +193,7 @@ declare -gA ACFS_MODULE_DEPS=(
   [acfs.workspace]="agents.claude,agents.codex,agents.gemini,cli.modern"
   [acfs.onboard]=""
   [acfs.update]=""
+  [acfs.nightly]="acfs.update"
   [acfs.doctor]=""
 )
 
@@ -253,6 +256,7 @@ declare -gA ACFS_MODULE_FUNC=(
   [acfs.workspace]="install_acfs_workspace"
   [acfs.onboard]="install_acfs_onboard"
   [acfs.update]="install_acfs_update"
+  [acfs.nightly]="install_acfs_nightly"
   [acfs.doctor]="install_acfs_doctor"
 )
 
@@ -315,6 +319,7 @@ declare -gA ACFS_MODULE_CATEGORY=(
   [acfs.workspace]="acfs"
   [acfs.onboard]="acfs"
   [acfs.update]="acfs"
+  [acfs.nightly]="acfs"
   [acfs.doctor]="acfs"
 )
 
@@ -377,6 +382,7 @@ declare -gA ACFS_MODULE_TAGS=(
   [acfs.workspace]="workspace,agents"
   [acfs.onboard]="orchestration"
   [acfs.update]="orchestration"
+  [acfs.nightly]="orchestration,maintenance"
   [acfs.doctor]="orchestration"
 )
 
@@ -439,6 +445,7 @@ declare -gA ACFS_MODULE_DEFAULT=(
   [acfs.workspace]="1"
   [acfs.onboard]="1"
   [acfs.update]="1"
+  [acfs.nightly]="1"
   [acfs.doctor]="1"
 )
 
@@ -501,6 +508,7 @@ declare -gA ACFS_MODULE_DESC=(
   [acfs.workspace]="Agent workspace with tmux session and project folder"
   [acfs.onboard]="Onboarding TUI tutorial"
   [acfs.update]="ACFS update command wrapper"
+  [acfs.nightly]="Nightly auto-update timer (systemd)"
   [acfs.doctor]="ACFS doctor command for health checks"
 )
 
@@ -560,6 +568,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK=(
   [utils.aadc]="command -v aadc"
   [utils.caut]="command -v caut"
   [acfs.workspace]="test -d /data/projects/my_first_project"
+  [acfs.nightly]="systemctl --user is-enabled acfs-nightly-update.timer 2>/dev/null"
 )
 
 declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=(
@@ -618,6 +627,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=(
   [utils.aadc]="target_user"
   [utils.caut]="target_user"
   [acfs.workspace]="target_user"
+  [acfs.nightly]="target_user"
 )
 
 ACFS_MANIFEST_INDEX_LOADED=true
