@@ -472,7 +472,7 @@ defaults:
 modules:
   - id: agents.claude
     description: Claude Code
-    install: ["bun install -g --trust @anthropic-ai/claude-code@stable"]
+    install: ["bun install -g --trust @anthropic-ai/claude-code@latest"]
     verify: ["claude --version"]
     tags:
       - recommended

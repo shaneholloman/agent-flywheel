@@ -18,7 +18,7 @@ fi
 # ============================================================
 
 # NPM package names for each agent
-CLAUDE_PACKAGE="@anthropic-ai/claude-code@stable"
+CLAUDE_PACKAGE="@anthropic-ai/claude-code@latest"
 CODEX_PACKAGE="${CODEX_PACKAGE:-@openai/codex@latest}"
 CODEX_FALLBACK_VERSION="${CODEX_FALLBACK_VERSION:-0.87.0}"
 CODEX_FALLBACK_PACKAGE=""
@@ -145,7 +145,7 @@ install_claude_code() {
             local url="${KNOWN_INSTALLERS[claude]}"
             local sha="${LOADED_CHECKSUMS[claude]}"
             if [[ -n "$url" && -n "$sha" ]]; then
-                if _agent_run_as_user "source '$AGENTS_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$sha' 'claude' | bash -s -- stable"; then
+                if _agent_run_as_user "source '$AGENTS_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$sha' 'claude' | bash -s -- latest"; then
                     log_success "Claude Code installed (verified)"
                     return 0
                 fi
