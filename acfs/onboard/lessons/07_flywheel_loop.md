@@ -218,6 +218,8 @@ One final lesson: keeping everything updated.
 onboard 8
 ```
 
+Also recommended: learn how git works with multiple agents in `onboard 21`.
+
 ---
 
 *The Agentic Coding Flywheel Setup - https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup*
