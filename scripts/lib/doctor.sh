@@ -1112,8 +1112,25 @@ check_stack() {
         version=$(get_version_line "ms")
         check "stack.meta_skill" "meta_skill ($version)" "pass" "installed"
     else
+        # Detect architecture to give the right install advice
+        local _ms_arch _ms_os _ms_fix
+        _ms_arch="$(uname -m 2>/dev/null || echo unknown)"
+        _ms_os="$(uname -s 2>/dev/null || echo unknown)"
+        _ms_fix="Re-run: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh | bash"
+
+        # Pre-built binaries exist for: x86_64-linux, aarch64-darwin, x86_64-windows, aarch64-linux
+        # If a platform has no binary, suggest building from source instead
+        case "${_ms_arch}-${_ms_os}" in
+            x86_64-Linux|aarch64-Linux|arm64-Linux|x86_64-Darwin|arm64-Darwin|aarch64-Darwin)
+                # These platforms have pre-built binaries (or will once the next release ships)
+                ;;
+            *)
+                _ms_fix="meta_skill has no pre-built binary for ${_ms_arch}-${_ms_os}. Build from source: cargo install --git https://github.com/Dicklesworthstone/meta_skill"
+                ;;
+        esac
+
         check "stack.meta_skill" "meta_skill (ms)" "warn" "not installed" \
-            "Re-run: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh | bash"
+            "$_ms_fix"
     fi
 
     # Check rch (Remote Compilation Helper)
