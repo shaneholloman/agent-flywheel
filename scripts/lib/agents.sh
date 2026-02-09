@@ -167,7 +167,7 @@ upgrade_claude_code() {
 
     if [[ -x "$claude_bin" ]]; then
         log_detail "Upgrading Claude Code (native)..."
-        if _agent_run_as_user "\"$claude_bin\" update"; then
+        if _agent_run_as_user "\"$claude_bin\" update --channel latest"; then
             log_success "Claude Code upgraded"
             return 0
         fi
