@@ -1335,6 +1335,53 @@ detect_environment() {
         source "$ACFS_LIB_DIR/logging.sh"
     fi
 
+    # Verify internal script integrity before sourcing (bd-3tpl.5)
+    # Fail-closed: abort if any tracked script has been modified.
+    # Gracefully skips if checksums file is missing (pre-migration compat).
+    if [[ -f "$ACFS_GENERATED_DIR/internal_checksums.sh" ]]; then
+        # shellcheck source=scripts/generated/internal_checksums.sh
+        source "$ACFS_GENERATED_DIR/internal_checksums.sh"
+        if declare -p ACFS_INTERNAL_CHECKSUMS &>/dev/null; then
+            local _ics_base
+            if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]]; then
+                _ics_base="$ACFS_BOOTSTRAP_DIR"
+            elif [[ -n "${SCRIPT_DIR:-}" ]]; then
+                _ics_base="$SCRIPT_DIR"
+            else
+                _ics_base="."
+            fi
+            local _ics_fail=0
+            for _ics_path in "${!ACFS_INTERNAL_CHECKSUMS[@]}"; do
+                local _ics_expected="${ACFS_INTERNAL_CHECKSUMS[$_ics_path]}"
+                local _ics_file="$_ics_base/$_ics_path"
+                if [[ -f "$_ics_file" ]]; then
+                    local _ics_actual
+                    _ics_actual=$(sha256sum "$_ics_file" | awk '{print $1}')
+                    if [[ "$_ics_actual" != "$_ics_expected" ]]; then
+                        _ics_fail=$((_ics_fail + 1))
+                        if declare -f log_error &>/dev/null; then
+                            log_error "INTEGRITY: $_ics_path checksum mismatch (expected ${_ics_expected:0:12}… got ${_ics_actual:0:12}…)"
+                        else
+                            echo "ERROR: INTEGRITY: $_ics_path checksum mismatch" >&2
+                        fi
+                    fi
+                fi
+            done
+            if [[ "$_ics_fail" -gt 0 ]]; then
+                local _msg="Internal script integrity check failed: $_ics_fail file(s) modified. Run 'bun run generate' to regenerate checksums."
+                if declare -f log_error &>/dev/null; then
+                    log_error "$_msg"
+                else
+                    echo "ERROR: $_msg" >&2
+                fi
+                exit 1
+            fi
+            if declare -f log_success &>/dev/null; then
+                log_success "Internal script integrity verified (${ACFS_INTERNAL_CHECKSUMS_COUNT:-?} scripts)"
+            fi
+        fi
+    fi
+
     if [[ -f "$ACFS_LIB_DIR/security.sh" ]]; then
         # shellcheck source=scripts/lib/security.sh
         source "$ACFS_LIB_DIR/security.sh"
