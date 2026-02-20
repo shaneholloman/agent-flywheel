@@ -273,6 +273,16 @@ INSTALL_AGENTS_GEMINI
         fi
     fi
 
+    # Apply Gemini CLI patches (EBADF crash fix, rate-limit retry, quota retry)
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: patch: curl ... fix-gemini-cli-ebadf-crash.sh | bash (target_user)"
+    else
+        log_step "Applying Gemini CLI patches (EBADF, retry, quota)"
+        run_as_target_shell <<'PATCH_GEMINI'
+curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/main/fix-gemini-cli-ebadf-crash.sh | bash
+PATCH_GEMINI
+    fi
+
     log_success "agents.gemini installed"
 }
 

@@ -384,6 +384,9 @@ install_gemini_cli() {
         if [[ -x "$gemini_bin" ]]; then
             # Create wrapper script that uses bun as runtime (avoids node PATH issues)
             _agent_create_bun_wrapper "$target_home" "gemini"
+            # Apply patches (EBADF crash fix, rate-limit retry 3→1000, quota retry)
+            log_detail "Applying Gemini CLI patches..."
+            _agent_run_as_user 'curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/main/fix-gemini-cli-ebadf-crash.sh | bash' || true
             # Configure settings for tmux/agent compatibility
             _configure_gemini_settings "$target_home"
             log_success "Gemini CLI installed"
@@ -408,6 +411,9 @@ upgrade_gemini_cli() {
 
     log_detail "Upgrading Gemini CLI..."
     if _agent_run_as_user "\"$bun_bin\" install -g --trust $GEMINI_PACKAGE"; then
+        # Apply patches (EBADF crash fix, rate-limit retry 3→1000, quota retry)
+        log_detail "Applying Gemini CLI patches..."
+        _agent_run_as_user 'curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/main/fix-gemini-cli-ebadf-crash.sh | bash' || true
         log_success "Gemini CLI upgraded"
         return 0
     else

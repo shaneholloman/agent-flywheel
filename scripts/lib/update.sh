@@ -1267,6 +1267,9 @@ update_agents() {
         if capture_version_after "gemini"; then
             [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[gemini]}" "${VERSION_AFTER[gemini]}"
         fi
+        # Apply Gemini CLI patches (EBADF crash fix, rate-limit retry, quota retry)
+        log_item "run" "Gemini CLI patches" "EBADF, retry, quota"
+        curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/main/fix-gemini-cli-ebadf-crash.sh | bash 2>&1 | tail -5 || true
     else
         log_item "skip" "Gemini CLI" "not installed (use --force to install)"
     fi

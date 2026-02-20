@@ -4078,6 +4078,13 @@ install_agents_phase() {
         ' _ "$gemini_bin_local" || true
     fi
 
+    # Apply Gemini CLI patches (EBADF crash fix, rate-limit retry, quota retry)
+    if [[ -x "$TARGET_HOME/.bun/bin/gemini" ]]; then
+        log_detail "Applying Gemini CLI patches (EBADF, retry, quota)"
+        try_step "Patching Gemini CLI" run_as_target bash -c \
+            'curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/main/fix-gemini-cli-ebadf-crash.sh | bash' || true
+    fi
+
     log_success "Coding agents installed"
 }
 
