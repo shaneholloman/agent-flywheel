@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-02-21T04:46:46+00:00
+# checksums.yaml - Auto-generated 2026-02-22T14:24:10+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -24,7 +24,7 @@ installers:
 
   cass:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/coding_agent_session_search/main/install.sh"
-    sha256: "616223707fe05a86c24ed9ef1bf437009d42ee1af8cc10495cb19876b85bff3e"
+    sha256: "7a8fcb981e84a815e808bdb133518631cb5b19ab6da035aa79e32e5c70e4c4d5"
 
   mcp_agent_mail:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/scripts/install.sh"
@@ -56,7 +56,7 @@ installers:
 
   mdwb:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/markdown_web_browser/main/install.sh"
-    sha256: "bb7dbf762dd5333c42d0f255e3b90e39724775d3eb7862e3df4801d2b84eb460"
+    sha256: "126bde4c49c6009af3ca4aa9c05bf31c5a62e8f8599bc0d28fbc9d79ccc6110f"
 
   uv:
     url: "https://astral.sh/uv/install.sh"
@@ -76,7 +76,7 @@ installers:
 
   ms:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/meta_skill/main/scripts/install.sh"
-    sha256: "013b8f4dc4c52a4da49e3d011a9f2bd185202d8329af8dae666a1b99f3171181"
+    sha256: "12832a89cb5ba9102bd60672e09ac8e3c40c54b154723f1f8e4832aeafbcb7d0"
 
   cm:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/cass_memory_system/main/install.sh"
