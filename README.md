@@ -1,5 +1,9 @@
 # Agentic Coding Flywheel Setup (ACFS)
 
+<div align="center">
+  <img src="acfs_illustration.webp" alt="Agentic Coding Flywheel Setup (ACFS) - From zero to fully-configured agentic coding VPS in 30 minutes">
+</div>
+
 ![Version](https://img.shields.io/badge/Version-0.6.0-bd93f9?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/Platform-Ubuntu%2025.10-6272a4?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT%2BOpenAI%2FAnthropic%20Rider-blue-the-badge)
