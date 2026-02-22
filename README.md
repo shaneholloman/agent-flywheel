@@ -2,7 +2,7 @@
 
 ![Version](https://img.shields.io/badge/Version-0.6.0-bd93f9?style=for-the-badge)
 ![Platform](https://img.shields.io/badge/Platform-Ubuntu%2025.10-6272a4?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-50fa7b?style=for-the-badge)
+![License](https://img.shields.io/badge/License-MIT%2BOpenAI%2FAnthropic%20Rider-blue-the-badge)
 ![Shell](https://img.shields.io/badge/Shell-Bash-ff79c6?style=for-the-badge)
 
 <p align="center">
@@ -4520,7 +4520,7 @@ Resume from 90%:  2 minutes
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License (with OpenAI/Anthropic Rider). See [LICENSE](LICENSE) for details.
 
 ---
 
