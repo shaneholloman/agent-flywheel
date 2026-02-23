@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-02-22T14:24:10+00:00
+# checksums.yaml - Auto-generated 2026-02-23T22:16:13+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -56,7 +56,7 @@ installers:
 
   mdwb:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/markdown_web_browser/main/install.sh"
-    sha256: "126bde4c49c6009af3ca4aa9c05bf31c5a62e8f8599bc0d28fbc9d79ccc6110f"
+    sha256: "4901ced31338a7fa23e8676d339c99b07060b3c8c42c1b49576c6dafecba884a"
 
   uv:
     url: "https://astral.sh/uv/install.sh"
