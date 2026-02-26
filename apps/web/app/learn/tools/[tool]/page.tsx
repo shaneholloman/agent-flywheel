@@ -32,11 +32,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: `${doc.title} | ACFS Learning Hub`,
     description: doc.tagline,
-    openGraph: {
-      title: `${doc.title} - ACFS Tool`,
-      description: doc.tagline,
-      type: "article",
-    },
   };
 }
 

@@ -3,7 +3,7 @@ import { getStaticRouteSocialData } from "@/lib/social-image-routes";
 
 export const runtime = "edge";
 
-export const alt = "The Agentic Coding Flywheel";
+export const alt = "Learning Glossary";
 export const size = {
   width: 1200,
   height: 630,
@@ -11,5 +11,5 @@ export const size = {
 export const contentType = "image/png";
 
 export default function Image() {
-  return createSocialImage(getStaticRouteSocialData("/flywheel"), "opengraph");
+  return createSocialImage(getStaticRouteSocialData("/learn/glossary"), "opengraph");
 }

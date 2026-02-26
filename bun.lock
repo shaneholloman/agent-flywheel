@@ -60,8 +60,8 @@
         "zod": "^4.3.6",
       },
       "devDependencies": {
-        "@types/node": "^22.10.2",
-        "typescript": "^5.7.2",
+        "@types/node": "^22.19.11",
+        "typescript": "^5.9.3",
       },
       "peerDependencies": {
         "typescript": ">=5.0.0",

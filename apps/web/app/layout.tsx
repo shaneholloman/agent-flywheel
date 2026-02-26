@@ -51,25 +51,6 @@ export const metadata: Metadata = {
   },
   // Icons are auto-generated from icon.tsx and apple-icon.tsx
   // favicon.ico is also available as a fallback
-  openGraph: {
-    title: "Agent Flywheel - AI Agents Coding For You",
-    description:
-      "Transform a fresh VPS into a fully-configured agentic coding environment in ~30 minutes. Claude Code, Codex CLI, Gemini CLI + 30 dev tools. Free & open-source.",
-    type: "website",
-    url: siteUrl,
-    siteName: "Agent Flywheel",
-    locale: "en_US",
-    // Images are auto-generated from opengraph-image.tsx
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Agent Flywheel - AI Agents Coding For You",
-    description:
-      "Transform a fresh VPS into a fully-configured agentic coding environment in ~30 minutes. Claude, Codex, Gemini + 30 dev tools. Free & open-source.",
-    creator: "@jeffreyemanuel",
-    site: "@jeffreyemanuel",
-    // Images are auto-generated from twitter-image.tsx
-  },
   robots: {
     index: true,
     follow: true,
