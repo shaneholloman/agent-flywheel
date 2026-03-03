@@ -80,3 +80,116 @@ EOF
     assert_output --partial "password=[REDACTED]"
     assert_output --partial '"session_id": "123"'
 }
+
+@test "convert_session_native: codex -> claude writes native file and sessions-index" {
+    local test_home
+    test_home=$(create_temp_dir)
+    export HOME="$test_home"
+    export CLAUDE_HOME="$HOME/.claude"
+    export CODEX_HOME="$HOME/.codex"
+    export GEMINI_HOME="$HOME/.gemini"
+
+    local codex_src="$test_home/source_codex.jsonl"
+    cat > "$codex_src" <<'EOF'
+{"timestamp":"2026-03-03T01:00:00Z","type":"session_meta","payload":{"id":"src-codex-id","cwd":"/data/projects/agentic_coding_flywheel_setup"}}
+{"timestamp":"2026-03-03T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"hello from codex"}}
+{"timestamp":"2026-03-03T01:00:02Z","type":"response_item","payload":{"role":"assistant","content":[{"type":"output_text","text":"hello from assistant"}]}}
+EOF
+
+    run convert_session_native "$codex_src" --from codex --to claude-code --workspace "/data/projects/agentic_coding_flywheel_setup" --json
+    assert_success
+
+    local written_path target_session_id
+    written_path="$(jq -r '.written_path' <<<"$output")"
+    target_session_id="$(jq -r '.target_session_id' <<<"$output")"
+
+    [[ -f "$written_path" ]]
+    [[ "$written_path" == "$HOME/.claude/projects/-data-projects-agentic-coding-flywheel-setup/"*".jsonl" ]]
+
+    run jq -r 'select(.type=="user" or .type=="assistant") | .type' "$written_path"
+    assert_output --partial "user"
+    assert_output --partial "assistant"
+
+    local index_file="$HOME/.claude/projects/-data-projects-agentic-coding-flywheel-setup/sessions-index.json"
+    [[ -f "$index_file" ]]
+    run jq -r --arg sid "$target_session_id" '.entries[] | select(.sessionId == $sid) | .fullPath' "$index_file"
+    assert_success
+    assert_equal "$output" "$written_path"
+}
+
+@test "convert_session_native: claude -> codex writes native rollout format" {
+    local test_home
+    test_home=$(create_temp_dir)
+    export HOME="$test_home"
+    export CLAUDE_HOME="$HOME/.claude"
+    export CODEX_HOME="$HOME/.codex"
+    export GEMINI_HOME="$HOME/.gemini"
+
+    local claude_src="$test_home/source_claude.jsonl"
+    cat > "$claude_src" <<'EOF'
+{"parentUuid":null,"isSidechain":false,"userType":"external","cwd":"/data/projects/agentic_coding_flywheel_setup","sessionId":"src-claude-id","version":"2.1.32","gitBranch":"main","type":"user","message":{"role":"user","content":"hello from claude"},"uuid":"u1","timestamp":"2026-03-03T01:10:00Z"}
+{"parentUuid":"u1","isSidechain":false,"userType":"external","cwd":"/data/projects/agentic_coding_flywheel_setup","sessionId":"src-claude-id","version":"2.1.32","gitBranch":"main","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"assistant reply"}]},"uuid":"u2","timestamp":"2026-03-03T01:10:01Z"}
+EOF
+
+    run convert_session_native "$claude_src" --from claude-code --to codex --workspace "/data/projects/agentic_coding_flywheel_setup" --json
+    assert_success
+
+    local written_path target_session_id
+    written_path="$(jq -r '.written_path' <<<"$output")"
+    target_session_id="$(jq -r '.target_session_id' <<<"$output")"
+
+    [[ -f "$written_path" ]]
+    [[ "$written_path" == "$HOME/.codex/sessions/"*"/rollout-"*".jsonl" ]]
+
+    run head -n 1 "$written_path"
+    assert_output --partial '"type":"session_meta"'
+    assert_output --partial "\"id\":\"$target_session_id\""
+
+    run jq -r '.type' "$written_path"
+    assert_output --partial "session_meta"
+    assert_output --partial "event_msg"
+    assert_output --partial "response_item"
+}
+
+@test "convert_session_native: codex -> gemini writes chat json and logs" {
+    local test_home
+    test_home=$(create_temp_dir)
+    export HOME="$test_home"
+    export CLAUDE_HOME="$HOME/.claude"
+    export CODEX_HOME="$HOME/.codex"
+    export GEMINI_HOME="$HOME/.gemini"
+
+    local codex_src="$test_home/source_codex_for_gemini.jsonl"
+    cat > "$codex_src" <<'EOF'
+{"timestamp":"2026-03-03T02:00:00Z","type":"session_meta","payload":{"id":"src-codex-id-2","cwd":"/data/projects/agentic_coding_flywheel_setup"}}
+{"timestamp":"2026-03-03T02:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"gemini please continue"}}
+{"timestamp":"2026-03-03T02:00:02Z","type":"response_item","payload":{"role":"assistant","content":[{"type":"output_text","text":"continuing now"}]}}
+EOF
+
+    run convert_session_native "$codex_src" --from codex --to gemini --workspace "/data/projects/agentic_coding_flywheel_setup" --json
+    assert_success
+
+    local written_path target_session_id
+    written_path="$(jq -r '.written_path' <<<"$output")"
+    target_session_id="$(jq -r '.target_session_id' <<<"$output")"
+
+    [[ -f "$written_path" ]]
+    [[ "$written_path" == "$HOME/.gemini/tmp/agentic-coding-flywheel-setup/chats/session-"*".json" ]]
+
+    run jq -r '.sessionId' "$written_path"
+    assert_equal "$output" "$target_session_id"
+
+    run jq -r '.messages[0].type' "$written_path"
+    assert_equal "$output" "user"
+
+    run jq -r '.projectHash' "$written_path"
+    [[ "$output" =~ ^[0-9a-f]{64}$ ]]
+
+    local root_dir
+    root_dir="$(dirname "$(dirname "$written_path")")"
+    local logs_file="$root_dir/logs.json"
+    [[ -f "$logs_file" ]]
+    run jq -r --arg sid "$target_session_id" '.[] | select(.sessionId == $sid) | .type' "$logs_file"
+    assert_success
+    assert_output --partial "user"
+}

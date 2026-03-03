@@ -889,6 +889,772 @@ JQ
 }
 
 # ============================================================
+# NATIVE SESSION CONVERSION (X -> Y)
+# ============================================================
+#
+# Converts one provider's native session file into another provider's
+# native storage format and location.
+#
+# Supported providers: claude-code, codex, gemini
+
+session_generate_uuid() {
+    if [[ -r /proc/sys/kernel/random/uuid ]]; then
+        tr '[:upper:]' '[:lower:]' < /proc/sys/kernel/random/uuid
+        return 0
+    fi
+    if command -v uuidgen >/dev/null 2>&1; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+        return 0
+    fi
+    # Best-effort fallback.
+    printf '%s-%s-%s-%s-%s\n' \
+        "$(date +%s | sha256sum | cut -c1-8)" \
+        "$(date +%s%N | sha256sum | cut -c1-4)" \
+        "$(date +%s%N | sha256sum | cut -c1-4)" \
+        "$(date +%s%N | sha256sum | cut -c1-4)" \
+        "$(date +%s%N | sha256sum | cut -c1-12)"
+}
+
+session_now_iso() {
+    date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+session_project_dir_key_claude() {
+    local workspace="${1:-/tmp}"
+    printf '%s' "$workspace" | sed -E 's/[^[:alnum:]]/-/g'
+}
+
+session_project_hash_gemini() {
+    local workspace="${1:-/tmp}"
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf '%s' "$workspace" | sha256sum | awk '{print $1}'
+        return 0
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        printf '%s' "$workspace" | shasum -a 256 | awk '{print $1}'
+        return 0
+    fi
+    log_error "No SHA256 tool found (need sha256sum or shasum)"
+    return 1
+}
+
+session_project_dir_key_gemini() {
+    local workspace="${1:-/tmp}"
+    local home_dir="${GEMINI_HOME:-$HOME/.gemini}"
+    local tmp_root="$home_dir/tmp"
+
+    # Prefer an existing native project directory keyed by .project_root.
+    if [[ -d "$tmp_root" ]]; then
+        local d project_root dir_name first_match=""
+        while IFS= read -r -d '' d; do
+            [[ -f "$d/.project_root" ]] || continue
+            project_root="$(tr -d '\r\n' < "$d/.project_root" 2>/dev/null || true)"
+            if [[ "$project_root" == "$workspace" ]]; then
+                dir_name="$(basename "$d")"
+                [[ -z "$first_match" ]] && first_match="$dir_name"
+                # Prefer native project-key directories (non hash-like names).
+                if [[ ! "$dir_name" =~ ^[0-9a-f]{64}$ ]]; then
+                    printf '%s\n' "$dir_name"
+                    return 0
+                fi
+            fi
+        done < <(find "$tmp_root" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+        if [[ -n "$first_match" ]]; then
+            printf '%s\n' "$first_match"
+            return 0
+        fi
+    fi
+
+    # Fallback for first-time conversion into a workspace with no existing Gemini dir.
+    local key
+    key="$(basename "$workspace" 2>/dev/null || true)"
+    if [[ -z "$key" || "$key" == "/" || "$key" == "." ]]; then
+        key="$(printf '%s' "$workspace" | sed -E 's#^/##; s#/+#-#g')"
+    fi
+    key="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^[:alnum:]]+/-/g; s/^-+//; s/-+$//')"
+    [[ -z "$key" ]] && key="default-project"
+    printf '%s\n' "$key"
+}
+
+parse_native_claude_to_canonical() {
+    local input_file="$1"
+    local workspace_hint="$2"
+    jq -s --arg workspace_hint "$workspace_hint" '
+        def flatten_content:
+            if . == null then ""
+            elif type == "string" then .
+            elif type == "array" then
+                ([ .[]? |
+                    if . == null then ""
+                    elif type == "string" then .
+                    elif type == "object" then
+                        (.text? // .content? // .output? // "")
+                    else "" end
+                 ] | join(""))
+            elif type == "object" then (.text? // .content? // "")
+            else "" end;
+
+        {
+            workspace: (([ .[] | .cwd? | select(type == "string" and length > 0) ] | .[0]) // ($workspace_hint // "/tmp")),
+            source_session_id: (([ .[] | .sessionId? | select(type == "string" and length > 0) ] | .[0]) // "unknown"),
+            messages: [
+                .[] |
+                select(.type == "user" or .type == "assistant") |
+                {
+                    role: (if .type == "assistant" then "assistant" else "user" end),
+                    content: ((.message.content? // .content?) | flatten_content),
+                    timestamp: (.timestamp? // "")
+                } |
+                select(.content | type == "string") |
+                select((.content | length) > 0)
+            ]
+        }
+    ' "$input_file"
+}
+
+parse_native_codex_to_canonical() {
+    local input_file="$1"
+    local workspace_hint="$2"
+    jq -s --arg workspace_hint "$workspace_hint" '
+        def flatten_content:
+            if . == null then ""
+            elif type == "string" then .
+            elif type == "array" then
+                ([ .[]? |
+                    if . == null then ""
+                    elif type == "string" then .
+                    elif type == "object" then (.text? // .content? // .message? // "")
+                    else "" end
+                 ] | join(""))
+            elif type == "object" then (.text? // .content? // .message? // "")
+            else "" end;
+
+        {
+            workspace: (([ .[] | select(.type == "session_meta") | .payload.cwd? | select(type == "string" and length > 0) ] | .[0]) // ($workspace_hint // "/tmp")),
+            source_session_id: (([ .[] | select(.type == "session_meta") | .payload.id? | select(type == "string" and length > 0) ] | .[0]) // "unknown"),
+            messages: [
+                .[] |
+                if (.type == "event_msg" and ((.payload.type? // "") == "user_message")) then
+                    {
+                        role: "user",
+                        content: ((.payload.message? // "") | tostring),
+                        timestamp: (.timestamp? // "")
+                    }
+                elif (.type == "event_msg" and ((.payload.type? // "") == "agent_reasoning")) then
+                    {
+                        role: "assistant",
+                        content: ((.payload.text? // "") | tostring),
+                        timestamp: (.timestamp? // "")
+                    }
+                elif (.type == "response_item") then
+                    {
+                        role: (if ((.payload.role? // "assistant") == "user") then "user" else "assistant" end),
+                        content: ((.payload.content? // "") | flatten_content),
+                        timestamp: (.timestamp? // "")
+                    }
+                else empty end |
+                select(.content | type == "string") |
+                select((.content | length) > 0)
+            ]
+        }
+    ' "$input_file"
+}
+
+parse_native_gemini_to_canonical() {
+    local input_file="$1"
+    local workspace_hint="$2"
+    jq --arg workspace_hint "$workspace_hint" '
+        def flatten_content:
+            if . == null then ""
+            elif type == "string" then .
+            elif type == "array" then
+                ([ .[]? |
+                    if . == null then ""
+                    elif type == "string" then .
+                    elif type == "object" then (.text? // .content? // "")
+                    else "" end
+                 ] | join(""))
+            elif type == "object" then (.text? // .content? // "")
+            else "" end;
+
+        {
+            workspace: ($workspace_hint // "/tmp"),
+            source_session_id: (.sessionId // "unknown"),
+            project_hash: (.projectHash // ""),
+            messages: [
+                (.messages // [])[] |
+                {
+                    role: (if ((.type // "") | ascii_downcase) == "user" then "user" else "assistant" end),
+                    content: (.content | flatten_content),
+                    timestamp: (.timestamp // "")
+                } |
+                select(.content | type == "string") |
+                select((.content | length) > 0)
+            ]
+        }
+    ' "$input_file"
+}
+
+parse_native_to_canonical() {
+    local input_file="$1"
+    local source_agent="$2"
+    local workspace_hint="$3"
+
+    case "$source_agent" in
+        claude-code)
+            parse_native_claude_to_canonical "$input_file" "$workspace_hint"
+            ;;
+        codex)
+            parse_native_codex_to_canonical "$input_file" "$workspace_hint"
+            ;;
+        gemini)
+            parse_native_gemini_to_canonical "$input_file" "$workspace_hint"
+            ;;
+        *)
+            log_error "Unsupported source agent: $source_agent"
+            return 1
+            ;;
+    esac
+}
+
+write_native_claude_from_canonical() {
+    local canonical_file="$1"
+    local workspace="$2"
+    local target_session_id="$3"
+    local dry_run="$4"
+
+    local home_dir="${CLAUDE_HOME:-$HOME/.claude}"
+    local dir_key
+    dir_key="$(session_project_dir_key_claude "$workspace")" || return 1
+    local target_dir="$home_dir/projects/$dir_key"
+    local target_path="$target_dir/${target_session_id}.jsonl"
+
+    if [[ "$dry_run" != "true" ]]; then
+        mkdir -p "$target_dir"
+        : > "$target_path"
+
+        local parent_uuid=""
+        local msg_count=0
+        local first_prompt=""
+        local created_ts
+        created_ts="$(session_now_iso)"
+        local msg
+        while IFS= read -r msg; do
+            [[ -z "$msg" ]] && continue
+            local role content msg_ts entry_uuid
+            role="$(jq -r '.role // "user"' <<<"$msg")"
+            content="$(jq -r '.content // ""' <<<"$msg")"
+            msg_ts="$(jq -r '.timestamp // ""' <<<"$msg")"
+            [[ -z "$msg_ts" ]] && msg_ts="$created_ts"
+            entry_uuid="$(session_generate_uuid)"
+
+            if [[ -z "$first_prompt" && "$role" == "user" ]]; then
+                first_prompt="$content"
+            fi
+
+            jq -cn \
+                --arg parent "$parent_uuid" \
+                --arg cwd "$workspace" \
+                --arg sid "$target_session_id" \
+                --arg role "$role" \
+                --arg content "$content" \
+                --arg uuid "$entry_uuid" \
+                --arg ts "$msg_ts" '
+                {
+                    parentUuid: (if $parent == "" then null else $parent end),
+                    isSidechain: false,
+                    userType: "external",
+                    cwd: $cwd,
+                    sessionId: $sid,
+                    version: "2.1.32",
+                    gitBranch: "main",
+                    type: (if $role == "assistant" then "assistant" else "user" end),
+                    message: (
+                        if $role == "assistant" then
+                            { role: "assistant", content: [{type: "text", text: $content}] }
+                        else
+                            { role: "user", content: $content }
+                        end
+                    ),
+                    uuid: $uuid,
+                    timestamp: $ts
+                }
+            ' >> "$target_path"
+
+            parent_uuid="$entry_uuid"
+            msg_count=$((msg_count + 1))
+        done < <(jq -c '.messages[]' "$canonical_file")
+
+        # Update/seed sessions-index so converted session appears alongside native sessions.
+        local index_file="$home_dir/projects/$dir_key/sessions-index.json"
+        local index_tmp
+        index_tmp=$(mktemp "${TMPDIR:-/tmp}/acfs_claude_index.XXXXXX") || return 1
+        if [[ ! -f "$index_file" ]]; then
+            printf '{"version":1,"entries":[]}\n' > "$index_file"
+        fi
+
+        local file_mtime_ms
+        file_mtime_ms=$(( $(date +%s) * 1000 ))
+
+        if ! jq \
+            --arg sid "$target_session_id" \
+            --arg full "$target_path" \
+            --arg first_prompt "$first_prompt" \
+            --arg created "$created_ts" \
+            --arg modified "$created_ts" \
+            --arg project "$workspace" \
+            --arg summary "Converted session" \
+            --argjson mtime "$file_mtime_ms" \
+            --argjson count "$msg_count" \
+            '
+                .version = (if (.version | type) == "number" then .version else 1 end) |
+                .entries = (
+                    (.entries // [])
+                    | map(select(.sessionId != $sid))
+                    + [{
+                        sessionId: $sid,
+                        fullPath: $full,
+                        fileMtime: $mtime,
+                        firstPrompt: $first_prompt,
+                        summary: $summary,
+                        messageCount: $count,
+                        created: $created,
+                        modified: $modified,
+                        gitBranch: "main",
+                        projectPath: $project,
+                        isSidechain: false
+                    }]
+                )
+            ' "$index_file" > "$index_tmp"; then
+            rm -f -- "$index_tmp" 2>/dev/null || true
+            log_error "Failed to update Claude sessions-index: $index_file"
+            return 1
+        fi
+        mv -- "$index_tmp" "$index_file"
+    fi
+
+    printf '%s\n' "$target_path"
+}
+
+write_native_codex_from_canonical() {
+    local canonical_file="$1"
+    local workspace="$2"
+    local target_session_id="$3"
+    local dry_run="$4"
+
+    local home_dir="${CODEX_HOME:-$HOME/.codex}"
+    local now_slug date_path now_iso
+    now_slug="$(date -u +%Y-%m-%dT%H-%M-%S)"
+    date_path="$(date -u +%Y/%m/%d)"
+    now_iso="$(session_now_iso)"
+
+    local target_dir="$home_dir/sessions/$date_path"
+    local target_path="$target_dir/rollout-${now_slug}-${target_session_id}.jsonl"
+
+    if [[ "$dry_run" != "true" ]]; then
+        mkdir -p "$target_dir"
+        : > "$target_path"
+
+        jq -cn \
+            --arg sid "$target_session_id" \
+            --arg cwd "$workspace" \
+            --arg ts "$now_iso" '
+            {
+                timestamp: $ts,
+                type: "session_meta",
+                payload: {
+                    id: $sid,
+                    timestamp: $ts,
+                    cwd: $cwd,
+                    originator: "acfs_session_bridge",
+                    cli_version: "unknown",
+                    source: "cli",
+                    model_provider: "openai"
+                }
+            }
+        ' >> "$target_path"
+
+        local msg
+        while IFS= read -r msg; do
+            [[ -z "$msg" ]] && continue
+            local role content msg_ts
+            role="$(jq -r '.role // "assistant"' <<<"$msg")"
+            content="$(jq -r '.content // ""' <<<"$msg")"
+            msg_ts="$(jq -r '.timestamp // ""' <<<"$msg")"
+            [[ -z "$msg_ts" ]] && msg_ts="$now_iso"
+
+            if [[ "$role" == "user" ]]; then
+                jq -cn \
+                    --arg ts "$msg_ts" \
+                    --arg content "$content" '
+                    {
+                        timestamp: $ts,
+                        type: "event_msg",
+                        payload: {
+                            type: "user_message",
+                            message: $content,
+                            images: [],
+                            local_images: [],
+                            text_elements: []
+                        }
+                    }
+                ' >> "$target_path"
+            else
+                jq -cn \
+                    --arg ts "$msg_ts" \
+                    --arg content "$content" '
+                    {
+                        timestamp: $ts,
+                        type: "response_item",
+                        payload: {
+                            type: "message",
+                            role: "assistant",
+                            content: [
+                                {
+                                    type: "output_text",
+                                    text: $content
+                                }
+                            ]
+                        }
+                    }
+                ' >> "$target_path"
+            fi
+        done < <(jq -c '.messages[]' "$canonical_file")
+    fi
+
+    printf '%s\n' "$target_path"
+}
+
+write_native_gemini_from_canonical() {
+    local canonical_file="$1"
+    local workspace="$2"
+    local target_session_id="$3"
+    local dry_run="$4"
+
+    local home_dir="${GEMINI_HOME:-$HOME/.gemini}"
+    local hash
+    hash="$(jq -r '.project_hash // ""' "$canonical_file" 2>/dev/null || true)"
+    if [[ -z "$hash" || "$hash" == "null" ]]; then
+        hash="$(session_project_hash_gemini "$workspace")" || return 1
+    fi
+
+    local now_iso file_stub
+    now_iso="$(session_now_iso)"
+    file_stub="$(date -u +%Y-%m-%dT%H-%M)-${target_session_id:0:8}"
+
+    local dir_key
+    dir_key="$(session_project_dir_key_gemini "$workspace")" || return 1
+    local root_dir="$home_dir/tmp/$dir_key"
+    local chats_dir="$root_dir/chats"
+    local target_path="$chats_dir/session-${file_stub}.json"
+    local logs_path="$root_dir/logs.json"
+    local project_root_file="$root_dir/.project_root"
+
+    if [[ "$dry_run" != "true" ]]; then
+        mkdir -p "$chats_dir"
+        printf '%s\n' "$workspace" > "$project_root_file"
+
+        local msg_tmp
+        msg_tmp=$(mktemp "${TMPDIR:-/tmp}/acfs_gemini_msgs.XXXXXX") || return 1
+
+        local first_ts=""
+        local last_ts="$now_iso"
+        local msg
+        while IFS= read -r msg; do
+            [[ -z "$msg" ]] && continue
+            local role content msg_ts entry_id
+            role="$(jq -r '.role // "assistant"' <<<"$msg")"
+            content="$(jq -r '.content // ""' <<<"$msg")"
+            msg_ts="$(jq -r '.timestamp // ""' <<<"$msg")"
+            [[ -z "$msg_ts" ]] && msg_ts="$now_iso"
+            [[ -z "$first_ts" ]] && first_ts="$msg_ts"
+            last_ts="$msg_ts"
+            entry_id="$(session_generate_uuid)"
+
+            jq -cn \
+                --arg id "$entry_id" \
+                --arg ts "$msg_ts" \
+                --arg role "$role" \
+                --arg content "$content" '
+                {
+                    id: $id,
+                    timestamp: $ts,
+                    type: (if $role == "user" then "user" else "gemini" end),
+                    content: [{text: $content}]
+                }
+            ' >> "$msg_tmp"
+        done < <(jq -c '.messages[]' "$canonical_file")
+
+        [[ -z "$first_ts" ]] && first_ts="$now_iso"
+
+        local messages_json
+        messages_json="$(jq -s '.' "$msg_tmp")"
+
+        jq -cn \
+            --arg sid "$target_session_id" \
+            --arg hash "$hash" \
+            --arg start "$first_ts" \
+            --arg updated "$last_ts" \
+            --argjson messages "$messages_json" '
+            {
+                sessionId: $sid,
+                projectHash: $hash,
+                startTime: $start,
+                lastUpdated: $updated,
+                messages: $messages,
+                summary: ""
+            }
+        ' > "$target_path"
+
+        # Keep logs.json in sync with user prompts for native discoverability.
+        local user_log_entries
+        user_log_entries="$(jq -c --arg sid "$target_session_id" '
+            [ .messages
+              | map(select(.role == "user"))
+              | to_entries[]
+              | {
+                    sessionId: $sid,
+                    messageId: .key,
+                    type: "user",
+                    message: .value.content,
+                    timestamp: (if (.value.timestamp | length) > 0 then .value.timestamp else (now | todateiso8601) end)
+                }
+            ]
+        ' "$canonical_file")"
+
+        if [[ -f "$logs_path" ]]; then
+            local logs_tmp
+            logs_tmp=$(mktemp "${TMPDIR:-/tmp}/acfs_gemini_logs.XXXXXX") || return 1
+            if jq --argjson add "$user_log_entries" '. + $add' "$logs_path" > "$logs_tmp"; then
+                mv -- "$logs_tmp" "$logs_path"
+            else
+                rm -f -- "$logs_tmp" 2>/dev/null || true
+                printf '%s\n' "$user_log_entries" > "$logs_path"
+            fi
+        else
+            printf '%s\n' "$user_log_entries" > "$logs_path"
+        fi
+
+        rm -f -- "$msg_tmp" 2>/dev/null || true
+    fi
+
+    printf '%s\n' "$target_path"
+}
+
+write_native_from_canonical() {
+    local canonical_file="$1"
+    local target_agent="$2"
+    local workspace="$3"
+    local target_session_id="$4"
+    local dry_run="$5"
+
+    case "$target_agent" in
+        claude-code)
+            write_native_claude_from_canonical "$canonical_file" "$workspace" "$target_session_id" "$dry_run"
+            ;;
+        codex)
+            write_native_codex_from_canonical "$canonical_file" "$workspace" "$target_session_id" "$dry_run"
+            ;;
+        gemini)
+            write_native_gemini_from_canonical "$canonical_file" "$workspace" "$target_session_id" "$dry_run"
+            ;;
+        *)
+            log_error "Unsupported target agent: $target_agent"
+            return 1
+            ;;
+    esac
+}
+
+infer_native_agent_from_file() {
+    local file="$1"
+    if [[ ! -f "$file" ]]; then
+        return 1
+    fi
+
+    # Gemini JSON object shape.
+    if jq -e 'type == "object" and .sessionId and .messages' "$file" >/dev/null 2>&1; then
+        echo "gemini"
+        return 0
+    fi
+
+    # JSONL shapes for Claude/Codex.
+    local first_line
+    first_line="$(head -n 1 "$file" 2>/dev/null || true)"
+    if [[ -z "$first_line" ]]; then
+        return 1
+    fi
+
+    if jq -e '.type == "session_meta" and (.payload.id != null)' >/dev/null 2>&1 <<<"$first_line"; then
+        echo "codex"
+        return 0
+    fi
+    if jq -e '(.sessionId != null) and (.message != null)' >/dev/null 2>&1 <<<"$first_line"; then
+        echo "claude-code"
+        return 0
+    fi
+    return 1
+}
+
+# Convert a native provider session file into another provider-native session.
+# Usage:
+#   convert_session_native <input_file> --from <agent> --to <agent> [--workspace PATH] [--session-id ID] [--dry-run] [--json]
+convert_session_native() {
+    local input_file=""
+    local from_agent=""
+    local to_agent=""
+    local workspace_hint=""
+    local target_session_id=""
+    local dry_run=false
+    local output_json=true
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from)
+                from_agent="${2:-}"
+                shift 2
+                ;;
+            --to)
+                to_agent="${2:-}"
+                shift 2
+                ;;
+            --workspace)
+                workspace_hint="${2:-}"
+                shift 2
+                ;;
+            --session-id)
+                target_session_id="${2:-}"
+                shift 2
+                ;;
+            --dry-run)
+                dry_run=true
+                shift
+                ;;
+            --json)
+                output_json=true
+                shift
+                ;;
+            --no-json)
+                output_json=false
+                shift
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$input_file" ]]; then
+                    input_file="$1"
+                else
+                    log_error "Unexpected positional argument: $1"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$input_file" ]]; then
+        log_error "Input file required"
+        log_info "Usage: convert_session_native <input_file> --from <agent> --to <agent>"
+        return 1
+    fi
+    if [[ ! -f "$input_file" ]]; then
+        log_error "Input file not found: $input_file"
+        return 1
+    fi
+
+    if [[ -z "$from_agent" ]]; then
+        from_agent="$(infer_native_agent_from_file "$input_file" || true)"
+        if [[ -z "$from_agent" ]]; then
+            log_error "Unable to infer source agent; pass --from"
+            return 1
+        fi
+    fi
+    if [[ -z "$to_agent" ]]; then
+        log_error "Target agent required (--to)"
+        return 1
+    fi
+
+    if [[ -z "$target_session_id" ]]; then
+        target_session_id="$(session_generate_uuid)"
+    fi
+
+    local canonical_tmp
+    canonical_tmp=$(mktemp "${TMPDIR:-/tmp}/acfs_native_canonical.XXXXXX") || {
+        log_error "Failed to create temporary canonical file"
+        return 1
+    }
+
+    if ! parse_native_to_canonical "$input_file" "$from_agent" "$workspace_hint" > "$canonical_tmp"; then
+        rm -f -- "$canonical_tmp" 2>/dev/null || true
+        log_error "Failed to parse source session into canonical format"
+        return 1
+    fi
+
+    local workspace
+    workspace="$(jq -r '.workspace // ""' "$canonical_tmp")"
+    if [[ -z "$workspace" || "$workspace" == "null" ]]; then
+        workspace="${workspace_hint:-$(pwd)}"
+    fi
+
+    local msg_count
+    msg_count="$(jq -r '.messages | length' "$canonical_tmp")"
+    if [[ "${msg_count:-0}" -le 0 ]]; then
+        rm -f -- "$canonical_tmp" 2>/dev/null || true
+        log_error "Source session has no conversational messages to convert"
+        return 1
+    fi
+
+    local source_session_id
+    source_session_id="$(jq -r '.source_session_id // "unknown"' "$canonical_tmp")"
+
+    local written_path
+    if ! written_path="$(write_native_from_canonical "$canonical_tmp" "$to_agent" "$workspace" "$target_session_id" "$dry_run")"; then
+        rm -f -- "$canonical_tmp" 2>/dev/null || true
+        log_error "Failed to write target-native session"
+        return 1
+    fi
+
+    if [[ "$output_json" == "true" ]]; then
+        jq -cn \
+            --arg source_agent "$from_agent" \
+            --arg target_agent "$to_agent" \
+            --arg source_session_id "$source_session_id" \
+            --arg target_session_id "$target_session_id" \
+            --arg input_file "$input_file" \
+            --arg written_path "$written_path" \
+            --arg workspace "$workspace" \
+            --argjson message_count "$msg_count" \
+            --arg dry_run "$dry_run" '
+            {
+                source_agent: $source_agent,
+                target_agent: $target_agent,
+                source_session_id: $source_session_id,
+                target_session_id: $target_session_id,
+                input_file: $input_file,
+                written_path: $written_path,
+                workspace: $workspace,
+                message_count: $message_count,
+                dry_run: ($dry_run == "true"),
+                resume_command: (
+                    if $target_agent == "claude-code" then ("claude --resume " + $target_session_id)
+                    elif $target_agent == "codex" then ("codex resume " + $target_session_id)
+                    elif $target_agent == "gemini" then ("gemini --resume " + $target_session_id)
+                    else ""
+                    end
+                )
+            }
+        '
+    else
+        echo "Source: $from_agent ($source_session_id)"
+        echo "Target: $to_agent ($target_session_id)"
+        echo "Written: $written_path"
+    fi
+
+    rm -f -- "$canonical_tmp" 2>/dev/null || true
+}
+
+# ============================================================
 # SESSION IMPORT
 # ============================================================
 

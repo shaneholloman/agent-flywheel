@@ -300,12 +300,14 @@ print_session_help() {
     echo "  export <session_path> [--format json|markdown] [--no-sanitize] [--output FILE]"
     echo "  recent [--workspace PATH] [--format json|markdown]"
     echo "  import <file.json> [--dry-run]"
+    echo "  convert <native_session_file> --from <claude-code|codex|gemini> --to <claude-code|codex|gemini> [--workspace PATH] [--session-id ID] [--dry-run]"
     echo "  show <id> [--format json|markdown|summary]"
     echo "  list-imported"
     echo ""
     echo "Examples:"
     echo "  acfs session list --days 7"
     echo "  acfs session export ~/.codex/sessions/.../abc.jsonl --output session.json"
+    echo "  acfs session convert ~/.codex/sessions/.../abc.jsonl --from codex --to claude-code --workspace /data/projects/foo"
     echo "  acfs session recent --workspace /data/projects/foo"
     echo "  acfs session import session.json --dry-run"
 }
@@ -365,6 +367,10 @@ acfs_session_main() {
         import)
             shift
             import_session "$@"
+            ;;
+        convert)
+            shift
+            convert_session_native "$@"
             ;;
         show)
             shift
