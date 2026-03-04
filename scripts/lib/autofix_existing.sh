@@ -404,9 +404,15 @@ create_installation_backup() {
             dest="$backup_dir/$(basename "$artifact")"
 
             if [[ -d "$artifact" ]]; then
-                cp -rp "$artifact" "$dest" 2>/dev/null || true
+                if ! cp -rp "$artifact" "$dest" 2>/dev/null; then
+                    log_error "[CLEAN] Failed to back up directory: $artifact"
+                    return 1
+                fi
             else
-                cp -p "$artifact" "$dest" 2>/dev/null || true
+                if ! cp -p "$artifact" "$dest" 2>/dev/null; then
+                    log_error "[CLEAN] Failed to back up file: $artifact"
+                    return 1
+                fi
             fi
 
             # Calculate checksum if it's a file
@@ -480,7 +486,10 @@ clean_reinstall() {
 
     # Step 1: Create comprehensive backup
     local backup_dir
-    backup_dir=$(create_installation_backup)
+    if ! backup_dir=$(create_installation_backup); then
+        log_error "[CLEAN] Backup creation failed; aborting clean reinstall"
+        return 1
+    fi
 
     # Step 2: Record the clean reinstall change
     local artifacts_json

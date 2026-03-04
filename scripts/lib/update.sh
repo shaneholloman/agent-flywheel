@@ -653,7 +653,12 @@ refresh_checksums() {
 
     # Download with timeout and retry
     local tmp_checksums
-    tmp_checksums=$(mktemp "${TMPDIR:-/tmp}/acfs-checksums.XXXXXX")
+    tmp_checksums=$(mktemp "${TMPDIR:-/tmp}/acfs-checksums.XXXXXX" 2>/dev/null || true)
+    if [[ -z "$tmp_checksums" ]]; then
+        [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "failed to create temp file, using cached"
+        log_to_file "Checksums refresh failed: mktemp failed"
+        return 1
+    fi
 
     if curl -fsSL --connect-timeout 5 --max-time 30 -o "$tmp_checksums" "$CHECKSUMS_URL" 2>/dev/null; then
         # Validate it looks like a checksums file
@@ -1460,11 +1465,23 @@ checksums="supabase_${version}_checksums.txt"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-supabase.XXXXXX" 2>/dev/null)" || tmp_dir=""
 tmp_tgz="$(mktemp "${TMPDIR:-/tmp}/acfs-supabase.tgz.XXXXXX" 2>/dev/null)" || tmp_tgz=""
 tmp_checksums="$(mktemp "${TMPDIR:-/tmp}/acfs-supabase.sha.XXXXXX" 2>/dev/null)" || tmp_checksums=""
+extracted_bin=""
 
 if [[ -z "$tmp_dir" ]] || [[ -z "$tmp_tgz" ]] || [[ -z "$tmp_checksums" ]]; then
   echo "Supabase CLI: failed to create temp files" >&2
   exit 1
 fi
+
+cleanup() {
+  [[ -n "${tmp_tgz:-}" ]] && rm -f "$tmp_tgz" 2>/dev/null || true
+  [[ -n "${tmp_checksums:-}" ]] && rm -f "$tmp_checksums" 2>/dev/null || true
+  [[ -n "${extracted_bin:-}" ]] && rm -f "$extracted_bin" 2>/dev/null || true
+  if [[ -n "${tmp_dir:-}" ]] && [[ -d "$tmp_dir" ]]; then
+    find "$tmp_dir" -type f -delete 2>/dev/null || true
+    find "$tmp_dir" -depth -type d -empty -delete 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
 
 if ! curl "${CURL_ARGS[@]}" -o "$tmp_tgz" "${base_url}/${tarball}" 2>/dev/null; then
   echo "Supabase CLI: failed to download ${tarball}" >&2
@@ -1528,10 +1545,6 @@ else
     exit 1
   }
 fi
-
-# Best-effort cleanup
-rm -f "$tmp_tgz" "$tmp_checksums" "$extracted_bin" 2>/dev/null || true
-rmdir "$tmp_dir" 2>/dev/null || true
 EOF
 }
 
@@ -1869,15 +1882,11 @@ update_stack() {
                         fi
                         rm -f "$status_file"
                     else
-                        # Fallback: can't create status file, use old fire-and-forget
-                        run_cmd "MCP Agent Mail (tmux)" tmux new-session -d -s "$tmux_session" "$tmp_install" --dir "$HOME/mcp_agent_mail" --yes
-                        if tmux has-session -t "$tmux_session" 2>/dev/null; then
-                            log_to_file "Started MCP Agent Mail update in tmux session: $tmux_session (no exit tracking)"
-                            [[ "$QUIET" != "true" ]] && printf "       ${DIM}Update running in tmux session '%s' (exit tracking unavailable)${NC}\n" "$tmux_session"
-                        fi
+                        log_item "fail" "MCP Agent Mail (tmux)" "failed to create status file for exit tracking"
+                        log_to_file "Failed: MCP Agent Mail - mktemp failed for tmux status tracking"
                     fi
 
-                    # Cleanup happens when system tmp is cleaned
+                    rm -f "$tmp_install" 2>/dev/null || true
                 else
                     rm -f "$tmp_install"
                     log_item "fail" "MCP Agent Mail" "verification failed"

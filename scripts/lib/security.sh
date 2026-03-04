@@ -297,20 +297,22 @@ fetch_checksum() {
         log_error "Failed to create temp file"
         return 1
     }
-    
-    # Ensure cleanup
-    # shellcheck disable=SC2064
-    trap "rm -f '$tmp_file'" RETURN
 
     if ! acfs_download_to_file "$url" "$tmp_file" "$url"; then
         log_error "Failed to fetch $url"
+        rm -f "$tmp_file" 2>/dev/null || true
         return 1
     fi
 
-    if ! calculate_file_sha256 "$tmp_file"; then
+    local file_sha256
+    if ! file_sha256=$(calculate_file_sha256 "$tmp_file"); then
         log_error "Failed to checksum $url"
+        rm -f "$tmp_file" 2>/dev/null || true
         return 1
     fi
+
+    rm -f "$tmp_file" 2>/dev/null || true
+    printf '%s\n' "$file_sha256"
 }
 
 # Verify URL content against expected checksum
@@ -339,18 +341,16 @@ verify_checksum() {
         return 1
     }
 
-    # Ensure cleanup
-    # shellcheck disable=SC2064
-    trap "rm -f '$tmp_file'" RETURN
-
     if ! acfs_download_to_file "$url" "$tmp_file" "$name"; then
         log_error "Security Error: Failed to fetch $name"
+        rm -f "$tmp_file" 2>/dev/null || true
         return 1
     fi
 
     local actual_sha256
     actual_sha256=$(calculate_file_sha256 "$tmp_file") || {
         log_error "Security Error: Failed to checksum $name"
+        rm -f "$tmp_file" 2>/dev/null || true
         return 1
     }
 
@@ -364,12 +364,16 @@ verify_checksum() {
         echo -e "    - End users: update ACFS to refresh checksums.yaml (re-run install.sh / update scripts)" >&2
         echo -e "    - Maintainers: regenerate checksums.yaml with:" >&2
         echo -e "        ./scripts/lib/security.sh --update-checksums > checksums.yaml" >&2
+        rm -f "$tmp_file" 2>/dev/null || true
         return 1
     fi
 
     log_success "Verified: $name"
     # Return the verified content (verbatim bytes) on stdout.
     cat "$tmp_file"
+    local cat_rc=$?
+    rm -f "$tmp_file" 2>/dev/null || true
+    return $cat_rc
 }
 
 # Fetch and run with optional verification
@@ -453,13 +457,10 @@ fetch_and_run_with_recovery() {
         return 1
     }
 
-    # Ensure cleanup
-    # shellcheck disable=SC2064
-    trap "rm -f '$tmp_file'" RETURN
-
     # Fetch content to file with retries
     if ! acfs_download_to_file "$url" "$tmp_file" "$name"; then
         log_error "Error: Failed to fetch $name"
+        rm -f "$tmp_file" 2>/dev/null || true
         return 1
     fi
 
@@ -467,6 +468,7 @@ fetch_and_run_with_recovery() {
     local actual_sha256
     actual_sha256=$(calculate_file_sha256 "$tmp_file") || {
         log_error "Error: Failed to calculate checksum for $name"
+        rm -f "$tmp_file" 2>/dev/null || true
         return 1
     }
 
@@ -480,15 +482,18 @@ fetch_and_run_with_recovery() {
             0)
                 # Skip - tool was skipped, continue installation
                 log_info "Skipped: $name (checksum mismatch)"
+                rm -f "$tmp_file" 2>/dev/null || true
                 return 0
                 ;;
             1)
                 # Abort - user or policy chose to abort
+                rm -f "$tmp_file" 2>/dev/null || true
                 return 1
                 ;;
             *)
                 # Unknown result, abort for safety
                 log_error "Unexpected handler result"
+                rm -f "$tmp_file" 2>/dev/null || true
                 return 1
                 ;;
         esac
@@ -498,6 +503,9 @@ fetch_and_run_with_recovery() {
 
     # Run the installer from verified file
     bash "$tmp_file" "${args[@]}"
+    local run_rc=$?
+    rm -f "$tmp_file" 2>/dev/null || true
+    return $run_rc
 }
 
 # ============================================================
@@ -607,12 +615,11 @@ load_checksums() {
     local in_installers=false
     local installers_indent=0
     local tool_indent=""
+    # Use ACFS colors if available, preserving empty-string NO_COLOR behavior.
+    local warn_color="${ACFS_YELLOW-\033[0;33m}"
+    local nc_color="${ACFS_NC-\033[0m}"
 
     if [[ ! -r "$file" ]]; then
-        # Use ACFS_YELLOW if available (logging.sh), else literal or plain.
-        # Use ${var-default} to preserve empty strings for NO_COLOR. Related: bd-39ye
-        local warn_color="${ACFS_YELLOW-\033[0;33m}"
-        local nc_color="${ACFS_NC-\033[0m}"
         echo -e "${warn_color}Warning:${nc_color} Checksums file not found: $file" >&2
         return 1
     fi
@@ -676,6 +683,13 @@ load_checksums() {
             LOADED_CHECKSUMS["$current_tool"]="${BASH_REMATCH[1],,}"
         fi
     done < "$file"
+
+    if [[ ${#LOADED_CHECKSUMS[@]} -eq 0 ]]; then
+        echo -e "${warn_color}Warning:${nc_color} No valid installer checksums found in: $file" >&2
+        return 1
+    fi
+
+    return 0
 }
 
 # Get checksum for a tool
