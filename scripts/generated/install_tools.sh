@@ -1080,11 +1080,11 @@ install_utils_rust_proxy() {
         if ! run_as_target_shell <<'INSTALL_UTILS_RUST_PROXY'
 # Build rust_proxy from source (no install.sh available)
 TMPDIR="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR"' EXIT
 git clone --depth 1 https://github.com/Dicklesworthstone/rust_proxy.git "$TMPDIR/rust_proxy"
 cd "$TMPDIR/rust_proxy"
 cargo build --release
 cp target/release/rust_proxy ~/.cargo/bin/
-rm -rf "$TMPDIR"
 INSTALL_UTILS_RUST_PROXY
         then
             log_warn "utils.rust_proxy: install command failed: # Build rust_proxy from source (no install.sh available)"
@@ -1130,11 +1130,11 @@ install_utils_aadc() {
         if ! run_as_target_shell <<'INSTALL_UTILS_AADC'
 # Build aadc from source (no install.sh available)
 TMPDIR="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR"' EXIT
 git clone --depth 1 https://github.com/Dicklesworthstone/aadc.git "$TMPDIR/aadc"
 cd "$TMPDIR/aadc"
 cargo build --release
 cp target/release/aadc ~/.cargo/bin/
-rm -rf "$TMPDIR"
 INSTALL_UTILS_AADC
         then
             log_warn "utils.aadc: install command failed: # Build aadc from source (no install.sh available)"
@@ -1180,11 +1180,11 @@ install_utils_caut() {
         if ! run_as_target_shell <<'INSTALL_UTILS_CAUT'
 # Build caut from source (no install.sh available)
 TMPDIR="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR"' EXIT
 git clone --depth 1 https://github.com/Dicklesworthstone/coding_agent_usage_tracker.git "$TMPDIR/caut"
 cd "$TMPDIR/caut"
 cargo build --release
 cp target/release/caut ~/.cargo/bin/
-rm -rf "$TMPDIR"
 INSTALL_UTILS_CAUT
         then
             log_warn "utils.caut: install command failed: # Build caut from source (no install.sh available)"
