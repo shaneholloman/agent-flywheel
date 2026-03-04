@@ -2569,6 +2569,21 @@ main() {
         export ACFS_INTERACTIVE=false
     fi
 
+    # Ensure jq is available (issue #180): on minimal Ubuntu installs jq may
+    # not be present, but later update steps (DCG cleanup, state management)
+    # depend on it.  Install it early via apt before any other work.
+    if ! command -v jq &>/dev/null; then
+        echo -e "${YELLOW}Installing jq (required for update operations)...${NC}" >&2
+        if command -v sudo &>/dev/null; then
+            sudo apt-get update -qq 2>/dev/null && sudo apt-get install -y -qq jq 2>/dev/null || true
+        elif [[ $EUID -eq 0 ]]; then
+            apt-get update -qq 2>/dev/null && apt-get install -y -qq jq 2>/dev/null || true
+        fi
+        if ! command -v jq &>/dev/null; then
+            echo -e "${YELLOW}Warning: jq could not be installed; some operations may be limited${NC}" >&2
+        fi
+    fi
+
     # Clean up legacy artifacts from previous versions
     cleanup_legacy_git_safety_guard
     cleanup_legacy_br_alias

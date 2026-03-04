@@ -5551,18 +5551,21 @@ main() {
 
     ensure_root
 
-    # Early dependency bootstrap (issue #152): on a truly fresh Ubuntu, jq and
-    # curl may be missing. Install them before anything else so that later phases
-    # (state management, JSON parsing, gum install) don't fail.
-    if [[ $EUID -eq 0 ]] || [[ -n "${SUDO:-}" ]]; then
+    # Early dependency bootstrap (issue #152, #180): on a truly fresh Ubuntu,
+    # jq and curl may be missing. Install them before anything else so that
+    # later phases (state management, JSON parsing, gum install) don't fail.
+    # Also covers the case where sudo is available but $SUDO isn't set yet.
+    if [[ $EUID -eq 0 ]] || [[ -n "${SUDO:-}" ]] || command -v sudo &>/dev/null; then
         local _need_early_apt=false
         command -v curl &>/dev/null || _need_early_apt=true
         command -v jq &>/dev/null   || _need_early_apt=true
         command -v git &>/dev/null   || _need_early_apt=true
         if [[ "$_need_early_apt" == "true" ]]; then
             echo -e "${YELLOW}Installing minimal bootstrap dependencies (curl, jq, git)...${NC}" >&2
-            ${SUDO:-} apt-get update -qq 2>/dev/null || true
-            ${SUDO:-} apt-get install -y -qq curl jq git 2>/dev/null || true
+            local _sudo_cmd="${SUDO:-}"
+            [[ -z "$_sudo_cmd" ]] && [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && _sudo_cmd="sudo"
+            ${_sudo_cmd} apt-get update -qq 2>/dev/null || true
+            ${_sudo_cmd} apt-get install -y -qq curl jq git 2>/dev/null || true
         fi
     fi
 
