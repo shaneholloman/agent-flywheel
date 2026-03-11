@@ -185,7 +185,7 @@ get_version() {
             version=$("$HOME/.cargo/bin/rustc" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
             ;;
         uv)
-            version=$("$HOME/.local/bin/uv" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+            version=$("${ACFS_BIN_DIR:-$HOME/.local/bin}/uv" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
             ;;
         claude)
             version=$(claude --version 2>/dev/null | head -1 || echo "unknown")
@@ -1366,7 +1366,7 @@ update_agents() {
     # Uses fallback chain: @latest -> unversioned -> pinned 0.87.0
     # npm can 404 briefly after publishing; pinned version is reliable fallback
     if cmd_exists codex || [[ "$FORCE_MODE" == "true" ]]; then
-        local codex_bin_local="$HOME/.local/bin/codex"
+        local codex_bin_local="${ACFS_BIN_DIR:-$HOME/.local/bin}/codex"
         local codex_bin_bun="$HOME/.bun/bin/codex"
         local codex_fallback_version="0.87.0"
 
@@ -1578,16 +1578,16 @@ if [[ -z "$extracted_bin" ]] || [[ ! -f "$extracted_bin" ]]; then
   exit 1
 fi
 
-mkdir -p "$HOME/.local/bin"
-install -m 0755 "$extracted_bin" "$HOME/.local/bin/supabase"
+mkdir -p "${ACFS_BIN_DIR:-$HOME/.local/bin}"
+install -m 0755 "$extracted_bin" "${ACFS_BIN_DIR:-$HOME/.local/bin}/supabase"
 
 if command -v timeout &>/dev/null; then
-  timeout 5 "$HOME/.local/bin/supabase" --version >/dev/null 2>&1 || {
+  timeout 5 "${ACFS_BIN_DIR:-$HOME/.local/bin}/supabase" --version >/dev/null 2>&1 || {
     echo "Supabase CLI: installed but failed to run" >&2
     exit 1
   }
 else
-  "$HOME/.local/bin/supabase" --version >/dev/null 2>&1 || {
+  "${ACFS_BIN_DIR:-$HOME/.local/bin}/supabase" --version >/dev/null 2>&1 || {
     echo "Supabase CLI: installed but failed to run" >&2
     exit 1
   }
@@ -1761,7 +1761,7 @@ update_uv() {
         return 0
     fi
 
-    local uv_bin="$HOME/.local/bin/uv"
+    local uv_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}/uv"
 
     if [[ ! -x "$uv_bin" ]]; then
         log_item "skip" "uv" "not installed"
