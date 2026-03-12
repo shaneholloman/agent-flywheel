@@ -1638,13 +1638,22 @@ state_should_skip_phase() {
         # completed, the phase must re-run so the module installer can execute.
         # Check whether any requested module belongs to this phase.
         if [[ "${ONLY_MODULES+x}" == "x" ]] && [[ ${#ONLY_MODULES[@]} -gt 0 ]]; then
+            # ACFS_MODULE_PHASE stores manifest phase numbers (1-10) which do
+            # NOT map 1:1 to ACFS_PHASE_IDS indices.  Manifest phases 1+2
+            # both map to "user_setup", and manifest phase 10 maps to
+            # "finalize".  Use an explicit lookup table.
+            local -A _manifest_phase_to_id=(
+                [1]="user_setup" [2]="user_setup"
+                [3]="filesystem" [4]="shell_setup"
+                [5]="cli_tools"  [6]="languages"
+                [7]="agents"     [8]="cloud_db"
+                [9]="stack"      [10]="finalize"
+            )
             local _mod _mod_phase_num _mod_phase_name
             for _mod in "${ONLY_MODULES[@]}"; do
                 _mod_phase_num="${ACFS_MODULE_PHASE[$_mod]:-}"
                 if [[ -n "$_mod_phase_num" ]]; then
-                    # ACFS_MODULE_PHASE stores 1-based numeric indices;
-                    # convert to named phase ID via ACFS_PHASE_IDS (0-based).
-                    _mod_phase_name="${ACFS_PHASE_IDS[$(( _mod_phase_num - 1 ))]:-}"
+                    _mod_phase_name="${_manifest_phase_to_id[$_mod_phase_num]:-}"
                     if [[ "$_mod_phase_name" == "$phase_id" ]]; then
                         # Explicitly requested module lives in this phase — don't skip
                         return 1
