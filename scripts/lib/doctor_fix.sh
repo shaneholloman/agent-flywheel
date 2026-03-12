@@ -481,6 +481,20 @@ dispatch_fix() {
             fix_ssh_keepalive "$check_id"
             ;;
 
+        # Agent CLI tools (fixes #213)
+        agent.claude)
+            fix_stack_install "$check_id" "claude" \
+                "curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --force-reinstall --only agents.claude"
+            ;;
+        agent.codex)
+            fix_stack_install "$check_id" "codex" \
+                "bun install -g --trust @openai/codex@latest"
+            ;;
+        agent.gemini)
+            fix_stack_install "$check_id" "gemini" \
+                "bun install -g --trust @google/gemini-cli@latest"
+            ;;
+
         # Agent aliases/functions (fixes #163)
         agent.alias.*)
             fix_acfs_sourcing "$check_id"

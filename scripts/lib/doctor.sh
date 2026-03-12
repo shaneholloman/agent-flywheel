@@ -167,7 +167,7 @@ build_fix_suggestion() {
     local base_url="https://agent-flywheel.com/install"
 
     # Build flags based on current state
-    local flags="--yes"
+    local flags="--yes --force-reinstall"
 
     # Add mode flag (vibe is default, but explicit is clearer)
     local mode="${ACFS_MODE:-vibe}"

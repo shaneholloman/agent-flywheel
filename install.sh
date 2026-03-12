@@ -4936,22 +4936,33 @@ GEMINI_TRUST_EOF
 
         # Pre-populate Gemini trusted folders list so agents skip the
         # interactive "Trust this folder?" prompt entirely.
+        # Gemini CLI 0.33.0+ expects trustedFolders.json as a JSON object
+        # mapping folder paths to "TRUST_FOLDER", not a JSON array.
         local gemini_trusted_folders="$TARGET_HOME/.gemini/trustedFolders.json"
         if [[ ! -f "$gemini_trusted_folders" ]]; then
             run_as_target tee "$gemini_trusted_folders" > /dev/null << GEMINI_FOLDERS_EOF
-["/data/projects", "$TARGET_HOME"]
+{"/data/projects": "TRUST_FOLDER", "$TARGET_HOME": "TRUST_FOLDER"}
 GEMINI_FOLDERS_EOF
             log_detail "Gemini trusted folders pre-configured"
         elif command -v jq &>/dev/null; then
-            # Ensure /data/projects and $HOME are in the trusted list
+            # Merge paths into existing file, handling both legacy array format
+            # and current object format (fixes #213).
             local tmp_folders="${gemini_trusted_folders}.tmp.$$"
             if run_as_target bash -c '
-                folders=$(jq -r ".[]" "$1" 2>/dev/null || echo "")
-                needs_update=false
-                echo "$folders" | grep -qxF "/data/projects" || needs_update=true
-                echo "$folders" | grep -qxF "$2" || needs_update=true
-                if [ "$needs_update" = "true" ]; then
-                    jq ". + [\"/data/projects\", \"$2\"] | unique" "$1" > "$3" && mv "$3" "$1"
+                content=$(cat "$1" 2>/dev/null) || content="{}"
+                is_array=$(echo "$content" | jq -e "type == \"array\"" 2>/dev/null) || is_array="false"
+                if [ "$is_array" = "true" ]; then
+                    # Migrate legacy array format to object format
+                    migrated=$(echo "$content" | jq "reduce .[] as \$p ({}; . + {(\$p): \"TRUST_FOLDER\"})")
+                    content="$migrated"
+                fi
+                # Merge required paths into object
+                updated=$(echo "$content" | jq \
+                    --arg p1 "/data/projects" \
+                    --arg p2 "$2" \
+                    ". + {(\$p1): \"TRUST_FOLDER\", (\$p2): \"TRUST_FOLDER\"}")
+                if [ "$updated" != "$content" ]; then
+                    echo "$updated" > "$3" && mv "$3" "$1"
                 fi
             ' _ "$gemini_trusted_folders" "$TARGET_HOME" "$tmp_folders" 2>/dev/null; then
                 log_detail "Gemini trusted folders updated"

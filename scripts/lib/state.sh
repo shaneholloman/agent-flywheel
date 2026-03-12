@@ -1634,6 +1634,19 @@ state_should_skip_phase() {
 
     # Skip if already completed
     if state_is_phase_completed "$phase_id"; then
+        # Bug #213: When --only selects a module whose parent phase is already
+        # completed, the phase must re-run so the module installer can execute.
+        # Check whether any requested module belongs to this phase.
+        if [[ "${ONLY_MODULES+x}" == "x" ]] && [[ ${#ONLY_MODULES[@]} -gt 0 ]]; then
+            local _mod _mod_phase
+            for _mod in "${ONLY_MODULES[@]}"; do
+                _mod_phase="${ACFS_MODULE_PHASE[$_mod]:-}"
+                if [[ "$_mod_phase" == "$phase_id" ]]; then
+                    # Explicitly requested module lives in this phase — don't skip
+                    return 1
+                fi
+            done
+        fi
         return 0
     fi
 
