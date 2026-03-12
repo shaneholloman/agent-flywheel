@@ -170,3 +170,4 @@ gemini.mcp.json
 
 # Ephemeral stderr capture files
 /err
+.claude/settings.local.json

@@ -51,7 +51,7 @@ export const shortIdToModuleId: Record<string, string> = {
   casr: 'stack.cross_agent_session_resumer',
   dsr: 'stack.doodlestein_self_releaser',
   asb: 'stack.agent_settings_backup',
-  pcr: 'stack.post_compact_reminder',
+  pcr: 'stack.pcr',
 };
 
 // Lookup maps indexed by moduleId for O(1) access

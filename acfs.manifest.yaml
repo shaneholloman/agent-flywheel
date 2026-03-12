@@ -1019,7 +1019,7 @@ modules:
     run_as: target_user
     optional: false
     enabled_by_default: true
-    tags: [recommended, tmux-spawn]
+    tags: [recommended]
     web:
       display_name: "MCP Agent Mail"
       short_name: "Mail"
@@ -1043,22 +1043,36 @@ modules:
     dependencies:
       - lang.bun
       - lang.uv
-      - cli.modern   # for tmux
     installed_check:
       run_as: target_user
       command: "command -v am"
     verified_installer:
       tool: mcp_agent_mail
       runner: bash
-      args: ["--dir", "${TARGET_HOME:-/home/ubuntu}/mcp_agent_mail", "--yes"]
+      args: ["--dir", "${TARGET_HOME:-/home/ubuntu}/mcp_agent_mail", "--yes", "--no-start"]
       fallback_url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/scripts/install.sh"
-      run_in_tmux: true   # Run in tmux to prevent blocking; server stays running
-    install: []
+    install:
+      - |
+          if ! command -v am >/dev/null 2>&1; then
+            echo "Agent Mail CLI missing after install" >&2
+            exit 1
+          fi
+          am service install >/dev/null
+          systemctl --user daemon-reload >/dev/null 2>&1 || true
+          if ! systemctl --user enable --now agent-mail.service >/dev/null 2>&1; then
+            systemctl --user restart agent-mail.service >/dev/null 2>&1
+          fi
+      - |
+          if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+            echo "Agent Mail service did not become healthy on 127.0.0.1:8765" >&2
+            exit 1
+          fi
     verify:
       - command -v am
+      - curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null
     notes:
-      - "Runs in tmux session 'acfs-services' to prevent blocking installer"
-      - "Server accessible at http://127.0.0.1:8765 after install"
+      - "Installs with --no-start, then enables a managed user service on port 8765"
+      - "Server health is verified at http://127.0.0.1:8765/health/liveness after install"
 
   - id: stack.meta_skill
     description: Local-first knowledge management with hybrid semantic search (ms)
@@ -1212,6 +1226,7 @@ modules:
       language: "Rust"
       stars: 45
       cli_name: "pt"
+      lesson_slug: "pt"
     dependencies:
       - lang.rust
     installed_check:
@@ -1704,6 +1719,7 @@ modules:
       language: "Rust"
       stars: 35
       cli_name: "rch"
+      lesson_slug: "rch"
     dependencies:
       - lang.rust
     installed_check:
@@ -1838,6 +1854,7 @@ modules:
       language: "Rust"
       stars: 30
       cli_name: "fsfs"
+      lesson_slug: "fsfs"
     dependencies:
       - lang.rust
     installed_check:
@@ -1879,6 +1896,7 @@ modules:
       language: "Rust"
       stars: 20
       cli_name: "sbh"
+      lesson_slug: "sbh"
     dependencies:
       - lang.rust
     installed_check:
@@ -1920,6 +1938,7 @@ modules:
       language: "Rust"
       stars: 25
       cli_name: "casr"
+      lesson_slug: "casr"
     dependencies:
       - lang.rust
     installed_check:
@@ -1960,6 +1979,7 @@ modules:
       language: "Bash"
       stars: 15
       cli_name: "dsr"
+      lesson_slug: "dsr"
     dependencies:
       - cli.modern   # for gh, docker
     installed_check:
@@ -2006,6 +2026,7 @@ modules:
       language: "Bash"
       stars: 10
       cli_name: "asb"
+      lesson_slug: "asb"
     dependencies:
       - base.system
     installed_check:
@@ -2046,6 +2067,7 @@ modules:
       language: "Bash"
       stars: 40
       cli_name: "pcr"
+      lesson_slug: "pcr"
     dependencies:
       - agents.claude
     installed_check:

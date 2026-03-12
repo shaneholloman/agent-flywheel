@@ -57,6 +57,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 10,
     cliName: "asb",
     cliAliases: [],
+    lessonSlug: "asb",
   },
   {
     id: "stack-automated_plan_reviser",
@@ -315,6 +316,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 25,
     cliName: "casr",
     cliAliases: [],
+    lessonSlug: "casr",
   },
   {
     id: "stack-dcg",
@@ -379,6 +381,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 15,
     cliName: "dsr",
     cliAliases: [],
+    lessonSlug: "dsr",
   },
   {
     id: "stack-frankensearch",
@@ -411,6 +414,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 30,
     cliName: "fsfs",
     cliAliases: [],
+    lessonSlug: "fsfs",
   },
   {
     id: "stack-jeffreysprompts",
@@ -568,6 +572,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 40,
     cliName: "pcr",
     cliAliases: [],
+    lessonSlug: "pcr",
   },
   {
     id: "stack-process_triage",
@@ -599,6 +604,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 45,
     cliName: "pt",
     cliAliases: [],
+    lessonSlug: "pt",
   },
   {
     id: "stack-rch",
@@ -631,6 +637,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 35,
     cliName: "rch",
     cliAliases: [],
+    lessonSlug: "rch",
   },
   {
     id: "stack-ru",
@@ -757,6 +764,7 @@ export const manifestTools: ManifestWebTool[] = [
     stars: 20,
     cliName: "sbh",
     cliAliases: [],
+    lessonSlug: "sbh",
   },
   {
     id: "stack-ultimate_bug_scanner",

@@ -144,9 +144,12 @@ _stack_require_security() {
 }
 
 # Run an installer script as target user with checksum verification.
-_stack_run_installer() {
+# Some upstream installers use environment variables instead of CLI flags for
+# non-interactive mode, so allow an optional bash-side env prefix.
+_stack_run_verified_installer() {
     local tool="$1"
-    shift || true
+    local bash_env_prefix="${2:-}"
+    shift 2 || true
 
     if ! _stack_require_security; then
         return 1
@@ -171,12 +174,22 @@ _stack_run_installer() {
         quoted_args+=("$(printf '%q' "$arg")")
     done
 
-    local cmd="source '$STACK_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$expected_sha256' '$tool' | bash -s --"
+    local cmd="source '$STACK_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$expected_sha256' '$tool' | "
+    if [[ -n "$bash_env_prefix" ]]; then
+        cmd+="$bash_env_prefix "
+    fi
+    cmd+="bash -s --"
     if [[ ${#quoted_args[@]} -gt 0 ]]; then
         cmd+=" ${quoted_args[*]}"
     fi
 
     _stack_run_as_user "$cmd"
+}
+
+_stack_run_installer() {
+    local tool="$1"
+    shift || true
+    _stack_run_verified_installer "$tool" "" "$@"
 }
 
 # Check if a stack tool is installed
@@ -425,12 +438,15 @@ install_ru() {
 
     log_detail "Installing ${STACK_NAMES[$tool]}..."
 
-    local -a args=()
-    if ! _stack_is_interactive; then
-        args+=(--yes)
-    fi
-
-    if _stack_run_installer "$tool" "${args[@]}"; then
+    # RU uses environment variables, not CLI flags, for non-interactive mode.
+    if _stack_is_interactive; then
+        if _stack_run_installer "$tool"; then
+            if _stack_is_installed "$tool"; then
+                log_success "${STACK_NAMES[$tool]} installed"
+                return 0
+            fi
+        fi
+    elif _stack_run_verified_installer "$tool" "RU_NON_INTERACTIVE=1"; then
         if _stack_is_installed "$tool"; then
             log_success "${STACK_NAMES[$tool]} installed"
             return 0

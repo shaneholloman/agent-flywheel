@@ -1845,112 +1845,73 @@ update_stack() {
     # NTM - always install/update (installer is idempotent)
     run_cmd "NTM" update_run_verified_installer ntm
 
-    # MCP Agent Mail - always install/update (requires tmux for server process)
-    # Fix: Track installer exit code via status file instead of trusting
-    # tmux new-session -d exit code (which only reflects session creation).
-    if cmd_exists tmux; then
-        local tool="mcp_agent_mail"
-        local url="${KNOWN_INSTALLERS[$tool]:-}"
-        local expected_sha256
-        expected_sha256="$(get_checksum "$tool")"
+    # MCP Agent Mail - always install/update via non-blocking installer mode,
+    # then enable the managed user service on port 8765.
+    local tool="mcp_agent_mail"
+    local url="${KNOWN_INSTALLERS[$tool]:-}"
+    local expected_sha256
+    expected_sha256="$(get_checksum "$tool")"
 
-        if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-            # Fetch and verify content first
-            local tmp_install
-            tmp_install=$(mktemp "${TMPDIR:-/tmp}/acfs-install-am.XXXXXX" 2>/dev/null) || tmp_install=""
-            if [[ -z "$tmp_install" ]]; then
-                log_item "fail" "MCP Agent Mail" "failed to create temp file for verified installer"
-            else
-                if verify_checksum "$url" "$expected_sha256" "$tool" > "$tmp_install"; then
-                    chmod +x "$tmp_install"
+    if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
+        local tmp_install
+        tmp_install=$(mktemp "${TMPDIR:-/tmp}/acfs-install-am.XXXXXX" 2>/dev/null) || tmp_install=""
+        if [[ -z "$tmp_install" ]]; then
+            log_item "fail" "MCP Agent Mail" "failed to create temp file for verified installer"
+        else
+            if verify_checksum "$url" "$expected_sha256" "$tool" > "$tmp_install"; then
+                chmod +x "$tmp_install"
+                log_item "run" "MCP Agent Mail"
 
-                    local tmux_session="acfs-services"
-                    # Kill old session if exists
-                    tmux kill-session -t "$tmux_session" 2>/dev/null || true
+                if bash "$tmp_install" --dir "$HOME/mcp_agent_mail" --yes --no-start; then
+                    local uid
+                    local runtime_dir
+                    local user_bus
+                    uid="$(id -u)"
+                    runtime_dir="/run/user/$uid"
+                    user_bus="$runtime_dir/bus"
 
-                    # Use a status file to track the installer's actual exit code.
-                    # tmux new-session -d returns 0 for session creation regardless
-                    # of whether the payload succeeds (issue #148).
-                    local status_file
-                    status_file=$(mktemp "${TMPDIR:-/tmp}/acfs-am-status.XXXXXX" 2>/dev/null) || status_file=""
-
-                    if [[ -n "$status_file" ]]; then
-                        log_item "run" "MCP Agent Mail (tmux)"
-
-                        # Wrap the installer: run it, write exit code to status file
-                        tmux new-session -d -s "$tmux_session" \
-                            bash -c '"$1" --dir "$3/mcp_agent_mail" --yes; printf "%s\n" "$?" > "$2"' \
-                            _ "$tmp_install" "$status_file" "$HOME"
-
-                        # The installer ends with `exec` into the server process,
-                        # so the status file is never written and the tmux session
-                        # stays alive indefinitely (by design — it runs the server).
-                        # Detect success by polling the health endpoint instead.
-                        local waited=0
-                        local max_wait=120
-                        local am_healthy=false
-                        while [[ $waited -lt $max_wait ]]; do
-                            # Check health endpoint (server listens on 8765 by default)
-                            if curl -sf http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
-                                am_healthy=true
-                                break
-                            fi
-                            # Also check status file as fallback (in case installer
-                            # exits normally without exec in future versions)
-                            if [[ -f "$status_file" ]] && [[ -s "$status_file" ]]; then
-                                local installer_rc
-                                installer_rc=$(cat "$status_file")
-                                if [[ "$installer_rc" == "0" ]]; then
-                                    am_healthy=true
-                                fi
-                                break
-                            fi
-                            # If tmux session ended and no status file, installer failed
-                            if ! tmux has-session -t "$tmux_session" 2>/dev/null; then
-                                break
-                            fi
-                            sleep 2
-                            waited=$((waited + 2))
-                        done
-
-                        if [[ "$am_healthy" == "true" ]]; then
-                            if [[ "$QUIET" != "true" ]] && [[ "$VERBOSE" != "true" ]]; then
-                                printf "\033[1A\033[2K  ${GREEN}[ok]${NC} %s\n" "MCP Agent Mail (tmux)"
-                            elif [[ "$QUIET" != "true" ]]; then
-                                printf "  ${GREEN}[ok]${NC} %s\n" "MCP Agent Mail (tmux)"
-                            fi
-                            log_to_file "Success: MCP Agent Mail (tmux)"
-                            ((SUCCESS_COUNT += 1))
-                        elif [[ $waited -ge $max_wait ]]; then
-                            if [[ "$QUIET" != "true" ]]; then
-                                printf "  ${YELLOW}[warn]${NC} %s\n" "MCP Agent Mail (tmux) - timed out after ${max_wait}s"
-                            fi
-                            log_to_file "Warning: MCP Agent Mail tmux session timed out after ${max_wait}s"
-                            ((FAIL_COUNT += 1))
-                        else
-                            if [[ "$QUIET" != "true" ]]; then
-                                printf "  ${RED}[fail]${NC} %s\n" "MCP Agent Mail (tmux) - installer failed"
-                            fi
-                            log_to_file "Failed: MCP Agent Mail - installer exited without starting server"
-                            ((FAIL_COUNT += 1))
+                    local -a service_env=("HOME=$HOME")
+                    if [[ -d "$runtime_dir" ]]; then
+                        service_env+=("XDG_RUNTIME_DIR=$runtime_dir")
+                        if [[ -S "$user_bus" ]]; then
+                            service_env+=("DBUS_SESSION_BUS_ADDRESS=unix:path=$user_bus")
                         fi
-                        rm -f "$status_file"
-                    else
-                        log_item "fail" "MCP Agent Mail (tmux)" "failed to create status file for exit tracking"
-                        log_to_file "Failed: MCP Agent Mail - mktemp failed for tmux status tracking"
                     fi
 
-                    rm -f "$tmp_install" 2>/dev/null || true
+                    if env "${service_env[@]}" am service install >/dev/null 2>&1; then
+                        env "${service_env[@]}" systemctl --user daemon-reload >/dev/null 2>&1 || true
+                        if ! env "${service_env[@]}" systemctl --user enable --now agent-mail.service >/dev/null 2>&1; then
+                            env "${service_env[@]}" systemctl --user restart agent-mail.service >/dev/null 2>&1
+                        fi
+                    fi
+
+                    if curl -sf http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+                        if [[ "$QUIET" != "true" ]] && [[ "$VERBOSE" != "true" ]]; then
+                            printf "\033[1A\033[2K  ${GREEN}[ok]${NC} %s\n" "MCP Agent Mail"
+                        elif [[ "$QUIET" != "true" ]]; then
+                            printf "  ${GREEN}[ok]${NC} %s\n" "MCP Agent Mail"
+                        fi
+                        log_to_file "Success: MCP Agent Mail"
+                        ((SUCCESS_COUNT += 1))
+                    else
+                        if [[ "$QUIET" != "true" ]]; then
+                            printf "  ${RED}[fail]${NC} %s\n" "MCP Agent Mail - service not healthy on 127.0.0.1:8765"
+                        fi
+                        log_to_file "Failed: MCP Agent Mail - service not healthy after install"
+                        ((FAIL_COUNT += 1))
+                    fi
                 else
-                    rm -f "$tmp_install"
-                    log_item "fail" "MCP Agent Mail" "verification failed"
+                    log_item "fail" "MCP Agent Mail" "installer failed"
                 fi
+
+                rm -f "$tmp_install" 2>/dev/null || true
+            else
+                rm -f "$tmp_install"
+                log_item "fail" "MCP Agent Mail" "verification failed"
             fi
-        else
-            log_item "fail" "MCP Agent Mail" "unknown installer URL/checksum"
         fi
     else
-        log_item "skip" "MCP Agent Mail" "tmux not found (required for install)"
+        log_item "fail" "MCP Agent Mail" "unknown installer URL/checksum"
     fi
 
     # Meta Skill (ms) - always install/update (installer is idempotent)
@@ -2040,6 +2001,20 @@ update_stack() {
 
     # Post-Compact Reminder (pcr) - always install/update
     run_cmd "PCR" update_run_verified_installer pcr --update
+
+    # DSR (Doodlestein Self-Releaser) - standalone bash script, update via git clone
+    if cmd_exists dsr; then
+        run_cmd "DSR" bash -c '
+            dsr_tmp="$(mktemp -d "${TMPDIR:-/tmp}/acfs-dsr-update.XXXXXX")"
+            if git clone --depth 1 https://github.com/Dicklesworthstone/doodlestein_self_releaser.git "$dsr_tmp/dsr" 2>/dev/null; then
+                if [[ -f "$dsr_tmp/dsr/dsr" ]]; then
+                    cp "$dsr_tmp/dsr/dsr" "$HOME/.local/bin/dsr"
+                    chmod 755 "$HOME/.local/bin/dsr"
+                fi
+            fi
+            rm -rf "$dsr_tmp"
+        '
+    fi
 }
 
 # ============================================================

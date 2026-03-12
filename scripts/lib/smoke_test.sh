@@ -240,7 +240,7 @@ _check_agent_mail() {
     if curl -fsS --max-time 5 http://127.0.0.1:8765/health &>/dev/null; then
         _smoke_info "Agent Mail: running"
     else
-        _smoke_warn "Agent Mail: not started" "run 'am' to start"
+        _smoke_warn "Agent Mail: not running" "run 'am service install && systemctl --user enable --now agent-mail.service'"
     fi
 }
 

@@ -183,20 +183,37 @@ install_stack_mcp_agent_mail() {
         log_info "dry-run: verified installer: stack.mcp_agent_mail"
     else
         if ! {
-            # Run installer in detached tmux session (run_in_tmux: true)
-            # This prevents blocking when the installer starts a long-running service
-            local tmux_session="acfs-services"
+            # Try security-verified install (no unverified fallback; fail closed)
+            local install_success=false
 
-            # Resolve verified installer URL + checksum (fail closed)
-            local tool="mcp_agent_mail"
-            local url=""
-            local expected_sha256=""
             if acfs_security_init; then
+                # Check if KNOWN_INSTALLERS is available as an associative array (declare -A)
+                # The grep ensures we specifically have an associative array, not just any variable
                 if declare -p KNOWN_INSTALLERS 2>/dev/null | grep -q 'declare -A'; then
+                    local tool="mcp_agent_mail"
+                    local url=""
+                    local expected_sha256=""
+
+                    # Safe access with explicit empty default
                     url="${KNOWN_INSTALLERS[$tool]:-}"
                     if ! expected_sha256="$(get_checksum "$tool")"; then
                         log_error "stack.mcp_agent_mail: get_checksum failed for tool '$tool'"
                         expected_sha256=""
+                    fi
+
+                    if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
+                        if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s' '--' '--dir' "${TARGET_HOME:-/home/ubuntu}"'/mcp_agent_mail' '--yes' '--no-start'; then
+                            install_success=true
+                        else
+                            log_error "stack.mcp_agent_mail: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.mcp_agent_mail: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.mcp_agent_mail: checksum for '$tool' not found"
+                        fi
                     fi
                 else
                     log_error "stack.mcp_agent_mail: KNOWN_INSTALLERS array not available"
@@ -205,51 +222,75 @@ install_stack_mcp_agent_mail() {
                 log_error "stack.mcp_agent_mail: acfs_security_init failed - check security.sh and checksums.yaml"
             fi
 
-            if [[ -z "$url" ]]; then
-                log_error "stack.mcp_agent_mail: KNOWN_INSTALLERS[$tool] not found"
+            # Verified install is required - no fallback
+            if [[ "$install_success" = "true" ]]; then
+                true
+            else
+                log_error "Verified install failed for stack.mcp_agent_mail"
                 false
             fi
-            if [[ -z "$expected_sha256" ]]; then
-                log_error "stack.mcp_agent_mail: checksum for '$tool' not found"
-                false
-            fi
-
-            # Download verified installer to a temp file (so tmux can exec it without pipes)
-            local tmp_install
-            tmp_install="$(mktemp "${TMPDIR:-/tmp}/acfs-install-${tool}.XXXXXX" 2>/dev/null)" || tmp_install=""
-            if [[ -z "$tmp_install" ]]; then
-                log_error "Failed to create temp installer for stack.mcp_agent_mail"
-                false
-            fi
-
-            if ! verify_checksum "$url" "$expected_sha256" "$tool" > "$tmp_install"; then
-                rm -f "$tmp_install" 2>/dev/null || true
-                log_error "stack.mcp_agent_mail: installer verification failed"
-                false
-            fi
-            chmod 755 "$tmp_install" 2>/dev/null || true
-
-            # Kill existing session if any (clean slate)
-            run_as_target tmux kill-session -t "$tmux_session" 2>/dev/null || true
-
-            # Create new detached tmux session and run the installer
-            if run_as_target tmux new-session -d -s "$tmux_session" 'bash' "$tmp_install" '--dir' "${TARGET_HOME:-/home/ubuntu}"'/mcp_agent_mail' '--yes'; then
-                    log_success "stack.mcp_agent_mail installing in tmux session '$tmux_session'"
-                    log_info "Attach with: tmux attach -t $tmux_session"
-                    # Give it a moment to start
-                    sleep 3
-                else
-                    log_warn "stack.mcp_agent_mail tmux installation may have failed"
-                fi
         }; then
             log_error "stack.mcp_agent_mail: verified installer failed"
             return 1
         fi
     fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: if ! command -v am >/dev/null 2>&1; then (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_MCP_AGENT_MAIL'
+if ! command -v am >/dev/null 2>&1; then
+  echo "Agent Mail CLI missing after install" >&2
+  exit 1
+fi
+am service install >/dev/null
+systemctl --user daemon-reload >/dev/null 2>&1 || true
+if ! systemctl --user enable --now agent-mail.service >/dev/null 2>&1; then
+  systemctl --user restart agent-mail.service >/dev/null 2>&1
+fi
+INSTALL_STACK_MCP_AGENT_MAIL
+        then
+            log_error "stack.mcp_agent_mail: install command failed: if ! command -v am >/dev/null 2>&1; then"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_MCP_AGENT_MAIL'
+if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+  echo "Agent Mail service did not become healthy on 127.0.0.1:8765" >&2
+  exit 1
+fi
+INSTALL_STACK_MCP_AGENT_MAIL
+        then
+            log_error "stack.mcp_agent_mail: install command failed: if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then"
+            return 1
+        fi
+    fi
 
-    # Verify skipped: run_in_tmux installs async in detached tmux session
-    log_info "stack.mcp_agent_mail: installation running in background tmux session"
-    log_info "Attach with: tmux attach -t acfs-services"
+    # Verify
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: command -v am (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_MCP_AGENT_MAIL'
+command -v am
+INSTALL_STACK_MCP_AGENT_MAIL
+        then
+            log_error "stack.mcp_agent_mail: verify failed: command -v am"
+            return 1
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: verify: curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_STACK_MCP_AGENT_MAIL'
+curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null
+INSTALL_STACK_MCP_AGENT_MAIL
+        then
+            log_error "stack.mcp_agent_mail: verify failed: curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null"
+            return 1
+        fi
+    fi
 
     log_success "stack.mcp_agent_mail installed"
 }

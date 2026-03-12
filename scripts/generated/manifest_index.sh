@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="4d3abf2c1b29da09e8d2a1e4d640546ecbf4fb77c4a194e7138e93640d7c4ec8"
+ACFS_MANIFEST_SHA256="88b6c1636844efbbf4359f638fc404063486cc3b9816f9e6d7a478bc9c4c7ca0"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -177,7 +177,7 @@ declare -gA ACFS_MODULE_DEPS=(
   ['cloud.supabase']="base.system,base.filesystem"
   ['cloud.vercel']="lang.bun"
   ['stack.ntm']="cli.modern"
-  ['stack.mcp_agent_mail']="lang.bun,lang.uv,cli.modern"
+  ['stack.mcp_agent_mail']="lang.bun,lang.uv"
   ['stack.meta_skill']="lang.rust,lang.uv"
   ['stack.automated_plan_reviser']="lang.rust"
   ['stack.jeffreysprompts']=""
@@ -387,7 +387,7 @@ declare -gA ACFS_MODULE_TAGS=(
   ['cloud.supabase']="optional,cloud"
   ['cloud.vercel']="optional,cloud"
   ['stack.ntm']="recommended"
-  ['stack.mcp_agent_mail']="recommended,tmux-spawn"
+  ['stack.mcp_agent_mail']="recommended"
   ['stack.meta_skill']="recommended,agent-skills"
   ['stack.automated_plan_reviser']="recommended,agent-tools"
   ['stack.jeffreysprompts']="recommended,agent-skills,prompts"

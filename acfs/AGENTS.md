@@ -472,9 +472,9 @@ rg -l -t rust 'unwrap\(' | xargs ast-grep run -l Rust -p '$X.unwrap()' --json
 | `pt scan` | Find abandoned or zombie processes before killing things manually |
 | `casr providers` | Check which agent/provider handoffs CASR can resume |
 | `dsr check --all` | Validate fallback release readiness when GitHub Actions is throttled |
-| `ru sync` | Pull all managed repos forward before starting a swarm or maintenance pass |
+| `ru status --fetch` | Inspect repo drift before starting a swarm or large maintenance pass |
 | `asb backup --all` | Back up agent settings before risky hook/config experiments |
-| `claude-post-compact-reminder` | PCR hook script that reminds Claude Code to re-read `AGENTS.md` after compaction |
+| `test -x "$HOME/.local/bin/claude-post-compact-reminder"` | Verify the PCR hook script exists before checking Claude settings |
 
 ### When To Reach For Them
 

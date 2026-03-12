@@ -2237,7 +2237,20 @@ run_as_target() {
     # Environment variables to set for target user commands
     # UV_NO_CONFIG prevents uv from looking for config in /root when running via sudo
     # HOME is set explicitly to ensure consistent home directory
+    # XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS let user services work even when
+    # install.sh is running as root and switching to TARGET_USER non-interactively.
     local -a env_args=("UV_NO_CONFIG=1" "HOME=$user_home")
+    local target_uid=""
+    local target_runtime_dir=""
+    if target_uid="$(id -u "$user" 2>/dev/null)"; then
+        target_runtime_dir="/run/user/$target_uid"
+        if [[ -d "$target_runtime_dir" ]]; then
+            env_args+=("XDG_RUNTIME_DIR=$target_runtime_dir")
+            if [[ -S "$target_runtime_dir/bus" ]]; then
+                env_args+=("DBUS_SESSION_BUS_ADDRESS=unix:path=$target_runtime_dir/bus")
+            fi
+        fi
+    fi
 
     # Pass ACFS context variables to target user environment
     if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]]; then env_args+=("ACFS_BOOTSTRAP_DIR=$ACFS_BOOTSTRAP_DIR"); fi
@@ -4554,52 +4567,56 @@ NTM_CONFIG_EOF
         fi
     fi
 
-    # MCP Agent Mail (check for mcp-agent-mail stub or mcp_agent_mail directory)
-    # NOTE: We run this in tmux because the installer starts the server which blocks
-    if binary_installed "mcp-agent-mail" || [[ -d "$TARGET_HOME/mcp_agent_mail" ]]; then
-        log_detail "MCP Agent Mail already installed"
+    # MCP Agent Mail
+    local am_cli_path="$TARGET_HOME/.local/bin/am"
+    if binary_installed "mcp-agent-mail" || [[ -x "$am_cli_path" ]] || [[ -d "$TARGET_HOME/mcp_agent_mail" ]]; then
+        log_detail "MCP Agent Mail already installed; ensuring managed service"
     else
-        log_detail "Installing MCP Agent Mail (in tmux session)"
-        # Create or use acfs-services tmux session, run installer in first pane.
-        # The installer will start the server, which runs persistently in tmux.
-        local tmux_session="acfs-services"
-        local tool="mcp_agent_mail"
-        local target_dir="$TARGET_HOME/mcp_agent_mail"
+        log_detail "Installing MCP Agent Mail"
+    fi
+    local tool="mcp_agent_mail"
+    local target_dir="$TARGET_HOME/mcp_agent_mail"
 
-        # Fetch + verify the installer script, then run it in tmux to avoid blocking.
-        if acfs_load_upstream_checksums; then
-            local url="${ACFS_UPSTREAM_URLS[$tool]:-}"
-            local expected_sha256="${ACFS_UPSTREAM_SHA256[$tool]:-}"
+    if acfs_load_upstream_checksums; then
+        local url="${ACFS_UPSTREAM_URLS[$tool]:-}"
+        local expected_sha256="${ACFS_UPSTREAM_SHA256[$tool]:-}"
 
-            if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
-                log_warn "MCP Agent Mail: missing installer URL/checksum"
-            else
-                local tmp_install
-                tmp_install="$(mktemp "${TMPDIR:-/tmp}/acfs-install-${tool}.XXXXXX" 2>/dev/null)" || tmp_install=""
+        if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+            log_warn "MCP Agent Mail: missing installer URL/checksum"
+        else
+            local tmp_install
+            tmp_install="$(mktemp "${TMPDIR:-/tmp}/acfs-install-${tool}.XXXXXX" 2>/dev/null)" || tmp_install=""
 
-                if [[ -n "$tmp_install" ]] && verify_checksum "$url" "$expected_sha256" "$tool" > "$tmp_install"; then
-                    chmod 755 "$tmp_install" 2>/dev/null || true
+            if [[ -n "$tmp_install" ]] && verify_checksum "$url" "$expected_sha256" "$tool" > "$tmp_install"; then
+                chmod 755 "$tmp_install" 2>/dev/null || true
 
-                    # Kill existing session if any (clean slate)
-                    run_as_target tmux kill-session -t "$tmux_session" 2>/dev/null || true
-
-                    # Create new detached session and run the installer
-                    if try_step "Installing MCP Agent Mail in tmux" run_as_target tmux new-session -d -s "$tmux_session" "$tmp_install" --dir "$target_dir" --yes; then
-                        log_success "MCP Agent Mail installing in tmux session '$tmux_session'"
-                        log_info "Attach with: tmux attach -t $tmux_session"
-                        # Give it a moment to start
-                        sleep 5
+                if try_step "Installing MCP Agent Mail" run_as_target bash "$tmp_install" --dir "$target_dir" --yes --no-start; then
+                    if run_as_target bash -c 'set -euo pipefail
+                        command -v am >/dev/null 2>&1
+                        am service install >/dev/null
+                        systemctl --user daemon-reload >/dev/null 2>&1 || true
+                        if ! systemctl --user enable --now agent-mail.service >/dev/null 2>&1; then
+                            systemctl --user restart agent-mail.service >/dev/null 2>&1
+                        fi
+                    '; then
+                        if curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+                            log_success "MCP Agent Mail service running on http://127.0.0.1:8765"
+                        else
+                            log_warn "MCP Agent Mail installed but service did not become healthy"
+                        fi
                     else
-                        log_warn "MCP Agent Mail tmux installation may have failed"
+                        log_warn "MCP Agent Mail installed but managed service setup failed"
                     fi
                 else
-                    rm -f "$tmp_install" 2>/dev/null || true
-                    log_warn "MCP Agent Mail: installer verification failed"
+                    log_warn "MCP Agent Mail installation may have failed"
                 fi
+            else
+                rm -f "$tmp_install" 2>/dev/null || true
+                log_warn "MCP Agent Mail: installer verification failed"
             fi
-        else
-            log_warn "MCP Agent Mail: unable to load upstream checksums; refusing to run unverified installer"
         fi
+    else
+        log_warn "MCP Agent Mail: unable to load upstream checksums; refusing to run unverified installer"
     fi
 
     # Ultimate Bug Scanner
@@ -5219,9 +5236,13 @@ run_smoke_test() {
         ((critical_failed += 1))
     fi
 
-    # Non-critical: Agent Mail server can start
-    if [[ -x "$TARGET_HOME/mcp_agent_mail/scripts/run_server_with_token.sh" ]]; then
-        echo "✅ Agent Mail: installed (run 'am' to start)" >&2
+    # Non-critical: Agent Mail service status
+    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness &>/dev/null; then
+        echo "✅ Agent Mail: running on http://127.0.0.1:8765" >&2
+    elif [[ -x "$TARGET_HOME/.local/bin/am" ]] || [[ -x "$TARGET_HOME/mcp_agent_mail/scripts/run_server_with_token.sh" ]]; then
+        echo "⚠️ Agent Mail: installed but service is not running" >&2
+        echo "    Fix: am service install && systemctl --user enable --now agent-mail.service" >&2
+        ((warnings += 1))
     else
         echo "⚠️ Agent Mail: not installed (re-run: curl -fsSL https://agent-flywheel.com/install | bash -s -- --yes --only-phase 8)" >&2
         ((warnings += 1))

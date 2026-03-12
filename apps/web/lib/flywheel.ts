@@ -1784,6 +1784,254 @@ Key capabilities:
       "cargo install --git https://github.com/Dicklesworthstone/coding_agent_usage_tracker",
     language: "Rust",
   },
+  {
+    id: "fsfs",
+    name: "FrankenSearch",
+    shortName: "FSFS",
+    href: "https://github.com/Dicklesworthstone/frankensearch",
+    icon: "Search",
+    color: "from-purple-500 to-violet-600",
+    tagline: "Two-tier hybrid search with progressive delivery",
+    description:
+      "BM25 lexical + semantic retrieval in a single binary. Returns fast initial results then refines with ML models. JSON API for agent integration.",
+    deepDescription: `FrankenSearch combines the best of both search worlds: BM25 lexical retrieval for exact
+keyword matches and semantic vector search for conceptual similarity. Results are delivered
+progressively — fast lexical hits arrive first while the semantic pass refines rankings.
+
+The embedded ML models (ONNX Runtime) run locally with no external API calls. Indexing
+is incremental and handles code, documentation, and session logs equally well.
+
+JSON API enables direct integration from AI agents — ask natural language questions about
+your codebase and get ranked file + line references back. Particularly useful when ripgrep
+finds too many results and you need semantic narrowing.`,
+    connectsTo: ["cass", "cm"],
+    connectionDescriptions: {
+      cass: "FSFS indexes the same session artifacts CASS searches",
+      cm: "Semantic search over procedural memory entries",
+    },
+    stars: 30,
+    features: [
+      "BM25 lexical + semantic retrieval",
+      "Progressive delivery (fast initial + quality refinement)",
+      "Embedded ONNX ML models (no API calls)",
+      "JSON API for agent integration",
+      "Incremental indexing",
+    ],
+    cliCommands: [
+      "fsfs search 'query'          # Hybrid search",
+      "fsfs index /path/to/project  # Index a project",
+      "fsfs status                  # Index health",
+    ],
+    installCommand:
+      'curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/frankensearch/main/install.sh" | bash -s -- --easy-mode',
+    language: "Rust",
+  },
+  {
+    id: "sbh",
+    name: "Storage Ballast Helper",
+    shortName: "SBH",
+    href: "https://github.com/Dicklesworthstone/storage_ballast_helper",
+    icon: "HardDrive",
+    color: "from-green-500 to-emerald-600",
+    tagline: "Predictive disk-pressure defense for AI workloads",
+    description:
+      "Monitors disk usage and maintains a ballast pool of pre-allocated files that can be instantly released when disk pressure spikes during builds or large clones.",
+    deepDescription: `AI coding workloads are bursty — cargo builds, node_modules installs, and git clones can
+consume gigabytes in seconds. SBH maintains a configurable ballast pool (default 5GB) of
+pre-allocated files. When free space drops below thresholds, ballast files are released
+instantly to prevent disk-full failures.
+
+Policies are explainable: 'sbh explain' shows exactly why each cleanup decision was made.
+Safe cleanup targets build artifacts, caches, and temporary files — never source code.
+
+The daemon monitors continuously with configurable check intervals. Integrates with SRPS
+for comprehensive system resource protection.`,
+    connectsTo: ["srps", "ru"],
+    connectionDescriptions: {
+      srps: "SBH handles disk pressure, SRPS handles CPU/memory",
+      ru: "Large multi-repo syncs can trigger disk pressure that SBH mitigates",
+    },
+    stars: 20,
+    features: [
+      "Predictive disk space monitoring",
+      "Instant ballast file release under pressure",
+      "Safe cleanup policies (never touches source code)",
+      "Explainable policy decisions",
+      "Configurable thresholds and check intervals",
+    ],
+    cliCommands: [
+      "sbh status                   # Current disk and ballast state",
+      "sbh explain                  # Why each policy decision was made",
+      "sbh daemon start             # Start continuous monitoring",
+    ],
+    installCommand:
+      'curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/storage_ballast_helper/main/scripts/install.sh" | bash',
+    language: "Rust",
+  },
+  {
+    id: "casr",
+    name: "Cross-Agent Session Resumer",
+    shortName: "CASR",
+    href: "https://github.com/Dicklesworthstone/cross_agent_session_resumer",
+    icon: "Repeat",
+    color: "from-fuchsia-500 to-pink-600",
+    tagline: "Resume coding sessions across AI providers",
+    description:
+      "Converts session history between Claude, Codex, Gemini, and 14+ providers. Resume work started in one agent using another without losing context.",
+    deepDescription: `When you hit a rate limit on Claude and need to continue in Codex, or want a fresh perspective
+from Gemini on a Claude session, CASR handles the conversion. It normalizes session history
+into a canonical model, then generates provider-specific resume contexts.
+
+Supports 14+ providers: Claude Code, Codex CLI, Gemini CLI, Cursor, Aider, Cline, and more.
+Session diff and merge allow combining insights from parallel agent sessions.
+
+The conversion preserves tool calls, file edits, and reasoning chains in a format each
+target provider understands. Quality depends on what was captured — inspect the generated
+resume context with 'casr preview' before trusting it.`,
+    connectsTo: ["cass", "ntm", "caam"],
+    connectionDescriptions: {
+      cass: "CASS provides the session logs that CASR converts",
+      ntm: "Resume sessions across NTM-managed agent instances",
+      caam: "Switch accounts then resume sessions across providers",
+    },
+    stars: 25,
+    features: [
+      "Cross-provider session conversion",
+      "Canonical session model",
+      "14+ provider support",
+      "Session diff and merge",
+      "Preview before commit",
+    ],
+    cliCommands: [
+      "casr providers               # List supported providers",
+      "casr resume --from claude --to codex",
+      "casr preview session.jsonl    # Inspect conversion",
+    ],
+    installCommand:
+      'curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/cross_agent_session_resumer/main/install.sh" | bash',
+    language: "Rust",
+  },
+  {
+    id: "dsr",
+    name: "Doodlestein Self-Releaser",
+    shortName: "DSR",
+    href: "https://github.com/Dicklesworthstone/doodlestein_self_releaser",
+    icon: "Package",
+    color: "from-orange-500 to-amber-600",
+    tagline: "Fallback release infra when CI is throttled",
+    description:
+      "Reuses your existing GitHub Actions YAML to build releases locally via nektos/act when GitHub Actions is unavailable or rate-limited.",
+    deepDescription: `When GitHub Actions hits quota limits or is too slow, DSR runs your release workflow
+locally using nektos/act (a local GitHub Actions runner). It reuses the exact same
+workflow YAML you already have — no separate release config to maintain.
+
+Multi-platform support via Docker containers matching GitHub's runner images. Artifact
+signing with minisign ensures release integrity. The 'dsr check' command validates that
+your repo has everything needed for a fallback release before you actually need one.`,
+    connectsTo: ["ru", "slb"],
+    connectionDescriptions: {
+      ru: "RU ensures repos are synced before DSR runs local releases",
+      slb: "SLB provides two-person approval for release operations",
+    },
+    stars: 15,
+    features: [
+      "Reuses existing GitHub Actions YAML",
+      "Local builds via nektos/act",
+      "Multi-platform support via Docker",
+      "Artifact signing with minisign",
+      "Pre-flight release readiness check",
+    ],
+    cliCommands: [
+      "dsr check --all              # Validate release readiness",
+      "dsr build                    # Run local release build",
+      "dsr doctor                   # Diagnose release setup",
+    ],
+    installCommand:
+      "git clone --depth 1 https://github.com/Dicklesworthstone/doodlestein_self_releaser.git && cp doodlestein_self_releaser/dsr ~/.local/bin/",
+    language: "Bash",
+  },
+  {
+    id: "asb",
+    name: "Agent Settings Backup",
+    shortName: "ASB",
+    href: "https://github.com/Dicklesworthstone/agent_settings_backup_script",
+    icon: "Save",
+    color: "from-sky-500 to-cyan-600",
+    tagline: "Git-versioned backups for AI agent configs",
+    description:
+      "Creates per-agent git repositories that version-control configuration folders. Supports 13+ agent types with full history and easy restoration.",
+    deepDescription: `Before experimenting with hook configurations, auth changes, or shell integrations,
+ASB snapshots everything into per-agent git repos. Each backup is a proper git commit
+with full history — you can diff, bisect, and restore any previous state.
+
+Supports Claude Code, Cursor, Codex, Gemini, Aider, Cline, and more. The backup repos
+contain agent-specific settings, MCP configs, hooks, and local preferences.
+
+Handle backup repos like secrets — they may contain tokens, auth state, or sensitive
+local configurations.`,
+    connectsTo: ["caam", "dcg"],
+    connectionDescriptions: {
+      caam: "Back up configs before CAAM switches accounts",
+      dcg: "Backup hook configurations before DCG changes",
+    },
+    stars: 10,
+    features: [
+      "Per-agent git repositories",
+      "Full version history with diffs",
+      "Easy restoration to any point",
+      "13+ agent type support",
+      "Automatic commit messages with timestamps",
+    ],
+    cliCommands: [
+      "asb backup --all             # Back up all agents",
+      "asb backup claude            # Back up specific agent",
+      "asb restore claude --list    # Show available snapshots",
+      "asb version                  # Show ASB version",
+    ],
+    installCommand:
+      'curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agent_settings_backup_script/main/install.sh" | bash',
+    language: "Bash",
+  },
+  {
+    id: "pcr",
+    name: "Post-Compact Reminder",
+    shortName: "PCR",
+    href: "https://github.com/Dicklesworthstone/post_compact_reminder",
+    icon: "Bell",
+    color: "from-yellow-500 to-amber-600",
+    tagline: "Forces AGENTS.md re-read after Claude Code compaction",
+    description:
+      "A Claude Code hook that detects context compaction events and injects a reminder to re-read AGENTS.md, preventing agents from forgetting project rules.",
+    deepDescription: `When Claude Code compacts its context window, project-specific rules from AGENTS.md
+can be lost. PCR is a Claude Code hook that fires after compaction events, injecting
+a system reminder to re-read the project's AGENTS.md file.
+
+Zero runtime overhead — it only activates on compaction events. Configurable reminder
+text lets you customize what gets injected. The hook script lives at
+~/.local/bin/claude-post-compact-reminder and is registered in Claude Code settings.
+
+This is a hook, not an interactive CLI. Verify installation by checking both the hook
+script and the Claude settings entry.`,
+    connectsTo: ["dcg"],
+    connectionDescriptions: {
+      dcg: "Both are Claude Code hooks that enforce project safety",
+    },
+    stars: 40,
+    features: [
+      "Auto-detects compaction events",
+      "Injects AGENTS.md re-read reminder",
+      "Zero overhead (only fires on compaction)",
+      "Configurable reminder text",
+      "Works alongside other Claude Code hooks",
+    ],
+    cliCommands: [
+      'test -x "$HOME/.local/bin/claude-post-compact-reminder"  # Verify hook exists',
+      'grep "post-compact-reminder" ~/.claude/settings.json     # Verify registration',
+    ],
+    installCommand:
+      'curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/post_compact_reminder/main/install-post-compact-reminder.sh" | bash --yes',
+    language: "Bash",
+  },
 ];
 
 // Merge basic metadata from manifest (source of truth for names, taglines,

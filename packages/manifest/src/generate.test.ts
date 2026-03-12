@@ -211,6 +211,18 @@ describe('Generated verified installer args', () => {
     expect(stackContent).not.toContain("'${TARGET_HOME:-/home/ubuntu}/mcp_agent_mail'");
     expect(stackContent).toContain('"${TARGET_HOME:-/home/ubuntu}"');
   });
+
+  test('stack.mcp_agent_mail uses managed service startup instead of tmux', () => {
+    const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
+    expect(existsSync(stackPath)).toBe(true);
+    const stackContent = readFileSync(stackPath, 'utf-8');
+
+    expect(stackContent).toContain('--no-start');
+    expect(stackContent).toContain('am service install >/dev/null');
+    expect(stackContent).toContain('systemctl --user enable --now agent-mail.service');
+    expect(stackContent).toContain('curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null');
+    expect(stackContent).not.toContain('tmux new-session -d -s "$tmux_session"');
+  });
 });
 
 describe('Generated filesystem script hardening', () => {

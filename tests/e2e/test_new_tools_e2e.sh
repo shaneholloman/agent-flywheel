@@ -132,9 +132,9 @@ test_tool_probe() {
     local output=""
     for cmd in "$@"; do
         if command -v timeout >/dev/null 2>&1; then
-            output=$(timeout "$probe_timeout" bash -lc "$cmd" 2>&1)
+            output=$(timeout "$probe_timeout" env PATH="$PATH" bash -lc "$cmd" 2>&1)
         else
-            output=$(bash -lc "$cmd" 2>&1)
+            output=$(env PATH="$PATH" bash -lc "$cmd" 2>&1)
         fi
 
         if [[ $? -eq 0 ]]; then
@@ -285,10 +285,23 @@ test_additional_stack_tools() {
 
     # post_compact_reminder (pcr)
     log "INFO" "pcr" "Testing post_compact_reminder (pcr)..."
-    if test_tool_basic "post_compact_reminder" "pcr" "false"; then
-        test_tool_probe "pcr_probe" "pcr" "pcr operational probe" "false" \
-            "pcr --help" \
-            "pcr status"
+    local pcr_hook_script="${HOME}/.local/bin/claude-post-compact-reminder"
+    local pcr_settings="${HOME}/.claude/settings.json"
+    local pcr_alt_settings="${HOME}/.config/claude/settings.json"
+    local pcr_hook_registered="false"
+
+    if [[ -f "$pcr_settings" ]] && grep -q "claude-post-compact-reminder" "$pcr_settings" 2>/dev/null; then
+        pcr_hook_registered="true"
+    elif [[ -f "$pcr_alt_settings" ]] && grep -q "claude-post-compact-reminder" "$pcr_alt_settings" 2>/dev/null; then
+        pcr_hook_registered="true"
+    fi
+
+    if [[ -x "$pcr_hook_script" && "$pcr_hook_registered" == "true" ]]; then
+        pass "pcr_hook" "PCR hook script and Claude settings entry are present"
+    elif [[ -e "$pcr_hook_script" || "$pcr_hook_registered" == "true" ]]; then
+        fail "pcr_hook" "PCR installation is partial; expected hook script plus Claude settings entry"
+    else
+        skip "pcr_hook" "PCR hook not installed (optional tool)"
     fi
 }
 
@@ -403,7 +416,7 @@ test_integration() {
         fail "br_primary" "br binary not found"
     fi
 
-    # Test 3: Flywheel.ts contains all new tools
+    # Test 3: flywheel.ts contains the core tool entries used by the page
     log "INFO" "flywheel_ts" "Testing flywheel.ts tool entries..."
     local flywheel_file="${ACFS_REPO:-$HOME/agentic_coding_flywheel_setup}/apps/web/lib/flywheel.ts"
     if [[ ! -f "$flywheel_file" ]]; then
@@ -419,7 +432,7 @@ test_integration() {
         done
 
         if [[ ${#missing_tools[@]} -eq 0 ]]; then
-            pass "flywheel_ts_tools" "All 16 tools present in flywheel.ts"
+            pass "flywheel_ts_tools" "All expected core flywheel.ts tool entries are present"
         else
             fail "flywheel_ts_tools" "Missing tools in flywheel.ts: ${missing_tools[*]}"
         fi
