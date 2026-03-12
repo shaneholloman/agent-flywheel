@@ -102,7 +102,7 @@ install_base_filesystem() {
     log_step "Installing base.filesystem"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Hardening: refuse to operate on symlinked workspace paths. (root)"
+        log_info "dry-run: install: for p in /data /data/projects /data/cache; do (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
 # Hardening: refuse to operate on symlinked workspace paths.
@@ -118,12 +118,12 @@ mkdir -p /data/projects /data/cache
 chown -h "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" /data /data/projects /data/cache
 INSTALL_BASE_FILESYSTEM
         then
-            log_error "base.filesystem: install command failed: # Hardening: refuse to operate on symlinked workspace paths."
+            log_error "base.filesystem: install command failed: for p in /data /data/projects /data/cache; do"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install AGENTS.md template to workspace root for agent guidance (root)"
+        log_info "dry-run: install: if curl --help all 2>/dev/null | grep -q -- '--proto'; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
 # Install AGENTS.md template to workspace root for agent guidance
@@ -136,12 +136,12 @@ curl "${CURL_ARGS[@]}" -o /data/projects/AGENTS.md "${ACFS_RAW}/acfs/AGENTS.md" 
 chown "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" /data/projects/AGENTS.md 2>/dev/null || true
 INSTALL_BASE_FILESYSTEM
         then
-            log_error "base.filesystem: install command failed: # Install AGENTS.md template to workspace root for agent guidance"
+            log_error "base.filesystem: install command failed: if curl --help all 2>/dev/null | grep -q -- '--proto'; then"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: target_home=\"\${TARGET_HOME:-/home/ubuntu}\" (root)"
+        log_info "dry-run: install: if [[ -z \"\$target_home\" || \"\$target_home\" == \"/\" || \"\$target_home\" != /* ]]; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
 target_home="${TARGET_HOME:-/home/ubuntu}"
@@ -158,7 +158,7 @@ mkdir -p "$target_home/.acfs"
 chown -hR "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" "$target_home/.acfs"
 INSTALL_BASE_FILESYSTEM
         then
-            log_error "base.filesystem: install command failed: target_home=\"\${TARGET_HOME:-/home/ubuntu}\""
+            log_error "base.filesystem: install command failed: if [[ -z \"\$target_home\" || \"\$target_home\" == \"/\" || \"\$target_home\" != /* ]]; then"
             return 1
         fi
     fi

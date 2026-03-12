@@ -102,7 +102,7 @@ install_network_tailscale() {
     log_step "Installing network.tailscale"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Add Tailscale apt repository (root)"
+        log_info "dry-run: install: case \"\$DISTRO_CODENAME\" in (root)"
     else
         if ! run_as_root_shell <<'INSTALL_NETWORK_TAILSCALE'
 # Add Tailscale apt repository
@@ -124,7 +124,7 @@ apt-get install -y tailscale
 systemctl enable tailscaled
 INSTALL_NETWORK_TAILSCALE
         then
-            log_error "network.tailscale: install command failed: # Add Tailscale apt repository"
+            log_error "network.tailscale: install command failed: case \"\$DISTRO_CODENAME\" in"
             return 1
         fi
     fi
@@ -163,7 +163,7 @@ install_network_ssh_keepalive() {
     log_step "Installing network.ssh_keepalive"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Backup original sshd_config if not already backed up (root)"
+        log_info "dry-run: install: if [[ ! -f /etc/ssh/sshd_config.acfs.bak ]]; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_NETWORK_SSH_KEEPALIVE'
 # Backup original sshd_config if not already backed up
@@ -189,9 +189,9 @@ echo "ClientAliveCountMax 3" >> /etc/ssh/sshd_config
 systemctl reload sshd || systemctl reload ssh || true
 INSTALL_NETWORK_SSH_KEEPALIVE
         then
-            log_warn "network.ssh_keepalive: install command failed: # Backup original sshd_config if not already backed up"
+            log_warn "network.ssh_keepalive: install command failed: if [[ ! -f /etc/ssh/sshd_config.acfs.bak ]]; then"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "network.ssh_keepalive" "install command failed: # Backup original sshd_config if not already backed up"
+              record_skipped_tool "network.ssh_keepalive" "install command failed: if [[ ! -f /etc/ssh/sshd_config.acfs.bak ]]; then"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "network.ssh_keepalive"
             fi

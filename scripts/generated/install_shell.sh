@@ -191,7 +191,7 @@ install_shell_omz() {
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install Powerlevel10k (target_user)"
+        log_info "dry-run: install: if [[ ! -d ~/.oh-my-zsh/custom/themes/powerlevel10k ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Install Powerlevel10k
@@ -200,12 +200,12 @@ if [[ ! -d ~/.oh-my-zsh/custom/themes/powerlevel10k ]]; then
 fi
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: # Install Powerlevel10k"
+            log_error "shell.omz: install command failed: if [[ ! -d ~/.oh-my-zsh/custom/themes/powerlevel10k ]]; then"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install zsh-autosuggestions (target_user)"
+        log_info "dry-run: install: if [[ ! -d ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Install zsh-autosuggestions
@@ -214,12 +214,12 @@ if [[ ! -d ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions ]]; then
 fi
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: # Install zsh-autosuggestions"
+            log_error "shell.omz: install command failed: if [[ ! -d ~/.oh-my-zsh/custom/plugins/zsh-autosuggestions ]]; then"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install zsh-syntax-highlighting (target_user)"
+        log_info "dry-run: install: if [[ ! -d ~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Install zsh-syntax-highlighting
@@ -228,12 +228,12 @@ if [[ ! -d ~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting ]]; then
 fi
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: # Install zsh-syntax-highlighting"
+            log_error "shell.omz: install command failed: if [[ ! -d ~/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting ]]; then"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install ACFS zshrc (target_user)"
+        log_info "dry-run: install: mkdir -p ~/.acfs/zsh (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Install ACFS zshrc
@@ -246,12 +246,12 @@ fi
 curl "${CURL_ARGS[@]}" -o ~/.acfs/zsh/acfs.zshrc "${ACFS_RAW}/acfs/zsh/acfs.zshrc"
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: # Install ACFS zshrc"
+            log_error "shell.omz: install command failed: mkdir -p ~/.acfs/zsh"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install ACFS shell completions (zsh) (target_user)"
+        log_info "dry-run: install: mkdir -p ~/.acfs/completions (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Install ACFS shell completions (zsh)
@@ -266,12 +266,12 @@ curl "${CURL_ARGS[@]}" -o ~/.acfs/completions/_acfs "${ACFS_RAW}/scripts/complet
 curl "${CURL_ARGS[@]}" -o ~/.acfs/completions/acfs.bash "${ACFS_RAW}/scripts/completions/acfs.bash"
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: # Install ACFS shell completions (zsh)"
+            log_error "shell.omz: install command failed: mkdir -p ~/.acfs/completions"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install pre-configured Powerlevel10k settings (prevents config wizard on first login) (target_user)"
+        log_info "dry-run: install: if curl --help all 2>/dev/null | grep -q -- '--proto'; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Install pre-configured Powerlevel10k settings (prevents config wizard on first login)
@@ -283,12 +283,12 @@ fi
 curl "${CURL_ARGS[@]}" -o ~/.p10k.zsh "${ACFS_RAW}/acfs/zsh/p10k.zsh"
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: # Install pre-configured Powerlevel10k settings (prevents config wizard on first login)"
+            log_error "shell.omz: install command failed: if curl --help all 2>/dev/null | grep -q -- '--proto'; then"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Setup loader .zshrc (target_user)"
+        log_info "dry-run: install: if [[ -f ~/.zshrc ]] && ! grep -q \"ACFS loader\" ~/.zshrc; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Setup loader .zshrc
@@ -302,12 +302,12 @@ echo '# User overrides live here forever' >> ~/.zshrc
 echo '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"' >> ~/.zshrc
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: # Setup loader .zshrc"
+            log_error "shell.omz: install command failed: if [[ -f ~/.zshrc ]] && ! grep -q \"ACFS loader\" ~/.zshrc; then"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Setup ~/.profile for bash login shells (prevents PATH warnings from installers) (target_user)"
+        log_info "dry-run: install: if [[ ! -f ~/.profile ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Setup ~/.profile for bash login shells (prevents PATH warnings from installers)
@@ -323,12 +323,12 @@ elif ! grep -q '\.local/bin' ~/.profile; then
 fi
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: # Setup ~/.profile for bash login shells (prevents PATH warnings from installers)"
+            log_error "shell.omz: install command failed: if [[ ! -f ~/.profile ]]; then"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Set default shell (target_user)"
+        log_info "dry-run: install: if [[ \"\$SHELL\" != */zsh ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Set default shell
@@ -352,7 +352,7 @@ if [[ "$SHELL" != */zsh ]]; then
 fi
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: # Set default shell"
+            log_error "shell.omz: install command failed: if [[ \"\$SHELL\" != */zsh ]]; then"
             return 1
         fi
     fi

@@ -156,7 +156,7 @@ install_tools_lazydocker() {
     log_step "Installing tools.lazydocker"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: LD_VER=\"0.23.3\" (root)"
+        log_info "dry-run: install: case \"\$ARCH\" in (root)"
     else
         if ! run_as_root_shell <<'INSTALL_TOOLS_LAZYDOCKER'
 LD_VER="0.23.3"
@@ -178,7 +178,7 @@ chmod +x /usr/local/bin/lazydocker
 rm "$TMP_FILE"
 INSTALL_TOOLS_LAZYDOCKER
         then
-            log_error "tools.lazydocker: install command failed: LD_VER=\"0.23.3\""
+            log_error "tools.lazydocker: install command failed: case \"\$ARCH\" in"
             return 1
         fi
     fi
@@ -396,7 +396,7 @@ install_tools_vault() {
     log_step "Installing tools.vault"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # HashiCorp doesn't always publish packages for newest Ubuntu versions. (root)"
+        log_info "dry-run: install: if curl --help all 2>/dev/null | grep -q -- '--proto'; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_TOOLS_VAULT'
 # HashiCorp doesn't always publish packages for newest Ubuntu versions.
@@ -421,9 +421,9 @@ echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://
 apt-get update && apt-get install -y vault
 INSTALL_TOOLS_VAULT
         then
-            log_warn "tools.vault: install command failed: # HashiCorp doesn't always publish packages for newest Ubuntu versions."
+            log_warn "tools.vault: install command failed: if curl --help all 2>/dev/null | grep -q -- '--proto'; then"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "tools.vault" "install command failed: # HashiCorp doesn't always publish packages for newest Ubuntu versions."
+              record_skipped_tool "tools.vault" "install command failed: if curl --help all 2>/dev/null | grep -q -- '--proto'; then"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "tools.vault"
             fi
@@ -1075,7 +1075,7 @@ install_utils_rust_proxy() {
     log_step "Installing utils.rust_proxy"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Build rust_proxy from source (no install.sh available) (target_user)"
+        log_info "dry-run: install: trap 'rm -rf \"\$TMPDIR\"' EXIT (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_UTILS_RUST_PROXY'
 # Build rust_proxy from source (no install.sh available)
@@ -1087,9 +1087,9 @@ cargo build --release
 cp target/release/rust_proxy ~/.cargo/bin/
 INSTALL_UTILS_RUST_PROXY
         then
-            log_warn "utils.rust_proxy: install command failed: # Build rust_proxy from source (no install.sh available)"
+            log_warn "utils.rust_proxy: install command failed: trap 'rm -rf \"\$TMPDIR\"' EXIT"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "utils.rust_proxy" "install command failed: # Build rust_proxy from source (no install.sh available)"
+              record_skipped_tool "utils.rust_proxy" "install command failed: trap 'rm -rf \"\$TMPDIR\"' EXIT"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "utils.rust_proxy"
             fi
@@ -1125,7 +1125,7 @@ install_utils_aadc() {
     log_step "Installing utils.aadc"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Build aadc from source (no install.sh available) (target_user)"
+        log_info "dry-run: install: trap 'rm -rf \"\$TMPDIR\"' EXIT (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_UTILS_AADC'
 # Build aadc from source (no install.sh available)
@@ -1137,9 +1137,9 @@ cargo build --release
 cp target/release/aadc ~/.cargo/bin/
 INSTALL_UTILS_AADC
         then
-            log_warn "utils.aadc: install command failed: # Build aadc from source (no install.sh available)"
+            log_warn "utils.aadc: install command failed: trap 'rm -rf \"\$TMPDIR\"' EXIT"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "utils.aadc" "install command failed: # Build aadc from source (no install.sh available)"
+              record_skipped_tool "utils.aadc" "install command failed: trap 'rm -rf \"\$TMPDIR\"' EXIT"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "utils.aadc"
             fi
@@ -1175,7 +1175,7 @@ install_utils_caut() {
     log_step "Installing utils.caut"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Build caut from source (no install.sh available) (target_user)"
+        log_info "dry-run: install: trap 'rm -rf \"\$TMPDIR\"' EXIT (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_UTILS_CAUT'
 # Build caut from source (no install.sh available)
@@ -1187,9 +1187,9 @@ cargo build --release
 cp target/release/caut ~/.cargo/bin/
 INSTALL_UTILS_CAUT
         then
-            log_warn "utils.caut: install command failed: # Build caut from source (no install.sh available)"
+            log_warn "utils.caut: install command failed: trap 'rm -rf \"\$TMPDIR\"' EXIT"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "utils.caut" "install command failed: # Build caut from source (no install.sh available)"
+              record_skipped_tool "utils.caut" "install command failed: trap 'rm -rf \"\$TMPDIR\"' EXIT"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "utils.caut"
             fi

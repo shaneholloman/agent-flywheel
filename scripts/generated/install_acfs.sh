@@ -102,7 +102,7 @@ install_acfs_workspace() {
     log_step "Installing acfs.workspace"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Create project directory (target_user)"
+        log_info "dry-run: install: mkdir -p /data/projects/my_first_project (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_WORKSPACE'
 # Create project directory
@@ -111,12 +111,12 @@ cd /data/projects/my_first_project
 git init 2>/dev/null || true
 INSTALL_ACFS_WORKSPACE
         then
-            log_error "acfs.workspace: install command failed: # Create project directory"
+            log_error "acfs.workspace: install command failed: mkdir -p /data/projects/my_first_project"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Create workspace instructions file (target_user)"
+        log_info "dry-run: install: mkdir -p ~/.acfs (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_WORKSPACE'
 # Create workspace instructions file
@@ -150,12 +150,12 @@ printf '%s\n' "" \
   "" > ~/.acfs/workspace-instructions.txt
 INSTALL_ACFS_WORKSPACE
         then
-            log_error "acfs.workspace: install command failed: # Create workspace instructions file"
+            log_error "acfs.workspace: install command failed: mkdir -p ~/.acfs"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Create tmux session with agent panes (if not already running) (target_user)"
+        log_info "dry-run: install: if ! tmux has-session -t \"\$SESSION_NAME\" 2>/dev/null; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_WORKSPACE'
 # Create tmux session with agent panes (if not already running)
@@ -177,12 +177,12 @@ if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
 fi
 INSTALL_ACFS_WORKSPACE
         then
-            log_error "acfs.workspace: install command failed: # Create tmux session with agent panes (if not already running)"
+            log_error "acfs.workspace: install command failed: if ! tmux has-session -t \"\$SESSION_NAME\" 2>/dev/null; then"
             return 1
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Add agents alias to zshrc.local if not already present (target_user)"
+        log_info "dry-run: install: if [[ ! -f ~/.zshrc.local ]] || ! grep -q \"alias agents=\" ~/.zshrc.local; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_WORKSPACE'
 # Add agents alias to zshrc.local if not already present
@@ -194,7 +194,7 @@ if [[ ! -f ~/.zshrc.local ]] || ! grep -q "alias agents=" ~/.zshrc.local; then
 fi
 INSTALL_ACFS_WORKSPACE
         then
-            log_error "acfs.workspace: install command failed: # Add agents alias to zshrc.local if not already present"
+            log_error "acfs.workspace: install command failed: if [[ ! -f ~/.zshrc.local ]] || ! grep -q \"alias agents=\" ~/.zshrc.local; then"
             return 1
         fi
     fi
@@ -244,7 +244,7 @@ INSTALL_ACFS_ONBOARD
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install onboard script (target_user)"
+        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh\" ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_ONBOARD'
 # Install onboard script
@@ -263,7 +263,7 @@ fi
 chmod +x ~/.local/bin/onboard
 INSTALL_ACFS_ONBOARD
         then
-            log_error "acfs.onboard: install command failed: # Install onboard script"
+            log_error "acfs.onboard: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh\" ]]; then"
             return 1
         fi
     fi
@@ -302,7 +302,7 @@ INSTALL_ACFS_UPDATE
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install acfs-update wrapper (target_user)"
+        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update\" ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_UPDATE'
 # Install acfs-update wrapper
@@ -321,7 +321,7 @@ fi
 chmod +x ~/.local/bin/acfs-update
 INSTALL_ACFS_UPDATE
         then
-            log_error "acfs.update: install command failed: # Install acfs-update wrapper"
+            log_error "acfs.update: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update\" ]]; then"
             return 1
         fi
     fi
@@ -365,7 +365,7 @@ INSTALL_ACFS_NIGHTLY
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install nightly update wrapper script (target_user)"
+        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/lib/nightly_update.sh\" ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_NIGHTLY'
 # Install nightly update wrapper script
@@ -384,9 +384,9 @@ fi
 chmod +x ~/.acfs/scripts/nightly-update.sh
 INSTALL_ACFS_NIGHTLY
         then
-            log_warn "acfs.nightly: install command failed: # Install nightly update wrapper script"
+            log_warn "acfs.nightly: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/lib/nightly_update.sh\" ]]; then"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "acfs.nightly" "install command failed: # Install nightly update wrapper script"
+              record_skipped_tool "acfs.nightly" "install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/lib/nightly_update.sh\" ]]; then"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "acfs.nightly"
             fi
@@ -394,7 +394,7 @@ INSTALL_ACFS_NIGHTLY
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install systemd timer unit (target_user)"
+        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/templates/acfs-nightly-update.timer\" ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_NIGHTLY'
 # Install systemd timer unit
@@ -412,9 +412,9 @@ else
 fi
 INSTALL_ACFS_NIGHTLY
         then
-            log_warn "acfs.nightly: install command failed: # Install systemd timer unit"
+            log_warn "acfs.nightly: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/templates/acfs-nightly-update.timer\" ]]; then"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "acfs.nightly" "install command failed: # Install systemd timer unit"
+              record_skipped_tool "acfs.nightly" "install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/templates/acfs-nightly-update.timer\" ]]; then"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "acfs.nightly"
             fi
@@ -422,7 +422,7 @@ INSTALL_ACFS_NIGHTLY
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install systemd service unit (target_user)"
+        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/templates/acfs-nightly-update.service\" ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_NIGHTLY'
 # Install systemd service unit
@@ -440,9 +440,9 @@ else
 fi
 INSTALL_ACFS_NIGHTLY
         then
-            log_warn "acfs.nightly: install command failed: # Install systemd service unit"
+            log_warn "acfs.nightly: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/templates/acfs-nightly-update.service\" ]]; then"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "acfs.nightly" "install command failed: # Install systemd service unit"
+              record_skipped_tool "acfs.nightly" "install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/templates/acfs-nightly-update.service\" ]]; then"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "acfs.nightly"
             fi
@@ -450,7 +450,7 @@ INSTALL_ACFS_NIGHTLY
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Reload systemd and enable the timer (target_user)"
+        log_info "dry-run: install: systemctl --user daemon-reload (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_NIGHTLY'
 # Reload systemd and enable the timer
@@ -458,9 +458,9 @@ systemctl --user daemon-reload
 systemctl --user enable --now acfs-nightly-update.timer
 INSTALL_ACFS_NIGHTLY
         then
-            log_warn "acfs.nightly: install command failed: # Reload systemd and enable the timer"
+            log_warn "acfs.nightly: install command failed: systemctl --user daemon-reload"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "acfs.nightly" "install command failed: # Reload systemd and enable the timer"
+              record_skipped_tool "acfs.nightly" "install command failed: systemctl --user daemon-reload"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "acfs.nightly"
             fi
@@ -507,7 +507,7 @@ INSTALL_ACFS_DOCTOR
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install acfs CLI (doctor.sh entrypoint) (target_user)"
+        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh\" ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_DOCTOR'
 # Install acfs CLI (doctor.sh entrypoint)
@@ -526,7 +526,7 @@ fi
 chmod +x ~/.local/bin/acfs
 INSTALL_ACFS_DOCTOR
         then
-            log_error "acfs.doctor: install command failed: # Install acfs CLI (doctor.sh entrypoint)"
+            log_error "acfs.doctor: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh\" ]]; then"
             return 1
         fi
     fi

@@ -242,7 +242,41 @@ if ! command -v am >/dev/null 2>&1; then
   echo "Agent Mail CLI missing after install" >&2
   exit 1
 fi
-am service install >/dev/null
+storage_root="$HOME/.mcp_agent_mail_git_mailbox_repo"
+unit_dir="$HOME/.config/systemd/user"
+unit_file="$unit_dir/agent-mail.service"
+am_bin="$(command -v am)"
+db_url="sqlite+aiosqlite:///${storage_root}/storage.sqlite3"
+
+mkdir -p "$storage_root" "$unit_dir"
+cat > "$unit_file" <<UNIT_EOF
+[Unit]
+Description=MCP Agent Mail Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=$storage_root
+Environment=RUST_LOG=info
+Environment=STORAGE_ROOT=$storage_root
+Environment=DATABASE_URL=$db_url
+Environment=HTTP_PATH=/mcp/
+ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path /mcp --no-auth --no-tui
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+UNIT_EOF
+
+runtime_dir="/run/user/$(id -u)"
+if [[ -d "$runtime_dir" ]]; then
+  export XDG_RUNTIME_DIR="$runtime_dir"
+  if [[ -S "$runtime_dir/bus" ]]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+  fi
+fi
+
 systemctl --user daemon-reload >/dev/null 2>&1 || true
 if ! systemctl --user enable --now agent-mail.service >/dev/null 2>&1; then
   systemctl --user restart agent-mail.service >/dev/null 2>&1
@@ -254,16 +288,23 @@ INSTALL_STACK_MCP_AGENT_MAIL
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then (target_user)"
+        log_info "dry-run: install: until curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; do (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_STACK_MCP_AGENT_MAIL'
-if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
-  echo "Agent Mail service did not become healthy on 127.0.0.1:8765" >&2
-  exit 1
-fi
+# Wait for the managed Agent Mail service to become healthy.
+waited=0
+max_wait=30
+until curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; do
+  if [[ "$waited" -ge "$max_wait" ]]; then
+    echo "Agent Mail service did not become healthy on 127.0.0.1:8765 after ${max_wait}s" >&2
+    exit 1
+  fi
+  sleep 2
+  waited=$((waited + 2))
+done
 INSTALL_STACK_MCP_AGENT_MAIL
         then
-            log_error "stack.mcp_agent_mail: install command failed: if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then"
+            log_error "stack.mcp_agent_mail: install command failed: until curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; do"
             return 1
         fi
     fi
@@ -1306,7 +1347,7 @@ INSTALL_STACK_DCG
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: settings=\"\$HOME/.claude/settings.json\" (target_user)"
+        log_info "dry-run: verify: if [[ -f \"\$settings\" ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_STACK_DCG'
 settings="$HOME/.claude/settings.json"
@@ -1320,7 +1361,7 @@ else
 fi
 INSTALL_STACK_DCG
         then
-            log_error "stack.dcg: verify failed: settings=\"\$HOME/.claude/settings.json\""
+            log_error "stack.dcg: verify failed: if [[ -f \"\$settings\" ]]; then"
             return 1
         fi
     fi
@@ -1357,7 +1398,7 @@ install_stack_ru() {
                     fi
 
                     if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
-                        if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s'; then
+                        if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'env' 'RU_NON_INTERACTIVE=1' 'bash' '-s'; then
                             install_success=true
                         else
                             log_error "stack.ru: verify_checksum or installer execution failed"
@@ -1589,7 +1630,7 @@ install_stack_wezterm_automata() {
     log_step "Installing stack.wezterm_automata"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: WA_TMP=\"\$(mktemp -d \"\${TMPDIR:-/tmp}/wa_build.XXXXXX\")\" (target_user)"
+        log_info "dry-run: install: cd \"\$WA_TMP\" (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_STACK_WEZTERM_AUTOMATA'
 WA_TMP="$(mktemp -d "${TMPDIR:-/tmp}/wa_build.XXXXXX")"
@@ -1600,9 +1641,9 @@ cp target/release/wa ~/.cargo/bin/
 rm -rf "$WA_TMP"
 INSTALL_STACK_WEZTERM_AUTOMATA
         then
-            log_warn "stack.wezterm_automata: install command failed: WA_TMP=\"\$(mktemp -d \"\${TMPDIR:-/tmp}/wa_build.XXXXXX\")\""
+            log_warn "stack.wezterm_automata: install command failed: cd \"\$WA_TMP\""
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "stack.wezterm_automata" "install command failed: WA_TMP=\"\$(mktemp -d \"\${TMPDIR:-/tmp}/wa_build.XXXXXX\")\""
+              record_skipped_tool "stack.wezterm_automata" "install command failed: cd \"\$WA_TMP\""
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "stack.wezterm_automata"
             fi
@@ -2006,21 +2047,59 @@ install_stack_doodlestein_self_releaser() {
     log_step "Installing stack.doodlestein_self_releaser"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: DSR_TMP=\"\$(mktemp -d \"\${TMPDIR:-/tmp}/dsr_install.XXXXXX\")\" (target_user)"
+        log_info "dry-run: verified installer: stack.doodlestein_self_releaser"
     else
-        if ! run_as_target_shell <<'INSTALL_STACK_DOODLESTEIN_SELF_RELEASER'
-DSR_TMP="$(mktemp -d "${TMPDIR:-/tmp}/dsr_install.XXXXXX")"
-cd "$DSR_TMP"
-git clone --depth 1 https://github.com/Dicklesworthstone/doodlestein_self_releaser.git .
-cp dsr ~/.local/bin/dsr
-chmod 755 ~/.local/bin/dsr
-cd ..
-rm -rf "$DSR_TMP"
-INSTALL_STACK_DOODLESTEIN_SELF_RELEASER
-        then
-            log_warn "stack.doodlestein_self_releaser: install command failed: DSR_TMP=\"\$(mktemp -d \"\${TMPDIR:-/tmp}/dsr_install.XXXXXX\")\""
+        if ! {
+            # Try security-verified install (no unverified fallback; fail closed)
+            local install_success=false
+
+            if acfs_security_init; then
+                # Check if KNOWN_INSTALLERS is available as an associative array (declare -A)
+                # The grep ensures we specifically have an associative array, not just any variable
+                if declare -p KNOWN_INSTALLERS 2>/dev/null | grep -q 'declare -A'; then
+                    local tool="dsr"
+                    local url=""
+                    local expected_sha256=""
+
+                    # Safe access with explicit empty default
+                    url="${KNOWN_INSTALLERS[$tool]:-}"
+                    if ! expected_sha256="$(get_checksum "$tool")"; then
+                        log_error "stack.doodlestein_self_releaser: get_checksum failed for tool '$tool'"
+                        expected_sha256=""
+                    fi
+
+                    if [[ -n "$url" ]] && [[ -n "$expected_sha256" ]]; then
+                        if verify_checksum "$url" "$expected_sha256" "$tool" | run_as_target_runner 'bash' '-s' '--' '--easy-mode'; then
+                            install_success=true
+                        else
+                            log_error "stack.doodlestein_self_releaser: verify_checksum or installer execution failed"
+                        fi
+                    else
+                        if [[ -z "$url" ]]; then
+                            log_error "stack.doodlestein_self_releaser: KNOWN_INSTALLERS[$tool] not found"
+                        fi
+                        if [[ -z "$expected_sha256" ]]; then
+                            log_error "stack.doodlestein_self_releaser: checksum for '$tool' not found"
+                        fi
+                    fi
+                else
+                    log_error "stack.doodlestein_self_releaser: KNOWN_INSTALLERS array not available"
+                fi
+            else
+                log_error "stack.doodlestein_self_releaser: acfs_security_init failed - check security.sh and checksums.yaml"
+            fi
+
+            # Verified install is required - no fallback
+            if [[ "$install_success" = "true" ]]; then
+                true
+            else
+                log_error "Verified install failed for stack.doodlestein_self_releaser"
+                false
+            fi
+        }; then
+            log_warn "stack.doodlestein_self_releaser: verified installer failed"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "stack.doodlestein_self_releaser" "install command failed: DSR_TMP=\"\$(mktemp -d \"\${TMPDIR:-/tmp}/dsr_install.XXXXXX\")\""
+              record_skipped_tool "stack.doodlestein_self_releaser" "verified installer failed"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "stack.doodlestein_self_releaser"
             fi
@@ -2030,15 +2109,15 @@ INSTALL_STACK_DOODLESTEIN_SELF_RELEASER
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: dsr doctor || dsr --help (target_user)"
+        log_info "dry-run: verify: dsr --version || dsr --help (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_STACK_DOODLESTEIN_SELF_RELEASER'
-dsr doctor || dsr --help
+dsr --version || dsr --help
 INSTALL_STACK_DOODLESTEIN_SELF_RELEASER
         then
-            log_warn "stack.doodlestein_self_releaser: verify failed: dsr doctor || dsr --help"
+            log_warn "stack.doodlestein_self_releaser: verify failed: dsr --version || dsr --help"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "stack.doodlestein_self_releaser" "verify failed: dsr doctor || dsr --help"
+              record_skipped_tool "stack.doodlestein_self_releaser" "verify failed: dsr --version || dsr --help"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "stack.doodlestein_self_releaser"
             fi
@@ -2206,7 +2285,7 @@ install_stack_pcr() {
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: target_home=\"\${TARGET_HOME:-\$HOME}\" (target_user)"
+        log_info "dry-run: verify: test -x \"\$hook_script\" || exit 1 (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_STACK_PCR'
 target_home="${TARGET_HOME:-$HOME}"
@@ -2225,9 +2304,9 @@ else
 fi
 INSTALL_STACK_PCR
         then
-            log_warn "stack.pcr: verify failed: target_home=\"\${TARGET_HOME:-\$HOME}\""
+            log_warn "stack.pcr: verify failed: test -x \"\$hook_script\" || exit 1"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "stack.pcr" "verify failed: target_home=\"\${TARGET_HOME:-\$HOME}\""
+              record_skipped_tool "stack.pcr" "verify failed: test -x \"\$hook_script\" || exit 1"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "stack.pcr"
             fi

@@ -146,7 +146,7 @@ install_cloud_supabase() {
     log_step "Installing cloud.supabase"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: # Install Supabase CLI from GitHub release (verified via sha256 checksums) (target_user)"
+        log_info "dry-run: install: case \"\$(uname -m)\" in (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_CLOUD_SUPABASE'
 # Install Supabase CLI from GitHub release (verified via sha256 checksums)
@@ -248,9 +248,9 @@ rm -f "$tmp_tgz" "$tmp_checksums" "$extracted_bin" 2>/dev/null || true
 rmdir "$tmp_dir" 2>/dev/null || true
 INSTALL_CLOUD_SUPABASE
         then
-            log_warn "cloud.supabase: install command failed: # Install Supabase CLI from GitHub release (verified via sha256 checksums)"
+            log_warn "cloud.supabase: install command failed: case \"\$(uname -m)\" in"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "cloud.supabase" "install command failed: # Install Supabase CLI from GitHub release (verified via sha256 checksums)"
+              record_skipped_tool "cloud.supabase" "install command failed: case \"\$(uname -m)\" in"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "cloud.supabase"
             fi
