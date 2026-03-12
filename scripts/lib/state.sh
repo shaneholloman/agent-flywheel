@@ -1638,12 +1638,17 @@ state_should_skip_phase() {
         # completed, the phase must re-run so the module installer can execute.
         # Check whether any requested module belongs to this phase.
         if [[ "${ONLY_MODULES+x}" == "x" ]] && [[ ${#ONLY_MODULES[@]} -gt 0 ]]; then
-            local _mod _mod_phase
+            local _mod _mod_phase_num _mod_phase_name
             for _mod in "${ONLY_MODULES[@]}"; do
-                _mod_phase="${ACFS_MODULE_PHASE[$_mod]:-}"
-                if [[ "$_mod_phase" == "$phase_id" ]]; then
-                    # Explicitly requested module lives in this phase — don't skip
-                    return 1
+                _mod_phase_num="${ACFS_MODULE_PHASE[$_mod]:-}"
+                if [[ -n "$_mod_phase_num" ]]; then
+                    # ACFS_MODULE_PHASE stores 1-based numeric indices;
+                    # convert to named phase ID via ACFS_PHASE_IDS (0-based).
+                    _mod_phase_name="${ACFS_PHASE_IDS[$(( _mod_phase_num - 1 ))]:-}"
+                    if [[ "$_mod_phase_name" == "$phase_id" ]]; then
+                        # Explicitly requested module lives in this phase — don't skip
+                        return 1
+                    fi
                 fi
             done
         fi
