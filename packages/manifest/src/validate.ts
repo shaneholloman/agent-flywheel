@@ -19,7 +19,9 @@ export interface ValidationError {
     | 'PHASE_VIOLATION'
     | 'FUNCTION_NAME_COLLISION'
     | 'RESERVED_NAME_COLLISION'
-    | 'INVALID_VERIFIED_INSTALLER_RUNNER';
+    | 'INVALID_VERIFIED_INSTALLER_RUNNER'
+    | 'MISSING_VERIFIED_INSTALLER_CHECKSUM'
+    | 'VERIFIED_INSTALLER_URL_MISMATCH';
   /** Human-readable error message */
   message: string;
   /** Module ID where the error was detected */
@@ -357,6 +359,11 @@ export function validateReservedNames(manifest: Manifest): ValidationError[] {
  */
 const ALLOWED_VERIFIED_INSTALLER_RUNNERS = new Set(['bash', 'sh']);
 
+export interface InstallerChecksumEntry {
+  url?: string;
+  sha256?: string;
+}
+
 /**
  * Validates that verified_installer.runner is in the security allowlist.
  * This is a defense-in-depth check in addition to schema validation.
@@ -386,6 +393,57 @@ export function validateVerifiedInstallerRunner(manifest: Manifest): ValidationE
           runner,
           allowedRunners: Array.from(ALLOWED_VERIFIED_INSTALLER_RUNNERS),
           tool: module.verified_installer.tool,
+        },
+      });
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * Validates that every verified installer has checksums.yaml coverage and, when
+ * the manifest declares an explicit installer URL, that it matches checksums.yaml.
+ *
+ * checksums.yaml remains the runtime source of truth for downloaded installers.
+ * This validator prevents the manifest from quietly drifting away from that source.
+ */
+export function validateVerifiedInstallerChecksums(
+  manifest: Manifest,
+  installers: Record<string, InstallerChecksumEntry>
+): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  for (const module of manifest.modules) {
+    const verifiedInstaller = module.verified_installer;
+    if (!verifiedInstaller) continue;
+
+    const tool = verifiedInstaller.tool;
+    const entry = installers[tool];
+
+    if (!entry?.url || !entry?.sha256) {
+      errors.push({
+        code: 'MISSING_VERIFIED_INSTALLER_CHECKSUM',
+        message: `checksums.yaml is missing a complete installer entry for "${tool}" (used by "${module.id}")`,
+        moduleId: module.id,
+        context: {
+          tool,
+          hasUrl: Boolean(entry?.url),
+          hasSha256: Boolean(entry?.sha256),
+        },
+      });
+      continue;
+    }
+
+    if (verifiedInstaller.url && verifiedInstaller.url !== entry.url) {
+      errors.push({
+        code: 'VERIFIED_INSTALLER_URL_MISMATCH',
+        message: `Module "${module.id}" declares verified_installer.url "${verifiedInstaller.url}" but checksums.yaml uses "${entry.url}"`,
+        moduleId: module.id,
+        context: {
+          tool,
+          manifestUrl: verifiedInstaller.url,
+          checksumsUrl: entry.url,
         },
       });
     }

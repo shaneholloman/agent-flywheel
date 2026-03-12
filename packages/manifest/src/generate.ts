@@ -17,6 +17,8 @@ import { parseManifestFile, validateManifestData } from './parser.js';
 import {
   validateManifest as validateManifestAdvanced,
   formatValidationErrors,
+  validateVerifiedInstallerChecksums,
+  type InstallerChecksumEntry,
 } from './validate.js';
 import {
   getCategories,
@@ -1650,25 +1652,22 @@ async function main(): Promise<void> {
 
   try {
     const checksums = parseYaml(readFileSync(CHECKSUMS_PATH, 'utf-8')) as {
-      installers?: Record<string, { url?: string; sha256?: string }>;
+      installers?: Record<string, InstallerChecksumEntry>;
     };
     const installers = checksums.installers ?? {};
+    const checksumValidationErrors = validateVerifiedInstallerChecksums(
+      manifest,
+      installers
+    );
 
-    // Validate all verified_installer entries in manifest have checksums.yaml coverage
-    const missingTools = new Set<string>();
-    for (const module of manifest.modules) {
-      if (module.verified_installer) {
-        const tool = module.verified_installer.tool;
-        const entry = installers[tool];
-        if (!entry?.url || !entry?.sha256) {
-          missingTools.add(`${tool} (used by ${module.id})`);
-        }
+    if (checksumValidationErrors.length > 0) {
+      console.error('Verified installer checksum validation failed:');
+      for (const err of checksumValidationErrors) {
+        console.error(`- [${err.code}] ${err.message}`);
       }
-    }
-
-    if (missingTools.size > 0) {
-      console.error(`checksums.yaml missing installer entries: ${Array.from(missingTools).sort().join(', ')}`);
-      console.error('Update checksums.yaml (./scripts/lib/security.sh --update-checksums > checksums.yaml) before regenerating.');
+      console.error(
+        'Update checksums.yaml (./scripts/lib/security.sh --update-checksums > checksums.yaml) or reconcile the manifest URLs before regenerating.'
+      );
       process.exit(1);
     }
   } catch (err) {

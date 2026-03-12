@@ -10,6 +10,7 @@ import { describe, test, expect, beforeAll } from 'bun:test';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseManifestFile, parseManifestString, validateManifest, validateManifestData } from './parser.js';
+import { validateVerifiedInstallerChecksums } from './validate.js';
 import type { Manifest } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -212,6 +213,7 @@ modules:
     description: Bun runtime
     verified_installer:
       tool: bun
+      url: https://bun.sh/install
       runner: bash
       env: ["BUN_INSTALL=1"]
       args: []
@@ -222,6 +224,7 @@ modules:
     expect(result.success).toBe(true);
     expect(result.data?.modules[0].verified_installer).toBeDefined();
     expect(result.data?.modules[0].verified_installer?.tool).toBe('bun');
+    expect(result.data?.modules[0].verified_installer?.url).toBe('https://bun.sh/install');
     expect(result.data?.modules[0].verified_installer?.runner).toBe('bash');
     expect(result.data?.modules[0].verified_installer?.env).toEqual(['BUN_INSTALL=1']);
   });
@@ -621,6 +624,43 @@ describe('validateManifestData web metadata warnings', () => {
     const result = validateManifestData(manifest);
     const webWarnings = result.warnings.filter((w) => w.path.includes('.web.'));
     expect(webWarnings).toHaveLength(0);
+  });
+});
+
+describe('validateVerifiedInstallerChecksums', () => {
+  test('reports manifest/checksums URL drift for verified installers', () => {
+    const yaml = `
+version: 1
+name: test
+id: test
+defaults:
+  user: ubuntu
+  workspace_root: /data
+  mode: vibe
+modules:
+  - id: stack.rch
+    description: Remote Compilation Helper
+    install: []
+    verified_installer:
+      tool: rch
+      url: https://example.com/custom-install.sh
+      runner: bash
+    verify:
+      - rch --version
+`;
+    const parseResult = parseManifestString(yaml);
+    expect(parseResult.success).toBe(true);
+    if (!parseResult.success || !parseResult.data) return;
+
+    const validationErrors = validateVerifiedInstallerChecksums(parseResult.data, {
+      rch: {
+        url: 'https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh',
+        sha256: 'abc123',
+      },
+    });
+
+    expect(validationErrors).toHaveLength(1);
+    expect(validationErrors[0]?.code).toBe('VERIFIED_INSTALLER_URL_MISMATCH');
   });
 });
 

@@ -319,6 +319,41 @@ describe('ModuleSchema', () => {
     }
   });
 
+  test('accepts https verified_installer url metadata', () => {
+    const result = ModuleSchema.safeParse({
+      id: 'stack.rch',
+      description: 'Remote Compilation Helper',
+      install: [],
+      verify: ['rch --version'],
+      verified_installer: {
+        tool: 'rch',
+        url: 'https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh',
+        runner: 'bash',
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.verified_installer?.url).toBe(
+        'https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh'
+      );
+    }
+  });
+
+  test('rejects non-https verified_installer url metadata', () => {
+    const result = ModuleSchema.safeParse({
+      id: 'stack.rch',
+      description: 'Remote Compilation Helper',
+      install: [],
+      verify: ['rch --version'],
+      verified_installer: {
+        tool: 'rch',
+        url: 'http://example.com/install.sh',
+        runner: 'bash',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
   test('rejects invalid verified_installer env entries', () => {
     const result = ModuleSchema.safeParse({
       id: 'stack.ru',

@@ -8,7 +8,7 @@
  * @see bd-2gys for the full spec
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { WIZARD_STEPS, type ValidationResult } from "../wizardSteps";
 
 const VALID: ValidationResult = { valid: true, errors: [] };
@@ -24,26 +24,42 @@ const ERROR_DISPLAY_MS = 4000;
  */
 export function useStepValidation() {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelPendingClear = useCallback(() => {
+    if (clearTimerRef.current !== null) {
+      clearTimeout(clearTimerRef.current);
+      clearTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancelPendingClear, [cancelPendingClear]);
 
   const clearErrors = useCallback(() => {
+    cancelPendingClear();
     setValidationErrors([]);
-  }, []);
+  }, [cancelPendingClear]);
 
   const validate = useCallback(
     (stepId: number): ValidationResult => {
       const step = WIZARD_STEPS.find((s) => s.id === stepId);
       if (!step?.validate) {
-        setValidationErrors([]);
+        clearErrors();
         return VALID;
       }
 
       const result = step.validate();
 
       if (!result.valid) {
+        cancelPendingClear();
         setValidationErrors(result.errors);
 
-        // Auto-dismiss after timeout
-        setTimeout(() => setValidationErrors([]), ERROR_DISPLAY_MS);
+        // Auto-dismiss after timeout. Cancel any older timer first so stale
+        // timeouts cannot clear a newer validation error.
+        clearTimerRef.current = setTimeout(() => {
+          clearTimerRef.current = null;
+          setValidationErrors([]);
+        }, ERROR_DISPLAY_MS);
 
         // Scroll to and focus the relevant element
         if (result.focusSelector) {
@@ -54,12 +70,12 @@ export function useStepValidation() {
           }
         }
       } else {
-        setValidationErrors([]);
+        clearErrors();
       }
 
       return result;
     },
-    [],
+    [cancelPendingClear, clearErrors],
   );
 
   return { validate, validationErrors, clearErrors } as const;

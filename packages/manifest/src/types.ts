@@ -32,6 +32,8 @@ export type VerifiedInstallerRunner = 'bash' | 'sh';
 export interface VerifiedInstaller {
   /** Tool key in checksums.yaml */
   tool: string;
+  /** Optional canonical installer URL; validated against checksums.yaml when provided */
+  url?: string;
   /** Executable runner (must be bash or sh) */
   runner: VerifiedInstallerRunner;
   /** Optional environment variable assignments (KEY=value) for the runner */

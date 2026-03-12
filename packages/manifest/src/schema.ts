@@ -170,8 +170,18 @@ export const ModuleSchema = z
           .min(1, 'Verified installer tool cannot be empty')
           .regex(
             /^[a-z][a-z0-9_]*$/,
-            'Tool name must be lowercase alphanumeric with underscores (e.g., "bun", "claude", "mcp_agent_mail")'
-          ),
+              'Tool name must be lowercase alphanumeric with underscores (e.g., "bun", "claude", "mcp_agent_mail")'
+            ),
+        // Optional canonical URL for drift detection against checksums.yaml.
+        // SECURITY: require HTTPS because these installers are downloaded and executed.
+        url: z
+          .string()
+          .url('verified_installer.url must be a valid URL')
+          .refine(
+            (value) => value.startsWith('https://'),
+            'verified_installer.url must use https://'
+          )
+          .optional(),
         runner: VerifiedInstallerRunnerSchema,
         env: z
           .array(

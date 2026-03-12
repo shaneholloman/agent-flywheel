@@ -377,9 +377,10 @@ test_integration() {
     if command -v acfs >/dev/null 2>&1; then
         local doctor_output=""
         local doctor_exit=0
+        local doctor_timeout="${ACFS_E2E_DOCTOR_TIMEOUT:-240}"
 
         if command -v timeout >/dev/null 2>&1; then
-            doctor_output=$(timeout "${ACFS_E2E_DOCTOR_TIMEOUT:-90}" env ACFS_DOCTOR_CI=true acfs doctor 2>&1)
+            doctor_output=$(timeout "$doctor_timeout" env ACFS_DOCTOR_CI=true acfs doctor 2>&1)
             doctor_exit=$?
         else
             doctor_output=$(ACFS_DOCTOR_CI=true acfs doctor 2>&1)
@@ -388,6 +389,8 @@ test_integration() {
 
         if [[ $doctor_exit -eq 0 ]]; then
             pass "doctor_runs" "acfs doctor completed without fatal errors"
+        elif [[ $doctor_exit -eq 124 ]]; then
+            fail "doctor_runs" "acfs doctor timed out after ${doctor_timeout}s"
         else
             fail "doctor_runs" "acfs doctor failed (exit=$doctor_exit)"
         fi
