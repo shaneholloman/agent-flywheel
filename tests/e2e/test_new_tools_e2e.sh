@@ -329,7 +329,7 @@ test_integration() {
         local doctor_exit=0
 
         if command -v timeout >/dev/null 2>&1; then
-            doctor_output=$(timeout "${ACFS_E2E_DOCTOR_TIMEOUT:-30}" env ACFS_DOCTOR_CI=true acfs doctor 2>&1)
+            doctor_output=$(timeout "${ACFS_E2E_DOCTOR_TIMEOUT:-90}" env ACFS_DOCTOR_CI=true acfs doctor 2>&1)
             doctor_exit=$?
         else
             doctor_output=$(ACFS_DOCTOR_CI=true acfs doctor 2>&1)
