@@ -168,6 +168,16 @@ gemini.mcp.json
 .beads/*.repair_candidate_*
 .beads/*.bak-corrupt
 
+# Beads ephemeral artifacts (recovery, backup, bad/rebuild snapshots)
+.beads/*.bad_*
+.beads/*.backup_*
+.beads/*.rebuild_*
+.beads/*.reindex_test_*
+.beads/*.vacuum_test_*
+.beads/recovery*/
+.beads_recovery*/
+.beads_archive_*/
+
 # Ephemeral stderr capture files
 /err
 .claude/settings.local.json
