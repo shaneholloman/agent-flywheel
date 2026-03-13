@@ -763,7 +763,7 @@ function InteractiveCloudDownload() {
       setImageBlur(20);
       setPipelineStep(0);
       setShowProtocol(false);
-      setTimeout(() => {
+      timerRef.current = setTimeout(() => {
         setPhase('pasting');
       }, 50);
     },

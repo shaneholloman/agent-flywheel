@@ -163,7 +163,7 @@ export function CmLesson() {
             {
               command: 'cm context "task description" --json',
               description: "Get relevant context for a task",
-            },
+            }
           ]}
         />
       </Section>
@@ -550,11 +550,7 @@ function InteractiveMemoryPipeline() {
       setActiveQuery(null);
     } else {
       setIsAutoPlaying(true);
-      if (SESSION_DATA.some((s) => !s.learned)) {
-        // We do not have a learnedSessions set in this context;
-        // but since we only need to kick off the auto-play sequence, 
-        // we can just let the auto-play loop handle it.
-      }
+      // Removed broken condition and comment since auto-play handles starting its own sequence based on state
     }
   }, [isAutoPlaying, clearAutoPlayTimers]);
 

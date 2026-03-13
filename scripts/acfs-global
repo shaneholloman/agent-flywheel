@@ -224,18 +224,19 @@ main() {
         [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
         [[ -n "${ACFS_RAW:-}" ]] && env_args+=("ACFS_RAW=$ACFS_RAW")
 
+        local cmd_with_env
+        if [[ ${#env_args[@]} -gt 0 ]]; then
+            cmd_with_env=("env" "${env_args[@]}" "$@")
+        else
+            cmd_with_env=("$@")
+        fi
+
         if [[ "$EUID" -eq 0 ]]; then
             if command -v runuser >/dev/null 2>&1; then
-                if [[ ${#env_args[@]} -gt 0 ]]; then
-                    exec runuser -u "$user" -- env "${env_args[@]}" "$@"
-                fi
-                exec runuser -u "$user" -- "$@"
+                exec runuser -u "$user" -- "${cmd_with_env[@]}"
             fi
             if command -v sudo >/dev/null 2>&1; then
-                if [[ ${#env_args[@]} -gt 0 ]]; then
-                    exec sudo -u "$user" -H env "${env_args[@]}" "$@"
-                fi
-                exec sudo -u "$user" -H -- "$@"
+                exec sudo -u "$user" -H "${cmd_with_env[@]}"
             fi
             echo "Error: need runuser or sudo to run acfs as '$user'" >&2
             exit 1
@@ -247,10 +248,7 @@ main() {
         fi
 
         echo "Note: Running acfs as '$user' (ACFS owner)" >&2
-        if [[ ${#env_args[@]} -gt 0 ]]; then
-            exec sudo -u "$user" -H env "${env_args[@]}" "$@"
-        fi
-        exec sudo -u "$user" -H -- "$@"
+        exec sudo -u "$user" -H "${cmd_with_env[@]}"
     }
 
     # If we're already the target user, run directly

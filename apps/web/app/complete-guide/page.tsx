@@ -51,13 +51,12 @@ import {
   FlywheelDiagram,
   TableOfContents,
   CodeBlock,
-  PhaseCard,
   PrincipleCard,
   OperatorCard,
-  PlanToBeadsViz,
-  SwarmExecutionViz,
-  AgentMailViz,
 } from "@/components/complete-guide/guide-components";
+import { PlanToBeadsViz } from "@/components/complete-guide/plan-to-beads-viz";
+import { SwarmExecutionViz } from "@/components/complete-guide/swarm-execution-viz";
+import { AgentMailViz } from "@/components/complete-guide/agent-mail-viz";
 
 // =============================================================================
 // TOC DATA
@@ -89,6 +88,381 @@ const TOC_ITEMS = [
   { id: "practical", label: "Practical Considerations", number: "23" },
   { id: "prompt-library", label: "Prompt Library", number: "24" },
 ];
+
+const EXHIBIT_PANEL_CLASS =
+  "my-8 rounded-[28px] border border-white/[0.12] bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_42%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(2,6,23,0.96))] p-5 sm:p-6 lg:p-7 backdrop-blur-xl shadow-[0_35px_90px_-40px_rgba(2,6,23,0.95),inset_0_1px_1px_rgba(255,255,255,0.08)]";
+
+type PlanDimensionId =
+  | "architecture"
+  | "workflow"
+  | "edgeCases"
+  | "novelty"
+  | "execution";
+type PlanModelId = "gpt" | "claude" | "gemini" | "grok";
+
+const PLAN_DIMENSIONS = [
+  { id: "architecture", label: "Architecture" },
+  { id: "workflow", label: "Workflow coverage" },
+  { id: "edgeCases", label: "Failure modes" },
+  { id: "novelty", label: "Novel ideas" },
+  { id: "execution", label: "Execution readiness" },
+] as const satisfies ReadonlyArray<{ id: PlanDimensionId; label: string }>;
+
+const PLAN_MODEL_DATA: ReadonlyArray<{
+  id: PlanModelId;
+  label: string;
+  color: string;
+  role: string;
+  strengths: readonly [string, string];
+  blindSpot: string;
+  contributions: Record<PlanDimensionId, number>;
+}> = [
+  {
+    id: "gpt",
+    label: "GPT Pro",
+    color: "#22d3ee",
+    role: "Global arbiter",
+    strengths: ["System-wide coherence", "Best-of-all-worlds synthesis"],
+    blindSpot:
+      "Without GPT Pro, global arbitration weakens and the hybrid plan becomes less coherent.",
+    contributions: {
+      architecture: 92,
+      workflow: 83,
+      edgeCases: 66,
+      novelty: 72,
+      execution: 68,
+    },
+  },
+  {
+    id: "claude",
+    label: "Claude Opus",
+    color: "#a78bfa",
+    role: "Implementation realist",
+    strengths: ["Execution detail", "Sharp structural edits"],
+    blindSpot:
+      "Without Claude, the plan sounds more complete than it really is for implementation.",
+    contributions: {
+      architecture: 78,
+      workflow: 84,
+      edgeCases: 74,
+      novelty: 64,
+      execution: 88,
+    },
+  },
+  {
+    id: "gemini",
+    label: "Gemini",
+    color: "#34d399",
+    role: "Coverage expander",
+    strengths: ["Alternative framings", "Missed edge cases"],
+    blindSpot:
+      "Without Gemini, more weird-but-important edge cases survive into later phases.",
+    contributions: {
+      architecture: 72,
+      workflow: 76,
+      edgeCases: 90,
+      novelty: 82,
+      execution: 61,
+    },
+  },
+  {
+    id: "grok",
+    label: "Grok Heavy",
+    color: "#f59e0b",
+    role: "Assumption stress-test",
+    strengths: ["Counterintuitive options", "Pressure-testing assumptions"],
+    blindSpot:
+      "Without Grok, the plan loses some of the challenging alternatives that expose hidden assumptions.",
+    contributions: {
+      architecture: 63,
+      workflow: 69,
+      edgeCases: 77,
+      novelty: 93,
+      execution: 58,
+    },
+  },
+];
+
+const PLAN_REFINEMENT_LABELS = [
+  "Raw merge",
+  "First integration",
+  "Revision pressure",
+  "Fresh-eyes polish",
+  "Converged draft",
+] as const;
+
+function PlanEvolutionStudio() {
+  const ref = useRef<HTMLDivElement>(null);
+  const isInView = useInView(ref, { once: true, margin: "-80px" });
+  const prefersReducedMotion = useReducedMotion();
+  const reducedMotion = prefersReducedMotion ?? false;
+  const [enabledModels, setEnabledModels] = useState<Record<PlanModelId, boolean>>({
+    gpt: true,
+    claude: true,
+    gemini: true,
+    grok: true,
+  });
+  const [refinementRound, setRefinementRound] = useState(2);
+
+  const selectedModels = PLAN_MODEL_DATA.filter((model) => enabledModels[model.id]);
+  const dimensionScores = PLAN_DIMENSIONS.map((dimension) => {
+    const bestSelectedContribution = selectedModels.reduce(
+      (maxValue, model) => Math.max(maxValue, model.contributions[dimension.id]),
+      0,
+    );
+    const diversityBonus = selectedModels.length > 1 ? (selectedModels.length - 1) * 4 : 0;
+    const roundBonus = refinementRound * 5;
+    return {
+      ...dimension,
+      value: Math.min(100, bestSelectedContribution + diversityBonus + roundBonus),
+    };
+  });
+  const totalScore = Math.round(
+    dimensionScores.reduce((sum, score) => sum + score.value, 0) /
+      dimensionScores.length,
+  );
+  const missingNotes = PLAN_MODEL_DATA.filter((model) => !enabledModels[model.id]).map(
+    (model) => model.blindSpot,
+  );
+
+  const toggleModel = useCallback((modelId: PlanModelId) => {
+    setEnabledModels((current) => {
+      const activeCount = Object.values(current).filter(Boolean).length;
+      if (current[modelId] && activeCount === 1) {
+        return current;
+      }
+      return { ...current, [modelId]: !current[modelId] };
+    });
+  }, []);
+
+  return (
+    <div ref={ref} className={EXHIBIT_PANEL_CLASS}>
+      <div className="flex flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="text-[0.65rem] font-semibold uppercase tracking-[0.28em] text-violet-300/70">
+            Interactive Exhibit
+          </div>
+          <h4 className="mt-2 text-xl font-black tracking-[-0.03em] text-white sm:text-2xl">
+            Best-of-all-worlds synthesis studio
+          </h4>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/60">
+            Toggle proposal plans on and off, then drag the refinement dial.
+            The point is not “many models” in the abstract; it is that
+            complementary strengths plus fresh-round revision produce a plan
+            that is harder to surprise later.
+          </p>
+        </div>
+
+        <label className="block rounded-[22px] border border-white/10 bg-white/[0.03] px-4 py-3">
+          <div className="flex items-center justify-between gap-6 text-[10px] uppercase tracking-[0.24em] text-white/35">
+            <span>Refinement round</span>
+            <span className="text-white/60">{PLAN_REFINEMENT_LABELS[refinementRound]}</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={4}
+            step={1}
+            value={refinementRound}
+            onChange={(event) => setRefinementRound(Number(event.target.value))}
+            aria-label="Refinement round"
+            className="mt-3 h-2 w-64 max-w-full cursor-pointer appearance-none rounded-full bg-white/10 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white/70 [&::-webkit-slider-thumb]:bg-violet-300 [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white/70 [&::-moz-range-thumb]:bg-violet-300"
+          />
+        </label>
+      </div>
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <div className="grid gap-4 sm:grid-cols-2">
+          {PLAN_MODEL_DATA.map((model, index) => {
+            const enabled = enabledModels[model.id];
+            return (
+              <motion.button
+                key={model.id}
+                type="button"
+                aria-pressed={enabled}
+                onClick={() => toggleModel(model.id)}
+                initial={reducedMotion ? false : { opacity: 0, y: 18 }}
+                animate={isInView ? { opacity: 1, y: 0 } : undefined}
+                transition={{
+                  type: "spring",
+                  stiffness: 220,
+                  damping: 22,
+                  delay: reducedMotion ? 0 : index * 0.06,
+                }}
+                className={`rounded-[26px] border p-4 text-left transition-colors ${
+                  enabled
+                    ? "border-white/18 bg-white/[0.07]"
+                    : "border-white/8 bg-white/[0.02] opacity-60 hover:opacity-85"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div
+                      className="text-[0.65rem] font-semibold uppercase tracking-[0.22em]"
+                      style={{ color: model.color }}
+                    >
+                      {model.role}
+                    </div>
+                    <div className="mt-2 text-lg font-bold tracking-[-0.02em] text-white">
+                      {model.label}
+                    </div>
+                  </div>
+                  <div
+                    className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+                      enabled ? "text-white" : "text-white/45"
+                    }`}
+                    style={{
+                      backgroundColor: enabled ? `${model.color}22` : "rgba(255,255,255,0.04)",
+                      border: `1px solid ${enabled ? `${model.color}55` : "rgba(255,255,255,0.08)"}`,
+                    }}
+                  >
+                    {enabled ? "Included" : "Muted"}
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {model.strengths.map((strength) => (
+                    <span
+                      key={strength}
+                      className="rounded-full border px-2.5 py-1 text-[11px] text-white/72"
+                      style={{ borderColor: `${model.color}35`, backgroundColor: `${model.color}12` }}
+                    >
+                      {strength}
+                    </span>
+                  ))}
+                </div>
+              </motion.button>
+            );
+          })}
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-[28px] border border-white/10 bg-slate-950/60 p-5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-white/35">
+                  Hybrid plan quality
+                </div>
+                <div className="mt-2 text-3xl font-black tracking-[-0.04em] text-white">
+                  {totalScore}%
+                </div>
+              </div>
+              <div className="rounded-2xl border border-violet-400/20 bg-violet-400/10 px-4 py-3 text-right">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-violet-200/60">
+                  Active inputs
+                </div>
+                <div className="mt-1 text-xl font-black text-violet-100">
+                  {selectedModels.length}
+                </div>
+              </div>
+            </div>
+
+            <div className="relative mt-5 h-56 overflow-hidden rounded-[24px] border border-white/8 bg-[radial-gradient(circle_at_top,rgba(167,139,250,0.18),transparent_45%),rgba(2,6,23,0.85)]">
+              {[0, 1, 2].map((sheetLayer) => (
+                <motion.div
+                  key={`sheet-${sheetLayer}`}
+                  className="absolute left-5 right-5 rounded-[24px] border border-white/8 bg-slate-950/70"
+                  style={{
+                    top: `${26 + sheetLayer * 12}px`,
+                    bottom: `${24 - sheetLayer * 2}px`,
+                    transform: `translateX(${sheetLayer * 8}px)`,
+                    opacity: 0.24 + sheetLayer * 0.18,
+                  }}
+                  initial={false}
+                  animate={{ rotate: sheetLayer === 2 ? (refinementRound - 2) * 0.45 : 0 }}
+                  transition={{ type: "spring", stiffness: 160, damping: 18 }}
+                />
+              ))}
+
+              <motion.div
+                className="absolute inset-[18px] rounded-[24px] border border-white/10 bg-gradient-to-br from-slate-900/95 to-slate-950/90 p-5"
+                initial={false}
+                animate={{ y: [12, 6, 0, -2, -4][refinementRound] }}
+                transition={{ type: "spring", stiffness: 180, damping: 20 }}
+              >
+                <div className="flex flex-wrap gap-2">
+                  {selectedModels.map((model) => (
+                    <span
+                      key={model.id}
+                      className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white"
+                      style={{ backgroundColor: `${model.color}22`, border: `1px solid ${model.color}55` }}
+                    >
+                      {model.label}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="mt-5 space-y-2">
+                  {Array.from({ length: 6 }, (_, lineIndex) => (
+                    <motion.div
+                      key={`line-${lineIndex}`}
+                      className="h-2 rounded-full bg-white/8"
+                      initial={false}
+                      animate={{
+                        width: `${82 - lineIndex * 8 + refinementRound * 3}%`,
+                        opacity: lineIndex === 0 ? 1 : 0.6 + refinementRound * 0.08,
+                      }}
+                      transition={{ type: "spring", stiffness: 150, damping: 18 }}
+                    />
+                  ))}
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-cyan-400/15 bg-cyan-400/8 px-4 py-3 text-sm leading-relaxed text-cyan-100/85">
+                  Round {refinementRound + 1}:{" "}
+                  {refinementRound < 2
+                    ? "The plan is still absorbing strengths and closing obvious gaps."
+                    : refinementRound < 4
+                      ? "Fresh rounds are sanding down contradictions and exposing edge cases."
+                      : "You are now near the point where improvements are incremental rather than architectural."}
+                </div>
+              </motion.div>
+            </div>
+          </div>
+
+          <div className="rounded-[28px] border border-white/10 bg-slate-950/60 p-5">
+            <div className="text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-white/35">
+              What the hybrid gains
+            </div>
+            <div className="mt-4 space-y-3">
+              {dimensionScores.map((dimension) => (
+                <div key={dimension.id}>
+                  <div className="mb-1 flex items-center justify-between text-xs text-white/55">
+                    <span>{dimension.label}</span>
+                    <span className="font-mono text-white/78">{dimension.value}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-white/6">
+                    <motion.div
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-violet-400 to-emerald-400"
+                      initial={reducedMotion ? { width: `${dimension.value}%` } : { width: 0 }}
+                      animate={{ width: `${dimension.value}%` }}
+                      transition={{ duration: 0.75, ease: "easeOut" }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/35">
+                If you mute a proposal
+              </div>
+              <div className="mt-3 space-y-2 text-sm leading-relaxed text-white/58">
+                {missingNotes.length > 0 ? (
+                  missingNotes.map((note) => <p key={note}>{note}</p>)
+                ) : (
+                  <p>
+                    All proposal sources are active. That is why this phase is
+                    called best-of-all-worlds rather than best-single-model.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // =============================================================================
 // INTERACTIVE VISUALIZATION: Representation Ladder
@@ -1504,6 +1878,8 @@ alias gmi='gemini --yolo'`}
     mode is uniquely suited to holding all the competing plans in context and performing genuine
     intellectual arbitration between them.
   </P>
+
+  <PlanEvolutionStudio />
 
   <PromptBlock
     title="The Synthesis Prompt"

@@ -15,17 +15,25 @@ ensure_path() {
     local dir
     local to_add=()
 
-    for dir in \
-        "$HOME/.local/bin" \
-        "$HOME/.bun/bin" \
-        "$HOME/.cargo/bin" \
-        "$HOME/go/bin" \
-        "$HOME/.atuin/bin"; do
+    # Priority order for ACFS tools
+    local candidate_dirs=(
+        "$HOME/.local/bin"
+        "$HOME/.acfs/bin"
+        "$HOME/.bun/bin"
+        "$HOME/.cargo/bin"
+        "$HOME/.atuin/bin"
+        "$HOME/go/bin"
+        "/usr/local/bin"
+        "/usr/bin"
+        "/bin"
+    )
+
+    for dir in "${candidate_dirs[@]}"; do
         [[ -d "$dir" ]] || continue
-        case ":$PATH:" in
-            *":$dir:"*) ;;
-            *) to_add+=("$dir") ;;
-        esac
+        # Robust PATH check using exact matching to avoid partial substring hits
+        if [[ ":$PATH:" != *":$dir:"* ]]; then
+            to_add+=("$dir")
+        fi
     done
 
     if [[ ${#to_add[@]} -gt 0 ]]; then
@@ -537,6 +545,7 @@ section() {
                 --border-foreground "$ACFS_MUTED" \
                 --border normal \
                 --padding "0 2" \
+                --margin "0 0 1 0" \
                 "󰋊 $1"
         else
             echo ""
@@ -1071,7 +1080,7 @@ check_shell() {
         check "shell.lsd_or_eza" "lsd/eza" "warn" "neither installed" "sudo apt install lsd"
     fi
 
-    check_command "shell.atuin" "Atuin" "atuin" "$(fix_for_module "tools.atuin")"
+    check_command "shell.atuin" "Atuin" "atuin" "$(fix_for_module "shell.atuin")"
     check_command "shell.fzf" "fzf" "fzf" "sudo apt install fzf"
     check_command "shell.zoxide" "zoxide" "zoxide" \
         "Re-run: curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash"
@@ -1998,7 +2007,6 @@ deep_check_stack_tools() {
         "deep.stack.asb" \
         "Agent Settings Backup operational probe" \
         "asb" \
-        "Run: asb list" \
         "test -d \"$HOME/.asb\" && asb list" \
         "asb list" \
         "asb help"
@@ -2008,7 +2016,6 @@ deep_check_stack_tools() {
         "Post-Compact Reminder operational probe" \
         "claude-post-compact-reminder" \
         "Reinstall PCR or verify Claude settings registration" \
-        "test -x \"$HOME/.local/bin/claude-post-compact-reminder\" && (grep -q \"claude-post-compact-reminder\" \"$HOME/.claude/settings.json\" 2>/dev/null || grep -q \"claude-post-compact-reminder\" \"$HOME/.config/claude/settings.json\" 2>/dev/null)" \
         "printf '{\"session_id\":\"doctor\",\"source\":\"compact\"}\n' | claude-post-compact-reminder"
 }
 
@@ -2153,7 +2160,7 @@ check_claude_auth() {
 
 # check_codex_auth - Thorough Codex CLI authentication check
 # Codex CLI uses OAuth (ChatGPT accounts), NOT OPENAI_API_KEY environment variable.
-# Token location: ~/.codex/auth.json (or $CODEX_HOME/auth.json)
+# Token location: ~/.codex/auth.json (or $CODEEX_HOME/auth.json)
 # Returns via check(): pass (auth OK), warn (partial/skipped), fail (auth broken)
 # Related: bead 325, ua5 (Codex auth documentation fix)
 check_codex_auth() {
@@ -2169,8 +2176,8 @@ check_codex_auth() {
         return
     fi
 
-    # Determine auth.json location (respects CODEX_HOME if set)
-    local auth_file="${CODEX_HOME:-$HOME/.codex}/auth.json"
+    # Determine auth.json location (respects CODEEX_HOME if set)
+    local auth_file="${CODEEX_HOME:-$HOME/.codex}/auth.json"
 
     # Check if auth.json exists
     if [[ ! -f "$auth_file" ]]; then
@@ -2208,7 +2215,7 @@ check_codex_auth() {
     elif [[ "$has_api_key" == "true" ]]; then
         check "deep.agent.codex_auth" "Codex CLI auth" "pass" "API key authenticated (pay-as-you-go)"
     else
-        check "deep.agent.codex_auth" "Codex CLI auth" "warn" "auth.json exists but no valid tokens" "Run: codex login --device-auth"
+        check "deep.agent.codex_auth" "Codex CLI auth" "warn" "not authenticated" "Run: codex login --device-auth"
     fi
 }
 
@@ -2367,25 +2374,21 @@ check_postgres_role() {
 
     # Try connecting as current user first (mirrors check_postgres_connection behavior)
     # This works when pg_hba.conf allows peer auth for local users
-    if role_check=$(timeout 5 psql -w -tAc "$sql_query" 2>/dev/null); then
+    if role_check=$(timeout 5 psql -w -tAc "$sql_query" 2>/dev/null) && [[ "$role_check" == "1" ]]; then
         connect_success=true
     # Try localhost with postgres user as fallback
-    elif role_check=$(timeout 5 psql -w -h localhost -U postgres -tAc "$sql_query" 2>/dev/null); then
+    elif role_check=$(timeout 5 psql -w -h localhost -U postgres -tAc "$sql_query" 2>/dev/null) && [[ "$role_check" == "1" ]]; then
         connect_success=true
     # Try unix socket with postgres user as last resort
-    elif role_check=$(timeout 5 psql -w -h /var/run/postgresql -U postgres -tAc "$sql_query" 2>/dev/null); then
+    elif role_check=$(timeout 5 psql -w -h /var/run/postgresql -U postgres -tAc "$sql_query" 2>/dev/null) && [[ "$role_check" == "1" ]]; then
         connect_success=true
     fi
 
     if [[ "$connect_success" == "true" ]]; then
-        if [[ "$role_check" == "1" ]]; then
-            check "deep.db.postgres_role" "PostgreSQL $target_user role" "pass" "role exists"
-        else
-            check "deep.db.postgres_role" "PostgreSQL $target_user role" "warn" "role missing" "sudo -u postgres createuser -s $target_user"
-        fi
+        check "deep.db.postgres_role" "PostgreSQL $target_user role" "pass" "role exists"
     else
-        # Connection failed - provide actionable fix
-        check "deep.db.postgres_role" "PostgreSQL $target_user role" "warn" "could not verify (connection failed)" "sudo -u postgres createuser -s $target_user"
+        # Connection failed or role missing - provide actionable fix
+        check "deep.db.postgres_role" "PostgreSQL $target_user role" "warn" "role missing or connection failed" "sudo -u postgres createuser -s $target_user"
     fi
 }
 
@@ -2548,7 +2551,7 @@ check_network_github() {
     # Also test raw.githubusercontent.com (used for script downloads)
     http_status=$(curl -sL --max-time 10 --connect-timeout 5 -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com" 2>/dev/null) || http_status="000"
 
-    if [[ "$http_status" == "200" ]] || [[ "$http_status" == "301" ]] || [[ "$http_status" == "400" ]]; then
+    if [[ "$http_status" == "200" ]] || [[ "$http_status" == "400" ]]; then
         # Note: raw.githubusercontent.com returns 400 on bare request, which is expected
         check "deep.network.github_raw" "GitHub raw content" "pass" "raw.githubusercontent.com reachable"
     elif [[ "$http_status" == "000" ]]; then
@@ -2794,7 +2797,7 @@ check_supabase_auth() {
         token_file="$HOME/.config/supabase/access-token"
     fi
 
-    if [[ -n "$token_file" && -s "$token_file" ]]; then
+    if [[ -n "$token_file" ]] && [[ -s "$token_file" ]]; then
         cache_result "supabase_auth" "access-token file"
         check "deep.cloud.supabase_auth" "Supabase CLI auth" "pass" "access-token file present"
     else

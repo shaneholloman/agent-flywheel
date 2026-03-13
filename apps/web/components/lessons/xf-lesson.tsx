@@ -629,7 +629,7 @@ function InteractiveArchiveSearch() {
           ]);
           timerRef.current = setTimeout(() => {
             setShowResults(true);
-            timerRef.current = setTimeout(() => {
+            pipelineTimerRef.current = setTimeout(() => {
               setShowStats(true);
             }, 300);
           }, 200);
