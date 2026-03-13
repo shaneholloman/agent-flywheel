@@ -136,24 +136,37 @@ try_step() {
     # We use process substitution to capture both stdout and stderr
     if [[ -n "$output_file" ]]; then
         if [[ "$ERROR_VERBOSE" == "true" ]]; then
-            # Verbose mode: show output in real-time AND capture it
-            if (
-                set -o pipefail
-                "$@" 2>&1 | tee "$output_file"
-                # Prefer the command's exit code over tee's (output capture is best-effort).
-                exit "${PIPESTATUS[0]}"
-            ); then
-                exit_code=0
-            else
+            # Verbose mode: show output in real-time AND capture it.
+            # We avoid a subshell (...) to preserve global variable updates (SC2030/SC2031).
+            # Using a temporary FIFO or redirection to a background process is more robust.
+            local fifo
+            fifo=$(mktemp -u "${TMPDIR:-/tmp}/acfs_fifo.XXXXXX" 2>/dev/null) || fifo=""
+            if [[ -n "$fifo" ]]; then
+                mkfifo "$fifo"
+                tee "$output_file" < "$fifo" &
+                local tee_pid=$!
+                
+                set +e
+                "$@" > "$fifo" 2>&1
                 exit_code=$?
+                set -e
+                
+                # Close FIFO and wait for tee to finish
+                exec {fd}> "$fifo"
+                exec {fd}>&-
+                wait "$tee_pid" 2>/dev/null || true
+                rm -f "$fifo"
+            else
+                # Fallback if mkfifo fails
+                "$@" 2>&1 | tee "$output_file"
+                exit_code="${PIPESTATUS[0]}"
             fi
         else
             # Normal mode: capture silently, show on error
-            if "$@" > "$output_file" 2>&1; then
-                exit_code=0
-            else
-                exit_code=$?
-            fi
+            set +e
+            "$@" > "$output_file" 2>&1
+            exit_code=$?
+            set -e
         fi
     else
         # If we cannot safely create a temp file, run without capture rather than

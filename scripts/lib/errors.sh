@@ -28,7 +28,7 @@ declare -gA ERROR_PATTERNS=(
 
     ['curl: (28) Connection timed out']="Network timeout. This could be:\n  1. Slow/unstable internet connection\n  2. Firewall blocking outbound HTTPS\n  3. Upstream server temporarily down\nTry: curl -v https://google.com --connect-timeout 10"
 
-    ['curl: (35) SSL connect error']="SSL/TLS handshake failed. Possible causes:\n  1. Outdated ca-certificates: sudo apt-get update && sudo apt-get install -y ca-certificates\n  2. System clock wrong: date && sudo ntpdate -s time.nist.gov\n  3. Corporate proxy/firewall intercepting HTTPS"
+    ['curl: (35) SSL connect error']="SSL/TLS handshake failed. Possible causes:\n  1. Outdated ca-certificates: sudo apt-get update && sudo apt-get install -y ca-certificates\n  2. System clock wrong: timedatectl status\n  3. Corporate proxy/firewall intercepting HTTPS"
 
     ['Connection refused']="Connection refused by remote server. The service may be:\n  1. Temporarily down - wait and retry\n  2. Blocked by firewall - check outbound rules\n  3. Rate limited - wait 60 seconds"
 
@@ -41,7 +41,7 @@ declare -gA ERROR_PATTERNS=(
 
     ['Unmet dependencies']="Package dependencies cannot be satisfied. Try:\n  sudo apt-get install -f\n  sudo apt-get update && sudo apt-get upgrade"
 
-    ['Hash Sum mismatch']="APT reported a hash mismatch. Try:\n  sudo apt-get clean\n  sudo apt-get update\nIf it persists, reboot and retry."
+    ['Hash Sum mismatch']="APT reported a hash mismatch. Try:\n  sudo rm -rf /var/lib/apt/lists/*\n  sudo apt-get clean\n  sudo apt-get update\nIf it persists, reboot and retry."
 
     # Permission issues
     ['Permission denied']="Permission issue. Ensure you're running with appropriate privileges:\n  1. Run with sudo: sudo bash install.sh\n  2. Or run as root user\n  3. Check file permissions: ls -la"
@@ -56,7 +56,7 @@ declare -gA ERROR_PATTERNS=(
     # GPG/signing issues
     ['gpg: keyserver receive failed']="GPG keyserver unreachable. Alternatives:\n  1. Retry later - keyservers are sometimes slow\n  2. Try different keyserver: --keyserver hkp://keyserver.ubuntu.com:80\n  3. Check firewall allows port 11371 or 80"
 
-    ['NO_PUBKEY']="Missing GPG key for repository. Try:\n  sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys <KEY_ID>"
+    ['NO_PUBKEY']="Missing GPG key for repository. Modern fix:\n  sudo gpg --no-default-keyring --keyring /etc/apt/keyrings/repo-name.gpg --keyserver keyserver.ubuntu.com --recv-keys <KEY_ID>"
 
     # Verification/checksum
     ['checksum mismatch']="Upstream installer script has changed. This could mean:\n  1. Legitimate update - check the tool's GitHub for release notes\n  2. Potential tampering - verify manually before proceeding\nSee: https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues"

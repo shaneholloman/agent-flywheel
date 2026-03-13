@@ -346,11 +346,12 @@ sanitize_session_export() {
     # This processes transcript content, summary, key_prompts, etc.
     #
     # Keep this as heredocs to avoid shell quoting issues with jq regex patterns.
-    # Note: don't use bash parameter substitution with patterns starting with "#"
-    # (e.g. "##OPTIONAL##"), because `${var/#pattern/...}` is special-cased.
     local jq_filter_base
     read -r -d '' jq_filter_base <<'JQ_BASE' || true
-def sanitize_string:
+def is_secret_key:
+    test("(?i)password|secret|api_key|apikey|auth_token|access_token|private_key|secret_key");
+
+def sanitize_value:
     if type == "string" then
         gsub("sk-[a-zA-Z0-9_-]{20,}"; "[REDACTED]") |
         gsub("sk-ant-[a-zA-Z0-9_-]{20,}"; "[REDACTED]") |
@@ -365,12 +366,8 @@ def sanitize_string:
         gsub("AKIA[A-Z0-9]{16}"; "[REDACTED]") |
         gsub("hf_[a-zA-Z0-9]{34}"; "[REDACTED]") |
         gsub("[rs]k_(live|test)_[a-zA-Z0-9]{24,}"; "[REDACTED]") |
-        gsub("(?i)password[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "password=[REDACTED]") |
-        gsub("(?i)secret[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "secret=[REDACTED]") |
-        gsub("(?i)api_key[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "api_key=[REDACTED]") |
-        gsub("(?i)apikey[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "apikey=[REDACTED]") |
-        gsub("(?i)auth_token[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "auth_token=[REDACTED]") |
-        gsub("(?i)access_token[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "access_token=[REDACTED]")
+        # Fallback for inline key=value pairs in strings
+        gsub("(?i)(password|secret|api_key|apikey|auth_token|access_token)[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "\\1=[REDACTED]")
 JQ_BASE
 
     local jq_filter_optional=""
@@ -385,13 +382,19 @@ JQ_OPTIONAL
     local jq_filter_tail
     read -r -d '' jq_filter_tail <<'JQ_TAIL' || true
     elif type == "array" then
-        map(sanitize_string)
+        map(sanitize_value)
     elif type == "object" then
-        with_entries(.value |= sanitize_string)
+        with_entries(
+            if (.key | is_secret_key) then
+                .value = "[REDACTED]"
+            else
+                .value |= sanitize_value
+            end
+        )
     else
         .
     end;
-sanitize_string
+sanitize_value
 JQ_TAIL
 
     local jq_filter="${jq_filter_base}${jq_filter_optional}${jq_filter_tail}"
@@ -885,13 +888,15 @@ session_generate_uuid() {
         uuidgen | tr '[:upper:]' '[:lower:]'
         return 0
     fi
-    # Best-effort fallback.
+    # Best-effort fallback: generate enough entropy in one pass.
+    local seed
+    seed=$( (date +%s%N; head -c 32 /dev/urandom | sha256sum) | sha256sum | cut -d' ' -f1)
     printf '%s-%s-%s-%s-%s\n' \
-        "$(date +%s | sha256sum | cut -c1-8)" \
-        "$(date +%s%N | sha256sum | cut -c1-4)" \
-        "$(date +%s%N | sha256sum | cut -c1-4)" \
-        "$(date +%s%N | sha256sum | cut -c1-4)" \
-        "$(date +%s%N | sha256sum | cut -c1-12)"
+        "${seed:0:8}" \
+        "${seed:8:4}" \
+        "${seed:12:4}" \
+        "${seed:16:4}" \
+        "${seed:20:12}"
 }
 
 session_now_iso() {
@@ -970,7 +975,7 @@ parse_native_claude_to_canonical() {
                         (.text? // .content? // .output? // "")
                     else "" end
                  ] | join(""))
-            elif type == "object" then (.text? // .content? // "")
+            elif type == "object" then (.text? // .content? // .output? // "")
             else "" end;
 
         {
