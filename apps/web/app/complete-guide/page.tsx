@@ -260,13 +260,6 @@ const CONVERGENCE_SIGNALS = [
   { label: "Content Similarity Rising", weight: 0.30, weightLabel: "30%", color: "#34d399" },
 ] as const;
 
-const PHASE_BANDS = [
-  { threshold: 0, width: 30, color: "#ef4444", span: 0.3 },
-  { threshold: 0.3, width: 25, color: "#f59e0b", span: 0.25 },
-  { threshold: 0.55, width: 20, color: "#22d3ee", span: 0.2 },
-  { threshold: 0.75, width: 25, color: "#34d399", span: 0.25 },
-];
-
 function ConvergenceDetector() {
   const ref = useRef<HTMLDivElement>(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
