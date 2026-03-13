@@ -170,6 +170,21 @@ function SvgDefs() {
         <stop offset="70%" stopColor="#a78bfa" stopOpacity="0.015" />
         <stop offset="100%" stopColor="transparent" stopOpacity="0" />
       </radialGradient>
+      {/* Per-stage radial glow for active icon background */}
+      {STAGES.map((stage) => (
+        <radialGradient
+          key={`clIconGlow-${stage.id}`}
+          id={`clIconGlow-${stage.id}`}
+          cx="50%"
+          cy="50%"
+          r="50%"
+        >
+          <stop offset="0%" stopColor={stage.color} stopOpacity="0.25" />
+          <stop offset="40%" stopColor={stage.color} stopOpacity="0.1" />
+          <stop offset="70%" stopColor={stage.color} stopOpacity="0.03" />
+          <stop offset="100%" stopColor={stage.color} stopOpacity="0" />
+        </radialGradient>
+      ))}
       <filter id="clNodeGlow">
         <feGaussianBlur stdDeviation="4" result="coloredBlur" />
         <feMerge>
@@ -199,6 +214,14 @@ function SvgDefs() {
         <feGaussianBlur stdDeviation="12" result="bigBlur" />
         <feMerge>
           <feMergeNode in="bigBlur" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+      {/* Glow filter for center label */}
+      <filter id="clCenterLabelGlow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="glow" />
+        <feMerge>
+          <feMergeNode in="glow" />
           <feMergeNode in="SourceGraphic" />
         </feMerge>
       </filter>
@@ -261,6 +284,19 @@ function StageNode({
     >
       {/* Invisible hit-area */}
       <circle cx={pos.x} cy={pos.y} r="44" fill="transparent" />
+
+      {/* Radial glow behind active icon */}
+      {isActive && (
+        <motion.circle
+          cx={pos.x}
+          cy={pos.y}
+          r={40}
+          fill={`url(#clIconGlow-${stage.id})`}
+          initial={{ r: 20, opacity: 0 }}
+          animate={{ r: 40, opacity: 1 }}
+          transition={{ duration: 0.6, ease: "easeOut" }}
+        />
+      )}
 
       {/* Large ambient glow ring behind active node */}
       {isActive && (
@@ -373,9 +409,17 @@ function DetailCard({ stage }: { stage: Stage }) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="flex flex-col gap-6"
-      style={{ borderLeft: `3px solid ${stage.color}`, paddingLeft: 24 }}
+      className="relative flex flex-col gap-6"
+      style={{ paddingLeft: 24 }}
     >
+      {/* Animated left border that draws downward */}
+      <motion.div
+        className="absolute left-0 top-0 w-[3px] rounded-full"
+        style={{ backgroundColor: stage.color }}
+        initial={{ height: "0%" }}
+        animate={{ height: "100%" }}
+        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
+      />
       {/* Header */}
       <div className="flex flex-col gap-3">
         <div
@@ -446,9 +490,11 @@ function DetailCard({ stage }: { stage: Stage }) {
 function MobileStageList({
   activeIndex,
   onSelect,
+  reducedMotion,
 }: {
   activeIndex: number;
   onSelect: (index: number) => void;
+  reducedMotion: boolean;
 }) {
   return (
     <div className="relative flex flex-col gap-3">
@@ -466,7 +512,7 @@ function MobileStageList({
         const isActive = index === activeIndex;
 
         return (
-          <button
+          <motion.button
             key={stage.id}
             type="button"
             onClick={() => onSelect(index)}
@@ -482,6 +528,22 @@ function MobileStageList({
                 ? `0 4px 24px -4px ${stage.color}30, 0 0 0 1px ${stage.color}15`
                 : undefined,
             }}
+            animate={
+              isActive && !reducedMotion
+                ? { scale: [1, 1.01, 1] }
+                : { scale: 1 }
+            }
+            transition={
+              isActive && !reducedMotion
+                ? {
+                    scale: {
+                      duration: 3,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                    },
+                  }
+                : { duration: 0.3 }
+            }
           >
             <div
               className={`relative z-10 flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 ${
@@ -528,7 +590,7 @@ function MobileStageList({
             >
               {index + 1}/{STAGE_COUNT}
             </span>
-          </button>
+          </motion.button>
         );
       })}
     </div>
@@ -538,6 +600,13 @@ function MobileStageList({
 /* ------------------------------------------------------------------ */
 /*  Pulsing dot that travels along the circle path                     */
 /* ------------------------------------------------------------------ */
+
+/** Particle trail specs: each one is smaller and more transparent, with a staggered delay. */
+const TRAIL_PARTICLES = [
+  { radius: 3.5, opacity: 0.5, delay: 0.08 },
+  { radius: 2.5, opacity: 0.3, delay: 0.18 },
+  { radius: 1.8, opacity: 0.15, delay: 0.3 },
+];
 
 function TravelingDot({
   cx,
@@ -561,24 +630,53 @@ function TravelingDot({
   }
 
   return (
-    <motion.circle
-      cx={pos.x}
-      cy={pos.y}
-      r={5}
-      fill="#FF5500"
-      filter="url(#clPulseGlow)"
-      initial={false}
-      animate={{
-        cx: pos.x,
-        cy: pos.y,
-        scale: [1, 1.6, 1],
-      }}
-      transition={{
-        cx: { duration: 0.6, ease: [0.16, 1, 0.3, 1] },
-        cy: { duration: 0.6, ease: [0.16, 1, 0.3, 1] },
-        scale: { duration: 1.6, repeat: Infinity, ease: "easeInOut" },
-      }}
-    />
+    <g>
+      {/* Particle trail -- smaller, more transparent circles that lag behind */}
+      {TRAIL_PARTICLES.map((particle, i) => (
+        <motion.circle
+          key={`trail-${i}`}
+          cx={pos.x}
+          cy={pos.y}
+          r={particle.radius}
+          fill="#FF5500"
+          fillOpacity={particle.opacity}
+          initial={false}
+          animate={{ cx: pos.x, cy: pos.y }}
+          transition={{
+            cx: {
+              duration: 0.6,
+              delay: particle.delay,
+              ease: [0.16, 1, 0.3, 1],
+            },
+            cy: {
+              duration: 0.6,
+              delay: particle.delay,
+              ease: [0.16, 1, 0.3, 1],
+            },
+          }}
+        />
+      ))}
+
+      {/* Main traveling dot */}
+      <motion.circle
+        cx={pos.x}
+        cy={pos.y}
+        r={5}
+        fill="#FF5500"
+        filter="url(#clPulseGlow)"
+        initial={false}
+        animate={{
+          cx: pos.x,
+          cy: pos.y,
+          scale: [1, 1.6, 1],
+        }}
+        transition={{
+          cx: { duration: 0.6, ease: [0.16, 1, 0.3, 1] },
+          cy: { duration: 0.6, ease: [0.16, 1, 0.3, 1] },
+          scale: { duration: 1.6, repeat: Infinity, ease: "easeInOut" },
+        }}
+      />
+    </g>
   );
 }
 
@@ -733,29 +831,55 @@ export function CoreLoopDiagram() {
                 );
                 const isActive = index === activeIndex;
                 const path = arcBetween(from, to, svgCx, svgCy);
+                const connId = `clConn-${stage.id}`;
 
                 return (
-                  <motion.path
-                    key={`conn-${stage.id}`}
-                    d={path}
-                    fill="none"
-                    stroke={isActive ? stage.color : "white"}
-                    strokeWidth={isActive ? 2.5 : 1}
-                    markerEnd={
-                      isActive
-                        ? `url(#clArrow-${stage.id})`
-                        : "url(#clArrow)"
-                    }
-                    initial={false}
-                    animate={{
-                      strokeDasharray: isActive
-                        ? ["0, 600", "600, 0"]
-                        : "4, 12",
-                      strokeOpacity: isActive ? 0.9 : 0.06,
-                    }}
-                    transition={{ duration: 1.2, ease: "easeInOut" }}
-                    filter={isActive ? "url(#clConnectorBloom)" : undefined}
-                  />
+                  <g key={`conn-group-${stage.id}`}>
+                    {/* Hidden path used for animateMotion reference */}
+                    <path id={connId} d={path} fill="none" stroke="none" />
+
+                    <motion.path
+                      key={`conn-${stage.id}`}
+                      d={path}
+                      fill="none"
+                      stroke={isActive ? stage.color : "white"}
+                      strokeWidth={isActive ? 2.5 : 1}
+                      markerEnd={
+                        isActive
+                          ? `url(#clArrow-${stage.id})`
+                          : "url(#clArrow)"
+                      }
+                      initial={false}
+                      animate={{
+                        strokeDasharray: isActive
+                          ? ["0, 600", "600, 0"]
+                          : "4, 12",
+                        strokeOpacity: isActive ? 0.9 : 0.06,
+                      }}
+                      transition={{ duration: 1.2, ease: "easeInOut" }}
+                      filter={isActive ? "url(#clConnectorBloom)" : undefined}
+                    />
+
+                    {/* Flowing direction dots on active connector */}
+                    {isActive &&
+                      !rm &&
+                      [0, 1, 2].map((dotIdx) => (
+                        <circle
+                          key={`flow-${stage.id}-${dotIdx}`}
+                          r={1.5}
+                          fill={stage.color}
+                          opacity={0.6 - dotIdx * 0.15}
+                        >
+                          <animateMotion
+                            dur="2s"
+                            repeatCount="indefinite"
+                            begin={`${dotIdx * 0.6}s`}
+                          >
+                            <mpath xlinkHref={`#${connId}`} />
+                          </animateMotion>
+                        </circle>
+                      ))}
+                  </g>
                 );
               })}
 
@@ -783,22 +907,17 @@ export function CoreLoopDiagram() {
                 );
               })}
 
-              {/* Center label */}
+              {/* Center label with glow */}
               <text
                 x={svgCx}
-                y={svgCy - 6}
+                y={svgCy + 4}
                 textAnchor="middle"
-                className="fill-white/20 text-[9px] font-bold uppercase tracking-[0.3em]"
+                className="text-[13px] font-black uppercase tracking-[0.25em]"
+                fill="#FF5500"
+                fillOpacity={0.25}
+                filter="url(#clCenterLabelGlow)"
               >
-                Core
-              </text>
-              <text
-                x={svgCx}
-                y={svgCy + 10}
-                textAnchor="middle"
-                className="fill-white/20 text-[9px] font-bold uppercase tracking-[0.3em]"
-              >
-                Loop
+                Core Loop
               </text>
             </svg>
           </div>
@@ -809,6 +928,7 @@ export function CoreLoopDiagram() {
           <MobileStageList
             activeIndex={activeIndex}
             onSelect={handleStageSelect}
+            reducedMotion={rm}
           />
         </div>
 

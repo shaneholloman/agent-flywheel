@@ -24,6 +24,7 @@ import {
   Cloud,
   Moon,
   BookOpen,
+  Target,
 } from "lucide-react";
 import { motion, AnimatePresence } from "@/components/motion";
 import { useDrag } from "@use-gesture/react";
@@ -1202,6 +1203,110 @@ export default function HomePage() {
                 {/* Decorative gradient orbs */}
                 <div className="pointer-events-none absolute -right-24 -top-24 h-56 w-56 rounded-full bg-primary/15 blur-3xl transition-opacity duration-500 group-hover:opacity-75" />
                 <div className="pointer-events-none absolute -bottom-20 -left-20 h-44 w-44 rounded-full bg-[oklch(0.7_0.2_330)]/15 blur-3xl transition-opacity duration-500 group-hover:opacity-75" />
+              </motion.div>
+            </Link>
+
+            {/* Core Flywheel — Simpler Starting Point */}
+            <Link href="/core_flywheel" className="group block mt-8">
+              <motion.div
+                className="relative overflow-hidden rounded-3xl border border-[#FF5500]/20 p-px"
+                initial={{ opacity: 0, y: 30, scale: 0.98 }}
+                whileInView={{ opacity: 1, y: 0, scale: 1 }}
+                viewport={{ once: true, margin: "-80px" }}
+                transition={springs.smooth}
+                whileHover={{ y: -4, scale: 1.005 }}
+                style={{
+                  boxShadow: "0 0 60px -12px oklch(0.75 0.18 30 / 0.12), 0 24px 48px -12px rgba(0,0,0,0.4)",
+                }}
+              >
+                {/* Animated border gradient */}
+                <div
+                  className="absolute inset-0 rounded-3xl opacity-30 transition-opacity duration-500 group-hover:opacity-80"
+                  style={{
+                    background: "linear-gradient(135deg, oklch(0.75 0.18 30 / 0.5), oklch(0.78 0.16 75 / 0.3), oklch(0.75 0.18 30 / 0.5))",
+                    backgroundSize: "200% 200%",
+                    animation: "shimmer 4s linear infinite",
+                    padding: "1px",
+                    WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
+                    WebkitMaskComposite: "xor",
+                    maskComposite: "exclude",
+                  }}
+                />
+
+                {/* Inner card */}
+                <div className="relative rounded-[23px] bg-gradient-to-br from-card via-card/95 to-card px-8 py-10 sm:px-12 sm:py-14">
+                  {/* Top label */}
+                  <motion.div
+                    className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#FF5500]/30 bg-[#FF5500]/10 px-4 py-1.5 text-xs font-semibold uppercase tracking-widest text-[#FF5500]"
+                    initial={{ opacity: 0, x: -10 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ ...springs.snappy, delay: 0.1 }}
+                  >
+                    <Target className="h-3.5 w-3.5" />
+                    Start Here
+                  </motion.div>
+
+                  <motion.h3
+                    className="mb-4 text-2xl font-extrabold tracking-tight sm:text-3xl lg:text-4xl"
+                    style={{ letterSpacing: "-0.025em" }}
+                    initial={{ opacity: 0, y: 10 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ ...springs.smooth, delay: 0.15 }}
+                  >
+                    <span className="bg-gradient-to-r from-[#FF5500] to-[#FFBD2E] bg-clip-text text-transparent">The Core Flywheel</span>
+                  </motion.h3>
+
+                  <motion.p
+                    className="mb-8 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg"
+                    initial={{ opacity: 0, y: 10 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ ...springs.smooth, delay: 0.2 }}
+                  >
+                    New to the Flywheel? Start with just three tools — Agent Mail, beads, and bv. This focused guide covers the core loop that captures most of the methodology&apos;s value, without the full system&apos;s complexity.
+                  </motion.p>
+
+                  {/* Stats row */}
+                  <motion.div
+                    className="mb-8 flex flex-wrap gap-x-6 gap-y-3 text-sm"
+                    initial={{ opacity: 0 }}
+                    whileInView={{ opacity: 1 }}
+                    viewport={{ once: true }}
+                    transition={{ ...springs.smooth, delay: 0.25 }}
+                  >
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Zap className="h-4 w-4 text-[#FF5500]/60" />
+                      <span>3 core tools</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Cpu className="h-4 w-4 text-[#FF5500]/60" />
+                      <span>3 interactive visualizations</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Clock className="h-4 w-4 text-[#FF5500]/60" />
+                      <span>Beginner-friendly</span>
+                    </div>
+                  </motion.div>
+
+                  {/* CTA button */}
+                  <motion.div
+                    className="inline-flex items-center gap-3 rounded-xl bg-[#FF5500] px-7 py-3.5 text-base font-bold text-black shadow-lg transition-all duration-300 group-hover:shadow-[0_0_40px_-8px_oklch(0.75_0.18_30/0.5)] group-hover:scale-[1.03]"
+                    initial={{ opacity: 0, y: 10 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ ...springs.snappy, delay: 0.3 }}
+                  >
+                    <Target className="h-5 w-5" />
+                    Read the Core Loop Guide
+                    <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1.5" />
+                  </motion.div>
+                </div>
+
+                {/* Decorative gradient orbs */}
+                <div className="pointer-events-none absolute -right-24 -top-24 h-56 w-56 rounded-full bg-[#FF5500]/12 blur-3xl transition-opacity duration-500 group-hover:opacity-75" />
+                <div className="pointer-events-none absolute -bottom-20 -left-20 h-44 w-44 rounded-full bg-[#FFBD2E]/10 blur-3xl transition-opacity duration-500 group-hover:opacity-75" />
               </motion.div>
             </Link>
           </div>

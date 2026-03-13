@@ -1021,7 +1021,7 @@ function CpuCorePanel({
   coreLoads: number[];
   srpsActive: boolean;
 }) {
-  const avgLoad = coreLoads.reduce((a, b) => a + b, 0) / coreLoads.length;
+  const avgLoad = coreLoads.length > 0 ? coreLoads.reduce((a, b) => a + b, 0) / coreLoads.length : 0;
 
   return (
     <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4 space-y-3">

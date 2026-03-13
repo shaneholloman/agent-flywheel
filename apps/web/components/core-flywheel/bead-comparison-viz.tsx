@@ -104,13 +104,20 @@ function TerminalBlock({
   variant,
   reducedMotion,
   isInView,
+  tabKey,
 }: {
   lines: string[];
   variant: "weak" | "strong";
   reducedMotion: boolean;
   isInView: boolean;
+  tabKey: string;
 }) {
   const isWeak = variant === "weak";
+
+  /* Line count display */
+  const displayCount = isWeak
+    ? lines.length
+    : lines.filter((l) => l.trim()).length;
 
   return (
     <div
@@ -126,6 +133,25 @@ function TerminalBlock({
       {/* Glow effect on strong side */}
       {!isWeak && (
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(16,185,129,0.08),transparent_70%)] pointer-events-none" />
+      )}
+
+      {/* #3 (weak watermark): "Missing context" watermark behind thin weak content */}
+      {isWeak && lines.length <= 2 && (
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0"
+          aria-hidden="true"
+        >
+          <span
+            className="text-red-400 text-4xl sm:text-5xl font-black uppercase tracking-widest"
+            style={{
+              opacity: 0.04,
+              transform: "rotate(-12deg)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Missing context
+          </span>
+        </div>
       )}
 
       {/* #3: macOS-style window dots */}
@@ -167,13 +193,15 @@ function TerminalBlock({
         </span>
         <span
           className={cn(
-            "ml-auto rounded-full px-2.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-widest border",
+            "ml-auto rounded-full px-2.5 py-0.5 text-[0.6rem] font-bold uppercase tracking-widest border tabular-nums",
             isWeak
               ? "border-red-500/20 bg-red-500/10 text-red-400"
               : "border-emerald-500/20 bg-emerald-500/10 text-emerald-400",
           )}
         >
-          {isWeak ? `${lines.length} line${lines.length > 1 ? "s" : ""}` : `${lines.filter((l) => l.trim()).length} lines`}
+          {isWeak
+            ? `${lines.length} line${lines.length > 1 ? "s" : ""}`
+            : `${displayCount} line${displayCount !== 1 ? "s" : ""}`}
         </span>
       </div>
 
@@ -188,16 +216,54 @@ function TerminalBlock({
       >
         {lines.map((line, i) => (
           <motion.div
-            key={i}
-            initial={reducedMotion ? false : { opacity: 0, x: isWeak ? -8 : 8 }}
-            animate={isInView ? { opacity: 1, x: 0 } : undefined}
+            key={`${tabKey}-${i}`}
+            initial={
+              reducedMotion
+                ? false
+                : {
+                    opacity: 0,
+                    x: isWeak ? -8 : 8,
+                    ...(!isWeak
+                      ? { backgroundColor: "rgba(16,185,129,0.05)" }
+                      : {}),
+                  }
+            }
+            animate={
+              isInView
+                ? {
+                    opacity: 1,
+                    x: 0,
+                    ...(!isWeak
+                      ? { backgroundColor: "rgba(16,185,129,0)" }
+                      : {}),
+                  }
+                : undefined
+            }
             transition={{
-              delay: reducedMotion ? 0 : i * 0.04,
+              delay: reducedMotion ? 0 : i * 0.05,
               type: "spring",
               stiffness: 260,
               damping: 24,
+              ...(!isWeak
+                ? {
+                    backgroundColor: {
+                      delay: reducedMotion ? 0 : i * 0.05,
+                      duration: 0.6,
+                    },
+                  }
+                : {}),
             }}
-            className="flex gap-3 py-px"
+            className={cn(
+              "flex gap-3 py-px rounded-sm",
+              !isWeak && "shadow-[0_0_0_0_rgba(16,185,129,0)]",
+            )}
+            style={
+              !isWeak && !reducedMotion
+                ? {
+                    boxShadow: `0 0 6px rgba(16,185,129,${isInView ? 0 : 0.12})`,
+                  }
+                : undefined
+            }
           >
             <span
               className={cn(
@@ -245,7 +311,11 @@ function QualityMetrics({
   tabKey: string;
 }) {
   return (
-    <div className="flex flex-row lg:flex-col items-center justify-center gap-3 py-4 lg:py-0">
+    <div className="flex flex-row lg:flex-col items-center justify-center gap-3 py-4 lg:py-0 lg:px-5 relative">
+      {/* #2 (connecting lines): subtle horizontal connector lines on desktop */}
+      <div className="hidden lg:block absolute top-1/2 -translate-y-1/2 -left-4 w-4 border-t border-dashed border-red-500/15 pointer-events-none" />
+      <div className="hidden lg:block absolute top-1/2 -translate-y-1/2 -right-4 w-4 border-t border-dashed border-emerald-500/15 pointer-events-none" />
+
       {/* #6: Column headers on desktop */}
       <div className="hidden lg:flex items-center gap-2 mb-1 w-full justify-center">
         <span className="text-[0.55rem] font-bold uppercase tracking-widest text-white/20 w-5 text-center">
@@ -279,8 +349,11 @@ function QualityMetrics({
                 stiffness: 260,
                 damping: 22,
               }}
-              className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2 min-w-0"
+              className="relative flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2 min-w-0"
             >
+              {/* Connecting dots on each metric row (desktop only) */}
+              <span className="hidden lg:block absolute -left-[18px] w-1.5 h-1.5 rounded-full bg-red-500/20" />
+              <span className="hidden lg:block absolute -right-[18px] w-1.5 h-1.5 rounded-full bg-emerald-500/20" />
               <span className="text-red-400 text-sm shrink-0">
                 {metric.weak ? "\u2705" : "\u274C"}
               </span>
@@ -376,25 +449,26 @@ export function BeadComparisonViz() {
         </LayoutGroup>
       </div>
 
-      {/* COMPARISON VIEW — #13: will-change-transform for smoother transitions */}
+      {/* COMPARISON VIEW — #13: will-change-transform for smoother transitions, #4: scale punch on transition */}
       <AnimatePresence mode="wait">
         <motion.div
           key={activeTab}
-          initial={reducedMotion ? false : { opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={reducedMotion ? undefined : { opacity: 0, y: -12 }}
+          initial={reducedMotion ? false : { opacity: 0, y: 12, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={reducedMotion ? undefined : { opacity: 0, y: -12, scale: 0.98 }}
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
           className="relative z-10 will-change-transform"
         >
           {/* Split view: side-by-side on lg, stacked on mobile */}
           {/* #8: On mobile, metrics appear as a horizontal row BETWEEN the stacked panels */}
-          <div className="grid gap-4 lg:gap-0 lg:grid-cols-[1fr_auto_1fr]">
+          <div className="grid gap-4 lg:gap-0 lg:grid-cols-[1fr_auto_1fr] lg:items-start">
             {/* Weak side */}
             <TerminalBlock
               lines={example.weakContent}
               variant="weak"
               reducedMotion={reducedMotion}
               isInView={isInView}
+              tabKey={activeTab}
             />
 
             {/* Quality metrics — on mobile this sits between the two panels naturally via grid order */}
@@ -414,19 +488,20 @@ export function BeadComparisonViz() {
                 variant="strong"
                 reducedMotion={reducedMotion}
                 isInView={isInView}
+                tabKey={activeTab}
               />
             </div>
           </div>
         </motion.div>
       </AnimatePresence>
 
-      {/* INSIGHT FOOTER — #12: entrance animation with delay after comparison content */}
+      {/* INSIGHT FOOTER — #12: entrance animation with delay after comparison content, #4: scale punch */}
       <AnimatePresence mode="wait">
         <motion.div
           key={`insight-${activeTab}`}
-          initial={reducedMotion ? false : { opacity: 0, y: 16 }}
-          animate={isInView ? { opacity: 1, y: 0 } : undefined}
-          exit={reducedMotion ? undefined : { opacity: 0, y: 8 }}
+          initial={reducedMotion ? false : { opacity: 0, y: 16, scale: 0.98 }}
+          animate={isInView ? { opacity: 1, y: 0, scale: 1 } : undefined}
+          exit={reducedMotion ? undefined : { opacity: 0, y: 8, scale: 0.98 }}
           transition={{
             type: "spring",
             stiffness: 220,
@@ -437,7 +512,15 @@ export function BeadComparisonViz() {
         >
           <div className="absolute top-0 right-0 w-40 h-40 blur-[60px] opacity-15 pointer-events-none bg-[#FFBD2E]" />
           <div className="relative z-10 flex items-center gap-2 text-[0.65rem] font-bold uppercase tracking-widest text-[#FFBD2E]">
-            <CheckCircle2 className="h-3.5 w-3.5" />
+            <motion.span
+              key={`icon-spin-${activeTab}`}
+              initial={reducedMotion ? false : { rotate: 0 }}
+              animate={{ rotate: 360 }}
+              transition={{ duration: 0.6, ease: "easeInOut" }}
+              className="inline-flex"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            </motion.span>
             The Takeaway
           </div>
           <motion.p

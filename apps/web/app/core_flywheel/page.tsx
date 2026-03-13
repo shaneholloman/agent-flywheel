@@ -19,6 +19,7 @@ import { CoordinationTrioViz } from "@/components/complete-guide/coordination-tr
 import { CoreLoopDiagram } from "@/components/core-flywheel/core-loop-diagram";
 import { ArtifactLadderViz } from "@/components/core-flywheel/artifact-ladder-viz";
 import { BeadComparisonViz } from "@/components/core-flywheel/bead-comparison-viz";
+import { QuickNav } from "@/components/core-flywheel/quick-nav";
 
 
 export default function CoreFlywheelPage() {
@@ -26,6 +27,9 @@ export default function CoreFlywheelPage() {
     <ErrorBoundary>
       <main className="min-h-screen bg-[#020408] selection:bg-[#FF5500]/20 selection:text-white overflow-x-hidden pb-32">
         <Hero />
+
+        {/* Floating quick-nav for desktop */}
+        <QuickNav />
 
         <div className="mx-auto max-w-[1000px] px-6 lg:px-12 relative mt-20">
 
@@ -597,7 +601,6 @@ function HelperCard({
             borderColor: `${color}33`,
             backgroundColor: `${color}0D`,
             color: color,
-            boxShadow: `0 0 0px ${color}00`,
           }}
         >
           <div className="transition-all duration-500 group-hover:drop-shadow-[0_0_8px_var(--card-color)]">
@@ -609,7 +612,7 @@ function HelperCard({
           <div className="text-[0.6rem] font-bold uppercase tracking-[0.2em] opacity-50 group-hover:opacity-70 transition-opacity duration-500" style={{ color }}>
             {fullName}
           </div>
-          <h4 className="text-2xl font-black text-white tracking-tight mt-1 transition-colors duration-500 group-hover:text-white">
+          <h4 className="text-2xl font-black text-white tracking-tight mt-1">
             {name}
           </h4>
         </div>

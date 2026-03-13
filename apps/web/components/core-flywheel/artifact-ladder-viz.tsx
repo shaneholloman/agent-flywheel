@@ -199,13 +199,14 @@ function StageNode({
       {/* Label */}
       <div className="flex flex-col gap-0.5 min-w-0">
         <span
-          className="text-[0.6rem] font-black uppercase tracking-[0.2em] transition-colors duration-500"
+          className="text-[0.6rem] font-black uppercase tracking-[0.2em]"
           style={{
             color: isActive
               ? stage.color
               : isPast
                 ? `${stage.color}80`
                 : "rgba(255,255,255,0.2)",
+            transition: "color 700ms cubic-bezier(0.4, 0, 0.2, 1)",
           }}
         >
           Stage {index + 1}
@@ -249,7 +250,7 @@ function ConnectorLine({
   reducedMotion: boolean;
 }) {
   return (
-    <div className="flex items-center justify-center py-1">
+    <div className="flex flex-col items-center justify-center py-1">
       <motion.div
         className="relative h-8 w-px overflow-hidden"
         initial={reducedMotion ? false : { opacity: 0 }}
@@ -280,6 +281,31 @@ function ConnectorLine({
           />
         )}
       </motion.div>
+
+      {/* Animated chevron on active connector (mobile / small screens) */}
+      {isActive && !reducedMotion && (
+        <motion.div
+          className="lg:hidden flex items-center justify-center -mt-1"
+          animate={{ opacity: [0.3, 0.9, 0.3], y: [0, 3, 0] }}
+          transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+        >
+          <svg
+            width="12"
+            height="8"
+            viewBox="0 0 12 8"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M1 1L6 6L11 1"
+              stroke={toColor}
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </motion.div>
+      )}
     </div>
   );
 }
@@ -335,7 +361,7 @@ function DetailPanel({
             value: stage.nextAction,
             accent: "#FFBD2E",
           },
-        ].map((card) => (
+        ].map((card, cardIndex) => (
           <motion.div
             key={card.label}
             initial={reducedMotion ? false : { opacity: 0, x: 12 }}
@@ -343,6 +369,7 @@ function DetailPanel({
             transition={{
               duration: 0.4,
               ease: [0.16, 1, 0.3, 1],
+              delay: reducedMotion ? 0 : cardIndex * 0.08,
             }}
             className="rounded-2xl border border-white/[0.04] bg-white/[0.01] p-5 relative overflow-hidden group/card"
             style={{ borderLeftWidth: "2px", borderLeftColor: `${stage.color}40` }}
@@ -375,7 +402,33 @@ function DetailPanel({
             return (
               <motion.div
                 key={s.id}
-                className="h-2 flex-1 rounded-full transition-all duration-500"
+                className="h-2 rounded-full origin-center"
+                animate={{
+                  flex: isCurrent ? 1.6 : 1,
+                  opacity: isCurrent && !reducedMotion ? [1, 0.6, 1] : 1,
+                }}
+                transition={
+                  isCurrent && !reducedMotion
+                    ? {
+                        flex: {
+                          type: "spring",
+                          stiffness: 300,
+                          damping: 20,
+                        },
+                        opacity: {
+                          duration: 1.5,
+                          repeat: Infinity,
+                          ease: "easeInOut",
+                        },
+                      }
+                    : {
+                        flex: {
+                          type: "spring",
+                          stiffness: 300,
+                          damping: 20,
+                        },
+                      }
+                }
                 style={{
                   backgroundColor: isCurrent
                     ? s.color
@@ -383,16 +436,6 @@ function DetailPanel({
                       ? `${s.color}60`
                       : "rgba(255,255,255,0.06)",
                   boxShadow: isCurrent ? `0 0 12px ${s.glowColor}` : "none",
-                }}
-                animate={
-                  isCurrent && !reducedMotion
-                    ? { opacity: [1, 0.6, 1] }
-                    : { opacity: 1 }
-                }
-                transition={{
-                  duration: 1.5,
-                  repeat: Infinity,
-                  ease: "easeInOut",
                 }}
               />
             );
@@ -616,6 +659,22 @@ export function ArtifactLadderViz() {
           </div>
         </div>
 
+        {/* Spotlight effect on desktop: light cone from active stage toward detail panel */}
+        <motion.div
+          className="pointer-events-none absolute hidden lg:block"
+          style={{
+            width: "300px",
+            height: "200px",
+            left: "calc(45% - 150px)",
+            zIndex: 0,
+          }}
+          animate={{
+            top: `${(activeIndex / (STAGES.length - 1)) * 60 + 10}%`,
+            background: `radial-gradient(ellipse at 50% 0%, ${activeStage.color}12, ${activeStage.color}06 40%, transparent 70%)`,
+          }}
+          transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+        />
+
         {/* Right: Detail panel */}
         <div className="sticky top-8 rounded-[2.5rem] border border-white/[0.03] bg-white/[0.02] backdrop-blur-sm p-8 shadow-inner relative overflow-hidden min-h-[500px]">
           {/* Colored top border that transitions with active stage */}
@@ -663,7 +722,9 @@ export function ArtifactLadderViz() {
           delay: reducedMotion ? 0 : 0.6,
         }}
       >
-        <div className="rounded-2xl border border-white/[0.04] bg-white/[0.01] p-5 group hover:-translate-y-1 transition-transform duration-500">
+        <div className="rounded-2xl border border-white/[0.04] bg-white/[0.01] p-5 group hover:-translate-y-1 transition-transform duration-500 relative overflow-hidden">
+          {/* White gradient top border */}
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-white/0 via-white/40 to-white/0 pointer-events-none" />
           <div className="text-[0.6rem] font-black uppercase tracking-[0.3em] text-white/20 group-hover:text-white/40 transition-colors">
             Total Stages
           </div>
@@ -675,7 +736,9 @@ export function ArtifactLadderViz() {
           </p>
         </div>
 
-        <div className="rounded-2xl border border-white/[0.04] bg-white/[0.01] p-5 group hover:-translate-y-1 transition-transform duration-500">
+        <div className="rounded-2xl border border-white/[0.04] bg-white/[0.01] p-5 group hover:-translate-y-1 transition-transform duration-500 relative overflow-hidden">
+          {/* Orange gradient top border */}
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-[#FF5500]/0 via-[#FF5500] to-[#FFBD2E]/0 pointer-events-none" />
           <div className="text-[0.6rem] font-black uppercase tracking-[0.3em] text-white/20 group-hover:text-white/40 transition-colors">
             Key Transition
           </div>
@@ -689,6 +752,8 @@ export function ArtifactLadderViz() {
         </div>
 
         <div className="rounded-2xl border border-[#22c55e]/20 bg-[#22c55e]/5 p-5 group relative overflow-hidden hover:-translate-y-1 transition-transform duration-500">
+          {/* Green gradient top border */}
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-[#22c55e]/0 via-[#22c55e]/60 to-[#22c55e]/0 pointer-events-none" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(34,197,94,0.1),transparent_50%)] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
           <div className="relative z-10 flex items-center gap-2 text-[0.6rem] font-black uppercase tracking-[0.3em] text-[#22c55e]">
             <CheckCircle className="h-3.5 w-3.5" />

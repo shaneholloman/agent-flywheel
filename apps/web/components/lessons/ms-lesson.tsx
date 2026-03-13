@@ -795,7 +795,7 @@ function DependencyGraph({
 function StatsBar({ skills }: { skills: Skill[] }) {
   const installedCount = skills.filter((s) => s.installed).length;
   const totalUsage = skills.reduce((sum, s) => sum + s.usageCount, 0);
-  const avgRating = skills.reduce((sum, s) => sum + s.rating, 0) / skills.length;
+  const avgRating = skills.length > 0 ? skills.reduce((sum, s) => sum + s.rating, 0) / skills.length : 0;
 
   return (
     <div className="grid grid-cols-4 gap-3">
@@ -956,7 +956,7 @@ function InteractiveSkillBrowser() {
                 className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   viewMode === mode.id
                     ? 'bg-primary/20 text-primary border border-primary/30'
-                    : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04] border border-transparent'
+                    : 'border-white/[0.06] text-white/40 hover:border-white/[0.12] hover:text-white/60'
                 }`}
               >
                 {mode.icon}
@@ -1325,7 +1325,7 @@ function InteractiveSkillBrowser() {
                           {selectedSkill.triggers.map((trigger) => (
                             <span
                               key={trigger}
-                              className={`rounded-md border px-2 py-1 text-xs font-mono ${getCategoryMeta(selectedSkill.category).borderColor} ${getCategoryMeta(selectedSkill.category).textColor} bg-white/[0.02]`}
+                              className="rounded-md border border-white/[0.08] bg-white/[0.02] px-2 py-1 text-xs font-mono text-white/50 hover:text-white/70 hover:border-white/[0.15] transition-colors"
                             >
                               {trigger}
                             </span>
@@ -1376,7 +1376,7 @@ function InteractiveSkillBrowser() {
                               );
                             })
                           ) : (
-                            <span className="text-xs text-white/25 italic">No dependencies</span>
+                            <span className="text-xs text-white/20 italic">No dependencies</span>
                           )}
                         </div>
                       </div>
