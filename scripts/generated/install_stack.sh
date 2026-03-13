@@ -254,7 +254,7 @@ storage_root="$HOME/.mcp_agent_mail_git_mailbox_repo"
 unit_dir="$HOME/.config/systemd/user"
 unit_file="$unit_dir/agent-mail.service"
 am_bin="$(command -v am)"
-db_url="sqlite+aiosqlite:///${storage_root}/storage.sqlite3"
+db_url="sqlite://${storage_root}/storage.sqlite3"
 
 mkdir -p "$storage_root" "$unit_dir"
 cat > "$unit_file" <<UNIT_EOF
@@ -268,8 +268,9 @@ WorkingDirectory=$storage_root
 Environment=RUST_LOG=info
 Environment=STORAGE_ROOT=$storage_root
 Environment=DATABASE_URL=$db_url
-Environment=HTTP_PATH=/mcp/
-ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path /mcp --no-auth --no-tui
+Environment=HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true
+ExecStartPre=$am_bin migrate
+ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path /mcp/
 Restart=on-failure
 RestartSec=5
 
@@ -2436,56 +2437,6 @@ INSTALL_STACK_PCR_PRE_INSTALL_CHECK
             log_warn "stack.pcr: verified installer failed"
             if type -t record_skipped_tool >/dev/null 2>&1; then
               record_skipped_tool "stack.pcr" "verified installer failed"
-            elif type -t state_tool_skip >/dev/null 2>&1; then
-              state_tool_skip "stack.pcr"
-            fi
-            return 0
-        fi
-    fi
-    if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: test -x \"\$hook_script\" || { (target_user)"
-    else
-        if ! run_as_target_shell <<'INSTALL_STACK_PCR'
-target_home="${TARGET_HOME:-$HOME}"
-hook_script="$target_home/.local/bin/claude-post-compact-reminder"
-settings="$target_home/.claude/settings.json"
-alt_settings="$target_home/.config/claude/settings.json"
-active_settings=""
-backup_file=""
-
-test -x "$hook_script" || {
-  echo "PCR hook script missing after install" >&2
-  exit 1
-}
-
-if [[ -f "$settings" ]]; then
-  active_settings="$settings"
-  backup_file="${settings}.bak"
-elif [[ -f "$alt_settings" ]]; then
-  active_settings="$alt_settings"
-  backup_file="${alt_settings}.bak"
-else
-  echo "PCR did not create a Claude settings.json file" >&2
-  exit 1
-fi
-
-if ! grep -q "compact" "$active_settings"; then
-  echo "PCR settings entry does not contain compact hook registration" >&2
-  exit 1
-fi
-
-if [[ -f "$backup_file" ]]; then
-  echo "PCR settings backup preserved at $backup_file" >&2
-else
-  echo "PCR configured $active_settings without creating a .bak backup (likely a fresh settings file)" >&2
-fi
-
-echo "PCR installed - Claude will be reminded to re-read AGENTS.md after compaction" >&2
-INSTALL_STACK_PCR
-        then
-            log_warn "stack.pcr: install command failed: test -x \"\$hook_script\" || {"
-            if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "stack.pcr" "install command failed: test -x \"\$hook_script\" || {"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "stack.pcr"
             fi

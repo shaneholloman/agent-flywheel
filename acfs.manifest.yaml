@@ -1,6 +1,7 @@
 # ACFS Module Manifest
 # Single source of truth for all tools installed by the Agentic Coding Flywheel Setup
 # Version: 2
+version: 2
 name: agentic_coding_flywheel_setup
 id: acfs
 
@@ -564,7 +565,6 @@ modules:
         [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
         node --version
 
-  # Additional CLI tools in phase 6
   - id: tools.atuin
     description: Atuin shell history (Ctrl-R superpowers)
     category: tools
@@ -1546,6 +1546,7 @@ modules:
       tool: cass
       runner: bash
       args: ["--easy-mode", "--verify"]
+    install: []
     verify:
       - cass --help || cass --version
 

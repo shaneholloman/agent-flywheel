@@ -310,26 +310,26 @@ INSTALL_ACFS_UPDATE
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update\" ]]; then (target_user)"
+        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/lib/nightly_update.sh\" ]]; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_UPDATE'
 # Install acfs-update wrapper
-if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update" ]]; then
-  cp "${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update" ~/.local/bin/acfs-update
-elif [[ -f "scripts/acfs-update" ]]; then
-  cp "scripts/acfs-update" ~/.local/bin/acfs-update
+if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/lib/nightly_update.sh" ]]; then
+  cp "${ACFS_BOOTSTRAP_DIR}/scripts/lib/nightly_update.sh" ~/.acfs/scripts/nightly-update.sh
+elif [[ -f "scripts/lib/nightly_update.sh" ]]; then
+  cp "scripts/lib/nightly_update.sh" ~/.acfs/scripts/nightly-update.sh
 else
   ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-fsSL)
   if curl --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(--proto '=https' --proto-redir '=https' -fsSL)
   fi
-  curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/acfs-update" -o ~/.local/bin/acfs-update
+  curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/lib/nightly_update.sh" -o ~/.acfs/scripts/nightly-update.sh
 fi
-chmod +x ~/.local/bin/acfs-update
+chmod +x ~/.acfs/scripts/nightly-update.sh
 INSTALL_ACFS_UPDATE
         then
-            log_error "acfs.update: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update\" ]]; then"
+            log_error "acfs.update: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/lib/nightly_update.sh\" ]]; then"
             return 1
         fi
     fi

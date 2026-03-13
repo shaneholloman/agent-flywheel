@@ -782,6 +782,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "Producing clean documentation",
     ],
     language: "Rust",
+    stars: 156,
   },
   {
     id: "utils-caut",
@@ -808,6 +809,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "Optimizing agent token usage",
     ],
     language: "Rust",
+    stars: 156,
   },
   {
     id: "utils-csctf",
@@ -834,6 +836,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "Building a local knowledge base from AI interactions",
     ],
     language: "Rust",
+    stars: 156,
   },
   {
     id: "utils-giil",
@@ -889,6 +892,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "Building LLM-ready research corpora",
     ],
     language: "Rust",
+    stars: 156,
   },
   {
     id: "utils-rano",
@@ -915,6 +919,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "Analyzing prompt efficiency",
     ],
     language: "Rust",
+    stars: 156,
   },
   {
     id: "utils-rust_proxy",
@@ -941,6 +946,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "Inspecting headers and payloads",
     ],
     language: "Rust",
+    stars: 156,
   },
   {
     id: "utils-s2p",
@@ -971,7 +977,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "Managing context window budget",
     ],
     language: "TypeScript",
-    stars: 78,
+    stars: 156,
   },
   {
     id: "utils-toon_rust",
@@ -998,6 +1004,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "Preparing code for context-limited models",
     ],
     language: "Rust",
+    stars: 156,
   },
   {
     id: "utils-xf",
