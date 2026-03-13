@@ -44,13 +44,13 @@ run_test() {
     local test_name="$1"
     local test_func="$2"
 
-    ((TESTS_RUN++))
+    ((TESTS_RUN++)) || true
 
     if $test_func; then
-        ((TESTS_PASSED++))
+        ((TESTS_PASSED++)) || true
         echo -e "${GREEN}PASS${NC}: $test_name"
     else
-        ((TESTS_FAILED++))
+        ((TESTS_FAILED++)) || true
         echo -e "${RED}FAIL${NC}: $test_name"
     fi
 }

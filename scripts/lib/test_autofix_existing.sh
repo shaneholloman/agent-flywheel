@@ -106,42 +106,42 @@ test_version_compare() {
     result=$(version_compare "1.0.0" "1.0.0")
     if [[ "$result" != "0" ]]; then
         echo "       1.0.0 == 1.0.0 should be 0, got $result"
-        ((failed++))
+        failed=$((failed + 1))
     fi
 
     # Test less than
     result=$(version_compare "1.0.0" "2.0.0")
     if [[ "$result" != "-1" ]]; then
         echo "       1.0.0 < 2.0.0 should be -1, got $result"
-        ((failed++))
+        failed=$((failed + 1))
     fi
 
     # Test greater than
     result=$(version_compare "2.0.0" "1.0.0")
     if [[ "$result" != "1" ]]; then
         echo "       2.0.0 > 1.0.0 should be 1, got $result"
-        ((failed++))
+        failed=$((failed + 1))
     fi
 
     # Test minor version comparison
     result=$(version_compare "1.2.0" "1.3.0")
     if [[ "$result" != "-1" ]]; then
         echo "       1.2.0 < 1.3.0 should be -1, got $result"
-        ((failed++))
+        failed=$((failed + 1))
     fi
 
     # Test patch version comparison
     result=$(version_compare "1.0.5" "1.0.3")
     if [[ "$result" != "1" ]]; then
         echo "       1.0.5 > 1.0.3 should be 1, got $result"
-        ((failed++))
+        failed=$((failed + 1))
     fi
 
     # Test unknown version handling
     result=$(version_compare "unknown" "1.0.0")
     if [[ "$result" != "0" ]]; then
         echo "       unknown vs 1.0.0 should be 0, got $result"
-        ((failed++))
+        failed=$((failed + 1))
     fi
 
     if [[ $failed -eq 0 ]]; then
@@ -180,13 +180,13 @@ test_cli_modes() {
 
     # Test check mode
     if ! bash "$SCRIPT_DIR/autofix_existing.sh" check &>/dev/null; then
-        ((failed++))
+        failed=$((failed + 1))
         echo "       check mode failed"
     fi
 
     # Test version mode
     if ! bash "$SCRIPT_DIR/autofix_existing.sh" version &>/dev/null; then
-        ((failed++))
+        failed=$((failed + 1))
         echo "       version mode failed"
     fi
 

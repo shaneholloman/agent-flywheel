@@ -587,9 +587,9 @@ test_integration() {
             skip "doctor_dcg_check" "DCG check not visible in doctor output"
         fi
 
-        # Legacy git_safety_guard cleanup is validated in the dedicated
-        # test_git_safety_guard_removal.sh suite. acfs doctor may still
-        # mention Git safety guard status in its current output.
+        # Legacy hook cleanup is validated in the dedicated
+        # removal test suite. acfs doctor may still
+        # mention legacy status in its current output.
     else
         skip "doctor_runs" "acfs command not found"
         skip "doctor_dcg_check" "acfs command not found"

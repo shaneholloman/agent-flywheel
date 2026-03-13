@@ -62,8 +62,10 @@ fi
 # Check 5: Doctor check function
 echo ""
 echo "[5/5] Checking doctor.sh for git_safety references..."
-if grep -n 'safety_guard\|Git safety' scripts/lib/doctor.sh 2>/dev/null; then
-    echo "❌ FOUND: Doctor still checks for git_safety"
+# Check doctor.sh for remaining checks
+echo -e "\n${BLUE}Checking doctor.sh...${NC}"
+if grep -nE 'safety_guard|Git safety' scripts/lib/doctor.sh 2>/dev/null; then
+    echo -e "${RED}Found remaining references in doctor.sh!${NC}"
     FOUND=1
 else
     echo "✓ Clean: Doctor.sh has no git_safety references"

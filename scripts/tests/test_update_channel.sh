@@ -206,7 +206,7 @@ security_output=$(
 ) || true
 
 if echo "$security_output" | grep -q 'SECURITY_EXIT='; then
-    if echo "$security_output" | grep -qi 'security\|unavailable\|missing'; then
+    if echo "$security_output" | grep -qiE 'security|unavailable|missing'; then
         pass "Security fallback produces warning and non-zero exit when security unavailable"
     else
         pass "Security fallback returns non-zero when update_require_security fails"

@@ -122,13 +122,13 @@ test_cli_modes() {
 
     # Test check mode
     if ! bash "$SCRIPT_DIR/autofix_unattended.sh" check &>/dev/null; then
-        ((failed++))
+        failed=$((failed + 1))
         echo "       check mode failed"
     fi
 
     # Test dry-run mode
     if ! bash "$SCRIPT_DIR/autofix_unattended.sh" dry-run &>/dev/null; then
-        ((failed++))
+        failed=$((failed + 1))
         echo "       dry-run mode failed"
     fi
 
