@@ -62,7 +62,7 @@ test_dcg_blocks_dangerous_command() {
     local test_output
     test_output=$(dcg test 'git reset --hard HEAD' 2>&1) || true
 
-    if echo "$test_output" | grep -qi "deny\|block\|dangerous"; then
+    if echo "$test_output" | grep -qiE "deny|block|dangerous"; then
         harness_pass "DCG correctly identifies dangerous command"
         if [[ "$VERBOSE" == "--verbose" ]]; then
             harness_info "Output: $test_output"
@@ -126,7 +126,7 @@ test_dcg_explain_works() {
     local explain_output
     explain_output=$(dcg test 'git reset --hard' --explain 2>&1) || true
 
-    if echo "$explain_output" | grep -qi "reason\|pattern\|pack"; then
+    if echo "$explain_output" | grep -qiE "reason|pattern|pack"; then
         harness_pass "DCG explain provides detailed output"
         if [[ "$VERBOSE" == "--verbose" ]]; then
             harness_info "Explain output: $explain_output"

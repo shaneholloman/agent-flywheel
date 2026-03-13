@@ -164,7 +164,7 @@ teardown() {
     }
 
     # Check for command references
-    grep -qi "sysmoni\|ananicy" "$lesson" || {
+    grep -qiE "sysmoni|ananicy" "$lesson" || {
         log_fail "Missing SRPS command references"
         return 1
     }

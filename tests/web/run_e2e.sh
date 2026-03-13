@@ -202,8 +202,8 @@ if [[ -f "$JSON_REPORT" ]]; then
 else
     # Try to parse from log output
     PASSED=$(grep -c "✓" "$ARTIFACTS_DIR/test-output.log" 2>/dev/null || echo "0")
-    FAILED=$(grep -c "✘\|×\|failed" "$ARTIFACTS_DIR/test-output.log" 2>/dev/null || echo "0")
-    SKIPPED=$(grep -c "⊘\|skipped" "$ARTIFACTS_DIR/test-output.log" 2>/dev/null || echo "0")
+    FAILED=$(grep -cE "✘|×|failed" "$ARTIFACTS_DIR/test-output.log" 2>/dev/null || echo "0")
+    SKIPPED=$(grep -cE "⊘|skipped" "$ARTIFACTS_DIR/test-output.log" 2>/dev/null || echo "0")
     TOTAL=$((PASSED + FAILED + SKIPPED))
 fi
 

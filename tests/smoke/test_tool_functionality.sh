@@ -38,7 +38,7 @@ test_br_functionality() {
 
     # Create a test issue (filter out INFO log lines)
     local test_id
-    test_id=$(br create "Smoke test issue - DELETE ME" --type task --priority 4 --silent 2>&1 | grep -v "INFO\|WARN\|ERROR" | head -1)
+    test_id=$(br create "Smoke test issue - DELETE ME" --type task --priority 4 --silent 2>&1 | grep -vE "INFO|WARN|ERROR" | head -1)
     local create_exit=$?
 
     if [[ $create_exit -ne 0 ]] || [[ -z "$test_id" ]]; then
@@ -57,7 +57,7 @@ test_br_functionality() {
     fi
 
     # Close the test issue
-    if br update "$test_id" --status closed 2>&1 | grep -q "Updated\|closed"; then
+    if br update "$test_id" --status closed 2>&1 | grep -qE "Updated|closed"; then
         pass "br closed test issue: $test_id"
     else
         fail "br failed to close test issue: $test_id"

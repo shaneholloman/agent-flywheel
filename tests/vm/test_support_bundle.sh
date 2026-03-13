@@ -523,7 +523,7 @@ test_verbose_flag() {
     stderr_output=$(HOME="$MOCK_HOME" ACFS_HOME="$MOCK_ACFS" SUPPORT_BUNDLE_DOCTOR_TIMEOUT=5 \
         bash "$SUPPORT_SH" --verbose --output "$output_dir" 2>&1 >/dev/null) || true
 
-    if echo "$stderr_output" | grep -qi 'collected\|scanned\|redact'; then
+    if echo "$stderr_output" | grep -qiE 'collected|scanned|redact'; then
         harness_pass "--verbose produces additional detail output"
     else
         harness_fail "--verbose produces additional detail output"

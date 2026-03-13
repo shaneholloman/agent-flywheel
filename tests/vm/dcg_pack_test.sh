@@ -78,7 +78,7 @@ test_pack_details_command() {
     log "Testing dcg pack <pack-id> command..."
     local output
     output=$(dcg pack core.git 2>&1) || true
-    if echo "$output" | grep -qi "git\|pattern"; then
+    if echo "$output" | grep -qiE "git|pattern"; then
         pass "dcg pack core.git returns pack details"
         return 0
     else
@@ -91,7 +91,7 @@ test_pack_patterns_flag() {
     log "Testing dcg pack <pack-id> --patterns flag..."
     local output
     output=$(dcg pack database.postgresql --patterns 2>&1) || true
-    if echo "$output" | grep -qi "drop\|truncate"; then
+    if echo "$output" | grep -qiE "drop|truncate"; then
         pass "dcg pack --patterns shows destructive patterns"
         return 0
     else
@@ -330,7 +330,7 @@ test_invalid_pack_name_handling() {
     local output
     output=$(dcg pack "nonexistent.pack" 2>&1) || true
     # Should either error gracefully or show "not found" message
-    if echo "$output" | grep -qi "not found\|unknown\|invalid\|error\|does not exist"; then
+    if echo "$output" | grep -qiE "not found|unknown|invalid|error|does not exist"; then
         pass "Invalid pack name handled gracefully"
         return 0
     elif [[ -z "$output" ]]; then

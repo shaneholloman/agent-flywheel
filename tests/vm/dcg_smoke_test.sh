@@ -116,7 +116,7 @@ fi
 # Test 7: Quick block test
 echo "7. Testing command blocking..."
 block_output=$(dcg test 'git reset --hard' 2>&1) || true
-if echo "$block_output" | grep -qi "deny\|block"; then
+if echo "$block_output" | grep -qiE "deny|block"; then
     pass "Dangerous command correctly identified"
 else
     fail "DCG did not identify dangerous command. Output: $block_output"

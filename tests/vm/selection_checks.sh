@@ -209,7 +209,7 @@ else
 fi
 
 # Verify the skip was acknowledged
-if echo "$output" | grep -qi "skip.*tools.atuin\|tools.atuin.*skip"; then
+if echo "$output" | grep -qiE "skip.*tools.atuin|tools.atuin.*skip"; then
     harness_pass "--skip tools.atuin acknowledged in output"
 else
     harness_info "--skip tools.atuin not explicitly shown (may be expected)"

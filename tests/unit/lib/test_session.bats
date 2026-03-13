@@ -154,7 +154,7 @@ EOF
     assert_success
     
     run cat "$file"
-    assert_output --partial "password=[REDACTED]"
+    assert_output --partial "[SECRET_REDACTED]"
     assert_output --partial '"session_id": "123"'
 }
 

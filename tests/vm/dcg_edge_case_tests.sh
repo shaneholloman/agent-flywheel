@@ -164,13 +164,13 @@ test_multiple_packs() {
     packs_output=$(dcg packs 2>&1) || true
 
     # Check core packs exist
-    if echo "$packs_output" | grep -q "core.git\|git"; then
+    if echo "$packs_output" | grep -qE "core.git|git"; then
         pass "Git pack available"
     else
         skip "Git pack not found in packs list"
     fi
 
-    if echo "$packs_output" | grep -q "core.filesystem\|filesystem"; then
+    if echo "$packs_output" | grep -qE "core.filesystem|filesystem"; then
         pass "Filesystem pack available"
     else
         skip "Filesystem pack not found in packs list"
@@ -179,7 +179,7 @@ test_multiple_packs() {
     # Test that both git and filesystem patterns work
     local git_block
     git_block=$(dcg test 'git reset --hard' 2>&1) || true
-    if echo "$git_block" | grep -qi "deny\|block"; then
+    if echo "$git_block" | grep -qiE "deny|block"; then
         pass "Git pack blocks dangerous git commands"
     else
         fail "Git pack not blocking. Output: $git_block"
@@ -187,7 +187,7 @@ test_multiple_packs() {
 
     local fs_block
     fs_block=$(dcg test 'rm -rf /' 2>&1) || true
-    if echo "$fs_block" | grep -qi "deny\|block"; then
+    if echo "$fs_block" | grep -qiE "deny|block"; then
         pass "Filesystem pack blocks dangerous rm commands"
     else
         fail "Filesystem pack not blocking. Output: $fs_block"
@@ -314,7 +314,7 @@ test_safe_force_push() {
     local dangerous_force
     dangerous_force=$(dcg test 'git push --force' 2>&1) || true
 
-    if echo "$dangerous_force" | grep -qi "deny\|block"; then
+    if echo "$dangerous_force" | grep -qiE "deny|block"; then
         pass "Dangerous --force is blocked"
     else
         fail "Dangerous --force not blocked. Output: $dangerous_force"
@@ -340,7 +340,7 @@ test_temp_directory_allowed() {
     local home_rm
     home_rm=$(dcg test 'rm -rf ~/important' 2>&1) || true
 
-    if echo "$home_rm" | grep -qi "deny\|block"; then
+    if echo "$home_rm" | grep -qiE "deny|block"; then
         pass "Home directory rm -rf blocked"
     else
         fail "Home directory rm -rf not blocked. Output: $home_rm"
@@ -602,7 +602,7 @@ test_checkpoint_binary_without_hook() {
     local doctor_output
     doctor_output=$(dcg doctor 2>&1) || true
 
-    if echo "$doctor_output" | grep -qi "hook\|not.*registered\|missing"; then
+    if echo "$doctor_output" | grep -qiE "hook|not.*registered|missing"; then
         pass "Doctor correctly reports hook status"
     else
         skip "Doctor output format unclear: ${doctor_output:0:100}..."
@@ -623,7 +623,7 @@ test_checkpoint_hook_idempotency() {
     install3=$(dcg install --force 2>&1) || true
 
     # All should succeed (or already installed)
-    if echo "$install1 $install2 $install3" | grep -qi "error\|failed\|fatal"; then
+    if echo "$install1 $install2 $install3" | grep -qiE "error|failed|fatal"; then
         fail "Hook install failed on repeated calls"
         return 1
     fi
@@ -688,7 +688,7 @@ test_checkpoint_state_consistency() {
     local doctor_output
     doctor_output=$(dcg doctor 2>&1) || true
 
-    if echo "$doctor_output" | grep -qi "hook wiring.*OK\|registered"; then
+    if echo "$doctor_output" | grep -qiE "hook wiring.*OK|registered"; then
         pass "Hook correctly re-registered after cycle"
     else
         skip "Hook registration status after cycle unclear"
@@ -698,7 +698,7 @@ test_checkpoint_state_consistency() {
     local git_block
     git_block=$(dcg test 'git reset --hard' 2>&1) || true
 
-    if echo "$git_block" | grep -qi "deny\|block"; then
+    if echo "$git_block" | grep -qiE "deny|block"; then
         pass "Core blocking functionality intact after cycle"
     else
         fail "Blocking broken after cycle. Output: $git_block"

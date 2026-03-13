@@ -170,7 +170,7 @@ test_agents_only() {
     output=$(acfs-update --agents-only --dry-run --yes 2>&1) || true
 
     # Should mention agents section
-    if echo "$output" | grep -qi "agents\|claude\|codex\|gemini"; then
+    if echo "$output" | grep -qiE "agents|claude|codex|gemini"; then
         pass "--agents-only processes agent section"
     else
         fail "--agents-only missing agent output"
@@ -191,7 +191,7 @@ test_no_apt() {
     output=$(acfs-update --no-apt --dry-run --yes 2>&1) || true
 
     # Should show skip message for apt
-    if echo "$output" | grep -q "disabled via --no-apt\|skip.*apt"; then
+    if echo "$output" | grep -qE "disabled via --no-apt|skip.*apt"; then
         pass "--no-apt shows apt disabled"
     else
         # It might just not show apt at all
@@ -272,7 +272,7 @@ test_shell_only() {
     output=$(acfs-update --shell-only --dry-run --yes 2>&1) || true
 
     # Should mention shell tools
-    if echo "$output" | grep -qi "shell\|omz\|zsh\|atuin\|zoxide"; then
+    if echo "$output" | grep -qiE "shell|omz|zsh|atuin|zoxide"; then
         pass "--shell-only processes shell section"
     else
         fail "--shell-only missing shell output"

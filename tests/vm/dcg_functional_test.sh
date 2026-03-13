@@ -204,7 +204,7 @@ test_hook_blocks_rm_rf() {
     log "Testing dcg test blocks: rm -rf"
     local test_output
     test_output=$(dcg test 'rm -rf /important' 2>&1) || true
-    if echo "$test_output" | grep -qi "deny\|block"; then
+    if echo "$test_output" | grep -qiE "deny|block"; then
         pass "dcg test correctly identifies rm -rf as dangerous"
         return 0
     else
@@ -341,10 +341,10 @@ test_allow_once_command_exists() {
     local help_output
     help_output=$(dcg allow-once --help 2>&1) || true
 
-    if echo "$help_output" | grep -qi "usage\|help\|bypass\|code"; then
+    if echo "$help_output" | grep -qiE "usage|help|bypass|code"; then
         pass "Allow-once command is available"
         return 0
-    elif echo "$help_output" | grep -qi "not found\|unknown"; then
+    elif echo "$help_output" | grep -qiE "not found|unknown"; then
         skip "Allow-once command not available in this DCG version"
         return 0
     else
@@ -361,10 +361,10 @@ test_allow_once_invalid_code() {
     output=$(dcg allow-once "INVALID-CODE-12345" 2>&1) || true
 
     # DCG should reject invalid codes with error message
-    if echo "$output" | grep -qi "invalid\|not found\|error\|unknown\|expired\|no.*match"; then
+    if echo "$output" | grep -qiE "invalid|not found|error|unknown|expired|no.*match"; then
         pass "Allow-once correctly rejects invalid code"
         return 0
-    elif echo "$output" | grep -qi "success\|allowed\|bypass"; then
+    elif echo "$output" | grep -qiE "success|allowed|bypass"; then
         fail "Allow-once should reject invalid codes"
         detail "Output: $output"
         return 1

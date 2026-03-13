@@ -34,7 +34,7 @@ test_pin_ref_flag_exists() {
     harness_section "Test: --pin-ref flag is recognized"
 
     # Check that the flag is parsed in install.sh source code
-    if grep -q '\-\-pin-ref\|\-\-confirm-ref' "$REPO_ROOT/install.sh"; then
+    if grep -qE '\-\-pin-ref|\-\-confirm-ref' "$REPO_ROOT/install.sh"; then
         harness_pass "--pin-ref flag is implemented in install.sh"
     else
         harness_fail "--pin-ref flag not found in install.sh"
@@ -176,7 +176,7 @@ test_pin_ref_invalid_ref() {
     fi
 
     # Should show error message
-    if echo "$output" | grep -qi "error\|could not resolve\|invalid"; then
+    if echo "$output" | grep -qiE "error|could not resolve|invalid"; then
         harness_pass "Output contains error message"
     else
         harness_fail "Missing error message for invalid ref"

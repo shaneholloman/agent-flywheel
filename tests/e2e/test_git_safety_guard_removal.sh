@@ -130,7 +130,7 @@ if [[ -n "$doctor_output" ]]; then
     fi
 
     # Check for DCG mentions (should exist)
-    if echo "$doctor_output" | grep -qi 'DCG\|Destructive Command Guard'; then
+    if echo "$doctor_output" | grep -qiE 'DCG|Destructive Command Guard'; then
         record_result "doctor_has_dcg" "pass" "Doctor mentions DCG"
     else
         record_result "doctor_has_dcg" "fail" "Doctor does not mention DCG"
@@ -180,7 +180,7 @@ if [[ -n "$install_log" ]]; then
         record_result "install_log_no_guard" "pass" "Install log clean of 'Git Safety Guard'"
     fi
 
-    if grep -qi 'DCG\|Destructive Command Guard' "$install_log" 2>/dev/null; then
+    if grep -qiE 'DCG|Destructive Command Guard' "$install_log" 2>/dev/null; then
         record_result "install_log_has_dcg" "pass" "Install log mentions DCG"
     else
         record_result "install_log_has_dcg" "fail" "Install log does not mention DCG"
