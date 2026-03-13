@@ -198,34 +198,80 @@ state_init() {
     local now
     now="$(date -Iseconds)"
 
-    # Create initial state JSON
+    # Initialize state directory and file
+    mkdir -p "$(dirname "$target")"
+
+    # Normalize boolean values for JSON
+    local skip_pg="false"; [[ "${SKIP_POSTGRES:-false}" == "true" ]] && skip_pg="true"
+    local skip_v="false"; [[ "${SKIP_VAULT:-false}" == "true" ]] && skip_v="true"
+    local skip_c="false"; [[ "${SKIP_CLOUD:-false}" == "true" ]] && skip_c="true"
+
     local initial_state
-    initial_state=$(cat <<EOF
+    if command -v jq &>/dev/null; then
+        initial_state=$(jq -n \
+            --arg ver "$ACFS_VERSION" \
+            --arg user "$TARGET_USER" \
+            --arg home "$TARGET_HOME" \
+            --arg ts "$(date -Iseconds)" \
+            --arg mode "${ACFS_MODE:-vibe}" \
+            --argjson skip_pg "$skip_pg" \
+            --argjson skip_v "$skip_v" \
+            --argjson skip_c "$skip_c" \
+            '{
+                acfs_version: $ver,
+                target_user: $user,
+                target_home: $home,
+                started_at: $ts,
+                mode: $mode,
+                completed_phases: [],
+                failed_phase: null,
+                failed_step: null,
+                skip_postgres: $skip_pg,
+                skip_vault: $skip_v,
+                skip_cloud: $skip_c,
+                ubuntu_upgrade: {
+                    enabled: false,
+                    current_stage: "none",
+                    upgrade_path: [],
+                    completed_upgrades: []
+                }
+            }')
+    else
+        # Fallback to heredoc if jq is not yet installed
+        initial_state=$(cat <<EOF
 {
-  "schema_version": ${ACFS_STATE_SCHEMA_VERSION},
-  "version": "${ACFS_VERSION:-0.1.0}",
-  "mode": "${MODE:-vibe}",
-  "started_at": "${now}",
-  "last_updated": "${now}",
+  "acfs_version": "$ACFS_VERSION",
+  "target_user": "$TARGET_USER",
+  "target_home": "$TARGET_HOME",
+  "started_at": "$(date -Iseconds)",
+  "mode": "${ACFS_MODE:-vibe}",
   "completed_phases": [],
-  "current_phase": null,
-  "current_step": null,
   "failed_phase": null,
   "failed_step": null,
-  "failed_error": null,
-  "skipped_tools": [],
-  "skipped_phases": [],
-  "phase_durations": {},
-  "target_user": "${TARGET_USER:-ubuntu}",
-  "skip_postgres": ${SKIP_POSTGRES:-false},
-  "skip_vault": ${SKIP_VAULT:-false},
-  "skip_cloud": ${SKIP_CLOUD:-false}
+  "skip_postgres": $skip_pg,
+  "skip_vault": $skip_v,
+  "skip_cloud": $skip_c,
+  "ubuntu_upgrade": {
+    "enabled": false,
+    "current_stage": "none",
+    "upgrade_path": [],
+    "completed_upgrades": []
+  }
 }
 EOF
 )
+    fi
 
-    # Write atomically (beads-aa1: atomic writes)
-    state_write_atomic "$state_file" "$initial_state"
+    if ! state_write_atomic "$target" "$initial_state"; then
+        return 1
+    fi
+
+    # Optional: sync the directory entry to ensure the rename is durable
+    if command -v sync &>/dev/null; then
+        sync "$target_dir" 2>/dev/null || true
+    fi
+
+    return 0
 }
 
 # Write state file atomically using temp file + rename
@@ -400,6 +446,11 @@ state_write_atomic() {
 # Usage: _state_acquire_lock
 # Returns: 0 on success, 1 on timeout/failure
 _state_acquire_lock() {
+    # If already locked by this process, just return success
+    if [[ "${_ACFS_STATE_LOCKED:-}" == "true" ]]; then
+        return 0
+    fi
+
     local state_file
     state_file="$(state_get_file)" || return 1
     local lock_file="${state_file}.lock"
@@ -412,31 +463,36 @@ _state_acquire_lock() {
     fi
 
     # Open lock file on FD 200 (same FD convention as autofix.sh)
-    # NOTE: On bash 5.3+, `exec N>file` under set -e exits the script
-    # before `if` can catch the failure. We test in a subshell first,
-    # then only exec in the main shell if the subshell succeeded.
-    if (exec 200>"$lock_file") 2>/dev/null; then
-        exec 200>"$lock_file"
-        ACFS_LOCK_FD=200
-    elif (exec 199>"$lock_file") 2>/dev/null; then
-        exec 199>"$lock_file"
-        ACFS_LOCK_FD=199
-    else
-        # Lock acquisition not possible, return failure
-        return 1
+    # Using >> to avoid truncating while opening for locking
+    if [[ -z "${ACFS_LOCK_FD:-}" ]]; then
+        if (exec 200>>"$lock_file") 2>/dev/null; then
+            exec 200>>"$lock_file"
+            ACFS_LOCK_FD=200
+        elif (exec 199>>"$lock_file") 2>/dev/null; then
+            exec 199>>"$lock_file"
+            ACFS_LOCK_FD=199
+        else
+            # Lock acquisition not possible, return failure
+            return 1
+        fi
     fi
 
     # Try to acquire lock with a 5-second timeout
-    if ! flock -w 5 "${ACFS_LOCK_FD:-200}" 2>/dev/null; then
+    if ! flock -w 5 "${ACFS_LOCK_FD}" 2>/dev/null; then
         return 1
     fi
+
+    _ACFS_STATE_LOCKED=true
     return 0
 }
 
 # Release the lock
 # Usage: _state_release_lock
 _state_release_lock() {
-    flock -u "${ACFS_LOCK_FD:-200}" 2>/dev/null || true
+    if [[ -n "${ACFS_LOCK_FD:-}" ]]; then
+        flock -u "${ACFS_LOCK_FD}" 2>/dev/null || true
+    fi
+    _ACFS_STATE_LOCKED=false
 }
 
 # Mark state as interrupted by a signal (SIGTERM, SIGINT, SIGHUP).
@@ -1279,6 +1335,7 @@ state_upgrade_print_status() {
 
     # Extract all fields in a single jq call (11→1 subprocess spawns)
     # Note: Uses ASCII Unit Separator (0x1f) as delimiter since bash strips null bytes
+    # Uses ASCII Record Separator (0x1e) for internal list items to prevent breaking read.
     local extracted
     extracted=$(echo "$state" | jq -r '
         .ubuntu_upgrade as $u |
@@ -1289,7 +1346,7 @@ state_upgrade_print_status() {
             ($u.current_stage // ""),
             ($u.completed_upgrades | length | tostring),
             ($u.upgrade_path | length | tostring),
-            ($u.completed_upgrades // [] | map("  ✓ \(.from) → \(.to)") | join("\n")),
+            ($u.completed_upgrades // [] | map("  ✓ \(.from) → \(.to)") | join("\u001e")),
             ($u.current_upgrade.from // ""),
             ($u.current_upgrade.to // ""),
             ($u.last_error // "")
@@ -1299,6 +1356,9 @@ state_upgrade_print_status() {
     # Parse unit-separator-delimited fields
     local enabled original target stage completed_count total_count completed_list current_from current_to error
     IFS=$'\x1f' read -r enabled original target stage completed_count total_count completed_list current_from current_to error <<< "$extracted"
+
+    # Restore newlines in the completed list
+    completed_list="${completed_list//[$'\x1e']/$'\n'}"
 
     if [[ "$enabled" != "true" ]]; then
         echo "No upgrade in progress"
@@ -1337,20 +1397,19 @@ state_save() {
     local state_file
     state_file="$(state_get_file)"
 
-    # Update last_updated timestamp
-    if command -v jq &>/dev/null; then
-        local now
-        now="$(date -Iseconds)"
-        if ! content=$(echo "$content" | jq --arg ts "$now" '.last_updated = $ts'); then
-            declare -f log_error &>/dev/null && log_error "state_save: failed to update last_updated timestamp"
-            return 1
-        fi
-    fi
-
-    if ! state_write_atomic "$state_file" "$content"; then
-        declare -f log_error &>/dev/null && log_error "state_save: state_write_atomic failed"
+    if ! _state_acquire_lock; then
+        declare -f log_error &>/dev/null && log_error "state_save: failed to acquire lock"
         return 1
     fi
+
+    local status=0
+    if ! state_write_atomic "$state_file" "$content"; then
+        declare -f log_error &>/dev/null && log_error "state_save: state_write_atomic failed"
+        status=1
+    fi
+
+    _state_release_lock
+    return $status
 }
 
 # Update specific fields in state
@@ -2039,11 +2098,8 @@ state_handle_invalid() {
                     state_migrate_v1_to_v2
                 fi
             else
-                echo "jq is required for migration. Starting fresh."
-                if ! state_backup_and_remove; then
-                    echo "ERROR: Failed to move legacy state file out of the way; aborting." >&2
-                    return 1
-                fi
+                echo "Error: jq is required for state migration" >&2
+                return 1
             fi
             return 0
             ;;

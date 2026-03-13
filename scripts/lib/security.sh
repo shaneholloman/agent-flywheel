@@ -247,7 +247,7 @@ enforce_https() {
     if ! is_https "$url"; then
         log_error "Security Error: URL for '$name' is not HTTPS"
         printf "  URL: %s\n" "$url" >&2
-        echo -e "  All installer URLs must use HTTPS." >&2
+        printf "  All installer URLs must use HTTPS.\n" >&2
         return 1
     fi
     return 0
@@ -366,11 +366,11 @@ verify_checksum() {
         printf "  Expected: %s\n" "$expected_sha256" >&2
         printf "  Actual:   %s\n" "$actual_sha256" >&2
         printf "  URL: %s\n" "$url" >&2
-        echo -e "  Refusing to execute unverified installer script." >&2
-        echo -e "  Fix:" >&2
-        echo -e "    - End users: update ACFS to refresh checksums.yaml (re-run install.sh / update scripts)" >&2
-        echo -e "    - Maintainers: regenerate checksums.yaml with:" >&2
-        echo -e "        ./scripts/lib/security.sh --update-checksums > checksums.yaml" >&2
+        printf "  Refusing to execute unverified installer script.\n" >&2
+        printf "  Fix:\n" >&2
+        printf "    - End users: update ACFS to refresh checksums.yaml (re-run install.sh / update scripts)\n" >&2
+        printf "    - Maintainers: regenerate checksums.yaml with:\n" >&2
+        printf "        ./scripts/lib/security.sh --update-checksums > checksums.yaml\n" >&2
         rm -f "$tmp_file" 2>/dev/null || true
         return 1
     fi
@@ -398,11 +398,11 @@ fetch_and_run() {
     if [[ -z "$expected_sha256" ]]; then
         log_error "Security Error: Missing checksum for $name"
         printf "  URL: %s\n" "$url" >&2
-        echo -e "  Refusing to execute unverified installer script." >&2
-        echo -e "  Fix:" >&2
-        echo -e "    - End users: update ACFS to refresh checksums.yaml (re-run install.sh / update scripts)" >&2
-        echo -e "    - Maintainers: regenerate checksums.yaml with:" >&2
-        echo -e "        ./scripts/lib/security.sh --update-checksums > checksums.yaml" >&2
+        printf "  Refusing to execute unverified installer script.\n" >&2
+        printf "  Fix:\n" >&2
+        printf "    - End users: update ACFS to refresh checksums.yaml (re-run install.sh / update scripts)\n" >&2
+        printf "    - Maintainers: regenerate checksums.yaml with:\n" >&2
+        printf "        ./scripts/lib/security.sh --update-checksums > checksums.yaml\n" >&2
         return 1
     fi
 
@@ -453,7 +453,11 @@ fetch_and_run_with_recovery() {
     if [[ -z "$expected_sha256" ]]; then
         log_error "Security Error: Missing checksum for $name"
         printf "  URL: %s\n" "$url" >&2
-        echo -e "  Refusing to execute unverified installer script." >&2
+        printf "  Refusing to execute unverified installer script.\n" >&2
+        printf "  Fix:\n" >&2
+        printf "    - End users: update ACFS to refresh checksums.yaml (re-run install.sh / update scripts)\n" >&2
+        printf "    - Maintainers: regenerate checksums.yaml with:\n" >&2
+        printf "        ./scripts/lib/security.sh --update-checksums > checksums.yaml\n" >&2
         return 1
     fi
 
@@ -522,7 +526,7 @@ fetch_and_run_with_recovery() {
 # Print all upstream URLs that will be fetched
 print_upstream_urls() {
     echo ""
-    echo -e "${CYAN}Upstream Installers${NC}"
+    printf "${CYAN}Upstream Installers${NC}\n"
     echo "============================================================"
     echo ""
     echo "The following scripts will be downloaded and executed:"
@@ -534,7 +538,7 @@ print_upstream_urls() {
     done | sort
 
     echo ""
-    echo -e "${DIM}All URLs use HTTPS for secure transport.${NC}"
+    printf "${DIM}All URLs use HTTPS for secure transport.${NC}\n"
     echo ""
 }
 
@@ -554,7 +558,7 @@ print_current_checksums() {
 
     # Progress info to stderr (not part of YAML output)
     echo "" >&2
-    echo -e "${CYAN}Generating checksums.yaml...${NC}" >&2
+    printf "${CYAN}Generating checksums.yaml...${NC}\n" >&2
     echo "" >&2
 
     {
@@ -627,7 +631,7 @@ load_checksums() {
     local nc_color="${ACFS_NC-\033[0m}"
 
     if [[ ! -r "$file" ]]; then
-        echo -e "${warn_color}Warning:${nc_color} Checksums file not found: $file" >&2
+        printf "${warn_color}Warning:${nc_color} Checksums file not found: %s\n" "$file" >&2
         return 1
     fi
 
@@ -692,7 +696,7 @@ load_checksums() {
     done < "$file"
 
     if [[ ${#LOADED_CHECKSUMS[@]} -eq 0 ]]; then
-        echo -e "${warn_color}Warning:${nc_color} No valid installer checksums found in: $file" >&2
+        printf "${warn_color}Warning:${nc_color} No valid installer checksums found in: %s\n" "$file" >&2
         return 1
     fi
 
@@ -774,7 +778,7 @@ handle_all_checksum_mismatches() {
 
     if [[ "${ACFS_STRICT_MODE:-false}" == "true" ]]; then
         echo "" >&2
-        echo -e "${RED}Security Error:${NC} Checksum mismatches detected (strict mode). Aborting." >&2
+        printf "${RED}Security Error:${NC} Checksum mismatches detected (strict mode). Aborting.\n" >&2
         echo "" >&2
         for entry in "${CHECKSUM_MISMATCHES[@]}"; do
             IFS="|" read -r tool url expected actual <<< "$entry"
@@ -802,9 +806,9 @@ handle_all_checksum_mismatches() {
 
     # Interactive mode: display mismatches and prompt
     echo "" >&2
-    echo -e "${YELLOW}============================================================${NC}" >&2
-    echo -e "${YELLOW}  Checksum Mismatches Detected: $mismatch_count installer(s)${NC}" >&2
-    echo -e "${YELLOW}============================================================${NC}" >&2
+    printf "${YELLOW}============================================================${NC}\n" >&2
+    printf "${YELLOW}  Checksum Mismatches Detected: %s installer(s)${NC}\n" "$mismatch_count" >&2
+    printf "${YELLOW}============================================================${NC}\n" >&2
     echo "" >&2
     echo "The following installers have changed since checksums.yaml was generated:" >&2
     echo "" >&2
@@ -844,9 +848,9 @@ handle_all_checksum_mismatches() {
     echo "" >&2
 
     if [[ "$has_critical" == "true" ]]; then
-        echo -e "${RED}ABORTING: ${#critical_tools[@]} CRITICAL tool(s) have checksum mismatches.${NC}" >&2
-        echo "ACFS will not run unverified CRITICAL installers." >&2
-        echo "Fix: update ACFS/checksums.yaml (or pin ACFS_REF to a known-good version) and re-run." >&2
+        printf "${RED}ABORTING: %s CRITICAL tool(s) have checksum mismatches.${NC}\n" "${#critical_tools[@]}" >&2
+        printf "ACFS will not run unverified CRITICAL installers.\n" >&2
+        printf "Fix: update ACFS/checksums.yaml (or pin ACFS_REF to a known-good version) and re-run.\n" >&2
         return 1
     fi
 
@@ -879,11 +883,11 @@ handle_all_checksum_mismatches() {
             return 0
             ;;
         a|abort|"")
-            echo -e "${RED}Installation aborted by user.${NC}" >&2
+            printf "${RED}Installation aborted by user.${NC}\n" >&2
             return 1
             ;;
         *)
-            echo "Invalid choice. Aborting for safety." >&2
+            printf "Invalid choice. Aborting for safety.\n" >&2
             return 1
             ;;
     esac
@@ -900,7 +904,7 @@ _handle_mismatches_noninteractive() {
     local critical_names=()
 
     echo "" >&2
-    echo -e "${YELLOW}Checksum mismatches detected (non-interactive mode):${NC}" >&2
+    printf "${YELLOW}Checksum mismatches detected (non-interactive mode):${NC}\n" >&2
     echo "" >&2
 
     for entry in "${CHECKSUM_MISMATCHES[@]}"; do
@@ -930,12 +934,12 @@ _handle_mismatches_noninteractive() {
     echo "" >&2
 
     if [[ "$has_critical" == "true" ]]; then
-        echo -e "${RED}ABORTING: Critical tools have checksum mismatches: ${critical_names[*]}${NC}" >&2
-        echo "Cannot proceed safely without verified critical installers." >&2
+        printf "${RED}ABORTING: Critical tools have checksum mismatches: %s${NC}\n" "${critical_names[*]}" >&2
+        printf "Cannot proceed safely without verified critical installers.\n" >&2
         return 1
     fi
 
-    echo -e "${GREEN}Proceeding with installation (non-critical mismatches skipped).${NC}" >&2
+    printf "${GREEN}Proceeding with installation (non-critical mismatches skipped).${NC}\n" >&2
     clear_checksum_mismatches
     return 0
 }
@@ -971,7 +975,7 @@ handle_checksum_mismatch() {
     local url="$4"
 
     if [[ "${ACFS_STRICT_MODE:-false}" == "true" ]]; then
-        echo -e "${RED}Security Error:${NC} Checksum mismatch for $tool (strict mode)" >&2
+        printf "${RED}Security Error:${NC} Checksum mismatch for %s (strict mode)\n" "$tool" >&2
         printf "  Expected: %s\n" "$expected" >&2
         printf "  Actual:   %s\n" "$actual" >&2
         printf "  URL: %s\n" "$url" >&2
@@ -1014,7 +1018,7 @@ handle_checksum_mismatch() {
 
     # Interactive mode: show details and prompt
     echo "" >&2
-    echo -e "${YELLOW}━━━ Checksum Mismatch: $tool ━━━${NC}" >&2
+    printf "${YELLOW}━━━ Checksum Mismatch: %s ━━━${NC}\n" "$tool" >&2
     echo "" >&2
 
     local classification_label
@@ -1024,7 +1028,7 @@ handle_checksum_mismatch() {
         classification_label="${YELLOW}[optional]${NC}"
     fi
 
-    echo -e "  Tool: $classification_label $tool" >&2
+    printf "  Tool: %b %s\n" "$classification_label" "$tool" >&2
     printf "  Expected: %.16s...\n" "$expected" >&2
     printf "  Actual:   %.16s...\n" "$actual" >&2
     printf "  URL: %s\n" "$url" >&2
@@ -1033,8 +1037,8 @@ handle_checksum_mismatch() {
     echo "" >&2
 
     if [[ "$is_critical" == "true" ]]; then
-        echo -e "${RED}ABORTING:${NC} $tool is CRITICAL and its installer checksum changed." >&2
-        echo "Update ACFS/checksums.yaml and re-run to proceed safely." >&2
+        printf "${RED}ABORTING:${NC} %s is CRITICAL and its installer checksum changed.\n" "$tool" >&2
+        printf "Update ACFS/checksums.yaml and re-run to proceed safely.\n" >&2
         return 1
     fi
 
@@ -1124,7 +1128,7 @@ verify_all_installers() {
     local failed=0
 
     echo ""
-    echo -e "${CYAN}Verifying Installer Integrity${NC}"
+    printf "${CYAN}Verifying Installer Integrity${NC}\n"
     echo "============================================================"
     echo ""
 
