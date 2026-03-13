@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Terminal,
@@ -27,7 +27,7 @@ import {
 } from "@/components/simpler-guide";
 import { useWizardAnalytics } from "@/lib/hooks/useWizardAnalytics";
 
-export default function WindowsTerminalSetupPage() {
+function WindowsTerminalSetupContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [vpsIP, , vpsIPLoaded] = useVPSIP();
@@ -371,5 +371,19 @@ export default function WindowsTerminalSetupPage() {
         </Button>
       </div>
     </div>
+  );
+}
+
+export default function WindowsTerminalSetupPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-12">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <WindowsTerminalSetupContent />
+    </Suspense>
   );
 }

@@ -207,7 +207,7 @@ test.describe("Wizard Flow", () => {
     }
 
     // Enter IP address (use type() + blur() for cross-browser reliability)
-    const ipInput = page.locator('input[placeholder*="192.168"]');
+    const ipInput = page.locator('[data-vps-ip-input]');
     await ipInput.clear();
     await ipInput.type("192.168.1.100");
     await ipInput.blur();
@@ -373,7 +373,7 @@ test.describe("State Persistence", () => {
     }
 
     // Enter IP address (use type() + blur() for cross-browser reliability)
-    const ipInput = page.locator('input[placeholder*="192.168"]');
+    const ipInput = page.locator('[data-vps-ip-input]');
     await ipInput.clear();
     await ipInput.type("10.0.0.50");
     await ipInput.blur();
@@ -459,7 +459,7 @@ test.describe("IP Address Validation", () => {
     await page.goto("/wizard/create-vps");
     await expect(page.locator("h1").first()).toBeVisible();
 
-    const input = page.locator('input[placeholder*="192.168"]');
+    const input = page.locator('[data-vps-ip-input]');
 
     // Clear any existing value and type the invalid IP (more reliable than fill across browsers)
     await input.clear();
@@ -479,7 +479,7 @@ test.describe("IP Address Validation", () => {
     await page.goto("/wizard/create-vps");
     await expect(page.locator("h1").first()).toBeVisible();
 
-    const input = page.locator('input[placeholder*="192.168"]');
+    const input = page.locator('[data-vps-ip-input]');
 
     // Clear any existing value and type the valid IP
     await input.clear();
@@ -499,7 +499,7 @@ test.describe("IP Address Validation", () => {
     await page.goto("/wizard/create-vps");
     await expect(page.locator("h1").first()).toBeVisible();
 
-    const input = page.locator('input[placeholder*="192.168"]');
+    const input = page.locator('[data-vps-ip-input]');
 
     // Clear any existing value and type the out-of-range IP
     await input.clear();
@@ -590,7 +590,7 @@ test.describe("Complete Wizard Flow Integration", () => {
     }
     // Users often paste IPs with surrounding whitespace - test that trimming works
     // Use type() + blur() for cross-browser reliability
-    const ipInput = page.locator('input[placeholder*="192.168"]');
+    const ipInput = page.locator('[data-vps-ip-input]');
     await ipInput.clear();
     await ipInput.type(" 192.168.1.100 ");
     await ipInput.blur();
@@ -706,7 +706,7 @@ test.describe("No localStorage (query-only resilience)", () => {
       await checkboxes.nth(i).click();
     }
 
-    const ipInput = page.locator('input[placeholder*="192.168"]');
+    const ipInput = page.locator('[data-vps-ip-input]');
     await ipInput.clear();
     await ipInput.type("10.10.10.10");
     await ipInput.blur();
@@ -1120,7 +1120,7 @@ test.describe("Create VPS - Button Disabled States", () => {
     await expect(page.locator("h1").first()).toBeVisible({ timeout: TIMEOUTS.PAGE_LOAD });
 
     // Enter valid IP but don't check any boxes
-    const ipInput = page.locator('input[placeholder*="192.168"]');
+    const ipInput = page.locator('[data-vps-ip-input]');
     await ipInput.clear();
     await ipInput.type("192.168.1.100");
     await ipInput.blur();
@@ -1140,7 +1140,7 @@ test.describe("Create VPS - Button Disabled States", () => {
     await checkboxes.first().click();
 
     // Enter valid IP
-    const ipInput = page.locator('input[placeholder*="192.168"]');
+    const ipInput = page.locator('[data-vps-ip-input]');
     await ipInput.clear();
     await ipInput.type("192.168.1.100");
     await ipInput.blur();
@@ -1179,7 +1179,7 @@ test.describe("Create VPS - Button Disabled States", () => {
     }
 
     // Enter invalid IP
-    const ipInput = page.locator('input[placeholder*="192.168"]');
+    const ipInput = page.locator('[data-vps-ip-input]');
     await ipInput.clear();
     await ipInput.type("not-an-ip");
     await ipInput.blur();
@@ -1204,7 +1204,7 @@ test.describe("Create VPS - Button Disabled States", () => {
     }
 
     // Enter valid IP
-    const ipInput = page.locator('input[placeholder*="192.168"]');
+    const ipInput = page.locator('[data-vps-ip-input]');
     await ipInput.clear();
     await ipInput.type("192.168.1.100");
     await ipInput.blur();
@@ -1236,7 +1236,7 @@ test.describe("Form Validation - Error States", () => {
     await page.goto("/wizard/create-vps");
     await expect(page.locator("h1").first()).toBeVisible({ timeout: TIMEOUTS.PAGE_LOAD });
 
-    const input = page.locator('input[placeholder*="192.168"]');
+    const input = page.locator('[data-vps-ip-input]');
     await input.clear();
     await input.type("abc");
     await input.blur();
@@ -1250,7 +1250,7 @@ test.describe("Form Validation - Error States", () => {
     await page.goto("/wizard/create-vps");
     await expect(page.locator("h1").first()).toBeVisible({ timeout: TIMEOUTS.PAGE_LOAD });
 
-    const input = page.locator('input[placeholder*="192.168"]');
+    const input = page.locator('[data-vps-ip-input]');
 
     // First enter invalid
     await input.clear();
@@ -1273,7 +1273,7 @@ test.describe("Form Validation - Error States", () => {
     await page.goto("/wizard/create-vps");
     await expect(page.locator("h1").first()).toBeVisible({ timeout: TIMEOUTS.PAGE_LOAD });
 
-    const input = page.locator('input[placeholder*="192.168"]');
+    const input = page.locator('[data-vps-ip-input]');
 
     // Test empty string
     await input.clear();
@@ -1536,7 +1536,7 @@ test.describe("Accessibility", () => {
     await expect(page.locator("h1").first()).toBeVisible({ timeout: TIMEOUTS.PAGE_LOAD });
 
     // IP input should be accessible
-    const input = page.locator('input[placeholder*="192.168"]');
+    const input = page.locator('[data-vps-ip-input]');
     await expect(input).toBeVisible();
     await expect(input).toBeEnabled();
   });

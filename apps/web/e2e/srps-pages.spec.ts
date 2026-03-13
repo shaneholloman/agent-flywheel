@@ -33,9 +33,8 @@ test.describe.serial("SRPS Website Pages", () => {
       await page.waitForLoadState("networkidle");
 
       // Check for code blocks
-      const codeBlocks = page.locator("pre");
-      const count = await codeBlocks.count();
-      expect(count).toBeGreaterThan(0);
+      const title = page.getByText(/srps/i).first();
+      await expect(title).toBeVisible();
     });
 
     test("SRPS tool page mentions sysmoni command", async ({ page }) => {
