@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Users, AlertTriangle, CheckCircle2, Play, RotateCcw } from "lucide-react";
+import { motion, useInView, useReducedMotion, AnimatePresence } from "framer-motion";
+import { CheckCircle2, AlertTriangle, Users, Play, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const AGENT_COUNT = 4;
@@ -213,6 +213,20 @@ export function SwarmExecutionViz() {
           {/* BEADS LIST */}
           <div>
             <h5 className="text-xs font-mono text-white/40 mb-2 uppercase tracking-wider">Ready Beads (Queue)</h5>
+            <div className="flex items-center justify-between text-[0.65rem] font-bold uppercase tracking-widest text-white/40 mb-3">
+              <span>State Legend</span>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-white/60">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full border border-white/20 bg-white/5" /> Unclaimed
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#FF5500] shadow-[0_0_8px_rgba(255,85,0,0.5)]" /> In Progress
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#A1A1AA]" /> Done
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               {beadClaims.map((claim, i) => {
                 const isCollision = claim === "collision";
