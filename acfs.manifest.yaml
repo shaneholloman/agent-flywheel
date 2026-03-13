@@ -1069,7 +1069,6 @@ modules:
       tool: mcp_agent_mail
       runner: bash
       args: ["--dir", "${TARGET_HOME:-/home/ubuntu}/mcp_agent_mail", "--yes", "--no-start"]
-      fallback_url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/scripts/install.sh"
     install:
       - |
           if ! command -v am >/dev/null 2>&1; then
@@ -1111,9 +1110,72 @@ modules:
             fi
           fi
 
-          systemctl --user daemon-reload >/dev/null 2>&1 || true
-          if ! systemctl --user enable --now agent-mail.service >/dev/null 2>&1; then
-            systemctl --user restart agent-mail.service >/dev/null 2>&1
+          fallback_pid_file="$storage_root/agent-mail.pid"
+          fallback_log_file="$storage_root/agent-mail.log"
+
+          stop_agent_mail_fallback() {
+            if [[ -f "$fallback_pid_file" ]]; then
+              existing_pid="$(cat "$fallback_pid_file" 2>/dev/null || true)"
+              if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
+                 ps -p "$existing_pid" -o args= 2>/dev/null | grep -Fq "$am_bin serve-http"; then
+                kill "$existing_pid" >/dev/null 2>&1 || true
+                for _ in {1..10}; do
+                  if ! kill -0 "$existing_pid" 2>/dev/null; then
+                    break
+                  fi
+                  sleep 1
+                done
+                if kill -0 "$existing_pid" 2>/dev/null; then
+                  kill -9 "$existing_pid" >/dev/null 2>&1 || true
+                fi
+              fi
+              rm -f "$fallback_pid_file"
+            fi
+          }
+
+          launch_agent_mail_fallback() {
+            if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+              return 0
+            fi
+
+            if [[ -f "$fallback_pid_file" ]]; then
+              existing_pid="$(cat "$fallback_pid_file" 2>/dev/null || true)"
+              if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
+                 ps -p "$existing_pid" -o args= 2>/dev/null | grep -Fq "$am_bin serve-http"; then
+                return 0
+              fi
+              rm -f "$fallback_pid_file"
+            fi
+
+            nohup env \
+              RUST_LOG=info \
+              STORAGE_ROOT="$storage_root" \
+              DATABASE_URL="$db_url" \
+              HTTP_PATH=/mcp/ \
+              "$am_bin" serve-http --host 127.0.0.1 --port 8765 --path /mcp --no-auth --no-tui \
+              >>"$fallback_log_file" 2>&1 < /dev/null &
+            echo $! > "$fallback_pid_file"
+          }
+
+          if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+            stop_agent_mail_fallback
+            systemctl --user daemon-reload >/dev/null 2>&1 || true
+            if ! systemctl --user enable --now agent-mail.service >/dev/null 2>&1; then
+              systemctl --user restart agent-mail.service >/dev/null 2>&1
+            fi
+            active_waited=0
+            active_max_wait=10
+            until systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1; do
+              if [[ "$active_waited" -ge "$active_max_wait" ]]; then
+                break
+              fi
+              sleep 1
+              active_waited=$((active_waited + 1))
+            done
+            systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1
+          else
+            echo "Agent Mail: systemctl --user unavailable, using background fallback" >&2
+            launch_agent_mail_fallback
           fi
       - |
           # Wait for the managed Agent Mail service to become healthy.
@@ -1129,10 +1191,22 @@ modules:
           done
     verify:
       - command -v am
-      - curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null
+      - |
+          runtime_dir="/run/user/$(id -u)"
+          if [[ -d "$runtime_dir" ]]; then
+            export XDG_RUNTIME_DIR="$runtime_dir"
+            if [[ -S "$runtime_dir/bus" ]]; then
+              export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+            fi
+          fi
+          if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+            systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1 || exit 1
+          fi
+          curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null
     notes:
       - "Installs with --no-start, then writes a managed no-auth user service on port 8765"
       - "Managed service pins storage, database, and MCP path under ~/.mcp_agent_mail_git_mailbox_repo"
+      - "If a user systemd manager is available, verification requires agent-mail.service to be active"
       - "Server health is verified at http://127.0.0.1:8765/health/liveness after install"
 
   - id: stack.meta_skill
@@ -1882,7 +1956,6 @@ modules:
       tool: srps
       runner: bash
       args: ["--install"]
-      fallback_url: "https://raw.githubusercontent.com/Dicklesworthstone/system_resource_protection_script/main/install.sh"
     install: []
     verify:
       - sysmoni --version || sysmoni --help
@@ -2105,7 +2178,46 @@ modules:
       tool: asb
       runner: bash
       url: "https://raw.githubusercontent.com/Dicklesworthstone/agent_settings_backup_script/main/install.sh"
-    install: []
+    install:
+      - |
+        backup_root="${ASB_BACKUP_ROOT:-$HOME/.agent_settings_backups}"
+        existing_backup_repo=""
+
+        if [[ -d "$backup_root" ]]; then
+          existing_backup_repo="$(find "$backup_root" -mindepth 2 -maxdepth 2 -name .git -print -quit 2>/dev/null || true)"
+        fi
+
+        if [[ -n "$existing_backup_repo" ]]; then
+          echo "ASB backup history already exists at $backup_root" >&2
+        else
+          if asb backup; then
+            echo "ASB initial backup created at $backup_root" >&2
+          else
+            echo "WARN: ASB initial backup failed; continuing without a seeded backup repo" >&2
+          fi
+        fi
+
+        cron_status="$(asb schedule --status --cron 2>&1 || true)"
+        systemd_status="$(asb schedule --status --systemd 2>&1 || true)"
+        cron_missing=false
+        systemd_missing=false
+
+        if printf '%s' "$cron_status" | grep -q "No cron schedule found"; then
+          cron_missing=true
+        fi
+        if printf '%s' "$systemd_status" | grep -q "Systemd timer is not enabled"; then
+          systemd_missing=true
+        fi
+
+        if [[ "$cron_missing" == "true" && "$systemd_missing" == "true" ]]; then
+          if asb schedule --cron --interval daily >/dev/null 2>&1; then
+            echo "ASB scheduled backups enabled via cron (daily)." >&2
+          else
+            echo "WARN: ASB scheduled backup setup failed; continuing without automation" >&2
+          fi
+        fi
+
+        echo "ASB backup root: $backup_root" >&2
     verify:
       - asb version || asb help
 
@@ -2136,11 +2248,16 @@ modules:
         - "Maintaining consistency across long sessions"
       language: "Bash"
       stars: 40
-      cli_name: "pcr"
-      command_example: "claude-post-compact-reminder --check"
+      cli_name: "claude-post-compact-reminder"
+      cli_aliases: ["pcr"]
+      command_example: "printf '{\"session_id\":\"demo\",\"source\":\"compact\"}\\n' | claude-post-compact-reminder"
       lesson_slug: "pcr"
     dependencies:
       - agents.claude
+    pre_install_check:
+      run_as: target_user
+      command: "command -v claude >/dev/null 2>&1"
+      skip_message: "Skipping PCR - Claude Code not found"
     installed_check:
       run_as: target_user
       command: |
@@ -2163,7 +2280,43 @@ modules:
       runner: bash
       args: ["--yes"]
       url: "https://raw.githubusercontent.com/Dicklesworthstone/post_compact_reminder/main/install-post-compact-reminder.sh"
-    install: []
+    install:
+      - |
+        target_home="${TARGET_HOME:-$HOME}"
+        hook_script="$target_home/.local/bin/claude-post-compact-reminder"
+        settings="$target_home/.claude/settings.json"
+        alt_settings="$target_home/.config/claude/settings.json"
+        active_settings=""
+        backup_file=""
+
+        test -x "$hook_script" || {
+          echo "PCR hook script missing after install" >&2
+          exit 1
+        }
+
+        if [[ -f "$settings" ]]; then
+          active_settings="$settings"
+          backup_file="${settings}.bak"
+        elif [[ -f "$alt_settings" ]]; then
+          active_settings="$alt_settings"
+          backup_file="${alt_settings}.bak"
+        else
+          echo "PCR did not create a Claude settings.json file" >&2
+          exit 1
+        fi
+
+        if ! grep -q "compact" "$active_settings"; then
+          echo "PCR settings entry does not contain compact hook registration" >&2
+          exit 1
+        fi
+
+        if [[ -f "$backup_file" ]]; then
+          echo "PCR settings backup preserved at $backup_file" >&2
+        else
+          echo "PCR configured $active_settings without creating a .bak backup (likely a fresh settings file)" >&2
+        fi
+
+        echo "PCR installed - Claude will be reminded to re-read AGENTS.md after compaction" >&2
     verify:
       - |
         target_home="${TARGET_HOME:-$HOME}"

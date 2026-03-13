@@ -16,12 +16,17 @@ import type {
   ValidationWarning,
 } from './types.js';
 
+function isEntirelyWrappedInMatchingQuotes(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return false;
+
+  const quote = trimmed[0];
+  return (quote === '"' || quote === "'") && trimmed.endsWith(quote);
+}
+
 function unwrapOptionalQuotes(value: string): string {
   const trimmed = value.trim();
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
+  if (isEntirelyWrappedInMatchingQuotes(trimmed)) {
     return trimmed.slice(1, -1).trim();
   }
   return trimmed;
@@ -61,8 +66,6 @@ function looksLikeDescriptionOnlyInstallEntry(raw: string): boolean {
   if (!unquoted) return false;
   if (/^(TODO|NOTE):/i.test(unquoted)) return true;
   if (looksLikeDescriptionSentence(unquoted)) return true;
-  // Back-compat: a literal leading quote in the string indicates a description-only entry.
-  if (raw.trimStart().startsWith('"')) return true;
   return false;
 }
 

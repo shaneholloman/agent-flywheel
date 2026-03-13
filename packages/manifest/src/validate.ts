@@ -21,6 +21,7 @@ export interface ValidationError {
     | 'RESERVED_NAME_COLLISION'
     | 'INVALID_VERIFIED_INSTALLER_RUNNER'
     | 'MISSING_VERIFIED_INSTALLER_CHECKSUM'
+    | 'INVALID_VERIFIED_INSTALLER_CHECKSUM'
     | 'VERIFIED_INSTALLER_URL_MISMATCH';
   /** Human-readable error message */
   message: string;
@@ -358,6 +359,7 @@ export function validateReservedNames(manifest: Manifest): ValidationError[] {
  * This is a belt-and-suspenders check - schema.ts also validates this.
  */
 const ALLOWED_VERIFIED_INSTALLER_RUNNERS = new Set(['bash', 'sh']);
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/i;
 
 export interface InstallerChecksumEntry {
   url?: string;
@@ -430,6 +432,19 @@ export function validateVerifiedInstallerChecksums(
           tool,
           hasUrl: Boolean(entry?.url),
           hasSha256: Boolean(entry?.sha256),
+        },
+      });
+      continue;
+    }
+
+    if (!SHA256_HEX_PATTERN.test(entry.sha256)) {
+      errors.push({
+        code: 'INVALID_VERIFIED_INSTALLER_CHECKSUM',
+        message: `checksums.yaml has invalid sha256 "${entry.sha256}" for "${tool}" (used by "${module.id}")`,
+        moduleId: module.id,
+        context: {
+          tool,
+          sha256: entry.sha256,
         },
       });
       continue;
@@ -612,6 +627,15 @@ export function formatValidationErrors(result: ValidationResult): string {
       case 'INVALID_VERIFIED_INSTALLER_RUNNER':
         lines.push(`    → SECURITY: Only "bash" or "sh" are allowed as runners`);
         lines.push(`    → Change verified_installer.runner to "bash" or "sh"`);
+        break;
+      case 'MISSING_VERIFIED_INSTALLER_CHECKSUM':
+        lines.push(`    → Add checksum entry in checksums.yaml for this installer`);
+        break;
+      case 'INVALID_VERIFIED_INSTALLER_CHECKSUM':
+        lines.push(`    → Checksum mismatch: re-download installer and update checksums.yaml`);
+        break;
+      case 'VERIFIED_INSTALLER_URL_MISMATCH':
+        lines.push(`    → URL in manifest does not match URL in checksums.yaml`);
         break;
     }
     lines.push('');

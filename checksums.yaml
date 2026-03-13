@@ -102,6 +102,10 @@ installers:
     url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
     sha256: "ce0b7c94aa04d8c7a8137e45fe5c4744e3947871f785fd58117c480c1bf49352"
 
+  opencode:
+    url: "https://opencode.ai/install"
+    sha256: "fc3c1b2123f49b6df545a7622e5127d21cd794b15134fc3b66e1ca49f7fb297e"
+
   pcr:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/post_compact_reminder/main/install-post-compact-reminder.sh"
     sha256: "8eb1aa36a76ef4bf21fd3d53c7f908488132f0b1db81268d699070404a2caf89"
@@ -161,4 +165,3 @@ installers:
   zoxide:
     url: "https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh"
     sha256: "0c25aed6cce9d56ee0596c9a5df8cbe99ffd0f7a7054de0262234dd268b61404"
-

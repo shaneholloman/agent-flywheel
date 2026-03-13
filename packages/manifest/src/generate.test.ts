@@ -201,6 +201,15 @@ describe('Generated category scripts exist', () => {
 });
 
 describe('Generated verified installer args', () => {
+  test('generated scripts detect the target user instead of hardcoding ubuntu', () => {
+    const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
+    expect(existsSync(stackPath)).toBe(true);
+    const stackContent = readFileSync(stackPath, 'utf-8');
+
+    expect(stackContent).toContain('_ACFS_DETECTED_USER="${SUDO_USER:-$(whoami)}"');
+    expect(stackContent).not.toContain('TARGET_USER="${TARGET_USER:-ubuntu}"');
+  });
+
   test('stack.mcp_agent_mail keeps TARGET_HOME fallback as an expandable variable', () => {
     const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
     expect(existsSync(stackPath)).toBe(true);
@@ -240,6 +249,33 @@ describe('Generated verified installer args', () => {
     );
   });
 
+  test('stack.meta_skill falls back to cargo source install on Linux ARM64', () => {
+    const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
+    expect(existsSync(stackPath)).toBe(true);
+    const stackContent = readFileSync(stackPath, 'utf-8');
+
+    expect(stackContent).toContain('meta_skill has no prebuilt Linux ARM64 release asset yet');
+    expect(stackContent).toContain('[[ "$(uname -s 2>/dev/null)" == "Linux" ]]');
+    expect(stackContent).toContain('[[ "$(uname -m 2>/dev/null)" == "aarch64" ]]');
+    expect(stackContent).toContain('[[ "$(uname -m 2>/dev/null)" == "arm64" ]]');
+    expect(stackContent).toContain(
+      'run_as_target_shell "command -v cargo >/dev/null 2>&1 && cargo install --git https://github.com/Dicklesworthstone/meta_skill --force"'
+    );
+  });
+
+  test('stack.pcr emits a pre-install Claude check before the verified installer', () => {
+    const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
+    expect(existsSync(stackPath)).toBe(true);
+    const stackContent = readFileSync(stackPath, 'utf-8');
+
+    const precheckIndex = stackContent.indexOf("log_warn \"stack.pcr: Skipping PCR - Claude Code not found\"");
+    const installerIndex = stackContent.indexOf('local tool="pcr"');
+
+    expect(precheckIndex).toBeGreaterThanOrEqual(0);
+    expect(stackContent).toContain("command -v claude >/dev/null 2>&1");
+    expect(installerIndex).toBeGreaterThan(precheckIndex);
+  });
+
   test('multi-line install summaries skip comment-only lines', () => {
     const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
     expect(existsSync(stackPath)).toBe(true);
@@ -250,6 +286,19 @@ describe('Generated verified installer args', () => {
     );
     expect(stackContent).toContain(
       'install command failed: until curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; do'
+    );
+  });
+
+  test('network modules emit post-install messages into generated installers', () => {
+    const networkPath = resolve(GENERATED_DIR, 'install_network.sh');
+    expect(existsSync(networkPath)).toBe(true);
+    const networkContent = readFileSync(networkPath, 'utf-8');
+
+    expect(networkContent).toContain(
+      'log_info "Tailscale installed! To connect your VPS to your Tailscale network:"'
+    );
+    expect(networkContent).toContain(
+      'log_info "SSH keepalive configured! Your connections will now survive VPN/NAT timeouts."'
     );
   });
 });
@@ -605,6 +654,8 @@ describe('manifest-commands.ts structure', () => {
 
   test('interface has required fields', () => {
     expect(content).toContain('moduleId: string;');
+    expect(content).toContain('displayName: string;');
+    expect(content).toContain('moduleCategory: string;');
     expect(content).toContain('cliName: string;');
     expect(content).toContain('cliAliases: string[];');
     expect(content).toContain('description: string;');

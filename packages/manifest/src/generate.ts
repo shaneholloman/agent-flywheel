@@ -57,7 +57,15 @@ ACFS_GENERATED_SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 # contract validation passes and local assets are discoverable.
 if [[ "\${BASH_SOURCE[0]}" = "\${0}" ]]; then
     # Match install.sh defaults
-    TARGET_USER="\${TARGET_USER:-ubuntu}"
+    if [[ -z "\${TARGET_USER:-}" ]]; then
+        if [[ \$EUID -eq 0 ]] && [[ -z "\${SUDO_USER:-}" ]]; then
+            _ACFS_DETECTED_USER="ubuntu"
+        else
+            _ACFS_DETECTED_USER="\${SUDO_USER:-\$(whoami)}"
+        fi
+        TARGET_USER="\$_ACFS_DETECTED_USER"
+    fi
+    unset _ACFS_DETECTED_USER
     MODE="\${MODE:-vibe}"
 
     if [[ -z "\${TARGET_HOME:-}" ]]; then
@@ -498,6 +506,37 @@ function wrapOptionalVerifyHeredoc(
   return lines;
 }
 
+function generatePreInstallCheck(module: Module): string[] {
+  const check = module.pre_install_check;
+  if (!check) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  const shellHelper = getRunAsShellHelper(check.run_as);
+  const delimiter = toHeredocDelimiter(`${module.id}_PRE_INSTALL_CHECK`);
+  const blockLines = check.command.includes('\n')
+    ? check.command.replace(/^\|?\n?/, '').trim().split('\n')
+    : [check.command.trim()];
+  const summary = summarizeShellBlock(blockLines, 'pre-install check');
+  const escapedSummary = escapeBash(summary);
+
+  lines.push('    if [[ "${DRY_RUN:-false}" = "true" ]]; then');
+  lines.push(`        log_info "dry-run: pre-install check: ${escapedSummary} (${check.run_as})"`);
+  lines.push('    else');
+  lines.push(`        if ! ${shellHelper} <<'${delimiter}'`);
+  for (const line of blockLines) {
+    lines.push(line);
+  }
+  lines.push(delimiter);
+  lines.push('        then');
+  lines.push(...indentLines(moduleFailureLines(module, check.skip_message), 12));
+  lines.push('        fi');
+  lines.push('    fi');
+
+  return lines;
+}
+
 function getModulePhase(module: Module): number {
   return module.phase ?? 1;
 }
@@ -539,7 +578,9 @@ function sortModulesByPhaseAndDependency(manifest: Manifest): Module[] {
 
     function visit(moduleId: string): void {
       if (visited.has(moduleId)) return;
-      if (visiting.has(moduleId)) return;
+      if (visiting.has(moduleId)) {
+        throw new Error(`Dependency cycle detected in phase: ${moduleId}`);
+      }
 
       visiting.add(moduleId);
 
@@ -697,6 +738,9 @@ function generateVerifiedInstallerSnippet(module: Module): string[] {
     '# Try security-verified install (no unverified fallback; fail closed)',
     'local install_success=false',
     '',
+  ];
+
+  const verifiedInstallAttemptLines: string[] = [
     'if acfs_security_init; then',
     '    # Check if KNOWN_INSTALLERS is available as an associative array (declare -A)',
     '    # The grep ensures we specifically have an associative array, not just any variable',
@@ -734,6 +778,28 @@ function generateVerifiedInstallerSnippet(module: Module): string[] {
     'fi',
   ];
 
+  if (tool === 'ms') {
+    const sourceInstallCmd = module.run_as === 'target_user'
+      ? 'run_as_target_shell "command -v cargo >/dev/null 2>&1 && cargo install --git https://github.com/Dicklesworthstone/meta_skill --force"'
+      : 'command -v cargo >/dev/null 2>&1 && cargo install --git https://github.com/Dicklesworthstone/meta_skill --force';
+
+    lines.push(
+      '# meta_skill has no prebuilt Linux ARM64 release asset yet; build from source there.',
+      'if [[ "$(uname -s 2>/dev/null)" == "Linux" ]] && { [[ "$(uname -m 2>/dev/null)" == "aarch64" ]] || [[ "$(uname -m 2>/dev/null)" == "arm64" ]]; }; then',
+      `    log_info "${escapeBash(module.id)}: Linux ARM64 detected; building meta_skill from source"`,
+      `    if ${sourceInstallCmd}; then`,
+      '        install_success=true',
+      '    else',
+      `        log_error "${escapeBash(module.id)}: cargo source install failed for Linux ARM64"`,
+      '    fi',
+      'else',
+      ...indentLines(verifiedInstallAttemptLines, 4),
+      'fi',
+    );
+  } else {
+    lines.push(...verifiedInstallAttemptLines);
+  }
+
   lines.push('', '# Verified install is required - no fallback');
   lines.push('if [[ "$install_success" = "true" ]]; then');
   lines.push('    true');
@@ -747,11 +813,15 @@ function generateVerifiedInstallerSnippet(module: Module): string[] {
 
 type NonCommandInstallEntryLabel = 'TODO' | 'NOTE';
 
+function isEntirelyWrappedInMatchingQuotes(value: string): boolean {
+  if (value.length < 2) return false;
+
+  const quote = value[0];
+  return (quote === '"' || quote === "'") && value.endsWith(quote);
+}
+
 function unwrapOptionalQuotes(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
+  if (isEntirelyWrappedInMatchingQuotes(value)) {
     return value.slice(1, -1).trim();
   }
   return value;
@@ -807,11 +877,6 @@ function classifyNonCommandInstallEntry(
     return { label: 'TODO', text: unquoted };
   }
 
-  // Back-compat: a literal leading quote in the string indicates a description-only entry.
-  if (trimmed.startsWith('"')) {
-    return { label: 'TODO', text: unquoted };
-  }
-
   return null;
 }
 
@@ -835,6 +900,8 @@ function summarizeShellBlock(blockLines: string[], fallback: string): string {
  */
 function generateInstallCommands(module: Module): string[] {
   const lines: string[] = [];
+
+  lines.push(...generatePreInstallCheck(module));
 
   // If module has verified_installer, generate that first (before any install commands)
   // Note: verified_installer runs in current context since it needs access to security.sh
@@ -910,6 +977,20 @@ function generateVerifyCommands(module: Module): string[] {
         )
       );
     }
+  }
+
+  return lines;
+}
+
+function generatePostInstallMessage(module: Module): string[] {
+  const message = module.post_install_message?.trimEnd();
+  if (!message) {
+    return [];
+  }
+
+  const lines: string[] = ['    # Post-install message'];
+  for (const line of message.split('\n')) {
+    lines.push(`    log_info "${escapeBash(line)}"`);
   }
 
   return lines;
@@ -1087,6 +1168,10 @@ function generateCategoryScript(manifest: Manifest, category: ModuleCategory): s
       lines.push('    # Verify');
       lines.push(...generateVerifyCommands(module));
     }
+    if (module.post_install_message) {
+      lines.push('');
+      lines.push(...generatePostInstallMessage(module));
+    }
     lines.push('');
     lines.push(`    log_success "${module.id} installed"`);
     lines.push('}');
@@ -1136,7 +1221,7 @@ function generateDoctorChecks(manifest: Manifest): string {
     for (let i = 0; i < module.verify.length; i++) {
       const verify = module.verify[i];
       // Module is optional if: the module itself is marked optional OR the command ends with || true
-      const isOptional = module.optional || /\|\|\s*true\s*$/.test(verify);
+      const isOptional = module.optional || /\|\|\s*true\s*(#.*)?$/.test(verify);
       const cleanCmd = verify.replace(/\s*\|\|\s*true\s*$/, '').trim();
       const suffix = module.verify.length > 1 ? `.${i + 1}` : '';
       const description = escapeBash(module.description);
@@ -1383,6 +1468,8 @@ function generateWebCommands(manifest: Manifest): string {
 
   lines.push('export interface ManifestCommand {');
   lines.push('  moduleId: string;');
+  lines.push('  displayName: string;');
+  lines.push('  moduleCategory: string;');
   lines.push('  cliName: string;');
   lines.push('  cliAliases: string[];');
   lines.push('  description: string;');
@@ -1395,16 +1482,19 @@ function generateWebCommands(manifest: Manifest): string {
 
   for (const module of modules) {
     const web = module.web!;
+    const moduleCategory = resolveModuleCategory(module);
     lines.push('  {');
     lines.push(`    moduleId: "${escapeTs(module.id)}",`);
+    lines.push(`    displayName: "${escapeTs(web.display_name ?? module.description)}",`);
+    lines.push(`    moduleCategory: "${escapeTs(moduleCategory)}",`);
     lines.push(`    cliName: "${escapeTs(web.cli_name!)}",`);
     lines.push(`    cliAliases: ${formatTsArray(web.cli_aliases ?? [], 4)},`);
     lines.push(`    description: "${escapeTs(web.short_desc ?? module.description)}",`);
     if (web.command_example) {
       lines.push(`    commandExample: "${escapeTs(web.command_example)}",`);
     }
-    if (module.docs_url) {
-      lines.push(`    docsUrl: "${escapeTs(module.docs_url)}",`);
+    if (web.href ?? module.docs_url) {
+      lines.push(`    docsUrl: "${escapeTs(web.href ?? module.docs_url ?? '')}",`);
     }
     lines.push('  },');
   }

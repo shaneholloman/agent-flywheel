@@ -275,6 +275,54 @@ modules:
     const result = parseManifestString(yaml);
     expect(result.success).toBe(true);
   });
+
+  test('parses module with post_install_message', () => {
+    const yaml = `
+version: 1
+name: test
+id: test
+defaults:
+  user: ubuntu
+  workspace_root: /data
+  mode: vibe
+modules:
+  - id: network.test
+    description: Test network module
+    install: ["echo install"]
+    verify: ["true"]
+    post_install_message: |
+      Installed successfully
+      Next step: run test-command
+`;
+    const result = parseManifestString(yaml);
+    expect(result.success).toBe(true);
+    expect(result.data?.modules[0].post_install_message).toContain('Next step: run test-command');
+  });
+
+  test('rejects unsupported verified_installer fallback_url', () => {
+    const yaml = `
+version: 1
+name: test
+id: test
+defaults:
+  user: ubuntu
+  workspace_root: /data
+  mode: vibe
+modules:
+  - id: tools.test
+    description: Test tool
+    verified_installer:
+      tool: test
+      runner: bash
+      fallback_url: https://example.com/install.sh
+    verify:
+      - test --version
+`;
+    const result = parseManifestString(yaml);
+    expect(result.success).toBe(false);
+    expect(result.error?.message).toContain('fallback_url');
+    expect(result.error?.message).toContain('fail closed');
+  });
 });
 
 describe('validateManifest with inline manifests', () => {
@@ -625,6 +673,28 @@ describe('validateManifestData web metadata warnings', () => {
     const webWarnings = result.warnings.filter((w) => w.path.includes('.web.'));
     expect(webWarnings).toHaveLength(0);
   });
+
+  test('does not treat quoted commands as description-only entries', () => {
+    const manifest: Manifest = {
+      ...baseManifest,
+      modules: [
+        {
+          id: 'tools.quoted_command',
+          description: 'Quoted command test',
+          run_as: 'target_user',
+          optional: false,
+          enabled_by_default: true,
+          generated: true,
+          install: ['"${HOME}/.local/bin/demo" --install'],
+          verify: ['true'],
+        },
+      ],
+    };
+    const result = validateManifestData(manifest);
+    expect(result.warnings.some((w) => w.path === 'modules.tools.quoted_command.install')).toBe(
+      false
+    );
+  });
 });
 
 describe('validateVerifiedInstallerChecksums', () => {
@@ -655,12 +725,47 @@ modules:
     const validationErrors = validateVerifiedInstallerChecksums(parseResult.data, {
       rch: {
         url: 'https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh',
-        sha256: 'abc123',
+        sha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       },
     });
 
     expect(validationErrors).toHaveLength(1);
     expect(validationErrors[0]?.code).toBe('VERIFIED_INSTALLER_URL_MISMATCH');
+  });
+
+  test('rejects malformed verified installer checksums', () => {
+    const yaml = `
+version: 1
+name: test
+id: test
+defaults:
+  user: ubuntu
+  workspace_root: /data
+  mode: vibe
+modules:
+  - id: stack.rch
+    description: Remote Compilation Helper
+    install: []
+    verified_installer:
+      tool: rch
+      url: https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh
+      runner: bash
+    verify:
+      - rch --version
+`;
+    const parseResult = parseManifestString(yaml);
+    expect(parseResult.success).toBe(true);
+    if (!parseResult.success || !parseResult.data) return;
+
+    const validationErrors = validateVerifiedInstallerChecksums(parseResult.data, {
+      rch: {
+        url: 'https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh',
+        sha256: 'not-a-real-sha',
+      },
+    });
+
+    expect(validationErrors).toHaveLength(1);
+    expect(validationErrors[0]?.code).toBe('INVALID_VERIFIED_INSTALLER_CHECKSUM');
   });
 });
 

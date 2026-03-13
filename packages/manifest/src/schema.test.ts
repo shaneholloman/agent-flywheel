@@ -425,6 +425,22 @@ describe('ModuleSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  test('validates pre_install_check object', () => {
+    const result = ModuleSchema.safeParse({
+      ...validMinimalModule,
+      pre_install_check: {
+        run_as: 'target_user',
+        command: 'command -v claude >/dev/null 2>&1',
+        skip_message: 'Skipping PCR - Claude Code not found',
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.pre_install_check?.command).toBe('command -v claude >/dev/null 2>&1');
+      expect(result.data.pre_install_check?.skip_message).toBe('Skipping PCR - Claude Code not found');
+    }
+  });
+
   test('validates aliases array', () => {
     const result = ModuleSchema.safeParse({
       ...validMinimalModule,

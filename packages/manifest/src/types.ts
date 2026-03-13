@@ -34,6 +34,8 @@ export interface VerifiedInstaller {
   tool: string;
   /** Optional canonical installer URL; validated against checksums.yaml when provided */
   url?: string;
+  /** Unsupported legacy field kept only so the parser can reject it explicitly */
+  fallback_url?: string;
   /** Executable runner (must be bash or sh) */
   runner: VerifiedInstallerRunner;
   /** Optional environment variable assignments (KEY=value) for the runner */
@@ -52,6 +54,18 @@ export interface InstalledCheck {
   run_as: RunAs;
   /** Command to determine installed status */
   command: string;
+}
+
+/**
+ * Optional pre-install check that can skip a module before running installers.
+ */
+export interface PreInstallCheck {
+  /** Execution context for the check */
+  run_as: RunAs;
+  /** Command that must succeed before installation continues */
+  command: string;
+  /** Message recorded when the check fails and the module is skipped */
+  skip_message: string;
 }
 
 /**
@@ -123,6 +137,8 @@ export interface Module {
   enabled_by_default: boolean;
   /** Installed check used for skip-if-present logic */
   installed_check?: InstalledCheck;
+  /** Optional guard run before verified installers / install steps */
+  pre_install_check?: PreInstallCheck;
   /** Skip generation if orchestration-only */
   generated: boolean;
   /** Phase number for ordering (1-10) */
@@ -133,6 +149,8 @@ export interface Module {
   verify: string[];
   /** Optional notes about the module */
   notes?: string[];
+  /** Optional user-facing message printed after the module finishes installing */
+  post_install_message?: string;
   /** Optional tags for higher-level selection */
   tags?: string[];
   /** Optional documentation URL */

@@ -34,6 +34,54 @@ const VerifiedInstallerRunnerSchema = z.enum(['bash', 'sh'], {
   error: 'verified_installer.runner must be "bash" or "sh" (security: runner allowlist)',
 });
 
+const VerifiedInstallerSchema = z
+  .object({
+    tool: z
+      .string()
+      .min(1, 'Verified installer tool cannot be empty')
+      .regex(
+        /^[a-z][a-z0-9_]*$/,
+        'Tool name must be lowercase alphanumeric with underscores (e.g., "bun", "claude", "mcp_agent_mail")'
+      ),
+    // Optional canonical URL for drift detection against checksums.yaml.
+    // SECURITY: require HTTPS because these installers are downloaded and executed.
+    url: z
+      .string()
+      .url('verified_installer.url must be a valid URL')
+      .refine(
+        (value) => value.startsWith('https://'),
+        'verified_installer.url must use https://'
+      )
+      .optional(),
+    fallback_url: z
+      .string()
+      .url('verified_installer.fallback_url must be a valid URL')
+      .refine(
+        (value) => value.startsWith('https://'),
+        'verified_installer.fallback_url must use https://'
+      )
+      .optional(),
+    runner: VerifiedInstallerRunnerSchema,
+    env: z
+      .array(
+        z
+          .string()
+          .regex(
+            /^[A-Za-z_][A-Za-z0-9_]*=.*$/,
+            'Verified installer env entries must be KEY=value assignments'
+          )
+      )
+      .default([]),
+    args: z.array(z.string()).default([]),
+    // Run installer in detached tmux session (prevents blocking for long-running services)
+    run_in_tmux: z.boolean().default(false),
+  })
+  .refine((installer) => installer.fallback_url === undefined, {
+    path: ['fallback_url'],
+    message:
+      'verified_installer.fallback_url is unsupported. Verified installers fail closed; remove fallback_url.',
+  });
+
 /**
  * Schema for module web metadata.
  * All fields are optional; the entire `web` block is optional on a module.
@@ -163,41 +211,7 @@ export const ModuleSchema = z
     run_as: RunAsSchema.default('target_user'),
 
     // Verified installer reference
-    verified_installer: z
-      .object({
-        tool: z
-          .string()
-          .min(1, 'Verified installer tool cannot be empty')
-          .regex(
-            /^[a-z][a-z0-9_]*$/,
-              'Tool name must be lowercase alphanumeric with underscores (e.g., "bun", "claude", "mcp_agent_mail")'
-            ),
-        // Optional canonical URL for drift detection against checksums.yaml.
-        // SECURITY: require HTTPS because these installers are downloaded and executed.
-        url: z
-          .string()
-          .url('verified_installer.url must be a valid URL')
-          .refine(
-            (value) => value.startsWith('https://'),
-            'verified_installer.url must use https://'
-          )
-          .optional(),
-        runner: VerifiedInstallerRunnerSchema,
-        env: z
-          .array(
-            z
-              .string()
-              .regex(
-                /^[A-Za-z_][A-Za-z0-9_]*=.*$/,
-                'Verified installer env entries must be KEY=value assignments'
-              )
-          )
-          .default([]),
-        args: z.array(z.string()).default([]),
-        // Run installer in detached tmux session (prevents blocking for long-running services)
-        run_in_tmux: z.boolean().default(false),
-      })
-      .optional(),
+    verified_installer: VerifiedInstallerSchema.optional(),
 
     // Installation behavior
     optional: z.boolean().default(false),
@@ -211,6 +225,19 @@ export const ModuleSchema = z
           .refine((s) => s.trim().length > 0, 'Installed check command cannot be only whitespace'),
       })
       .optional(),
+    pre_install_check: z
+      .object({
+        run_as: RunAsSchema.default('target_user'),
+        command: z
+          .string()
+          .min(1, 'Pre-install check command cannot be empty')
+          .refine((s) => s.trim().length > 0, 'Pre-install check command cannot be only whitespace'),
+        skip_message: z
+          .string()
+          .min(1, 'Pre-install check skip_message cannot be empty')
+          .refine((s) => s.trim().length > 0, 'Pre-install check skip_message cannot be only whitespace'),
+      })
+      .optional(),
     generated: z.boolean().default(true),
 
     phase: z.number().int().min(1).max(10).optional(),
@@ -221,6 +248,14 @@ export const ModuleSchema = z
     verify: z.array(z.string()).min(1, 'At least one verify command required'),
     dependencies: z.array(z.string()).optional(),
     notes: z.array(z.string()).optional(),
+    post_install_message: z
+      .string()
+      .min(1, 'post_install_message cannot be empty')
+      .refine(
+        (s) => s.trim().length > 0,
+        'post_install_message cannot be only whitespace'
+      )
+      .optional(),
     tags: z.array(z.string()).optional(),
     docs_url: z.string().url().optional(),
     aliases: z.array(z.string()).optional(),

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# check-manifest-drift.sh - Detect and auto-fix ACFS manifest/script SHA256 drift
+# check-manifest-drift.sh - Detect and auto-fix ACFS manifest/script/config drift
 #
 # This script verifies that scripts/generated/manifest_index.sh has the correct
-# SHA256 hash for acfs.manifest.yaml, AND that internal library scripts match
-# their recorded checksums in scripts/generated/internal_checksums.sh.
+# SHA256 hash for acfs.manifest.yaml, that internal library scripts match
+# their recorded checksums in scripts/generated/internal_checksums.sh, and that
+# checked-in MCP Agent Mail client configs still point at the canonical HTTP URL.
 # If drift is detected, it can regenerate all generated scripts, commit, and push.
 #
 # Usage:
@@ -24,6 +25,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+EXPECTED_AGENT_MAIL_MCP_URL="http://127.0.0.1:8765/mcp/"
+REPO_MCP_CONFIG_FILES=(
+    ".claude/settings.local.json"
+    "cline.mcp.json"
+    "cursor.mcp.json"
+    "gemini.mcp.json"
+    "opencode.json"
+    "windsurf.mcp.json"
+)
 
 # Defaults
 FIX_MODE=false
@@ -47,13 +57,69 @@ done
 log() { $QUIET || echo "[manifest-drift] $*" >&2; }
 log_error() { echo "[manifest-drift] ERROR: $*" >&2; }
 
+require_readable_file() {
+    local file="$1"
+    local description="$2"
+
+    if [[ ! -f "$file" ]]; then
+        log_error "$description not found: $file"
+        return 1
+    fi
+    if [[ ! -r "$file" ]]; then
+        log_error "$description not readable: $file"
+        return 1
+    fi
+}
+
+sha256_file() {
+    local file="$1"
+    local description="$2"
+    local output
+
+    require_readable_file "$file" "$description" || return 1
+    if ! output="$(sha256sum "$file" 2>/dev/null)"; then
+        log_error "Failed to compute SHA256 for $description: $file"
+        return 1
+    fi
+
+    printf '%s\n' "${output%% *}"
+}
+
+extract_assignment_value() {
+    local file="$1"
+    local key="$2"
+    local description="$3"
+    local value
+
+    require_readable_file "$file" "$description" || return 1
+    if ! value="$(awk -F= -v key="$key" '$1 == key { gsub(/["[:space:]\r]/, "", $2); print $2; exit }' "$file")"; then
+        log_error "Failed to read $key from $description: $file"
+        return 1
+    fi
+
+    printf '%s\n' "$value"
+}
+
 INTERNAL_CHECKSUM_PATHS=()
 INTERNAL_CHECKSUM_VALUES=()
+INTERNAL_CHECKSUMS_EXPECTED_COUNT=0
+
+if $JSON_MODE && ! command -v jq &>/dev/null; then
+    log_error "jq is required for --json output"
+    exit 3
+fi
 
 parse_internal_checksums_file() {
     local file="$1"
+    require_readable_file "$file" "Internal checksums file" || return 1
+
     INTERNAL_CHECKSUM_PATHS=()
     INTERNAL_CHECKSUM_VALUES=()
+    INTERNAL_CHECKSUMS_EXPECTED_COUNT=0
+
+    INTERNAL_CHECKSUMS_EXPECTED_COUNT=$(
+        grep -E '^ACFS_INTERNAL_CHECKSUMS_COUNT=' "$file" | head -n 1 | cut -d'=' -f2 | tr -d '"[:space:]\r' || true
+    )
 
     while IFS= read -r line; do
         if [[ "$line" =~ ^[[:space:]]*\[([^]]+)\]=\"([0-9A-Fa-f]{64})\"[[:space:]]*$ ]]; then
@@ -61,6 +127,68 @@ parse_internal_checksums_file() {
             INTERNAL_CHECKSUM_VALUES+=("${BASH_REMATCH[2],,}")
         fi
     done < "$file"
+}
+
+extract_repo_mcp_config_url() {
+    local rel_path="$1"
+    local abs_path="$2"
+
+    command -v jq &>/dev/null || return 1
+
+    case "$rel_path" in
+        .claude/settings.local.json|cline.mcp.json|cursor.mcp.json|windsurf.mcp.json)
+            jq -r '.mcpServers["mcp-agent-mail"].url // empty' "$abs_path" 2>/dev/null || true
+            ;;
+        gemini.mcp.json)
+            jq -r '.mcpServers["mcp-agent-mail"].httpUrl // .mcpServers["mcp-agent-mail"].url // empty' "$abs_path" 2>/dev/null || true
+            ;;
+        opencode.json)
+            jq -r '.mcp["mcp-agent-mail"].url // empty' "$abs_path" 2>/dev/null || true
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+check_repo_mcp_config_drift() {
+    local record_drift="${1:-true}"
+    REPO_MCP_CONFIGS_CHECKED=0
+    REPO_MCP_CONFIG_DRIFT_COUNT=0
+    REPO_MCP_CONFIG_DRIFT_FILES=()
+
+    local rel_path abs_path configured_url
+    for rel_path in "${REPO_MCP_CONFIG_FILES[@]}"; do
+        abs_path="$REPO_ROOT/$rel_path"
+
+        if [[ ! -f "$abs_path" ]]; then
+            continue
+        fi
+
+        REPO_MCP_CONFIGS_CHECKED=$((REPO_MCP_CONFIGS_CHECKED + 1))
+        configured_url="$(extract_repo_mcp_config_url "$rel_path" "$abs_path" || true)"
+        if [[ -n "$configured_url" ]]; then
+            if [[ "$configured_url" == "$EXPECTED_AGENT_MAIL_MCP_URL" ]]; then
+                continue
+            fi
+            REPO_MCP_CONFIG_DRIFT_COUNT=$((REPO_MCP_CONFIG_DRIFT_COUNT + 1))
+            REPO_MCP_CONFIG_DRIFT_FILES+=("$rel_path")
+            if [[ "$record_drift" == "true" ]]; then
+                DRIFT_DETECTED=true
+                DRIFT_REASONS+=("Repo MCP config drift: $rel_path uses $configured_url (expected $EXPECTED_AGENT_MAIL_MCP_URL)")
+            fi
+            continue
+        fi
+
+        if ! grep -Fq "$EXPECTED_AGENT_MAIL_MCP_URL" "$abs_path"; then
+            REPO_MCP_CONFIG_DRIFT_COUNT=$((REPO_MCP_CONFIG_DRIFT_COUNT + 1))
+            REPO_MCP_CONFIG_DRIFT_FILES+=("$rel_path")
+            if [[ "$record_drift" == "true" ]]; then
+                DRIFT_DETECTED=true
+                DRIFT_REASONS+=("Repo MCP config drift: $rel_path should contain $EXPECTED_AGENT_MAIL_MCP_URL")
+            fi
+        fi
+    done
 }
 
 # Verify prerequisites
@@ -77,10 +205,14 @@ if [[ ! -f "$INDEX" ]]; then
 fi
 
 # Compute actual hash
-ACTUAL_SHA256=$(sha256sum "$MANIFEST" | awk '{print $1}')
+if ! ACTUAL_SHA256="$(sha256_file "$MANIFEST" "Manifest")"; then
+    exit 3
+fi
 
 # Extract recorded hash from generated index
-RECORDED_SHA256=$(grep -E '^ACFS_MANIFEST_SHA256=' "$INDEX" | head -n 1 | cut -d'=' -f2 | tr -d '"[:space:]\r')
+if ! RECORDED_SHA256="$(extract_assignment_value "$INDEX" "ACFS_MANIFEST_SHA256" "Generated manifest index")"; then
+    exit 3
+fi
 
 if [[ -z "$RECORDED_SHA256" ]]; then
     log_error "Could not extract ACFS_MANIFEST_SHA256 from $INDEX"
@@ -107,6 +239,11 @@ if [[ "$SHA_LINE_COUNT" -gt 1 ]]; then
     DRIFT_REASONS+=("Duplicate ACFS_MANIFEST_SHA256 lines: $SHA_LINE_COUNT found")
 fi
 
+if [[ "$MANIFEST_MODULE_COUNT" -ne "$INDEX_MODULE_COUNT" ]]; then
+    DRIFT_DETECTED=true
+    DRIFT_REASONS+=("Module count mismatch: manifest=$MANIFEST_MODULE_COUNT index=$INDEX_MODULE_COUNT")
+fi
+
 # ============================================================
 # Internal script checksum verification (bd-3tpl)
 # ============================================================
@@ -114,9 +251,14 @@ INTERNAL_CHECKSUMS_FILE="$REPO_ROOT/scripts/generated/internal_checksums.sh"
 INTERNAL_DRIFT_COUNT=0
 INTERNAL_DRIFT_FILES=()
 INTERNAL_CHECKED=0
+REPO_MCP_CONFIGS_CHECKED=0
+REPO_MCP_CONFIG_DRIFT_COUNT=0
+REPO_MCP_CONFIG_DRIFT_FILES=()
 
 if [[ -f "$INTERNAL_CHECKSUMS_FILE" ]]; then
-    parse_internal_checksums_file "$INTERNAL_CHECKSUMS_FILE"
+    if ! parse_internal_checksums_file "$INTERNAL_CHECKSUMS_FILE"; then
+        exit 3
+    fi
 
     if [[ ${#INTERNAL_CHECKSUM_PATHS[@]} -gt 0 ]]; then
         for i in "${!INTERNAL_CHECKSUM_PATHS[@]}"; do
@@ -124,7 +266,9 @@ if [[ -f "$INTERNAL_CHECKSUMS_FILE" ]]; then
             expected="${INTERNAL_CHECKSUM_VALUES[$i]}"
             abs_path="$REPO_ROOT/$rel_path"
             if [[ -f "$abs_path" ]]; then
-                actual=$(sha256sum "$abs_path" | awk '{print $1}')
+                if ! actual="$(sha256_file "$abs_path" "Internal script $rel_path")"; then
+                    exit 3
+                fi
                 INTERNAL_CHECKED=$((INTERNAL_CHECKED + 1))
                 if [[ "$actual" != "$expected" ]]; then
                     INTERNAL_DRIFT_COUNT=$((INTERNAL_DRIFT_COUNT + 1))
@@ -141,11 +285,20 @@ if [[ -f "$INTERNAL_CHECKSUMS_FILE" ]]; then
         done
         log "Internal checksums: $INTERNAL_CHECKED checked, $INTERNAL_DRIFT_COUNT drifted"
     else
-        log "Warning: No internal checksum entries parsed from $INTERNAL_CHECKSUMS_FILE"
+        if [[ "$INTERNAL_CHECKSUMS_EXPECTED_COUNT" =~ ^[0-9]+$ ]] && [[ "$INTERNAL_CHECKSUMS_EXPECTED_COUNT" -gt 0 ]]; then
+            INTERNAL_DRIFT_COUNT=$INTERNAL_CHECKSUMS_EXPECTED_COUNT
+            DRIFT_DETECTED=true
+            DRIFT_REASONS+=("Internal checksum index malformed: parsed 0 of expected $INTERNAL_CHECKSUMS_EXPECTED_COUNT entries")
+        else
+            log "Warning: No internal checksum entries parsed from $INTERNAL_CHECKSUMS_FILE"
+        fi
     fi
 else
     log "Internal checksums file not found (pre-migration), skipping"
 fi
+
+check_repo_mcp_config_drift
+log "Repo MCP configs: $REPO_MCP_CONFIGS_CHECKED checked, $REPO_MCP_CONFIG_DRIFT_COUNT drifted"
 
 # Output results
 if $JSON_MODE; then
@@ -157,16 +310,24 @@ if $JSON_MODE; then
     if [[ ${#INTERNAL_DRIFT_FILES[@]} -gt 0 ]]; then
         internal_drift_json=$(printf '%s\n' "${INTERNAL_DRIFT_FILES[@]}" | jq -R . | jq -s .)
     fi
+    repo_mcp_drift_json="[]"
+    if [[ ${#REPO_MCP_CONFIG_DRIFT_FILES[@]} -gt 0 ]]; then
+        repo_mcp_drift_json=$(printf '%s\n' "${REPO_MCP_CONFIG_DRIFT_FILES[@]}" | jq -R . | jq -s .)
+    fi
     jq -nc \
         --argjson drift "$DRIFT_DETECTED" \
         --arg actual "$ACTUAL_SHA256" \
         --arg recorded "$RECORDED_SHA256" \
+        --arg expected_mcp_url "$EXPECTED_AGENT_MAIL_MCP_URL" \
         --argjson sha_lines "$SHA_LINE_COUNT" \
         --argjson manifest_modules "$MANIFEST_MODULE_COUNT" \
         --argjson index_modules "$INDEX_MODULE_COUNT" \
         --argjson internal_checked "$INTERNAL_CHECKED" \
         --argjson internal_drifted "$INTERNAL_DRIFT_COUNT" \
         --argjson internal_drift_files "$internal_drift_json" \
+        --argjson repo_mcp_checked "$REPO_MCP_CONFIGS_CHECKED" \
+        --argjson repo_mcp_drifted "$REPO_MCP_CONFIG_DRIFT_COUNT" \
+        --argjson repo_mcp_drift_files "$repo_mcp_drift_json" \
         --argjson reasons "$reasons_json" \
         '{
             drift_detected: $drift,
@@ -181,6 +342,12 @@ if $JSON_MODE; then
                 checked: $internal_checked,
                 drifted: $internal_drifted,
                 drift_files: $internal_drift_files
+            },
+            repo_mcp_configs: {
+                expected_url: $expected_mcp_url,
+                checked: $repo_mcp_checked,
+                drifted: $repo_mcp_drifted,
+                drift_files: $repo_mcp_drift_files
             },
             reasons: $reasons
         }'
@@ -225,8 +392,17 @@ if ! bun run generate >&2; then
 fi
 
 # Verify manifest fix
-NEW_RECORDED=$(grep -E '^ACFS_MANIFEST_SHA256=' "$INDEX" | head -n 1 | cut -d'=' -f2 | tr -d '"[:space:]\r')
-ACTUAL_NOW=$(sha256sum "$MANIFEST" | awk '{print $1}')
+if ! NEW_RECORDED="$(extract_assignment_value "$INDEX" "ACFS_MANIFEST_SHA256" "Generated manifest index")"; then
+    exit 2
+fi
+if ! ACTUAL_NOW="$(sha256_file "$MANIFEST" "Manifest")"; then
+    exit 2
+fi
+
+if [[ -z "$NEW_RECORDED" ]]; then
+    log_error "Could not extract ACFS_MANIFEST_SHA256 from $INDEX after regeneration"
+    exit 2
+fi
 
 if [[ "$NEW_RECORDED" != "$ACTUAL_NOW" ]]; then
     log_error "Regeneration did not fix manifest mismatch! recorded=$NEW_RECORDED actual=$ACTUAL_NOW"
@@ -238,14 +414,18 @@ log "Manifest SHA256 now matches: $ACTUAL_NOW"
 # Verify internal checksums fix (if file was regenerated)
 if [[ -f "$INTERNAL_CHECKSUMS_FILE" ]] && [[ "$INTERNAL_DRIFT_COUNT" -gt 0 ]]; then
     log "Verifying internal script checksums after regeneration..."
-    parse_internal_checksums_file "$INTERNAL_CHECKSUMS_FILE"
+    if ! parse_internal_checksums_file "$INTERNAL_CHECKSUMS_FILE"; then
+        exit 2
+    fi
     post_fix_drift=0
     for i in "${!INTERNAL_CHECKSUM_PATHS[@]}"; do
         rel_path="${INTERNAL_CHECKSUM_PATHS[$i]}"
         expected="${INTERNAL_CHECKSUM_VALUES[$i]}"
         abs_path="$REPO_ROOT/$rel_path"
         if [[ -f "$abs_path" ]]; then
-            actual=$(sha256sum "$abs_path" | awk '{print $1}')
+            if ! actual="$(sha256_file "$abs_path" "Internal script $rel_path")"; then
+                exit 2
+            fi
             if [[ "$actual" != "$expected" ]]; then
                 post_fix_drift=$((post_fix_drift + 1))
                 log_error "Still drifted after fix: $rel_path"
@@ -257,6 +437,12 @@ if [[ -f "$INTERNAL_CHECKSUMS_FILE" ]] && [[ "$INTERNAL_DRIFT_COUNT" -gt 0 ]]; t
         exit 2
     fi
     log "Internal script checksums verified clean after regeneration"
+fi
+
+check_repo_mcp_config_drift false
+if [[ "$REPO_MCP_CONFIG_DRIFT_COUNT" -gt 0 ]]; then
+    log_error "Repo MCP config drift still requires manual repair: ${REPO_MCP_CONFIG_DRIFT_FILES[*]}"
+    exit 2
 fi
 
 # Commit and push
