@@ -2368,7 +2368,11 @@ update_p10k() {
 
     if [[ $exit_code -eq 0 ]]; then
         if ! echo "$output" | grep -q "Already up to date"; then
-            log_item "ok" "Powerlevel10k updated" "${VERSION_BEFORE[p10k]} → ${VERSION_AFTER[p10k]}"
+            if capture_version_after "p10k"; then
+                log_item "ok" "Powerlevel10k updated" "${VERSION_BEFORE[p10k]} → ${VERSION_AFTER[p10k]}"
+            else
+                log_item "ok" "Powerlevel10k updated" "(version unchanged)"
+            fi
         else
             log_item "ok" "Powerlevel10k" "already up to date"
         fi
