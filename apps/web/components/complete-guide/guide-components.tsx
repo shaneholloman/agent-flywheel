@@ -630,108 +630,388 @@ export function OperatorCard({
 }
 
 // =============================================================================
-// FLYWHEEL DIAGRAM - SVG visualization with animated flow
+// FLYWHEEL DIAGRAM - Interactive compounding loop explainer
 // =============================================================================
 export function FlywheelDiagram() {
   const ref = useRef<HTMLDivElement>(null);
-  const isInView = useInView(ref, { once: true, margin: "-50px" });
+  const isInView = useInView(ref, { once: true, margin: "-100px" });
   const prefersReducedMotion = useReducedMotion();
   const rm = prefersReducedMotion ?? false;
+  const [activeStage, setActiveStage] = useState(0);
+  const [cycleDepth, setCycleDepth] = useState(1);
+  const [autoTour, setAutoTour] = useState(true);
 
-  const nodes = [
-    { id: "human-intent", label: "Human Intent", x: 80, y: 50, color: "#22d3ee" },
-    { id: "markdown-plan", label: "Markdown Plan", x: 280, y: 50, color: "#a78bfa" },
-    { id: "building-beads", label: "Beads", x: 460, y: 50, color: "#f472b6" },
-    { id: "swarm-execution", label: "Swarm Execution", x: 460, y: 180, color: "#34d399" },
-    { id: "review-loops", label: "Reviews / Tests", x: 280, y: 180, color: "#fbbf24" },
-    { id: "memory-and-knowledge", label: "Memory / QA", x: 80, y: 180, color: "#818cf8" },
+  const stages = [
+    {
+      id: "human-intent",
+      label: "Human Intent",
+      short: "Goals + workflows",
+      x: 320,
+      y: 68,
+      color: "#22d3ee",
+      input: "Raw desire and taste",
+      output: "Explicit constraints and workflows",
+      effect: "Human judgment compresses ambiguity before any downstream artifact starts drifting.",
+    },
+    {
+      id: "markdown-plan",
+      label: "Markdown Plan",
+      short: "Whole-system reasoning",
+      x: 518,
+      y: 154,
+      color: "#a78bfa",
+      input: "Clarified goals",
+      output: "A design that still fits in context",
+      effect: "Architecture gets settled while global reasoning is still cheap and actually possible.",
+    },
+    {
+      id: "building-beads",
+      label: "Bead Graph",
+      short: "Executable memory",
+      x: 452,
+      y: 336,
+      color: "#f472b6",
+      input: "Approved plan decisions",
+      output: "Self-contained work packets",
+      effect: "Context leaves prose and enters the execution graph where fresh agents can actually use it.",
+    },
+    {
+      id: "swarm-execution",
+      label: "Swarm Execution",
+      short: "Parallel implementation",
+      x: 188,
+      y: 336,
+      color: "#34d399",
+      input: "Prioritized ready beads",
+      output: "Code, tests, reviews, commits",
+      effect: "Fungible agents stay busy on the frontier instead of improvising their own architecture.",
+    },
+    {
+      id: "memory-and-knowledge",
+      label: "Memory & QA",
+      short: "CASS, UBS, lessons",
+      x: 122,
+      y: 154,
+      color: "#fbbf24",
+      input: "Session history and defects",
+      output: "Better prompts and sharper defaults",
+      effect: "The next loop starts with stronger artifacts than the previous loop had on day zero.",
+    },
+  ] as const;
+
+  const cycleOptions = [1, 3, 6] as const;
+  const metrics = [
+    { label: "Planning leverage", value: Math.min(99, 58 + cycleDepth * 12) },
+    { label: "Swarm determinism", value: Math.min(99, 42 + cycleDepth * 18) },
+    { label: "Reusable memory", value: Math.min(99, 28 + cycleDepth * 24) },
   ];
+  const loopVelocity = [1, 1.8, 3.2][cycleDepth];
+  const currentStage = stages[activeStage];
+
+  useEffect(() => {
+    if (!isInView || rm || !autoTour) return undefined;
+
+    const intervalId = window.setInterval(() => {
+      setActiveStage((current) => (current + 1) % stages.length);
+    }, 2600);
+
+    return () => window.clearInterval(intervalId);
+  }, [autoTour, isInView, rm, stages.length]);
+
+  const getConnectorPath = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+    const center = { x: 320, y: 210 };
+    const midX = (from.x + to.x) / 2;
+    const midY = (from.y + to.y) / 2;
+    const controlX = midX + (center.x - midX) * 0.26;
+    const controlY = midY + (center.y - midY) * 0.26;
+    return `M ${from.x} ${from.y} Q ${controlX} ${controlY} ${to.x} ${to.y}`;
+  };
 
   return (
-    <div ref={ref} className="relative flex justify-center py-8 -mx-4 sm:mx-0 group">
-      {/* Background glow for the flywheel */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,oklch(0.75_0.18_195/0.1),transparent_60%)] animate-pulse-glow pointer-events-none" />
-      
-      <svg viewBox="0 0 540 240" className="w-full max-w-xl relative z-10" role="img" aria-label="Flywheel diagram showing the compounding loop from Human Intent through Markdown Plan, Beads, Swarm Execution, Reviews, and Memory">
-        <defs>
-          <marker id="guide-fwd" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-            <path d="M0,0 L8,3 L0,6" fill="white" opacity="0.5" />
-          </marker>
-          {/* Animated dash for flow */}
-          {!rm && (
-            <style>{`
-              @keyframes dash-flow { to { stroke-dashoffset: -20; } }
-              .flow-line { animation: dash-flow 1.5s linear infinite; }
-              .group:hover .flow-line { animation-duration: 0.8s; stroke-opacity: 0.4; }
-            `}</style>
-          )}
-        </defs>
-        {/* Connection lines with flow animation */}
-        {[
-          { x1: 140, y1: 50, x2: 240, y2: 50 },
-          { x1: 370, y1: 50, x2: 420, y2: 50 },
-          { x1: 460, y1: 80, x2: 460, y2: 150 },
-          { x1: 420, y1: 180, x2: 340, y2: 180 },
-          { x1: 240, y1: 180, x2: 140, y2: 180 },
-          { x1: 80, y1: 150, x2: 80, y2: 80 },
-        ].map((line, i) => (
-          <line
-            key={i}
-            {...line}
-            stroke="white"
-            strokeOpacity="0.2"
-            strokeWidth="1.5"
-            strokeDasharray="4 4"
-            className={`transition-all duration-500 ${rm ? "" : "flow-line"}`}
-            markerEnd="url(#guide-fwd)"
-          />
-        ))}
+    <div
+      ref={ref}
+      className="my-8 rounded-[28px] border border-white/[0.12] bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.12),transparent_42%),linear-gradient(180deg,rgba(15,23,42,0.96),rgba(2,6,23,0.96))] p-5 sm:p-6 lg:p-7 backdrop-blur-xl shadow-[0_35px_90px_-40px_rgba(2,6,23,0.95),inset_0_1px_1px_rgba(255,255,255,0.08)]"
+    >
+      <div className="flex flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="text-[0.65rem] font-semibold uppercase tracking-[0.28em] text-cyan-300/70">
+            Interactive Exhibit
+          </div>
+          <h4 className="mt-2 text-xl font-black tracking-[-0.03em] text-white sm:text-2xl">
+            Why the flywheel compounds instead of spinning in place
+          </h4>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/60">
+            Step through the loop a few times. The same project gets faster and safer
+            because every completed cycle upgrades the artifacts feeding the next one.
+          </p>
+        </div>
 
-        {nodes.map((node, i) => (
-          <motion.a
-            href={`#${node.id}`}
-            key={i}
-            initial={rm ? {} : { opacity: 0, scale: 0.8 }}
-            animate={isInView ? { opacity: 1, scale: 1 } : {}}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            transition={{
-              duration: rm ? 0 : 0.4,
-              delay: rm ? 0 : i * 0.08,
-              type: "spring",
-              stiffness: 300,
-              damping: 25,
-            }}
-            className="cursor-pointer outline-none"
-          >
-            <rect
-              x={node.x - 60}
-              y={node.y - 18}
-              width="120"
-              height="36"
-              rx="10"
-              fill={node.color}
-              fillOpacity="0.15"
-              stroke={node.color}
-              strokeOpacity="0.4"
-              strokeWidth="1.5"
-              className="transition-all duration-300 hover:fill-opacity-30 hover:stroke-opacity-100"
-            />
-            <text
-              x={node.x}
-              y={node.y + 4}
-              textAnchor="middle"
-              fill="white"
-              fontSize="12"
-              fontWeight="600"
-              opacity="0.9"
-              className="pointer-events-none"
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-[0.22em] text-white/35">
+            Loop depth
+          </span>
+          {cycleOptions.map((cycleCount, index) => (
+            <button
+              key={cycleCount}
+              type="button"
+              aria-pressed={cycleDepth === index}
+              onClick={() => {
+                setCycleDepth(index);
+                setAutoTour(false);
+              }}
+              className={`min-h-[44px] rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
+                cycleDepth === index
+                  ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-200"
+                  : "border-white/10 bg-white/[0.03] text-white/55 hover:border-white/20 hover:text-white/80"
+              }`}
             >
-              {node.label}
-            </text>
-          </motion.a>
-        ))}
-      </svg>
+              Loop {cycleCount}
+            </button>
+          ))}
+          <button
+            type="button"
+            aria-pressed={autoTour}
+            onClick={() => setAutoTour((current) => !current)}
+            className={`min-h-[44px] rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
+              autoTour
+                ? "border-violet-400/50 bg-violet-400/15 text-violet-200"
+                : "border-white/10 bg-white/[0.03] text-white/55 hover:border-white/20 hover:text-white/80"
+            }`}
+          >
+            {autoTour ? "Auto touring" : "Auto paused"}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.9fr]">
+        <div className="relative overflow-hidden rounded-[30px] border border-white/10 bg-white/[0.03] p-3 sm:p-4">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,211,238,0.12),transparent_50%),radial-gradient(circle_at_bottom_left,rgba(167,139,250,0.12),transparent_42%)]" />
+
+          <svg
+            viewBox="0 0 640 420"
+            className="relative z-10 w-full"
+            role="img"
+            aria-label="Interactive flywheel diagram showing human intent, planning, beads, swarm execution, and memory reinforcing one another across repeated loops."
+          >
+            <defs>
+              <linearGradient id="flywheel-ring-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#22d3ee" />
+                <stop offset="45%" stopColor="#a78bfa" />
+                <stop offset="75%" stopColor="#f472b6" />
+                <stop offset="100%" stopColor="#34d399" />
+              </linearGradient>
+              <filter id="flywheel-stage-glow" x="-80%" y="-80%" width="260%" height="260%">
+                <feGaussianBlur stdDeviation="10" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+
+            <ellipse
+              cx="320"
+              cy="210"
+              rx="222"
+              ry="150"
+              fill="none"
+              stroke="url(#flywheel-ring-gradient)"
+              strokeOpacity="0.18"
+              strokeWidth="1.5"
+            />
+
+            {stages.map((stage, index) => {
+              const nextStage = stages[(index + 1) % stages.length];
+              const isActive = index === activeStage;
+
+              return (
+                <motion.path
+                  key={`${stage.id}-${nextStage.id}`}
+                  d={getConnectorPath(stage, nextStage)}
+                  fill="none"
+                  stroke={isActive ? stage.color : "#334155"}
+                  strokeOpacity={isActive ? 0.9 : 0.45}
+                  strokeWidth={isActive ? 3 : 1.6}
+                  strokeDasharray={isActive ? "10 8" : "6 7"}
+                  initial={false}
+                  animate={rm ? undefined : { strokeDashoffset: isActive ? -48 : 0 }}
+                  transition={rm ? undefined : { duration: 2.2, repeat: Infinity, ease: "linear" }}
+                />
+              );
+            })}
+
+            {!rm &&
+              [0, 1, 2].map((orbitalIndex) => (
+                <motion.g
+                  key={`orbit-${orbitalIndex}`}
+                  style={{ transformOrigin: "320px 210px" }}
+                  animate={{ rotate: 360 }}
+                  transition={{
+                    duration: 18 - cycleDepth * 4 + orbitalIndex * 2,
+                    repeat: Infinity,
+                    ease: "linear",
+                  }}
+                >
+                  <circle
+                    cx="320"
+                    cy={78 + orbitalIndex * 18}
+                    r={orbitalIndex === 2 ? 4 : 5}
+                    fill={orbitalIndex === 1 ? "#a78bfa" : "#22d3ee"}
+                    fillOpacity={0.8 - orbitalIndex * 0.15}
+                    filter="url(#flywheel-stage-glow)"
+                  />
+                </motion.g>
+              ))}
+
+            <g>
+              <circle cx="320" cy="210" r="68" fill="rgba(8,15,31,0.92)" stroke="rgba(255,255,255,0.12)" />
+              <circle cx="320" cy="210" r="47" fill="rgba(34,211,238,0.08)" stroke="rgba(34,211,238,0.22)" />
+              <text x="320" y="194" textAnchor="middle" className="fill-white/45 text-[11px] uppercase tracking-[0.28em]">
+                cycle {cycleOptions[cycleDepth]}
+              </text>
+              <text x="320" y="218" textAnchor="middle" className="fill-white text-[30px] font-black">
+                {loopVelocity.toFixed(1)}x
+              </text>
+              <text x="320" y="238" textAnchor="middle" className="fill-cyan-200/80 text-[10px] uppercase tracking-[0.18em]">
+                loop velocity
+              </text>
+            </g>
+
+            {stages.map((stage, index) => {
+              const isActive = index === activeStage;
+              return (
+                <motion.g
+                  key={stage.id}
+                  initial={rm ? false : { opacity: 0, scale: 0.85 }}
+                  animate={isInView ? { opacity: 1, scale: isActive ? 1.08 : 1 } : undefined}
+                  transition={{
+                    type: "spring",
+                    stiffness: 220,
+                    damping: 20,
+                    delay: rm ? 0 : index * 0.08,
+                  }}
+                  onMouseEnter={() => {
+                    setActiveStage(index);
+                    setAutoTour(false);
+                  }}
+                  onFocus={() => {
+                    setActiveStage(index);
+                    setAutoTour(false);
+                  }}
+                  onClick={() => {
+                    setActiveStage(index);
+                    setAutoTour(false);
+                  }}
+                  className="cursor-pointer"
+                >
+                  <circle cx={stage.x} cy={stage.y} r="44" fill="transparent" />
+                  <circle
+                    cx={stage.x}
+                    cy={stage.y}
+                    r={isActive ? 33 : 28}
+                    fill={isActive ? `${stage.color}30` : "rgba(15,23,42,0.92)"}
+                    stroke={stage.color}
+                    strokeWidth={isActive ? 3 : 2}
+                    filter={isActive ? "url(#flywheel-stage-glow)" : undefined}
+                  />
+                  <text x={stage.x} y={stage.y - 2} textAnchor="middle" className="fill-white text-[12px] font-bold">
+                    {stage.label}
+                  </text>
+                  <text x={stage.x} y={stage.y + 15} textAnchor="middle" className="fill-white/45 text-[9px]">
+                    {stage.short}
+                  </text>
+                </motion.g>
+              );
+            })}
+          </svg>
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+            {stages.map((stage, index) => {
+              const isActive = index === activeStage;
+              return (
+                <button
+                  key={stage.id}
+                  type="button"
+                  aria-pressed={isActive}
+                  onClick={() => {
+                    setActiveStage(index);
+                    setAutoTour(false);
+                  }}
+                  className={`min-h-[44px] rounded-2xl border px-4 py-3 text-left transition-colors ${
+                    isActive
+                      ? "border-white/20 bg-white/[0.08]"
+                      : "border-white/8 bg-white/[0.03] hover:border-white/15 hover:bg-white/[0.05]"
+                  }`}
+                >
+                  <div className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: stage.color }}>
+                    {stage.label}
+                  </div>
+                  <div className="mt-1 text-sm text-white/55">{stage.short}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={currentStage.id}
+              initial={rm ? { opacity: 1 } : { opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={rm ? { opacity: 1 } : { opacity: 0, y: -12 }}
+              transition={{ type: "spring", stiffness: 210, damping: 24 }}
+              className="rounded-[26px] border border-white/10 bg-white/[0.04] p-5"
+            >
+              <div className="text-[0.65rem] font-semibold uppercase tracking-[0.22em]" style={{ color: currentStage.color }}>
+                Active stage
+              </div>
+              <div className="mt-2 text-2xl font-black tracking-[-0.03em] text-white">
+                {currentStage.label}
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                <div className="rounded-2xl border border-white/8 bg-slate-950/60 p-4">
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-white/35">What enters</div>
+                  <div className="mt-2 text-sm text-white/72">{currentStage.input}</div>
+                </div>
+                <div className="rounded-2xl border border-white/8 bg-slate-950/60 p-4">
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-white/35">What leaves</div>
+                  <div className="mt-2 text-sm text-white/72">{currentStage.output}</div>
+                </div>
+              </div>
+              <p className="mt-4 text-sm leading-relaxed text-white/60">{currentStage.effect}</p>
+            </motion.div>
+          </AnimatePresence>
+
+          <div className="rounded-[26px] border border-white/10 bg-slate-950/60 p-5">
+            <div className="text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-white/35">
+              Compounding signals after loop {cycleOptions[cycleDepth]}
+            </div>
+            <div className="mt-4 space-y-3">
+              {metrics.map((metric) => (
+                <div key={metric.label}>
+                  <div className="mb-1 flex items-center justify-between text-xs text-white/55">
+                    <span>{metric.label}</span>
+                    <span className="font-mono text-white/78">{metric.value}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-white/6">
+                    <motion.div
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-violet-400 to-emerald-400"
+                      initial={rm ? { width: `${metric.value}%` } : { width: 0 }}
+                      animate={{ width: `${metric.value}%` }}
+                      transition={{ duration: 0.75, ease: "easeOut" }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-sm leading-relaxed text-white/55">
+              Every full turn upgrades the next starting point: sharper prompts,
+              richer beads, better review instincts, and more reusable memory.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

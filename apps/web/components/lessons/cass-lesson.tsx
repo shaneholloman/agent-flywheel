@@ -1011,20 +1011,33 @@ function InteractiveSessionSearch() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [searchProgress, setSearchProgress] = useState(0);
   const searchTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const scenario = SEARCH_SCENARIOS[activeScenarioIdx];
 
-  // Cleanup interval on unmount
+  const pushTimer = useCallback((t: ReturnType<typeof setTimeout>) => {
+    pendingTimersRef.current.push(t);
+  }, []);
+
+  const clearAllTimers = useCallback(() => {
+    if (searchTimerRef.current) {
+      clearInterval(searchTimerRef.current);
+      searchTimerRef.current = null;
+    }
+    for (const t of pendingTimersRef.current) clearTimeout(t);
+    pendingTimersRef.current = [];
+  }, []);
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (searchTimerRef.current) {
-        clearInterval(searchTimerRef.current);
-      }
+      clearAllTimers();
     };
-  }, []);
+  }, [clearAllTimers]);
 
   const runSearch = useCallback(
     (index: number) => {
+      clearAllTimers();
       const sc = SEARCH_SCENARIOS[index];
       setActiveScenarioIdx(index);
       setSearching(true);
@@ -1035,23 +1048,20 @@ function InteractiveSessionSearch() {
 
       // Animated terminal output
       setTerminalLines([`$ ${sc.command}`]);
-      setTimeout(() => {
+      pushTimer(setTimeout(() => {
         setTerminalLines((prev) => [
           ...prev,
           `Searching ${sc.stats.sessionsSearched} indexed sessions...`,
         ]);
-      }, 300);
-      setTimeout(() => {
+      }, 300));
+      pushTimer(setTimeout(() => {
         setTerminalLines((prev) => [
           ...prev,
           `Scanning ${sc.stats.agents} agents: claude, codex, gemini, cursor`,
         ]);
-      }, 600);
+      }, 600));
 
       // Progress bar animation
-      if (searchTimerRef.current) {
-        clearInterval(searchTimerRef.current);
-      }
       const progressInterval = setInterval(() => {
         setSearchProgress((prev) => {
           if (prev >= 100) {
@@ -1063,7 +1073,7 @@ function InteractiveSessionSearch() {
       }, 50);
       searchTimerRef.current = progressInterval;
 
-      setTimeout(() => {
+      pushTimer(setTimeout(() => {
         clearInterval(progressInterval);
         searchTimerRef.current = null;
         setSearchProgress(100);
@@ -1074,9 +1084,9 @@ function InteractiveSessionSearch() {
         ]);
         setSearching(false);
         setHasSearched(true);
-      }, SEARCH_DELAY_MS);
+      }, SEARCH_DELAY_MS));
     },
-    []
+    [clearAllTimers, pushTimer]
   );
 
   const handlePrev = useCallback(() => {
@@ -1096,10 +1106,10 @@ function InteractiveSessionSearch() {
       // Clipboard not available
     });
     setCopiedId(hitId);
-    setTimeout(() => {
+    pushTimer(setTimeout(() => {
       setCopiedId(null);
-    }, 2000);
-  }, []);
+    }, 2000));
+  }, [pushTimer]);
 
   const IconForScenario = SCENARIO_ICONS[scenario.icon];
 
