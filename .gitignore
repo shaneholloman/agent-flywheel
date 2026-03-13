@@ -181,3 +181,18 @@ gemini.mcp.json
 # Ephemeral stderr capture files
 /err
 .claude/settings.local.json
+
+# Beads backup snapshots (created by br doctor / concurrent agents)
+.beads_backup_*/
+
+# Agent-generated throwaway root-level JS scripts
+/apply_phase_cards.js
+/fix_phases.js
+/lint-check.js
+/script.js
+/test-highlight.js
+/update-page.js
+/update_phases.js
+
+# Next.js trash directories (leftover from hot-reload crashes)
+.next_trash_*/
