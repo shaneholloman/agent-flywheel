@@ -158,8 +158,10 @@ try_step() {
                 rm -f "$fifo"
             else
                 # Fallback if mkfifo fails
+                set +e
                 "$@" 2>&1 | tee "$output_file"
                 exit_code="${PIPESTATUS[0]}"
+                set -e
             fi
         else
             # Normal mode: capture silently, show on error

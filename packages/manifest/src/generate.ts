@@ -709,25 +709,27 @@ function generateVerifiedInstallerSnippet(module: Module): string[] {
 
     parts.push(shellQuote(vi.runner));
 
-    // Add -s for bash/sh since we're piping script content to stdin
-    // Without -s, bash expects a filename argument, not stdin input
-    // But skip if args already include -s (manifest may specify it explicitly)
+    const viArgs = vi.args ?? [];
+    const dashIndex = viArgs.indexOf('--');
+    const runnerArgs = dashIndex === -1 ? [] : viArgs.slice(0, dashIndex);
+    const scriptArgs = dashIndex === -1 ? viArgs : viArgs.slice(dashIndex + 1);
+
     const needsStdinFlag = ['bash', 'sh'].includes(vi.runner);
-    const argsHaveStdinFlag = vi.args?.includes('-s') ?? false;
-    if (needsStdinFlag && !argsHaveStdinFlag) {
-      parts.push("'-s'");
+    if (needsStdinFlag && !runnerArgs.includes('-s')) {
+      runnerArgs.unshift('-s');
     }
 
-    if (vi.args && vi.args.length > 0) {
-      // Add -- separator before args (unless already present)
-      const hasDash = vi.args.includes('--');
-      if (!hasDash) {
-        parts.push("'--'");
-      }
-      for (const arg of vi.args) {
+    for (const arg of runnerArgs) {
+      parts.push(shellQuoteVerifiedInstallerArg(arg));
+    }
+
+    if (scriptArgs.length > 0) {
+      parts.push(shellQuote('--'));
+      for (const arg of scriptArgs) {
         parts.push(shellQuoteVerifiedInstallerArg(arg));
       }
     }
+    
     execCmd = parts.join(' ');
   } else {
     // Default/root: run directly

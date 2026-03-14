@@ -180,20 +180,20 @@ export function RecursiveImprovementViz() {
           </button>
         </div>
         {/* Step dots */}
-        <div className="flex justify-center gap-2 mt-2.5">
+        <div className="flex justify-center gap-3 mt-2.5">
           {LAYERS.map((l, i) => (
             <button
               key={l.id}
               onClick={() => setActiveLayer(i)}
               aria-label={`Go to layer ${i + 1}`}
-              className="h-2 w-2 rounded-full transition-all min-h-[44px] min-w-[44px] flex items-center justify-center"
+              className="p-2 -m-1"
             >
               <div
-                className="h-2 w-2 rounded-full transition-all"
+                className="h-2.5 w-2.5 rounded-full transition-all"
                 style={{
-                  backgroundColor: i === activeLayer ? l.color : "rgba(255,255,255,0.1)",
+                  backgroundColor: i === activeLayer ? l.color : "rgba(255,255,255,0.15)",
                   boxShadow: i === activeLayer ? `0 0 8px ${l.color}60` : "none",
-                  transform: i === activeLayer ? "scale(1.5)" : "scale(1)",
+                  transform: i === activeLayer ? "scale(1.4)" : "scale(1)",
                 }}
               />
             </button>

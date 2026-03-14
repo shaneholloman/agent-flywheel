@@ -28,7 +28,7 @@ interface SimAgent {
   alive: boolean;
   currentBead: number | null;
   progress: number;
-  justCompleted: boolean; // transient flash state
+  justCompleted: number; // countdown ticks for completion flash (0 = off)
 }
 
 interface SimBead {
@@ -55,7 +55,7 @@ function createInitialState(): SimState {
     alive: true,
     currentBead: i < BEAD_TITLES.length ? i : null,
     progress: Math.floor(Math.random() * 40) + 10,
-    justCompleted: false,
+    justCompleted: 0,
   }));
 
   const beads: SimBead[] = BEAD_TITLES.map((title, i) => ({
@@ -70,7 +70,7 @@ function createInitialState(): SimState {
 
 /** Pure function: advance simulation by one tick. */
 function tick(state: SimState): SimState {
-  const agents = state.agents.map(a => ({ ...a, justCompleted: false }));
+  const agents = state.agents.map(a => ({ ...a, justCompleted: Math.max(0, a.justCompleted - 1) }));
   const beads = state.beads.map(b => ({ ...b }));
   const log = [...state.log];
   let { killed, recovered, completed } = state;
@@ -104,7 +104,7 @@ function tick(state: SimState): SimState {
       bead.assignedTo = null;
     }
     completed++;
-    agent.justCompleted = true;
+    agent.justCompleted = 3; // flash for 3 ticks (~600ms)
     log.unshift(`${agent.name} completed ${BEAD_TITLES[beadId]}.`);
 
     // Claim next unclaimed bead
@@ -284,7 +284,7 @@ export function CrashRecoveryViz() {
                 aria-label={agent.alive ? `Kill agent ${agent.name}` : `Agent ${agent.name} is crashed`}
                 className={`relative rounded-xl border p-4 text-left transition-colors min-h-[44px] ${
                   agent.alive
-                    ? agent.justCompleted
+                    ? agent.justCompleted > 0
                       ? "border-emerald-500/30 bg-emerald-500/[0.05] cursor-pointer group"
                       : "border-white/10 bg-white/[0.02] hover:border-[#FF5500]/30 hover:bg-white/[0.05] cursor-pointer group"
                     : "border-red-500/20 bg-red-500/[0.03] cursor-not-allowed"
