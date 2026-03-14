@@ -200,7 +200,7 @@ const PHASES: PhaseNarrative[] = [
       statusText: "A1 finished T1 \u2192 bv routes to T2 (now unblocked)",
     },
     description:
-      "On the left, A4 finished a low-priority task while a critical one was untouched. On the right, closing T1 updated the dependency graph \u2014 bv immediately routes agents to newly-unblocked work.",
+      "On the left, A4 finished a low-priority task while a critical one sat untouched. On the right, closing T1 updated the dependency graph. bv immediately routes agents to newly-unblocked work.",
   },
   {
     // Phase 4: Final tally
@@ -215,7 +215,7 @@ const PHASES: PhaseNarrative[] = [
       conflicts: 1,
       idleBurn: 12600,
       completed: 3,
-      statusText: "3/6 done after all that time \u2014 1 merge conflict, 12.6k wasted tokens",
+      statusText: "3/6 done. 1 merge conflict, 12.6k wasted tokens",
     },
     coordinated: {
       agents: [
@@ -228,10 +228,10 @@ const PHASES: PhaseNarrative[] = [
       conflicts: 0,
       idleBurn: 0,
       completed: 5,
-      statusText: "5/6 done, 0 conflicts, 0 wasted tokens \u2014 T4 finishing now",
+      statusText: "5/6 done, 0 conflicts, 0 wasted tokens. T4 finishing now",
     },
     description:
-      "Same agents, same tasks, same time. Without the core loop: 3 completed, a merge conflict, a blocked task, and thousands of wasted tokens. With it: 5 completed, zero conflicts, zero waste. The tools pay for themselves on the first run.",
+      "Same agents, same tasks, same time. Without the core loop: 3 completed, 1 merge conflict, 1 blocked task, thousands of wasted tokens. With it: 5 completed, zero conflicts, zero waste.",
   },
 ];
 
@@ -601,8 +601,8 @@ export function SwarmChaosViz() {
           Why the tools matter
         </h4>
         <p className="text-[1.05rem] leading-relaxed text-zinc-400 font-light max-w-2xl">
-          Watch the same four agents work on the same six tasks &mdash; with and
-          without the core loop. Press Start to see the difference.
+          Four agents, six tasks, side by side. One side uses the core
+          loop, the other does not. Press Start.
         </p>
       </div>
 

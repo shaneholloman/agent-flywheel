@@ -14,7 +14,7 @@ const NAV_ITEMS = [
   { id: "operating-rhythm", label: "Rhythm", number: "07" },
   { id: "operator", label: "Human's Job", number: "08" },
   { id: "failure-modes", label: "Failures", number: "09" },
-  { id: "what-it-feels-like", label: "The Feeling", number: "10" },
+  { id: "what-it-feels-like", label: "In Practice", number: "10" },
   { id: "helpers", label: "Helpers", number: "11" },
   { id: "getting-started", label: "Start", number: "12" },
 ] as const;

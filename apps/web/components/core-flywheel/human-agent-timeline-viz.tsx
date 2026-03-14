@@ -78,9 +78,9 @@ const STAGES: TimelineStage[] = [
     color: HUMAN_COLOR,
     icon: BookOpen,
     who: "You",
-    what: "Create the operating manual that tells agents how to behave, what tools to use, and what coordination rules to follow.",
+    what: "Write the operating manual: agent behavior rules, tool usage, and coordination protocol.",
     tools: "Your text editor",
-    insight: "This one file is what makes everything else automatic.",
+    insight: "Every agent reads this file on startup. It replaces verbal instructions.",
   },
   {
     id: "launch",
@@ -127,7 +127,7 @@ const STAGES: TimelineStage[] = [
     what: "Check bv for stuck beads, rescue confused agents by telling them to reread AGENTS.md, add missing beads.",
     tools: "bv --robot-triage, Agent Mail inbox",
     insight:
-      "This is light maintenance, not micromanagement. 5 minutes every 15.",
+      "About 5 minutes of checking every 15 minutes.",
   },
   {
     id: "review",
@@ -683,9 +683,9 @@ export function HumanAgentTimelineViz() {
               Who Does What in the Core Loop
             </h4>
             <p className="mt-4 text-[1.05rem] leading-relaxed text-zinc-400 font-light">
-              The human designs the system and tends the swarm.{" "}
+              You design the system and tend the swarm.{" "}
               <span className="text-white/60">
-                The agents handle all the coordination plumbing.
+                Agents do the coordination work.
               </span>
             </p>
           </div>

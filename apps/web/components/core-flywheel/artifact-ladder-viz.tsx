@@ -598,7 +598,7 @@ export function ArtifactLadderViz() {
             Artifact Progression
           </div>
           <h4 className="mt-6 text-3xl font-black tracking-[-0.04em] text-white sm:text-4xl lg:text-5xl leading-[1.1]">
-            How artifacts transform through the core loop
+            What you produce at each stage
           </h4>
           <p className="mt-8 text-[1.1rem] leading-relaxed text-zinc-400 font-extralight">
             An idea becomes a plan, a plan becomes beads, beads become
