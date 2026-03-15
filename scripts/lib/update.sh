@@ -24,7 +24,7 @@ if [[ -f "$SCRIPT_DIR/../../VERSION" ]]; then
     ACFS_VERSION="$(cat "$SCRIPT_DIR/../../VERSION" 2>/dev/null || echo "$ACFS_VERSION")"
 fi
 
-# Build display version: v0.6.0+a7598d0 (with short commit hash when available)
+# Build display version: v0.7.0+a7598d0 (with short commit hash when available)
 _acfs_short_hash=""
 if command -v git &>/dev/null && [[ -d "$SCRIPT_DIR/../../.git" ]]; then
     _acfs_short_hash=$(git -C "$SCRIPT_DIR/../.." rev-parse --short HEAD 2>/dev/null) || true

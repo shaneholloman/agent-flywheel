@@ -48,7 +48,7 @@ export DEBCONF_NONINTERACTIVE_SEEN=true
 # ============================================================
 # Configuration
 # ============================================================
-ACFS_VERSION="0.6.0"
+ACFS_VERSION="0.7.0"
 # Allow fork installations by overriding these via environment variables
 ACFS_REPO_OWNER="${ACFS_REPO_OWNER:-Dicklesworthstone}"
 ACFS_REPO_NAME="${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}"
@@ -3724,6 +3724,12 @@ install_cli_tools() {
         log_detail "Using generated installers for network (phase 5)"
         acfs_run_generated_category_phase "network" "5" || return 1
         used_generated_network=true
+    fi
+
+    # tools phase 5: lazygit, lazydocker — bug #146 audit follow-up
+    if acfs_use_generated_category "tools"; then
+        log_detail "Using generated installers for tools (phase 5)"
+        acfs_run_generated_category_phase "tools" "5" || return 1
     fi
 
     if [[ "$used_generated_cli" == "true" ]]; then

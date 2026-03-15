@@ -1,6 +1,6 @@
 {
   "name": "@acfs/manifest",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "Parser and utilities for ACFS manifest files",
   "type": "module",
