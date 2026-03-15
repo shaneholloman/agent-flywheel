@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BookOpen,
@@ -21,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AlertCard } from "@/components/alert-card";
 import { markStepComplete } from "@/lib/wizardSteps";
 import { useWizardAnalytics } from "@/lib/hooks/useWizardAnalytics";
+import { useCheckedServices } from "@/lib/userPreferences";
 import { withCurrentSearch } from "@/lib/utils";
 import {
   SimplerGuide,
@@ -256,9 +257,8 @@ function TierSection({
 export default function AccountsPage() {
   const router = useRouter();
   const [isNavigating, setIsNavigating] = useState(false);
-  const [checkedServices, setCheckedServices] = useState<Set<string>>(
-    new Set()
-  );
+  const [checkedServiceIds, toggleService] = useCheckedServices();
+  const checkedServices = useMemo(() => new Set(checkedServiceIds), [checkedServiceIds]);
 
   // Analytics tracking for this wizard step
   const { markComplete } = useWizardAnalytics({
@@ -266,18 +266,6 @@ export default function AccountsPage() {
     stepNumber: 7,
     stepTitle: "Set Up Accounts",
   });
-
-  const handleToggle = useCallback((serviceId: string) => {
-    setCheckedServices((prev) => {
-      const next = new Set(prev);
-      if (next.has(serviceId)) {
-        next.delete(serviceId);
-      } else {
-        next.add(serviceId);
-      }
-      return next;
-    });
-  }, []);
 
   const handleContinue = useCallback(() => {
     markComplete({

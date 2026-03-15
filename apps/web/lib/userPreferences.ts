@@ -18,6 +18,7 @@ const INSTALL_MODE_KEY = "agent-flywheel-install-mode";
 const SSH_USERNAME_KEY = "agent-flywheel-ssh-username";
 const ACFS_REF_KEY = "agent-flywheel-acfs-ref";
 export const CREATE_VPS_CHECKLIST_KEY = "agent-flywheel-create-vps-checklist";
+const CHECKED_SERVICES_KEY = "agent-flywheel-checked-services";
 
 const OS_QUERY_KEY = "os";
 const VPS_IP_QUERY_KEY = "ip";
@@ -120,6 +121,7 @@ export const userPreferencesKeys = {
   sshUsername: ["userPreferences", "sshUsername"] as const,
   acfsRef: ["userPreferences", "acfsRef"] as const,
   createVPSChecklist: ["userPreferences", "createVPSChecklist"] as const,
+  checkedServices: ["userPreferences", "checkedServices"] as const,
 };
 
 /**
@@ -323,6 +325,48 @@ export function useCreateVPSChecklist(): [string[], (items: string[]) => void, b
   }, [queryClient]);
 
   return [data ?? [], setChecklist, status === "success"];
+}
+
+// --- Checked Services (accounts wizard step) ---
+
+export function getCheckedServices(): string[] {
+  return normalizeStringList(safeGetJSON<unknown[]>(CHECKED_SERVICES_KEY));
+}
+
+export function setCheckedServices(serviceIds: string[]): boolean {
+  const didPersist = safeSetJSON(CHECKED_SERVICES_KEY, normalizeStringList(serviceIds));
+  if (didPersist) {
+    emitUserPreferencesUpdate();
+  }
+  return didPersist;
+}
+
+export function useCheckedServices(): [string[], (serviceId: string) => void, boolean] {
+  const queryClient = useQueryClient();
+  usePreferenceSync(userPreferencesKeys.checkedServices);
+
+  const { data, status } = useQuery({
+    queryKey: userPreferencesKeys.checkedServices,
+    queryFn: getCheckedServices,
+    staleTime: 0,
+    gcTime: Infinity,
+  });
+
+  const toggleService = useCallback((serviceId: string) => {
+    const currentIds = getCheckedServices();
+    const currentSet = new Set(currentIds);
+    if (currentSet.has(serviceId)) {
+      currentSet.delete(serviceId);
+    } else {
+      currentSet.add(serviceId);
+    }
+    const newIds = [...currentSet];
+    if (setCheckedServices(newIds)) {
+      queryClient.setQueryData(userPreferencesKeys.checkedServices, newIds);
+    }
+  }, [queryClient]);
+
+  return [data ?? [], toggleService, status === "success"];
 }
 
 /**
