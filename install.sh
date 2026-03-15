@@ -5150,7 +5150,7 @@ UNIT_EOF
         log_detail "S2P already installed"
     else
         log_detail "Installing S2P"
-        try_step "Installing S2P" acfs_run_verified_upstream_script_as_target "s2p" "bash" -- --skip-cass || log_warn "S2P installation may have failed"
+        try_step "Installing S2P" acfs_run_verified_upstream_script_as_target "s2p" "bash" --skip-cass || log_warn "S2P installation may have failed"
     fi
 
     # System Resource Protection Script (srps)
@@ -5174,7 +5174,7 @@ UNIT_EOF
         log_detail "Brenner Bot already installed"
     else
         log_detail "Installing Brenner Bot"
-        try_step "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" -- --skip-cass || log_warn "Brenner Bot installation may have failed"
+        try_step "Installing Brenner Bot" acfs_run_verified_upstream_script_as_target "brenner_bot" "bash" --skip-cass || log_warn "Brenner Bot installation may have failed"
     fi
 
     log_success "Dicklesworthstone stack installed"
