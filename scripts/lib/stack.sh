@@ -1027,7 +1027,7 @@ install_all_stack() {
     install_ru
     install_dcg
 
-    # Additional tools (9 new integrations)
+    # Additional tools (8 new integrations)
     install_rch
     install_pt
     install_fsfs

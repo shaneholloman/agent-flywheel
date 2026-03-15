@@ -312,7 +312,7 @@ update_path_entries() {
                 {
                     echo ''
                     echo '# ACFS PATH'
-                    echo 'export PATH="$HOME/.local/bin:$PATH"'
+                    echo 'export PATH="$HOME/.local/bin:$PATH" # ACFS'
                 } >> "$config"
 
                 record_change \

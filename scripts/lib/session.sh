@@ -370,7 +370,7 @@ def sanitize_value:
         # Since jq gsub doesn't support backreferences in the replacement string,
         # we use a capture-and-replace approach or just redact the whole match.
         # Redacting the whole match is safer for security.
-        gsub("(?i)(password|secret|api_key|apikey|auth_token|access_token)[\"\\s:=]+[\"']?[^\\s\"'\\}\\]\\),;\\[]{8,}[\"']?"; "[SECRET_REDACTED]")
+        gsub("(?i)(password|secret|api_key|apikey|auth_token|access_token)[\"\\s:=]+[\"'\''"]?[^\\s\"'\''"]{8,}[\"'\''"]?"; "[SECRET_REDACTED]")
 JQ_BASE
 
     local jq_filter_optional=""
@@ -1740,11 +1740,6 @@ import_session() {
         return 1
     fi
 
-    if [[ ! -f "$file" ]]; then
-        log_error "File not found: $file"
-        return 1
-    fi
-
     if ! jq -e . "$file" >/dev/null 2>&1; then
         log_error "Invalid JSON: $file"
         return 1
@@ -1767,7 +1762,7 @@ import_session() {
             if any(.[]?; .type == "user" or .type == "assistant") then
                 ([.[] | select(.type == "user" or .type == "assistant") | .sessionId] | map(select(type == "string" and length > 0)) | .[0]) // "unknown"
             else
-                ([.[] | select(.type == "session_meta") | .payload.id?] | map(select(type == "string" and length > 0)) | .[0]) // "unknown"
+                ([.[] | select(.type == "session_meta") | .payload.id?] | map(select(type == "string" and length > 0)) | .[0]) // "unknown")
             end
         ' "$file")
         agent="$(infer_agent_from_cass_export "$file")"
