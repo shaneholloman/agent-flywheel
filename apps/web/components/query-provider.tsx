@@ -5,7 +5,6 @@ import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client
 import { createSyncStoragePersister } from "@tanstack/query-sync-storage-persister";
 import { useState, useEffect, type ReactNode } from "react";
 import { wizardStepsKeys } from "../lib/wizardSteps";
-import { userPreferencesKeys } from "../lib/userPreferences";
 
 function makeQueryClient() {
   return new QueryClient({
@@ -79,11 +78,10 @@ export function QueryProvider({ children }: { children: ReactNode }) {
               ) {
                 return false;
               }
-              // Exclude detected OS (fast, client-only, no need to persist)
-              if (
-                queryKey[0] === userPreferencesKeys.detectedOS[0] &&
-                queryKey[1] === userPreferencesKeys.detectedOS[1]
-              ) {
+              // Exclude all user preferences (each preference has its own
+              // canonical localStorage key — double-persisting in the query
+              // cache would cause stale flashes on page reload)
+              if (queryKey[0] === "userPreferences") {
                 return false;
               }
               return true;

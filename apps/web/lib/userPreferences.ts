@@ -77,7 +77,7 @@ function usePreferenceSync(queryKey: readonly string[]) {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const invalidate = () => {
-      queryClient.invalidateQueries({ queryKey: [...queryKey] });
+      queryClient.invalidateQueries({ queryKey });
     };
     window.addEventListener(USER_PREFERENCES_EVENT, invalidate);
     window.addEventListener("storage", invalidate);

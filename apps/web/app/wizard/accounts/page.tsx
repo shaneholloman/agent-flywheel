@@ -369,7 +369,7 @@ export default function AccountsPage() {
             tier={tier}
             services={tieredServices[tier]}
             checkedServices={checkedServices}
-            onToggleService={handleToggle}
+            onToggleService={toggleService}
           />
         ))}
       </div>
