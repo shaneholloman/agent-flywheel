@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-03-15T01:28:21+00:00
+# checksums.yaml - Auto-generated 2026-03-15T03:08:22+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -112,7 +112,7 @@ installers:
 
   pt:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/process_triage/main/install.sh"
-    sha256: "834ffa53ae63f8f639ef393c5c8a3e5bf6ebfd9c763b1220186be3997cf39f65"
+    sha256: "8db7aa5c0680b235c492216a8efa7967dbc7c40cba4567581879cd120f8c5dab"
 
   rano:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/rano/main/install.sh"
