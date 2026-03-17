@@ -674,6 +674,13 @@ load_checksums() {
             fi
         fi
 
+        # Match url value for the current tool — override KNOWN_INSTALLERS so
+        # stale URLs baked into an older security.sh are corrected when
+        # checksums.yaml is refreshed from GitHub.
+        if [[ -n "$current_tool" ]] && [[ "$line" =~ url:[[:space:]]*\"(https://[^\"]+)\" ]]; then
+            KNOWN_INSTALLERS["$current_tool"]="${BASH_REMATCH[1]}"
+        fi
+
         # Match sha256 value for the current tool.
         if [[ -n "$current_tool" ]] && [[ "$line" =~ sha256:[[:space:]]*['\"]?([0-9A-Fa-f]{64})['\"]? ]]; then
             LOADED_CHECKSUMS["$current_tool"]="${BASH_REMATCH[1],,}"
