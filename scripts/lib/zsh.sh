@@ -193,11 +193,8 @@ install_acfs_zshrc() {
 
     # Create minimal loader .zshrc
     cat > "$user_zshrc" << 'EOF'
-# ACFS loader
+# ACFS loader — user overrides go in ~/.zshrc.local (sourced by acfs.zshrc)
 source "$HOME/.acfs/zsh/acfs.zshrc"
-
-# User overrides live here forever
-[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
 EOF
 
     log_success "ACFS zshrc installed"

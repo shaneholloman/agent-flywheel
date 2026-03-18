@@ -111,11 +111,11 @@ if command -v bat &>/dev/null; then
 elif command -v batcat &>/dev/null; then
   alias cat='batcat'
 fi
-# Prefer fd over fdfind (Debian/Ubuntu names it fdfind)
+# fd/fdfind as a standalone alias (NOT aliased over 'find' — fd has incompatible syntax)
 if command -v fd &>/dev/null; then
-  alias find='fd'
+  alias fdfind='fd'
 elif command -v fdfind &>/dev/null; then
-  alias find='fdfind'
+  alias fd='fdfind'
 fi
 command -v rg &>/dev/null && alias grep='rg'
 command -v dust &>/dev/null && alias du='dust'
@@ -219,7 +219,7 @@ command -v zoxide &>/dev/null && eval "$(zoxide init zsh)"
 command -v direnv &>/dev/null && eval "$(direnv hook zsh)"
 
 # fzf integration (optional)
-export FZF_DISABLE_KEYBINDINGS=1
+export DISABLE_FZF_KEY_BINDINGS=1
 [[ -f "$HOME/.fzf.zsh" ]] && source "$HOME/.fzf.zsh"
 
 # --- Prompt config ---
