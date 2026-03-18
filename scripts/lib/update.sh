@@ -913,7 +913,7 @@ update_run_meta_skill_source_install() {
 
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via run_cmd()
 update_run_slb_source_install() {
-    log_detail "Building SLB from source (upstream installer issue workaround)"
+    log_to_file "Building SLB from source (upstream installer issue workaround)"
     
     local build_cmd
     build_cmd="$(cat <<'EOF'
@@ -928,6 +928,91 @@ rm -rf "$SLB_TMP"
 EOF
 )"
     update_run_in_target_context "" bash -c "$build_cmd"
+}
+
+# ============================================================
+# Verified Installer Wrappers
+# ============================================================
+# Download an upstream installer, verify its SHA-256 checksum
+# against checksums.yaml, and execute it in the target context.
+# ============================================================
+
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via run_cmd()
+update_run_verified_installer_with_env() {
+    if [[ $# -lt 1 ]]; then
+        echo "update_run_verified_installer_with_env requires a tool name" >&2
+        return 1
+    fi
+
+    local tool="$1"
+    local bash_env_assignment="${2:-}"
+    if [[ $# -ge 2 ]]; then
+        shift 2
+    else
+        shift
+    fi
+
+    if [[ "$tool" == "ms" ]] && update_is_linux_arm64; then
+        update_run_meta_skill_source_install
+        return $?
+    fi
+
+    if ! update_require_security; then
+        echo "Security verification unavailable (missing $SCRIPT_DIR/security.sh, repo scripts/lib/security.sh, or checksums.yaml)" >&2
+        return 1
+    fi
+
+    local url="${KNOWN_INSTALLERS[$tool]:-}"
+    local expected_sha256
+    expected_sha256="$(get_checksum "$tool")"
+
+    if [[ -z "$url" ]] || [[ -z "$expected_sha256" ]]; then
+        echo "Missing checksum entry for $tool" >&2
+        return 1
+    fi
+
+    if [[ -n "$bash_env_assignment" ]] && [[ ! "$bash_env_assignment" =~ ^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+$ ]]; then
+        echo "Invalid inline env assignment for $tool installer: $bash_env_assignment" >&2
+        return 1
+    fi
+
+    local tmp_install=""
+    tmp_install=$(mktemp "${TMPDIR:-/tmp}/acfs-update-${tool}.XXXXXX" 2>/dev/null) || tmp_install=""
+    if [[ -z "$tmp_install" ]]; then
+        echo "Failed to create temp file for verified $tool installer" >&2
+        return 1
+    fi
+
+    if verify_checksum "$url" "$expected_sha256" "$tool" > "$tmp_install"; then
+        :
+    else
+        local exit_code=$?
+        rm -f "$tmp_install"
+        return "$exit_code"
+    fi
+
+    if ! chmod +x "$tmp_install"; then
+        rm -f "$tmp_install"
+        return 1
+    fi
+
+    local exit_code=0
+    update_run_in_target_context "$bash_env_assignment" bash "$tmp_install" "$@" </dev/null || exit_code=$?
+
+    rm -f "$tmp_install"
+    return "$exit_code"
+}
+
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via run_cmd()
+update_run_verified_installer() {
+    if [[ $# -lt 1 ]]; then
+        echo "update_run_verified_installer requires a tool name" >&2
+        return 1
+    fi
+
+    local tool="$1"
+    shift
+    update_run_verified_installer_with_env "$tool" "" "$@"
 }
 
 # ============================================================
@@ -957,7 +1042,7 @@ update_acfs_self() {
 
     # Recovery for orphaned git init (issue #200)
     if [[ -d "$ACFS_REPO_ROOT/.git" ]] && ! git -C "$ACFS_REPO_ROOT" rev-parse HEAD &>/dev/null; then
-        log_info "Detected incomplete git bootstrap — attempting recovery..."
+        log_to_file "Detected incomplete git bootstrap — attempting recovery..."
         local actual_origin
         actual_origin=$(git -C "$ACFS_REPO_ROOT" remote get-url origin 2>/dev/null || true)
         if is_expected_acfs_origin_url "$actual_origin"; then
@@ -967,7 +1052,7 @@ update_acfs_self() {
             fi
 
             if git -C "$ACFS_REPO_ROOT" checkout -B main --track origin/main; then
-                log_info "Git bootstrap recovery succeeded"
+                log_to_file "Git bootstrap recovery succeeded"
             else
                 log_item "warn" "ACFS self-update" "git recovery checkout failed; leaving existing .git untouched"
                 return 0
