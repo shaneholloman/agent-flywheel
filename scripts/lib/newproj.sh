@@ -306,6 +306,7 @@ Common pitfalls:
 
 ---
 
+<!-- br-agent-instructions-v1 -->
 ## Issue Tracking with br (Beads)
 
 All issue tracking goes through **Beads**. No other TODO systems.
@@ -360,6 +361,7 @@ Never:
 - Use markdown TODO lists.
 - Use other trackers.
 - Duplicate tracking.
+<!-- end-br-agent-instructions -->
 
 ---
 
