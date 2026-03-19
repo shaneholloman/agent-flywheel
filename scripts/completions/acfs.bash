@@ -8,7 +8,7 @@ _acfs_completions() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="newproj new services-setup services setup doctor check session sessions update status continue progress info i cheatsheet cs changelog changes log export-config export dashboard dash support-bundle bundle version help"
+    local commands="newproj new services svc services-setup setup doctor check session sessions update status continue progress info i cheatsheet cs changelog changes log export-config export dashboard dash support-bundle bundle version help"
 
     # Subcommand-specific flags
     local newproj_flags="-i --interactive --no-br --no-claude --no-agents -h --help"
@@ -25,6 +25,8 @@ _acfs_completions() {
     local session_import_flags="--dry-run"
     local session_convert_flags="--from --to --workspace --session-id --dry-run --json --no-json"
     local session_show_flags="--format"
+    local services_subcommands="start stop status restart logs help"
+    local services_logs_targets="agent-mail cm cass"
     local dashboard_subcommands="generate serve"
     local common_flags="-h --help"
 
@@ -32,7 +34,7 @@ _acfs_completions() {
     local cmd=""
     for ((i=1; i < cword; i++)); do
         case "${words[i]}" in
-            newproj|new|services-setup|services|setup|doctor|check|session|sessions|update|status|continue|progress|info|i|cheatsheet|cs|changelog|changes|log|export-config|export|dashboard|dash|support-bundle|bundle|version|help)
+            newproj|new|services|svc|services-setup|setup|doctor|check|session|sessions|update|status|continue|progress|info|i|cheatsheet|cs|changelog|changes|log|export-config|export|dashboard|dash|support-bundle|bundle|version|help)
                 cmd="${words[i]}"
                 break
                 ;;
@@ -127,6 +129,34 @@ _acfs_completions() {
             esac
             return
             ;;
+        services|svc)
+            # Check if we have a services subcommand
+            local svc_cmd=""
+            for ((j=i+1; j < cword; j++)); do
+                case "${words[j]}" in
+                    start|stop|status|restart|logs|help)
+                        svc_cmd="${words[j]}"
+                        break
+                        ;;
+                esac
+            done
+
+            case "$svc_cmd" in
+                logs)
+                    mapfile -t COMPREPLY < <(compgen -W "$services_logs_targets --dry-run" -- "$cur")
+                    ;;
+                start|stop|restart)
+                    mapfile -t COMPREPLY < <(compgen -W "--dry-run" -- "$cur")
+                    ;;
+                status|help)
+                    COMPREPLY=()
+                    ;;
+                *)
+                    mapfile -t COMPREPLY < <(compgen -W "$services_subcommands --dry-run" -- "$cur")
+                    ;;
+            esac
+            return
+            ;;
         dashboard|dash)
             # Check if we have a dashboard subcommand
             local dash_cmd=""
@@ -144,7 +174,7 @@ _acfs_completions() {
             fi
             return
             ;;
-        update|continue|progress|services-setup|services|setup|support-bundle|bundle|version|help)
+        update|continue|progress|services-setup|setup|support-bundle|bundle|version|help)
             mapfile -t COMPREPLY < <(compgen -W "$common_flags" -- "$cur")
             return
             ;;

@@ -264,7 +264,18 @@ acfs() {
         return 1
       fi
       ;;
-    services-setup|services|setup)
+    services|svc)
+      if [[ -f "$acfs_home/scripts/lib/acfs-services.sh" ]]; then
+        bash "$acfs_home/scripts/lib/acfs-services.sh" "$@"
+      elif [[ -x "$acfs_bin" ]]; then
+        "$acfs_bin" services "$@"
+      else
+        echo "Error: acfs-services.sh not found"
+        echo "Re-run the ACFS installer to get the latest scripts"
+        return 1
+      fi
+      ;;
+    services-setup|setup)
       if [[ -f "$acfs_home/scripts/services-setup.sh" ]]; then
         bash "$acfs_home/scripts/services-setup.sh" "$@"
       elif [[ -x "$acfs_bin" ]]; then
@@ -426,6 +437,7 @@ acfs() {
       echo "  cheatsheet      Command reference (aliases, shortcuts)"
       echo "  dashboard, dash <generate|serve> - Static HTML dashboard"
       echo "  continue        View installation progress (after Ubuntu upgrade)"
+      echo "  services        Manage background daemons (start/stop/status/logs)"
       echo "  services-setup  Configure AI agents and cloud services"
       echo "  doctor          Check system health and tool status"
       echo "  status          Quick one-line health summary (fast, no network)"
