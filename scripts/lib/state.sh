@@ -1820,8 +1820,59 @@ state_should_skip_phase() {
     if command -v jq &>/dev/null; then
         local state
         state=$(state_load) || return 1
-        echo "$state" | jq -e --arg phase "$phase_id" '.skipped_phases | index($phase) != null' &>/dev/null
-        return $?
+        if echo "$state" | jq -e --arg phase "$phase_id" '.skipped_phases | index($phase) != null' &>/dev/null; then
+            return 0
+        fi
+    fi
+
+    # If --only was specified, skip phases that don't contain any requested
+    # modules.  This must run *outside* the state_is_phase_completed block so
+    # that it takes effect on fresh installs where no phases are completed yet.
+    # (Bug #227)
+    if [[ "${ONLY_MODULES+x}" == "x" ]] && [[ ${#ONLY_MODULES[@]} -gt 0 ]]; then
+        local -A _manifest_phase_to_id_fresh=(
+            [1]="user_setup" [2]="user_setup"
+            [3]="filesystem" [4]="shell_setup"
+            [5]="cli_tools"  [6]="languages"
+            [7]="agents"     [8]="cloud_db"
+            [9]="stack"      [10]="finalize"
+        )
+        local _mod_fresh _mod_phase_num_fresh _mod_phase_name_fresh
+        local _found_match=0
+        for _mod_fresh in "${ONLY_MODULES[@]}"; do
+            _mod_phase_num_fresh="${ACFS_MODULE_PHASE[$_mod_fresh]:-}"
+            if [[ -n "$_mod_phase_num_fresh" ]]; then
+                _mod_phase_name_fresh="${_manifest_phase_to_id_fresh[$_mod_phase_num_fresh]:-}"
+                if [[ "$_mod_phase_name_fresh" == "$phase_id" ]]; then
+                    _found_match=1
+                    break
+                fi
+            fi
+        done
+        if [[ "$_found_match" -eq 0 ]]; then
+            return 0  # skip — no requested module belongs to this phase
+        fi
+    fi
+
+    # Same for --only-phases on fresh installs (Bug #227)
+    if [[ "${ONLY_PHASES+x}" == "x" ]] && [[ ${#ONLY_PHASES[@]} -gt 0 ]]; then
+        local -A _manifest_phase_to_id_fresh_p=(
+            [1]="user_setup" [2]="user_setup"
+            [3]="filesystem" [4]="shell_setup"
+            [5]="cli_tools"  [6]="languages"
+            [7]="agents"     [8]="cloud_db"
+            [9]="stack"      [10]="finalize"
+        )
+        local _target_phase_fresh _found_phase=0
+        for _target_phase_fresh in "${ONLY_PHASES[@]}"; do
+            if [[ "${_manifest_phase_to_id_fresh_p[$_target_phase_fresh]:-}" == "$phase_id" ]]; then
+                _found_phase=1
+                break
+            fi
+        done
+        if [[ "$_found_phase" -eq 0 ]]; then
+            return 0  # skip — phase not explicitly requested
+        fi
     fi
 
     return 1
