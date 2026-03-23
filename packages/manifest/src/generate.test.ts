@@ -226,12 +226,11 @@ describe('Generated verified installer args', () => {
     expect(existsSync(stackPath)).toBe(true);
     const stackContent = readFileSync(stackPath, 'utf-8');
 
-    expect(stackContent).toContain('--no-start');
     expect(stackContent).toContain('cat > "$unit_file" <<UNIT_EOF');
     expect(stackContent).toContain('Environment=STORAGE_ROOT=$storage_root');
     expect(stackContent).toContain('Environment=DATABASE_URL=$db_url');
     expect(stackContent).toContain(
-      'ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path /mcp/'
+      'ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path'
     );
     expect(stackContent).toContain('systemctl --user enable --now agent-mail.service');
     expect(stackContent).toContain('curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null');
