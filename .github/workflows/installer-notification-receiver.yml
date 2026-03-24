@@ -8,7 +8,7 @@ name: Installer Notification Receiver
 
 on:
   repository_dispatch:
-    types: [installer-updated, installer-removed, installer-added]
+    types: [installer-updated, installer-removed, installer-added, upstream-changed]
   workflow_dispatch:
     inputs:
       tool_name:
@@ -60,13 +60,8 @@ jobs:
         id: validate
         env:
           INPUT_TOOL: ${{ github.event.inputs.tool_name }}
-          PAYLOAD_TOOL: ${{ github.event.client_payload.tool }}
+          PAYLOAD_JSON: ${{ toJson(github.event.client_payload) }}
           PAYLOAD_ACTION: ${{ github.event.action }}
-          PAYLOAD_NEW_SHA256: ${{ github.event.client_payload.new_sha256 }}
-          PAYLOAD_OLD_SHA256: ${{ github.event.client_payload.old_sha256 }}
-          PAYLOAD_REPO: ${{ github.event.client_payload.repo }}
-          PAYLOAD_COMMIT: ${{ github.event.client_payload.commit }}
-          PAYLOAD_URL: ${{ github.event.client_payload.url }}
         run: |
           set -euo pipefail
 
@@ -80,14 +75,27 @@ jobs:
             OLD_SHA256=""
             SOURCE_REPO="manual"
             SOURCE_COMMIT="manual"
+            INSTALLER_URL=""
           else
             # Extract from repository_dispatch payload
-            TOOL_NAME="$PAYLOAD_TOOL"
-            EVENT_TYPE="$PAYLOAD_ACTION"
-            NEW_SHA256="$PAYLOAD_NEW_SHA256"
-            OLD_SHA256="$PAYLOAD_OLD_SHA256"
-            SOURCE_REPO="$PAYLOAD_REPO"
-            SOURCE_COMMIT="$PAYLOAD_COMMIT"
+            TOOL_NAME="$(jq -r '.tool // empty' <<< "$PAYLOAD_JSON")"
+            RAW_EVENT_TYPE="$PAYLOAD_ACTION"
+            case "$RAW_EVENT_TYPE" in
+              upstream-changed)
+                EVENT_TYPE="installer-updated"
+                ;;
+              installer-updated|installer-removed|installer-added)
+                EVENT_TYPE="$RAW_EVENT_TYPE"
+                ;;
+              *)
+                EVENT_TYPE="$RAW_EVENT_TYPE"
+                ;;
+            esac
+            NEW_SHA256="$(jq -r '.new_sha256 // empty' <<< "$PAYLOAD_JSON")"
+            OLD_SHA256="$(jq -r '.old_sha256 // empty' <<< "$PAYLOAD_JSON")"
+            SOURCE_REPO="$(jq -r '.source_repo // .repo // .commit.repo // empty' <<< "$PAYLOAD_JSON")"
+            SOURCE_COMMIT="$(jq -r '.sha // .commit.sha // .commit // empty' <<< "$PAYLOAD_JSON")"
+            INSTALLER_URL="$(jq -r '.url // empty' <<< "$PAYLOAD_JSON")"
           fi
 
           echo "Tool: $TOOL_NAME"
@@ -110,17 +118,20 @@ jobs:
 
           # Validate dispatch provenance fields when event came from repository_dispatch
           if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
-            if ! [[ "$SOURCE_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+            if [[ -z "$SOURCE_REPO" ]]; then
+              SOURCE_REPO="unknown"
+            elif ! [[ "$SOURCE_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
               echo "::error::Invalid source repository format: $SOURCE_REPO"
               echo "is_valid=false" >> "$GITHUB_OUTPUT"
               exit 1
             fi
-            if [[ -n "$SOURCE_COMMIT" ]] && ! [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+            if [[ -z "$SOURCE_COMMIT" ]]; then
+              SOURCE_COMMIT="unknown"
+            elif ! [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
               echo "::error::Invalid source commit SHA: $SOURCE_COMMIT"
               echo "is_valid=false" >> "$GITHUB_OUTPUT"
               exit 1
             fi
-            SOURCE_COMMIT="${SOURCE_COMMIT:-unknown}"
           fi
 
           # Check if tool exists in checksums.yaml (for update/remove)
@@ -134,7 +145,7 @@ jobs:
 
           # Get URL from checksums.yaml (or from payload for new tools)
           if [[ "$EVENT_TYPE" == "installer-added" ]]; then
-            INSTALLER_URL="$PAYLOAD_URL"
+            :
           else
             INSTALLER_URL=$(yq e ".installers[\"$TOOL_NAME\"].url // \"\"" "$CHECKSUMS_FILE")
           fi

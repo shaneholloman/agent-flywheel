@@ -71,13 +71,17 @@ name: Notify ACFS of Installer Changes
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     paths:
       # Adjust this path to match your install script location
       - 'install.sh'
       # For repos with scripts/install.sh:
       # - 'scripts/install.sh'
   workflow_dispatch:  # Manual trigger for testing
+
+env:
+  # IMPORTANT: this must match the installer key in ACFS checksums.yaml.
+  TOOL_NAME: "replace-with-acfs-tool-key"
 
 jobs:
   notify-acfs:
@@ -91,7 +95,8 @@ jobs:
           event-type: upstream-changed
           client-payload: |
             {
-              "tool": "${{ github.event.repository.name }}",
+              "tool": "${{ env.TOOL_NAME }}",
+              "source_repo": "${{ github.repository }}",
               "ref": "${{ github.ref }}",
               "sha": "${{ github.sha }}",
               "actor": "${{ github.actor }}",
@@ -101,10 +106,12 @@ jobs:
       - name: Log dispatch
         run: |
           echo "✅ Dispatched upstream-changed event to ACFS"
-          echo "   Tool: ${{ github.event.repository.name }}"
+          echo "   Tool: ${{ env.TOOL_NAME }}"
           echo "   SHA: ${{ github.sha }}"
           echo "   Triggered by: ${{ github.actor }}"
 ```
+
+`TOOL_NAME` must match the key under `installers:` in ACFS `checksums.yaml`. Do not assume the GitHub repository name matches the ACFS tool key.
 
 ## Tool-Specific Path Configuration
 
@@ -132,7 +139,7 @@ Different tools have different installer locations. Adjust the `paths` trigger a
 ```yaml
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     paths:
       - 'install.sh'
 ```
@@ -142,7 +149,7 @@ on:
 ```yaml
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     paths:
       - 'scripts/install.sh'
 ```
@@ -152,7 +159,7 @@ on:
 ```yaml
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     paths:
       - 'install.sh'
       - 'scripts/*.sh'

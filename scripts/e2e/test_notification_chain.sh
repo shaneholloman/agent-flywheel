@@ -2,8 +2,9 @@
 # ============================================================
 # E2E Test: Full Notification Chain Verification
 #
-# Tests the GitHub Actions workflow that receives installer update
-# notifications and creates PRs for checksum updates.
+# Tests the GitHub Actions workflow chain for installer change notifications.
+# The canonical fast path is `upstream-changed`; legacy receiver-specific
+# events remain covered for compatibility.
 #
 # Related: bead bd-19y9.2.5
 #
@@ -154,9 +155,9 @@ test_1_matching_checksum() {
 
     log "INFO" "Current zoxide checksum: ${current_sha:0:16}..."
 
-    # Send dispatch with matching checksum
-    local payload="{\"tool\":\"zoxide\",\"new_sha256\":\"$current_sha\",\"old_sha256\":\"$current_sha\",\"repo\":\"test\",\"commit\":\"test123\"}"
-    send_dispatch "installer-updated" "$payload"
+    # Send canonical upstream-changed event for an installer that should already match.
+    local payload="{\"tool\":\"zoxide\",\"source_repo\":\"ajeetdsouza/zoxide\",\"sha\":\"test1234\",\"ref\":\"refs/heads/main\",\"actor\":\"e2e-test\",\"timestamp\":\"$(date -Iseconds)\"}"
+    send_dispatch "upstream-changed" "$payload"
 
     # Check workflow result
     if wait_for_workflow "success" 60; then
@@ -194,7 +195,7 @@ test_3_malformed_payload() {
 
     # Send malformed payload (missing required fields)
     local payload="{\"bad_field\":\"value\"}"
-    send_dispatch "installer-updated" "$payload" || true
+    send_dispatch "upstream-changed" "$payload" || true
 
     sleep 20
 
@@ -300,7 +301,7 @@ test_7_workflow_dispatches_configured() {
 
         # Check for expected event types
         local events_found=0
-        for event in "installer-updated" "installer-removed" "installer-added"; do
+        for event in "upstream-changed" "installer-updated" "installer-removed" "installer-added"; do
             if grep -q "$event" "$workflow_file"; then
                 log "INFO" "  Found event type: $event"
                 ((events_found++)) || true

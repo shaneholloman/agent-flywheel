@@ -7,6 +7,7 @@
 #   1. Create a PAT with 'contents:read' on agentic_coding_flywheel_setup
 #   2. Add it as a secret named ACFS_REPO_DISPATCH_TOKEN in this repo
 #   3. Copy this file to .github/workflows/notify-acfs.yml
+#   4. Set TOOL_NAME to the matching key in ACFS checksums.yaml
 #
 # Related: agentic_coding_flywheel_setup-b04c
 #
@@ -14,10 +15,14 @@ name: Notify ACFS of Installer Changes
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     paths:
       - 'scripts/install.sh'
   workflow_dispatch:  # Manual trigger for testing
+
+env:
+  # REQUIRED: Update this to match the installer key in ACFS checksums.yaml.
+  TOOL_NAME: '{{ TOOL_NAME_PLACEHOLDER }}'
 
 jobs:
   notify-acfs:
@@ -31,7 +36,8 @@ jobs:
           event-type: upstream-changed
           client-payload: |
             {
-              "tool": "${{ github.event.repository.name }}",
+              "tool": "${{ env.TOOL_NAME }}",
+              "source_repo": "${{ github.repository }}",
               "ref": "${{ github.ref }}",
               "sha": "${{ github.sha }}",
               "actor": "${{ github.actor }}",
@@ -41,6 +47,6 @@ jobs:
       - name: Log dispatch
         run: |
           echo "✅ Dispatched upstream-changed event to ACFS"
-          echo "   Tool: ${{ github.event.repository.name }}"
+          echo "   Tool: ${{ env.TOOL_NAME }}"
           echo "   SHA: ${{ github.sha }}"
           echo "   Triggered by: ${{ github.actor }}"
