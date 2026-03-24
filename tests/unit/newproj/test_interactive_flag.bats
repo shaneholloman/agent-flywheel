@@ -352,6 +352,48 @@ teardown() {
     assert_success
 }
 
+@test "main CLI commits AGENTS.md when br is skipped" {
+    local project_dir="$TEST_DIR/cli-agents-project"
+
+    run bash -c '
+        source '"$ACFS_LIB_DIR"'/newproj.sh
+        main --no-br myproj "'"$project_dir"'"
+    '
+    assert_success
+
+    run git -C "$project_dir" status --short
+    assert_success
+    assert_output ""
+
+    run git -C "$project_dir" ls-files --error-unmatch AGENTS.md
+    assert_success
+}
+
+@test "main CLI commits beads workspace and AGENTS.md by default" {
+    if ! command -v br >/dev/null 2>&1; then
+        skip "br not installed"
+    fi
+
+    local project_dir="$TEST_DIR/cli-default-project"
+
+    run bash -c '
+        source '"$ACFS_LIB_DIR"'/newproj.sh
+        main myproj "'"$project_dir"'"
+    '
+    assert_success
+
+    run git -C "$project_dir" status --short
+    assert_success
+    assert_output ""
+
+    run git -C "$project_dir" ls-files --error-unmatch AGENTS.md
+    assert_success
+
+    run git -C "$project_dir" ls-files .beads
+    assert_success
+    [[ -n "$output" ]]
+}
+
 @test "main CLI recommends beads_rust when br is missing" {
     local project_dir="$TEST_DIR/cli-missing-br-project"
 

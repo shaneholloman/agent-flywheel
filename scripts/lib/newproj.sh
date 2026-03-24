@@ -533,6 +533,7 @@ main() {
     local skip_claude=false
     local skip_agents=false
     local interactive_mode=false
+    local git_initialized=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -681,6 +682,7 @@ main() {
     if [[ ! -d .git ]]; then
         echo -e "${GREEN}Initializing git repository...${NC}"
         git init -b main
+        git_initialized=true
         CREATED_ITEMS+=("Git repository")
 
         # Create README
@@ -765,17 +767,6 @@ test-results/
 .yarn/
 EOF
         CREATED_ITEMS+=(".ubsignore")
-
-        git add README.md .gitignore .ubsignore
-
-        # Check if git user is configured before committing
-        if git config user.name &>/dev/null && git config user.email &>/dev/null; then
-            git commit -m "Initial commit"
-        else
-            echo -e "${YELLOW}Warning: Git user not configured, skipping initial commit${NC}"
-            echo -e "${YELLOW}Run: git config --global user.name \"Your Name\"${NC}"
-            echo -e "${YELLOW}     git config --global user.email \"you@example.com\"${NC}"
-        fi
     else
         echo -e "${CYAN}Git already initialized, skipping${NC}"
     fi
@@ -826,6 +817,21 @@ EOF
             CREATED_ITEMS+=("AGENTS.md (template)")
         else
             echo -e "${CYAN}AGENTS.md already exists, skipping${NC}"
+        fi
+    fi
+
+    if [[ "$git_initialized" == "true" ]]; then
+        git add -A
+
+        # Check if git user is configured before committing
+        if git config user.name &>/dev/null && git config user.email &>/dev/null; then
+            if ! git diff --cached --quiet --ignore-submodules; then
+                git commit -m "Initial commit"
+            fi
+        else
+            echo -e "${YELLOW}Warning: Git user not configured, skipping initial commit${NC}"
+            echo -e "${YELLOW}Run: git config --global user.name \"Your Name\"${NC}"
+            echo -e "${YELLOW}     git config --global user.email \"you@example.com\"${NC}"
         fi
     fi
 
