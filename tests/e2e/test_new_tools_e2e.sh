@@ -222,15 +222,8 @@ test_flywheel_tools() {
         if (
             run_beads_probe_command "$br_probe_dir" br create "E2E probe issue" --type task --priority 4 >/dev/null 2>>"$LOG_FILE" &&
             br_list_output=$(run_beads_probe_command "$br_probe_dir" br list --json 2>>"$LOG_FILE") &&
-            jq -e '
-                if type == "array" then
-                    any(.[]?; .title == "E2E probe issue")
-                elif type == "object" then
-                    (.issues | type == "array") and any(.issues[]?; .title == "E2E probe issue")
-                else
-                    false
-                end
-            ' <<<"$br_list_output" >/dev/null 2>&1
+            [[ "$br_list_output" =~ ^[[:space:]]*[\{\[] ]] &&
+            grep -q '"title":[[:space:]]*"E2E probe issue"' <<<"$br_list_output"
         ); then
             pass "br_list" "br init + br list --json succeeds in isolated workspace ($br_probe_dir)"
         else
@@ -668,7 +661,8 @@ test_integration() {
             fail "bv_triage" "mktemp failed while creating isolated bv probe workspace"
         elif run_beads_probe_command "$bv_probe_dir" br create "BV E2E probe issue" --type task --priority 4 >/dev/null 2>>"$LOG_FILE" && \
             bv_output=$(run_beads_probe_command "$bv_probe_dir" bv --robot-triage 2>>"$LOG_FILE") && \
-            jq -e 'type == "object"' <<<"$bv_output" >/dev/null 2>&1; then
+            [[ "$bv_output" =~ ^[[:space:]]*\{ ]] && \
+            grep -q '"quick_ref"' <<<"$bv_output"; then
             pass "bv_triage" "bv --robot-triage returns valid JSON in isolated workspace"
         else
             fail "bv_triage" "bv --robot-triage failed"

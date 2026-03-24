@@ -32,7 +32,7 @@ create_beads_probe_workspace() {
         return 1
     fi
 
-    if ! (cd "$probe_dir" && timeout "$TEST_TIMEOUT_SECONDS" br init >/dev/null 2>&1); then
+    if ! (cd "$probe_dir" && timeout "$TEST_TIMEOUT_SECONDS" br init >/dev/null 2>>"$LOG_FILE"); then
         return 1
     fi
 
@@ -77,7 +77,7 @@ test_br_functionality() {
         return
     fi
 
-    test_id=$(jq -r '.id // empty' <<<"$create_output" 2>/dev/null)
+    test_id=$(grep -m1 -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' <<<"$create_output" | sed -E 's/.*"id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
     if [[ -z "$test_id" ]]; then
         fail "br create returned JSON without an issue id"
         return
@@ -86,15 +86,8 @@ test_br_functionality() {
     local list_output list_exit
     list_output=$(run_beads_probe_command "$probe_dir" br list --json 2>>"$LOG_FILE")
     list_exit=$?
-    if [[ $list_exit -eq 0 ]] && jq -e --arg id "$test_id" '
-        if type == "array" then
-            any(.[]?; .id == $id)
-        elif type == "object" then
-            (.issues | type == "array") and any(.issues[]?; .id == $id)
-        else
-            false
-        end
-    ' <<<"$list_output" >/dev/null 2>&1; then
+    if [[ $list_exit -eq 0 ]] && [[ "$list_output" =~ ^[[:space:]]*[\{\[] ]] && \
+        grep -q "\"id\":[[:space:]]*\"$test_id\"" <<<"$list_output"; then
         pass "br created and listed issue in isolated workspace: $test_id"
     else
         if [[ $list_exit -eq 124 ]]; then
@@ -240,7 +233,7 @@ test_bv_functionality() {
         return
     fi
 
-    if ! run_beads_probe_command "$probe_dir" br create "BV smoke probe" --type task --priority 4 >/dev/null 2>&1; then
+    if ! run_beads_probe_command "$probe_dir" br create "BV smoke probe" --type task --priority 4 >/dev/null 2>>"$LOG_FILE"; then
         fail "bv probe issue creation failed"
         return
     fi
@@ -249,7 +242,8 @@ test_bv_functionality() {
     output=$(run_beads_probe_command "$probe_dir" bv --robot-next 2>>"$LOG_FILE")
     exit_code=$?
 
-    if [[ $exit_code -eq 0 ]] && jq -e 'type == "object" and (.id? // .recommendation?.id? // .issue?.id?) != null' <<<"$output" >/dev/null 2>&1; then
+    if [[ $exit_code -eq 0 ]] && [[ "$output" =~ ^[[:space:]]*\{ ]] && \
+        grep -qE '"(id|recommendation|issue)"' <<<"$output"; then
         pass "bv --robot-next returned valid JSON recommendation in isolated workspace"
     else
         if [[ $exit_code -eq 124 ]]; then

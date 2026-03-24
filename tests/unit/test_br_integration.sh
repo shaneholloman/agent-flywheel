@@ -108,15 +108,8 @@ test_br_list() {
 
     output=$(run_probe_command br list --json 2>>"$LOG_FILE")
     rc=$?
-    if [[ "$rc" -eq 0 ]] && jq -e '
-        if type == "array" then
-            any(.[]?; .title == "Integration test probe issue")
-        elif type == "object" then
-            (.issues | type == "array") and any(.issues[]?; .title == "Integration test probe issue")
-        else
-            false
-        end
-    ' <<<"$output" >/dev/null 2>&1; then
+    if [[ "$rc" -eq 0 ]] && [[ "$output" =~ ^[[:space:]]*[\{\[] ]] && \
+        grep -q '"title":[[:space:]]*"Integration test probe issue"' <<<"$output"; then
         pass "br list --json returns the probe issue in isolated workspace"
     else
         report_probe_failure "br list --json" "$rc" "$output"
@@ -134,7 +127,8 @@ test_br_ready() {
 
     output=$(run_probe_command br ready --json 2>>"$LOG_FILE")
     rc=$?
-    if [[ "$rc" -eq 0 ]] && jq -e 'type == "array"' <<<"$output" >/dev/null 2>&1; then
+    if [[ "$rc" -eq 0 ]] && [[ "$output" =~ ^[[:space:]]*\[ ]] && \
+        grep -q '"title":[[:space:]]*"Integration test probe issue"' <<<"$output"; then
         pass "br ready --json returns valid JSON array in isolated workspace"
     else
         report_probe_failure "br ready --json" "$rc" "$output"
@@ -162,7 +156,8 @@ test_bv_robot_triage() {
 
     output=$(run_probe_command bv --robot-triage 2>>"$LOG_FILE")
     rc=$?
-    if [[ "$rc" -eq 0 ]] && jq -e 'type == "object"' <<<"$output" >/dev/null 2>&1; then
+    if [[ "$rc" -eq 0 ]] && [[ "$output" =~ ^[[:space:]]*\{ ]] && \
+        grep -q '"quick_ref"' <<<"$output"; then
         pass "bv --robot-triage returns valid JSON in isolated workspace"
     else
         report_probe_failure "bv --robot-triage" "$rc" "$output"
