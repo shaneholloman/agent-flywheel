@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-03-24T16:03:30+00:00
+# checksums.yaml - Auto-generated 2026-03-24T20:13:16+00:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -64,7 +64,7 @@ installers:
 
   fsfs:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/frankensearch/main/install.sh"
-    sha256: "a4499e4e58be7e4f10f9bab0468195cda30e97e280e90f01cba1cb979d5f125c"
+    sha256: "320fdb93c10a3fd22b3c9f00a4a30e580a7c0effeb69cfb01e86c80b9ab8ac70"
 
   gemini_patch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/misc_coding_agent_tips_and_scripts/main/fix-gemini-cli-ebadf-crash.sh"
