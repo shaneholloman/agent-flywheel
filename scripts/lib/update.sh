@@ -735,6 +735,21 @@ cleanup_legacy_git_safety_guard() {
 
 # Fix stale aliases in deployed acfs.zshrc
 # Older versions aliased br='bun run dev', which shadows beads_rust (br).
+cleanup_legacy_bv_alias() {
+    local zshrc_local="$HOME/.zshrc.local"
+    [[ -f "$zshrc_local" ]] || return 0
+
+    # The bv() function in acfs.zshrc handles beads_viewer PATH resolution.
+    # Any leftover "alias bv=" in .zshrc.local causes zsh parse errors
+    # ("defining function based on alias 'bv'") when acfs.zshrc tries to
+    # define the bv() function after .zshrc.local has already created an alias.
+    if grep -q 'alias bv=' "$zshrc_local" 2>/dev/null; then
+        sed -i '/alias bv=/d' "$zshrc_local"
+        log_item "ok" "legacy cleanup" "removed stale bv alias from .zshrc.local (handled by acfs.zshrc bv() function)"
+        log_to_file "Removed alias bv= lines from $zshrc_local"
+    fi
+}
+
 cleanup_legacy_br_alias() {
     local deployed="$HOME/.acfs/zsh/acfs.zshrc"
     [[ -f "$deployed" ]] || return 0
@@ -3222,6 +3237,7 @@ main() {
     # Clean up legacy artifacts from previous versions
     cleanup_legacy_git_safety_guard
     cleanup_legacy_br_alias
+    cleanup_legacy_bv_alias
 
     # Run updates
     update_apt
