@@ -15,7 +15,38 @@ ACFS_REPO_NAME="${ACFS_REPO_NAME:-agentic_coding_flywheel_setup}"
 ACFS_CHECKSUMS_REF="${ACFS_CHECKSUMS_REF:-main}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACFS_REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Discover ACFS_REPO_ROOT: prefer a real git repo over the tarball install dir.
+# On fleet machines, update.sh runs from ~/.acfs/scripts/lib/ (no .git) but
+# the authoritative source repo lives at /data/projects/agentic_coding_flywheel_setup.
+# Without this, self-update can't pull new code and deployed scripts go stale.
+_acfs_discover_repo_root() {
+    local script_root
+    script_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+    # If the script already lives inside a git repo, use it directly
+    if [[ -d "$script_root/.git" ]]; then
+        printf '%s\n' "$script_root"
+        return 0
+    fi
+
+    # Search well-known locations for a git-based ACFS checkout
+    local -a candidates=(
+        "/data/projects/agentic_coding_flywheel_setup"
+        "$HOME/agentic_coding_flywheel_setup"
+        "/dp/agentic_coding_flywheel_setup"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [[ -d "$candidate/.git" ]] && [[ -f "$candidate/scripts/lib/update.sh" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    # Fallback: use script-relative root (triggers bootstrap in update_acfs_self)
+    printf '%s\n' "$script_root"
+}
+ACFS_REPO_ROOT="$(_acfs_discover_repo_root)"
 
 # Track if self-update already ran (prevents re-exec loops)
 ACFS_SELF_UPDATE_DONE="${ACFS_SELF_UPDATE_DONE:-false}"
@@ -787,6 +818,54 @@ sync_acfs_zshrc() {
     log_to_file "Deployed $repo_zshrc -> $deployed_zshrc"
 }
 
+# Sync critical scripts from the git repo to ~/.acfs/ so that subsequent
+# runs of 'acfs update' (invoked from ~/.acfs/scripts/lib/update.sh) use
+# the latest code.  Without this, fleet machines that run from the
+# tarball-installed ~/.acfs/ never pick up fixes to update.sh, security.sh,
+# or checksums.yaml — the self-update pulls into the git repo but the
+# deployed copies at ~/.acfs/ remain stale.
+sync_acfs_deployed() {
+    local acfs_home="${ACFS_HOME:-$HOME/.acfs}"
+
+    # Only sync when the repo is a different directory from ~/.acfs
+    [[ "$(realpath "$ACFS_REPO_ROOT" 2>/dev/null)" != "$(realpath "$acfs_home" 2>/dev/null)" ]] || return 0
+
+    local -a file_pairs=(
+        # repo-relative-path : deployed-relative-path
+        "scripts/lib/update.sh:scripts/lib/update.sh"
+        "scripts/lib/security.sh:scripts/lib/security.sh"
+        "checksums.yaml:checksums.yaml"
+        "acfs/zsh/acfs.zshrc:zsh/acfs.zshrc"
+        "acfs/zsh/p10k.zsh:zsh/p10k.zsh"
+        "VERSION:VERSION"
+    )
+
+    local synced=0
+    for pair in "${file_pairs[@]}"; do
+        local repo_rel="${pair%%:*}"
+        local deployed_rel="${pair##*:}"
+        local repo_file="$ACFS_REPO_ROOT/$repo_rel"
+        local deployed_file="$acfs_home/$deployed_rel"
+
+        [[ -f "$repo_file" ]] || continue
+
+        # Skip if identical
+        if [[ -f "$deployed_file" ]] && cmp -s "$repo_file" "$deployed_file"; then
+            continue
+        fi
+
+        mkdir -p "$(dirname "$deployed_file")"
+        cp "$repo_file" "$deployed_file"
+        chmod --reference="$repo_file" "$deployed_file" 2>/dev/null || true
+        log_to_file "Synced $repo_rel -> $deployed_file"
+        synced=$((synced + 1))
+    done
+
+    if [[ $synced -gt 0 ]]; then
+        log_to_file "Synced $synced file(s) from repo to $acfs_home"
+    fi
+}
+
 # ============================================================
 # Checksums Refresh (Auto-update from GitHub)
 # ============================================================
@@ -1314,6 +1393,13 @@ update_acfs_self() {
     log_to_file "ACFS updated from $local_head to $remote_head"
 
     update_refresh_installed_security
+
+    # Sync critical scripts from repo to ~/.acfs/ so the deployed copies
+    # stay fresh.  This MUST happen before the re-exec check below, because
+    # $update_script points to ~/.acfs/scripts/lib/update.sh — if we don't
+    # copy the new version there first, the hash comparison won't trigger
+    # the re-exec and future runs will use the old code.
+    sync_acfs_deployed
 
     # Check if update.sh itself changed - if so, re-exec
     local new_hash=""
@@ -2850,8 +2936,9 @@ update_shell() {
     update_atuin
     update_zoxide
 
-    # Keep deployed acfs.zshrc in sync with repo
+    # Keep deployed files in sync with repo (acfs.zshrc, update.sh, etc.)
     sync_acfs_zshrc
+    sync_acfs_deployed
 }
 
 # ============================================================

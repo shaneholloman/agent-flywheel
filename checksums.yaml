@@ -12,7 +12,7 @@ installers:
 
   atuin:
     url: "https://setup.atuin.sh"
-    sha256: "6835c5797fdc992b1d324fa4ae6a9bd7714b358fea7cc88c1c353e5bf2f8c912"
+    sha256: "a4a362c67ec75d294870d1034e475e8f6741e77ba71333a8443358cbe74f8667"
 
   br:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/install.sh"
@@ -80,7 +80,7 @@ installers:
 
   mcp_agent_mail:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/main/install.sh"
-    sha256: "4bd3e32f0b960a5b46092524496a60c21ffe5b9c7f9170aff910a609004ea616"
+    sha256: "621df84d707c39ddb1972cacfb6dd6216ce45378413b885368eb5ce7ac31f4d8"
 
   mdwb:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/markdown_web_browser/main/install.sh"
