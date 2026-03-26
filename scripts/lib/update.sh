@@ -1265,11 +1265,14 @@ update_acfs_self() {
         return 0
     fi
 
-    # Never mutate a dirty working tree during self-update.
-    # Auto-stash/reapply can create conflicts and unexpectedly rewrite local work.
-    if [[ -n "$(git -C "$ACFS_REPO_ROOT" status --porcelain --untracked-files=all 2>/dev/null)" ]]; then
-        log_item "warn" "ACFS self-update" "local or untracked files detected; skipping self-update"
-        log_to_file "Self-update skipped: working tree has tracked or untracked modifications"
+    # Skip self-update if tracked files have local modifications to avoid
+    # merge conflicts. Use --untracked-files=no because ~/.acfs/ contains
+    # runtime state files (state.json, logs/, cache/, autofix/) that are
+    # not in the git repo — these must not block self-update since
+    # git pull --ff-only never touches untracked files.
+    if [[ -n "$(git -C "$ACFS_REPO_ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+        log_item "warn" "ACFS self-update" "tracked files have local modifications; skipping self-update"
+        log_to_file "Self-update skipped: working tree has tracked modifications"
         return 0
     fi
 
