@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-03-26T22:29:59+00:00
+# checksums.yaml - Auto-generated 2026-03-26T20:15:44-04:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -60,7 +60,7 @@ installers:
 
   dsr:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/doodlestein_self_releaser/main/install.sh"
-    sha256: "21460de5ad0bb348c4a2ad4aca8f1703a00ba4bd54201a280e79d9f575607d86"
+    sha256: "7621398daca0b043d0e3b6e0d9a505eb5cbdf0b4b578d221d911461db49b517b"
 
   fsfs:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/frankensearch/main/install.sh"
@@ -112,7 +112,7 @@ installers:
 
   pt:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/process_triage/main/install.sh"
-    sha256: "f42461ddeb861957a9d610284d6bd3d80bc261eabb8cfce6deca40d5176233d6"
+    sha256: "5642c40e66591886985b4e669ca2aaf82deeb72b76fd7b188a2222f1f1721606"
 
   rano:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/rano/main/install.sh"
@@ -120,7 +120,7 @@ installers:
 
   rch:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/remote_compilation_helper/main/install.sh"
-    sha256: "4220dba3004ffecff091b8bcaeae0351b3528441dc24f87e924166d38e9b0ed7"
+    sha256: "3acef1f6576d067d931a42a6e8c2b76a4f94a2ba3d2e1c1ab44d8f81806ddee2"
 
   ru:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/repo_updater/main/install.sh"
