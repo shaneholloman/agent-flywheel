@@ -243,11 +243,30 @@ check_memory() {
 }
 
 check_disk() {
+    # Determine the actual installation target directory.
+    # This mirrors the logic in install.sh: TARGET_HOME > HOME, with
+    # TARGET_USER-based fallback when running as root.
+    local target_dir
+    if [[ -n "${TARGET_HOME:-}" ]]; then
+        target_dir="$TARGET_HOME"
+    elif [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        target_dir="/home/${TARGET_USER:-ubuntu}"
+    else
+        target_dir="${HOME:-/}"
+    fi
+
+    # Walk up to the nearest existing ancestor directory, since the target
+    # may not have been created yet (e.g. /home/newuser on a fresh VPS).
+    local check_path="$target_dir"
+    while [[ ! -d "$check_path" ]] && [[ "$check_path" != "/" ]]; do
+        check_path="$(dirname "$check_path")"
+    done
+
     local free_kb
     # Use -P for POSIX output (header + one line per FS), awk column 4 is usually Available
     # Tail -n 1 to get the data line (more portable than tail -1)
     # Using -k ensures 1K blocks
-    free_kb=$(df -k -P / 2>/dev/null | tail -n 1 | awk '{print $4}')
+    free_kb=$(df -k -P "$check_path" 2>/dev/null | tail -n 1 | awk '{print $4}')
 
     # Handle non-numeric or empty values
     if [[ -z "$free_kb" ]] || ! [[ "$free_kb" =~ ^[0-9]+$ ]]; then
@@ -256,13 +275,19 @@ check_disk() {
     fi
 
     local free_gb=$((free_kb / 1024 / 1024))
+    local mount_point
+    mount_point=$(df -P "$check_path" 2>/dev/null | tail -n 1 | awk '{print $6}')
+    local detail_suffix=""
+    if [[ -n "$mount_point" ]] && [[ "$mount_point" != "/" ]]; then
+        detail_suffix=" on ${mount_point}"
+    fi
 
     if (( free_gb >= 40 )); then
-        pass "Disk Space: ${free_gb}GB free"
+        pass "Disk Space: ${free_gb}GB free${detail_suffix}"
     elif (( free_gb >= 20 )); then
-        pass "Disk Space: ${free_gb}GB free" "40GB+ recommended for large projects"
+        pass "Disk Space: ${free_gb}GB free${detail_suffix}" "40GB+ recommended for large projects"
     else
-        fail "Disk Space: ${free_gb}GB free" "Need at least 20GB free (40GB+ recommended)"
+        fail "Disk Space: ${free_gb}GB free${detail_suffix}" "Need at least 20GB free (40GB+ recommended)"
     fi
 }
 
