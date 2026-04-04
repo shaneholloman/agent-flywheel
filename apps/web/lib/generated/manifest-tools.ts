@@ -460,7 +460,7 @@ export const manifestTools: ManifestWebTool[] = [
     shortDesc: "Like gmail for coding agents; MCP HTTP server + token; installs beads tools",
     icon: "mail",
     color: "#8B5CF6",
-    href: "https://github.com/Dicklesworthstone/mcp_agent_mail",
+    href: "https://github.com/Dicklesworthstone/mcp_agent_mail_rust",
     features: [
       "Threaded messaging between AI agents",
       "Advisory file reservations",
@@ -468,9 +468,7 @@ export const manifestTools: ManifestWebTool[] = [
       "MCP integration for any compatible agent",
     ],
     techStack: [
-      "Python",
-      "FastMCP",
-      "FastAPI",
+      "Rust",
       "SQLite",
     ],
     useCases: [
@@ -478,7 +476,7 @@ export const manifestTools: ManifestWebTool[] = [
       "Passing context between session restarts",
       "Building audit trails of agent decisions",
     ],
-    language: "Python",
+    language: "Rust",
     stars: 1400,
     cliName: "am",
     cliAliases: [],

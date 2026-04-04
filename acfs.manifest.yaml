@@ -1043,18 +1043,18 @@ modules:
       tagline: "Like Gmail for AI coding agents"
       icon: "mail"
       color: "#8B5CF6"
-      href: "https://github.com/Dicklesworthstone/mcp_agent_mail"
+      href: "https://github.com/Dicklesworthstone/mcp_agent_mail_rust"
       features:
         - "Threaded messaging between AI agents"
         - "Advisory file reservations"
         - "SQLite-backed persistent storage"
         - "MCP integration for any compatible agent"
-      tech_stack: ["Python", "FastMCP", "FastAPI", "SQLite"]
+      tech_stack: ["Rust", "SQLite"]
       use_cases:
         - "Coordinating file ownership across parallel agents"
         - "Passing context between session restarts"
         - "Building audit trails of agent decisions"
-      language: "Python"
+      language: "Rust"
       stars: 1400
       cli_name: "am"
     dependencies:

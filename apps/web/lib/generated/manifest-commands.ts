@@ -149,7 +149,7 @@ export const manifestCommands: ManifestCommand[] = [
     cliName: "am",
     cliAliases: [],
     description: "Like gmail for coding agents; MCP HTTP server + token; installs beads tools",
-    docsUrl: "https://github.com/Dicklesworthstone/mcp_agent_mail",
+    docsUrl: "https://github.com/Dicklesworthstone/mcp_agent_mail_rust",
   },
   {
     moduleId: "stack.meta_skill",

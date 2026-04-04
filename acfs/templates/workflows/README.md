@@ -30,7 +30,7 @@ ntm:
 
 # scripts/install.sh → use notify-acfs-scripts.yml
 mcp_agent_mail:
-  url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/scripts/install.sh"
+  url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/main/install.sh"
 ```
 
 ## Full Documentation

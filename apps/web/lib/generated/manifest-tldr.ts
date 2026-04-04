@@ -414,7 +414,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
     tldrSnippet: "Like gmail for coding agents; MCP HTTP server + token; installs beads tools",
     icon: "mail",
     color: "#8B5CF6",
-    href: "https://github.com/Dicklesworthstone/mcp_agent_mail",
+    href: "https://github.com/Dicklesworthstone/mcp_agent_mail_rust",
     features: [
       "Threaded messaging between AI agents",
       "Advisory file reservations",
@@ -422,9 +422,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "MCP integration for any compatible agent",
     ],
     techStack: [
-      "Python",
-      "FastMCP",
-      "FastAPI",
+      "Rust",
       "SQLite",
     ],
     useCases: [
@@ -432,7 +430,7 @@ export const manifestTldrTools: ManifestTldrTool[] = [
       "Passing context between session restarts",
       "Building audit trails of agent decisions",
     ],
-    language: "Python",
+    language: "Rust",
     stars: 1400,
   },
   {
