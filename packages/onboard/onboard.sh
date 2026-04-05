@@ -27,6 +27,17 @@ PROGRESS_LOCK_FILE="${PROGRESS_FILE}.lock"
 VERSION="0.1.0"
 MENU_SEPARATOR="─────────────────────────────────"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Signal Handling — clean exit on Ctrl+C / SIGTERM
+# ─────────────────────────────────────────────────────────────────────────────
+_onboard_cleanup() {
+    printf '\033[?25h' 2>/dev/null  # Restore cursor visibility
+    stty echo 2>/dev/null || true   # Re-enable echo if gum disabled it
+    echo ""                         # Clean newline so shell prompt isn't mangled
+    exit 130                        # Standard SIGINT exit code
+}
+trap _onboard_cleanup INT TERM HUP
+
 # Source gum_ui library if available for consistent theming
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 for candidate in \
@@ -1188,7 +1199,12 @@ show_auth_flow() {
             local choice
             choice=$(printf '%s\n' "${items[@]}" | gum choose \
                 --cursor.foreground "$ACFS_ACCENT" \
-                --selected.foreground "$ACFS_SUCCESS")
+                --selected.foreground "$ACFS_SUCCESS" 2>/dev/null) || true
+
+            # Empty choice (Esc or Ctrl+C) -> back to menu
+            if [[ -z "$choice" ]]; then
+                return 0
+            fi
 
             case "$choice" in
                 *"[m]"*) return 0 ;;
@@ -1541,7 +1557,8 @@ render_markdown() {
     local file=$1
 
     if has_glow; then
-        glow -s dark "$file"
+        # Prevent glow's built-in pager from blocking on long lessons
+        PAGER="cat" glow -s dark "$file"
     elif has_gum; then
         # Use gum format for markdown rendering
         gum format -t markdown < "$file"
