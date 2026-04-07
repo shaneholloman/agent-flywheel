@@ -1723,43 +1723,45 @@ check_utilities() {
 # check function; 1 (false) if it needs manifest supplemental coverage.
 _is_bespoke_covered() {
     local id="$1"
-    local module_id
-    module_id=$(_manifest_module_id "$id")
+
+    # Match against the raw check ID (e.g. "stack.beads_rust.1") rather than
+    # the stripped module_id.  The previous approach stripped the trailing ".N"
+    # via _manifest_module_id and then tested against patterns like
+    # "stack.beads_rust.*" which requires a dot after the base — but the
+    # stripped module_id ("stack.beads_rust") has no trailing dot so the pattern
+    # never matched, causing duplicate/false-negative warnings (#241).
 
     case "$id" in
         # check_cloud covers the CLI presence check, but we still want the
         # manifest-derived PostgreSQL service health check (db.postgres18.2).
         db.postgres18.1) return 0 ;;
-    esac
-
-    case "$module_id" in
         # check_identity
-        users.ubuntu.*) return 0 ;;
+        users.ubuntu|users.ubuntu.*) return 0 ;;
         # check_workspace
         base.filesystem.[12]) return 0 ;;
         # check_shell
-        shell.*) return 0 ;;
+        shell|shell.*) return 0 ;;
         # check_core_tools  (cli.modern.* maps to rg, tmux, fzf, gh, etc.)
-        cli.modern.*) return 0 ;;
+        cli.modern|cli.modern.*) return 0 ;;
         # check_core_tools  (languages)
-        lang.bun|lang.uv|lang.rust.*|lang.go) return 0 ;;
+        lang.bun|lang.uv|lang.rust|lang.rust.*|lang.go) return 0 ;;
         # check_shell / check_core_tools  (individual tools)
         tools.atuin|tools.zoxide|tools.ast_grep|tools.vault) return 0 ;;
         # check_agents
-        agents.*) return 0 ;;
+        agents|agents.*) return 0 ;;
         # check_cloud / check_ssh
         cloud.wrangler|cloud.supabase|cloud.vercel) return 0 ;;
-        network.tailscale|network.ssh_keepalive) return 0 ;;
+        network.tailscale|network.tailscale.*|network.ssh_keepalive|network.ssh_keepalive.*) return 0 ;;
         # check_stack  (individual stack entries)
-        stack.ntm|stack.slb|stack.mcp_agent_mail) return 0 ;;
-        stack.ultimate_bug_scanner.*|stack.beads_viewer) return 0 ;;
-        stack.beads_rust.*|stack.cass|stack.cm.*|stack.caam) return 0 ;;
-        stack.dcg.*|stack.ru|stack.meta_skill.*) return 0 ;;
+        stack.ntm|stack.slb|stack.mcp_agent_mail|stack.mcp_agent_mail.*) return 0 ;;
+        stack.ultimate_bug_scanner|stack.ultimate_bug_scanner.*|stack.beads_viewer) return 0 ;;
+        stack.beads_rust|stack.beads_rust.*|stack.cass|stack.cm|stack.cm.*|stack.caam) return 0 ;;
+        stack.dcg|stack.dcg.*|stack.ru|stack.meta_skill|stack.meta_skill.*) return 0 ;;
         stack.brenner_bot|stack.rch|stack.wezterm_automata) return 0 ;;
         # check_stack  (acfs nightly timer — bespoke handles D-Bus gracefully)
         acfs.nightly) return 0 ;;
         # check_utilities (bd-2gog)
-        util.*|utils.*) return 0 ;;
+        util|util.*|utils|utils.*) return 0 ;;
     esac
     return 1
 }
