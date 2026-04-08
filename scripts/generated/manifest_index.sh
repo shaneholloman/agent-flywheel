@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="50634107380dc91f9cd546406d28647dbc17bc73484a83943d571828be0ba1ea"
+ACFS_MANIFEST_SHA256="f56bcc4c9544c5f785779ae950193e5d186ac0d5c0fcef496e87f0f8c4d28c1e"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -169,7 +169,7 @@ declare -gA ACFS_MODULE_DEPS=(
   ['tools.ast_grep']="lang.rust"
   ['agents.claude']="base.system"
   ['agents.codex']="lang.bun"
-  ['agents.gemini']="lang.bun"
+  ['agents.gemini']="lang.bun,lang.nvm"
   ['agents.opencode']="base.system"
   ['tools.vault']="base.system"
   ['db.postgres18']="base.system"

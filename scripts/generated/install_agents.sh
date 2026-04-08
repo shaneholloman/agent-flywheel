@@ -288,6 +288,23 @@ fi
 # shellcheck disable=SC1090,SC1091
 source "$security_lib"
 load_checksums
+if ! compgen -G "$HOME/.nvm/versions/node/*/bin/node" > /dev/null; then
+  nvm_url="${KNOWN_INSTALLERS[nvm]:-}"
+  nvm_sha256="$(get_checksum nvm)"
+  if [[ -z "$nvm_url" || -z "$nvm_sha256" ]]; then
+    echo "agents.gemini: missing verified installer metadata for nvm" >&2
+    exit 1
+  fi
+  verify_checksum "$nvm_url" "$nvm_sha256" "nvm" | bash
+  export NVM_DIR="$HOME/.nvm"
+  if [[ ! -s "$NVM_DIR/nvm.sh" ]]; then
+    echo "agents.gemini: nvm.sh not found at $NVM_DIR/nvm.sh" >&2
+    exit 1
+  fi
+  . "$NVM_DIR/nvm.sh"
+  nvm install node
+  nvm alias default node
+fi
 patch_url="${KNOWN_INSTALLERS[gemini_patch]:-}"
 patch_sha256="$(get_checksum gemini_patch)"
 if [[ -z "$patch_url" || -z "$patch_sha256" ]]; then

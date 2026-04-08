@@ -4070,32 +4070,32 @@ install_cli_tools() {
 # ============================================================
 # Phase 5: Language runtimes
 # ============================================================
-install_languages_legacy_lang() {
-    _target_has_nvm_node() {
-        compgen -G "$TARGET_HOME/.nvm/versions/node/*/bin/node" >/dev/null 2>&1
-    }
+_target_has_nvm_node() {
+    compgen -G "$TARGET_HOME/.nvm/versions/node/*/bin/node" >/dev/null 2>&1
+}
 
-    _ensure_target_nvm_node() {
-        if _target_has_nvm_node; then
-            log_detail "nvm + Node.js already installed"
-            return 0
+_ensure_target_nvm_node() {
+    if _target_has_nvm_node; then
+        log_detail "nvm + Node.js already installed"
+        return 0
+    fi
+
+    log_detail "Installing nvm + latest Node.js for $TARGET_USER"
+    try_step "Installing nvm" acfs_run_verified_upstream_script_as_target "nvm" "bash" || return 1
+    try_step "Installing Node.js via nvm" run_as_target bash -c '
+        set -euo pipefail
+        export NVM_DIR="$HOME/.nvm"
+        if [[ ! -s "$NVM_DIR/nvm.sh" ]]; then
+            echo "nvm.sh not found at $NVM_DIR/nvm.sh" >&2
+            exit 1
         fi
+        . "$NVM_DIR/nvm.sh"
+        nvm install node
+        nvm alias default node
+    ' || return 1
+}
 
-        log_detail "Installing nvm + latest Node.js for $TARGET_USER"
-        try_step "Installing nvm" acfs_run_verified_upstream_script_as_target "nvm" "bash" || return 1
-        try_step "Installing Node.js via nvm" run_as_target bash -c '
-            set -euo pipefail
-            export NVM_DIR="$HOME/.nvm"
-            if [[ ! -s "$NVM_DIR/nvm.sh" ]]; then
-                echo "nvm.sh not found at $NVM_DIR/nvm.sh" >&2
-                exit 1
-            fi
-            . "$NVM_DIR/nvm.sh"
-            nvm install node
-            nvm alias default node
-        ' || return 1
-    }
-
+install_languages_legacy_lang() {
     # Bun (install as target user)
     local bun_bin="$TARGET_HOME/.bun/bin/bun"
     if [[ ! -x "$bun_bin" ]]; then
@@ -4422,13 +4422,13 @@ install_agents_phase() {
     # Apply Gemini CLI patches (EBADF crash fix, rate-limit retry, quota retry)
     if [[ -x "$TARGET_HOME/.bun/bin/gemini" ]]; then
         log_detail "Applying Gemini CLI patches (EBADF, retry, quota)"
-        if ! _ensure_target_nvm_node; then
+        if _ensure_target_nvm_node; then
+            try_step "Patching Gemini CLI" acfs_run_verified_upstream_script_as_target "gemini_patch" "bash" || \
+                log_warn "Gemini CLI patch step failed (continuing)"
+        else
             log_warn "Skipping Gemini CLI patch because Node.js via nvm could not be prepared"
             log_warn "Re-run phase 5 or install nvm manually, then re-run the Gemini patch"
-            return 0
         fi
-        try_step "Patching Gemini CLI" acfs_run_verified_upstream_script_as_target "gemini_patch" "bash" || \
-            log_warn "Gemini CLI patch step failed (continuing)"
     fi
 
     log_success "Coding agents installed"

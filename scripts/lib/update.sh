@@ -1984,6 +1984,7 @@ update_agents() {
 
     # Gemini CLI via bun (--trust allows postinstall scripts)
     if cmd_exists gemini || [[ "$FORCE_MODE" == "true" ]]; then
+        local gemini_patch_ready=true
         capture_version_before "gemini"
         run_cmd_bun_with_retry "Gemini CLI" "$bun_bin" install -g --trust @google/gemini-cli@latest
         # Show version change without double-counting
@@ -1991,8 +1992,24 @@ update_agents() {
             [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[gemini]}" "${VERSION_AFTER[gemini]}"
         fi
         # Apply Gemini CLI patches (EBADF crash fix, rate-limit retry, quota retry)
-        run_cmd "Node.js runtime for Gemini patch" update_ensure_gemini_patch_node
-        run_cmd "Gemini CLI patches" update_run_verified_installer gemini_patch
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_item "skip" "Node.js runtime for Gemini patch" "dry-run: ensure nvm + latest Node.js when missing"
+        elif update_has_nvm_node; then
+            log_item "info" "Node.js runtime for Gemini patch" "nvm + latest Node.js already present"
+        else
+            log_item "run" "Node.js runtime for Gemini patch"
+            if update_ensure_gemini_patch_node; then
+                log_item "fix" "Node.js runtime for Gemini patch" "installed nvm + latest Node.js"
+            else
+                log_item "warn" "Node.js runtime for Gemini patch" "failed to install nvm + latest Node.js; skipping Gemini patch"
+                gemini_patch_ready=false
+            fi
+        fi
+        if [[ "$gemini_patch_ready" == "true" ]]; then
+            run_cmd "Gemini CLI patches" update_run_verified_installer gemini_patch
+        else
+            log_item "skip" "Gemini CLI patches" "Node.js runtime unavailable"
+        fi
     else
         log_item "skip" "Gemini CLI" "not installed (use --force to install)"
     fi
