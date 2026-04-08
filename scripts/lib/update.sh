@@ -1995,6 +1995,7 @@ update_agents() {
     if cmd_exists gemini || [[ "$FORCE_MODE" == "true" ]]; then
         local gemini_patch_ready=true
         local gemini_nvm_bin=""
+        local gemini_patch_skip_reason="Node.js runtime unavailable"
         capture_version_before "gemini"
         run_cmd_bun_with_retry "Gemini CLI" "$bun_bin" install -g --trust @google/gemini-cli@latest
         # Show version change without double-counting
@@ -2004,6 +2005,8 @@ update_agents() {
         # Apply Gemini CLI patches (EBADF crash fix, rate-limit retry, quota retry)
         if [[ "$DRY_RUN" == "true" ]]; then
             log_item "skip" "Node.js runtime for Gemini patch" "dry-run: ensure nvm + latest Node.js when missing"
+            gemini_patch_ready=false
+            gemini_patch_skip_reason="dry-run: would apply after ensuring nvm + latest Node.js when needed"
         elif update_has_nvm_node; then
             log_item "info" "Node.js runtime for Gemini patch" "nvm + latest Node.js already present"
         else
@@ -2013,16 +2016,18 @@ update_agents() {
             else
                 log_item "warn" "Node.js runtime for Gemini patch" "failed to install nvm + latest Node.js; skipping Gemini patch"
                 gemini_patch_ready=false
+                gemini_patch_skip_reason="Node.js runtime unavailable"
             fi
         fi
         if [[ "$gemini_patch_ready" == "true" ]] && ! gemini_nvm_bin="$(update_nvm_node_bin_dir)"; then
             log_item "warn" "Node.js runtime for Gemini patch" "nvm Node.js bin not found; skipping Gemini patch"
             gemini_patch_ready=false
+            gemini_patch_skip_reason="Node.js runtime unavailable"
         fi
         if [[ "$gemini_patch_ready" == "true" ]]; then
             run_cmd "Gemini CLI patches" update_run_verified_installer_with_env gemini_patch "PATH=$gemini_nvm_bin:$PATH"
         else
-            log_item "skip" "Gemini CLI patches" "Node.js runtime unavailable"
+            log_item "skip" "Gemini CLI patches" "$gemini_patch_skip_reason"
         fi
     else
         log_item "skip" "Gemini CLI" "not installed (use --force to install)"

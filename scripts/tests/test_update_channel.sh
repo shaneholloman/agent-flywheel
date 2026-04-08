@@ -153,6 +153,57 @@ else
 fi
 
 # ============================================================
+section "Test 3b: Gemini dry-run skips nvm warnings cleanly"
+# ============================================================
+gemini_dry_run_output=$(
+    bash -c '
+        source "'"$UPDATE_SH"'"
+
+        temp_home="${TMPDIR:-/tmp}/acfs-gemini-dry-run.$$"
+        mkdir -p "$temp_home/.bun/bin"
+        printf "#!/usr/bin/env bash\nexit 0\n" > "$temp_home/.bun/bin/bun"
+        chmod +x "$temp_home/.bun/bin/bun"
+
+        HOME="$temp_home"
+        DRY_RUN=true
+        VERBOSE=false
+        QUIET=true
+        FORCE_MODE=false
+        YES_MODE=false
+        ABORT_ON_FAILURE=false
+        UPDATE_LOG_FILE="/dev/null"
+        UPDATE_AGENTS=true
+        UPDATE_RUNTIME=true
+        SUCCESS_COUNT=0
+        SKIP_COUNT=0
+        FAIL_COUNT=0
+        NO_COLOR=1
+        RED="" GREEN="" YELLOW="" CYAN="" BOLD="" DIM="" NC=""
+        declare -gA VERSION_BEFORE=()
+        declare -gA VERSION_AFTER=()
+
+        log_item() { printf "%s|%s|%s\n" "$1" "$2" "$3"; }
+        cmd_exists() { [[ "$1" == "gemini" ]]; }
+        capture_version_before() { return 0; }
+        capture_version_after() { return 1; }
+        run_cmd_bun_with_retry() { log_item "skip" "$1" "dry-run"; return 0; }
+        update_has_nvm_node() { return 1; }
+        update_nvm_node_bin_dir() { echo "update_nvm_node_bin_dir should not be called in gemini dry-run" >&2; return 1; }
+        update_ensure_gemini_patch_node() { echo "update_ensure_gemini_patch_node should not be called in gemini dry-run" >&2; return 1; }
+
+        update_agents
+    ' 2>&1
+) || true
+
+if echo "$gemini_dry_run_output" | grep -q '^warn|Node\.js runtime for Gemini patch|'; then
+    fail "Gemini dry-run emitted a misleading nvm warning: $gemini_dry_run_output"
+elif echo "$gemini_dry_run_output" | grep -q '^skip|Gemini CLI patches|dry-run: would apply after ensuring nvm + latest Node.js when needed$'; then
+    pass "Gemini dry-run skips patch warnings and reports predictive skip"
+else
+    fail "Gemini dry-run skip output missing or changed unexpectedly: $gemini_dry_run_output"
+fi
+
+# ============================================================
 section "Test 4: Function instrumentation (mock)"
 # ============================================================
 # Source update.sh, override update_run_verified_installer with a mock,
