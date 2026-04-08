@@ -25,6 +25,17 @@ WARNING_COUNT=0
 # Target user (from install.sh or default)
 TARGET_USER="${TARGET_USER:-ubuntu}"
 if [[ -z "${TARGET_HOME:-}" ]]; then
+    _smoke_target_passwd_entry="$(getent passwd "$TARGET_USER" 2>/dev/null || true)"
+    if [[ -n "$_smoke_target_passwd_entry" ]]; then
+        TARGET_HOME="$(printf '%s\n' "$_smoke_target_passwd_entry" | cut -d: -f6)"
+    elif [[ "${TARGET_USER}" == "root" ]]; then
+        TARGET_HOME="/root"
+    else
+        TARGET_HOME="/home/$TARGET_USER"
+    fi
+    unset _smoke_target_passwd_entry
+fi
+if [[ "${TARGET_HOME:-}" != /* ]]; then
     if [[ "${TARGET_USER}" == "root" ]]; then
         TARGET_HOME="/root"
     else

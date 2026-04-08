@@ -64,6 +64,14 @@ configure_external_shell_handoff() {
         return 0
     fi
 
+    if [[ -f "$bashrc" ]] && [[ -s "$bashrc" ]]; then
+        local last_char=""
+        last_char=$(tail -c 1 "$bashrc" | od -An -t u1 | tr -d ' ' 2>/dev/null || true)
+        if [[ "$last_char" != "10" ]]; then
+            printf '\n' >> "$bashrc"
+        fi
+    fi
+
     cat >> "$bashrc" << 'EOF'
 # ACFS externally-managed shell handoff
 if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then

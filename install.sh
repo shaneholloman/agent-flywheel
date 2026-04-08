@@ -3620,6 +3620,27 @@ acfs_external_shell_handoff_configured() {
     grep -q 'ACFS externally-managed shell handoff' "$target_home/.bashrc" 2>/dev/null
 }
 
+acfs_append_external_shell_handoff() {
+    local bashrc_path="${1:-}"
+    [[ -n "$bashrc_path" ]] || return 1
+
+    if [[ -f "$bashrc_path" ]] && [[ -s "$bashrc_path" ]]; then
+        local last_char=""
+        last_char=$(tail -c 1 "$bashrc_path" | od -An -t u1 | tr -d ' ' 2>/dev/null || true)
+        if [[ "$last_char" != "10" ]]; then
+            printf '\n' >> "$bashrc_path"
+        fi
+    fi
+
+    cat >> "$bashrc_path" << 'EOF'
+# ACFS externally-managed shell handoff
+if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then
+    export ACFS_ZSH_HANDOFF_ACTIVE=1
+    exec "$(command -v zsh)" -l
+fi
+EOF
+}
+
 acfs_configure_external_shell_handoff() {
     local target_home="${1:-}"
     local target_user="${2:-}"
@@ -3631,13 +3652,7 @@ acfs_configure_external_shell_handoff() {
         return 0
     fi
 
-    cat >> "$target_home/.bashrc" << 'EOF'
-# ACFS externally-managed shell handoff
-if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then
-    export ACFS_ZSH_HANDOFF_ACTIVE=1
-    exec "$(command -v zsh)" -l
-fi
-EOF
+    acfs_append_external_shell_handoff "$target_home/.bashrc" || return 1
 
     $SUDO chown "$target_user:$target_user" "$target_home/.bashrc" 2>/dev/null || true
     return 0

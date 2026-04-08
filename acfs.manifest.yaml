@@ -246,6 +246,12 @@ modules:
           fi
           if [[ -n "$passwd_entry" ]] && [[ -z "$local_entry" ]]; then
             if ! grep -q 'ACFS externally-managed shell handoff' ~/.bashrc 2>/dev/null; then
+              if [[ -f ~/.bashrc ]] && [[ -s ~/.bashrc ]]; then
+                last_char="$(tail -c 1 ~/.bashrc | od -An -t u1 | tr -d ' ' 2>/dev/null || true)"
+                if [[ "$last_char" != "10" ]]; then
+                  printf '\n' >> ~/.bashrc
+                fi
+              fi
               {
                 echo '# ACFS externally-managed shell handoff'
                 echo 'if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then'

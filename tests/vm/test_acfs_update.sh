@@ -110,6 +110,9 @@ pass() {
 
 fail() {
     echo -e "${RED}❌ FAIL${NC}: $1"
+    if [[ -n "${2:-}" ]]; then
+        echo "    ${2}"
+    fi
     ((fail_count += 1))
 }
 
@@ -469,7 +472,7 @@ run_one() {
             # Run ACFS installer
             echo "Installing ACFS..."
             cd /repo
-            ACFS_CI=true bash install.sh --yes --mode vibe
+            ACFS_CI=true CARGO_BUILD_JOBS=1 bash install.sh --yes --mode vibe --skip-ubuntu-upgrade
 
             # Verify the direct installed wrapper does not short-circuit owner
             # handoff before state discovery, even if root has stale state.

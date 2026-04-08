@@ -252,6 +252,36 @@ migrate_ssh_keys() {
 }
 
 # Set default shell for target user
+user_external_shell_handoff_configured() {
+    local target_home="${1:-}"
+    [[ -n "$target_home" ]] || return 1
+    grep -q 'ACFS externally-managed shell handoff' "$target_home/.bashrc" 2>/dev/null
+}
+
+user_append_external_shell_handoff() {
+    local target_home="${1:-}"
+    local bashrc_path=""
+    bashrc_path="${target_home}/.bashrc"
+
+    [[ -n "$target_home" ]] || return 1
+
+    if [[ -f "$bashrc_path" ]] && [[ -s "$bashrc_path" ]]; then
+        local last_char=""
+        last_char=$(tail -c 1 "$bashrc_path" | od -An -t u1 | tr -d ' ' 2>/dev/null || true)
+        if [[ "$last_char" != "10" ]]; then
+            printf '\n' >> "$bashrc_path"
+        fi
+    fi
+
+    cat >> "$bashrc_path" << 'EOF'
+# ACFS externally-managed shell handoff
+if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then
+    export ACFS_ZSH_HANDOFF_ACTIVE=1
+    exec "$(command -v zsh)" -l
+fi
+EOF
+}
+
 set_default_shell() {
     local shell="$1"
     local target="$TARGET_USER"
@@ -279,14 +309,8 @@ set_default_shell() {
 
     if [[ -n "$passwd_entry" ]] && [[ -z "$local_entry" ]]; then
         log_warn "Shell for $target is managed outside /etc/passwd; installing a bash-to-zsh handoff instead of using chsh"
-        if [[ -n "$target_home" ]]; then
-            cat >> "$target_home/.bashrc" << 'EOF'
-# ACFS externally-managed shell handoff
-if [[ $- == *i* ]] && [[ -t 0 ]] && command -v zsh >/dev/null 2>&1 && [[ -z "${ACFS_ZSH_HANDOFF_ACTIVE:-}" ]]; then
-    export ACFS_ZSH_HANDOFF_ACTIVE=1
-    exec "$(command -v zsh)" -l
-fi
-EOF
+        if [[ -n "$target_home" ]] && ! user_external_shell_handoff_configured "$target_home"; then
+            user_append_external_shell_handoff "$target_home" || return 1
             $SUDO chown "$target:$target" "$target_home/.bashrc" 2>/dev/null || true
         fi
         return 0
