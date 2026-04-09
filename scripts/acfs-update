@@ -14,6 +14,29 @@ is_valid_username() {
   [[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]]
 }
 
+resolve_home_for_user() {
+  local user="$1"
+  local user_home=""
+
+  if [[ "$user" == "root" ]]; then
+    printf '/root\n'
+    return 0
+  fi
+
+  user_home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)" || true
+  if [[ -n "$user_home" ]] && [[ "$user_home" == /* ]]; then
+    printf '%s\n' "$user_home"
+    return 0
+  fi
+
+  if [[ "$user" == "$(whoami 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
+    printf '%s\n' "$HOME"
+    return 0
+  fi
+
+  printf '/home/%s\n' "$user"
+}
+
 read_target_user_from_state_file() {
   local state_file="$1"
   local target_user=""
@@ -30,6 +53,74 @@ read_target_user_from_state_file() {
 
   if [[ -n "$target_user" ]] && is_valid_username "$target_user"; then
     printf '%s\n' "$target_user"
+    return 0
+  fi
+
+  return 1
+}
+
+find_wrapper_installed_home() {
+  local candidate_home=""
+
+  case "$SCRIPT_DIR" in
+    */.local/bin)
+      candidate_home="${SCRIPT_DIR%/.local/bin}"
+      ;;
+    */.acfs/bin)
+      candidate_home="${SCRIPT_DIR%/.acfs/bin}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  [[ -n "$candidate_home" ]] || return 1
+  [[ "$candidate_home" == /* ]] || return 1
+  [[ "$candidate_home" != "/" ]] || return 1
+  [[ -f "$candidate_home/.acfs/scripts/lib/update.sh" ]] || return 1
+
+  printf '%s\n' "$candidate_home"
+}
+
+read_user_for_home() {
+  local user_home="$1"
+  local candidate_user=""
+
+  [[ -n "$user_home" ]] || return 1
+
+  candidate_user="$(read_target_user_from_state_file "$user_home/.acfs/state.json" 2>/dev/null || true)"
+  if [[ -n "$candidate_user" ]]; then
+    printf '%s\n' "$candidate_user"
+    return 0
+  fi
+
+  candidate_user="$(
+    getent passwd 2>/dev/null \
+      | awk -F: -v home="$user_home" '$6 == home { print $1; exit }'
+  )" || true
+  if [[ -n "$candidate_user" ]] && is_valid_username "$candidate_user"; then
+    printf '%s\n' "$candidate_user"
+    return 0
+  fi
+
+  if command -v stat >/dev/null 2>&1; then
+    candidate_user="$(stat -c '%U' "$user_home" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]] && [[ "$candidate_user" != "UNKNOWN" ]] && is_valid_username "$candidate_user"; then
+      printf '%s\n' "$candidate_user"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+find_update_script_for_home() {
+  local user_home="$1"
+
+  [[ -n "$user_home" ]] || return 1
+
+  if [[ -f "$user_home/.acfs/scripts/lib/update.sh" ]]; then
+    printf '%s\n' "$user_home/.acfs/scripts/lib/update.sh"
     return 0
   fi
 
@@ -57,17 +148,8 @@ find_update_script_for_user() {
   local user="$1"
   local user_home=""
 
-  user_home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)" || true
-  if [[ -z "$user_home" ]]; then
-    user_home="/home/$user"
-  fi
-
-  if [[ -f "$user_home/.acfs/scripts/lib/update.sh" ]]; then
-    printf '%s\n' "$user_home/.acfs/scripts/lib/update.sh"
-    return 0
-  fi
-
-  return 1
+  user_home="$(resolve_home_for_user "$user")"
+  find_update_script_for_home "$user_home"
 }
 
 user_has_installed_update_script() {
@@ -77,10 +159,9 @@ user_has_installed_update_script() {
 
 find_installed_update_owner() {
   local current_user=""
-  local candidate=""
+  local entry=""
   local candidate_user=""
-  local nullglob_was_set=0
-  local -a candidates=()
+  local candidate_home=""
 
   current_user="$(whoami 2>/dev/null || true)"
   if [[ -n "$current_user" ]] && user_has_installed_update_script "$current_user"; then
@@ -88,31 +169,15 @@ find_installed_update_owner() {
     return 0
   fi
 
-  if shopt -q nullglob; then
-    nullglob_was_set=1
-  fi
-  shopt -s nullglob
-  candidates=(/home/*/.acfs/scripts/lib/update.sh /root/.acfs/scripts/lib/update.sh)
-  if (( ! nullglob_was_set )); then
-    shopt -u nullglob
-  fi
-
-  for candidate in "${candidates[@]}"; do
-    [[ -f "$candidate" ]] || continue
-
-    if [[ "$candidate" == /home/* ]]; then
-      candidate_user="$(printf '%s\n' "$candidate" | cut -d/ -f3)"
-    elif [[ "$candidate" == /root/* ]]; then
-      candidate_user="root"
-    else
-      candidate_user=""
-    fi
-
-    if [[ -n "$candidate_user" ]]; then
+  while IFS=: read -r candidate_user _ _ _ _ candidate_home _; do
+    [[ -n "$candidate_user" ]] || continue
+    [[ -n "$candidate_home" ]] || continue
+    [[ "$candidate_home" == /* ]] || continue
+    if [[ -f "$candidate_home/.acfs/scripts/lib/update.sh" ]]; then
       printf '%s\n' "$candidate_user"
       return 0
     fi
-  done
+  done < <(getent passwd 2>/dev/null || true)
 
   return 1
 }
@@ -120,9 +185,28 @@ find_installed_update_owner() {
 detect_target_user() {
   local state_candidate=""
   local candidate_user=""
+  local wrapper_home=""
+  local candidate_home=""
+
+  wrapper_home="$(find_wrapper_installed_home 2>/dev/null || true)"
+  if [[ -n "$wrapper_home" ]]; then
+    candidate_user="$(read_user_for_home "$wrapper_home" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]]; then
+      printf '%s\n' "$candidate_user"
+      return 0
+    fi
+  fi
 
   if [[ -n "${ACFS_STATE_FILE:-}" ]]; then
     candidate_user="$(read_target_user_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]] && user_has_installed_update_script "$candidate_user"; then
+      printf '%s\n' "$candidate_user"
+      return 0
+    fi
+  fi
+
+  if [[ -n "${ACFS_HOME:-}" ]]; then
+    candidate_user="$(read_target_user_from_state_file "${ACFS_HOME}/state.json" 2>/dev/null || true)"
     if [[ -n "$candidate_user" ]] && user_has_installed_update_script "$candidate_user"; then
       printf '%s\n' "$candidate_user"
       return 0
@@ -135,19 +219,16 @@ detect_target_user() {
     return 0
   fi
 
-  candidate_user="$(read_target_user_from_state_file "/home/ubuntu/.acfs/state.json" 2>/dev/null || true)"
-  if [[ -n "$candidate_user" ]] && user_has_installed_update_script "$candidate_user"; then
-    printf '%s\n' "$candidate_user"
-    return 0
-  fi
-
-  for state_candidate in /home/*/.acfs/state.json; do
+  while IFS=: read -r _ _ _ _ _ candidate_home _; do
+    [[ -n "$candidate_home" ]] || continue
+    [[ "$candidate_home" == /* ]] || continue
+    state_candidate="$candidate_home/.acfs/state.json"
     candidate_user="$(read_target_user_from_state_file "$state_candidate" 2>/dev/null || true)"
     if [[ -n "$candidate_user" ]] && user_has_installed_update_script "$candidate_user"; then
       printf '%s\n' "$candidate_user"
       return 0
     fi
-  done
+  done < <(getent passwd 2>/dev/null || true)
 
   candidate_user="$(read_target_user_from_state_file "/var/lib/acfs/state.json" 2>/dev/null || true)"
   if [[ -n "$candidate_user" ]] && user_has_installed_update_script "$candidate_user"; then
@@ -206,11 +287,20 @@ main() {
   local repo_update_script=""
   local target_user=""
   local current_user=""
+  local wrapper_home=""
 
   repo_update_script="$(find_repo_local_update_script || true)"
+  wrapper_home="$(find_wrapper_installed_home || true)"
   target_user="$(detect_target_user || true)"
   if [[ -n "$repo_update_script" ]]; then
     update_script="$repo_update_script"
+  elif [[ -n "$wrapper_home" ]]; then
+    ACFS_HOME="${ACFS_HOME:-$wrapper_home/.acfs}"
+    ACFS_STATE_FILE="${ACFS_STATE_FILE:-$ACFS_HOME/state.json}"
+    update_script="$(find_update_script_for_home "$wrapper_home" || true)"
+    if [[ -z "$target_user" ]]; then
+      target_user="$(read_user_for_home "$wrapper_home" || true)"
+    fi
   elif [[ -n "$target_user" ]]; then
     update_script="$(find_update_script_for_user "$target_user" || true)"
   fi

@@ -547,6 +547,46 @@ EOF
                 exit 1
             fi
 
+            # Verify a wrapper installed under a nonstandard passwd home
+            # dispatches to its own adjacent ACFS tree instead of a generic
+            # /home/* scan or some other user's install.
+            echo ""
+            echo "Verifying nonstandard-home acfs-update wrapper dispatch..."
+            useradd -m -d /srv/acfs-alt -s /bin/bash altuser
+            mkdir -p /srv/acfs-alt/.local/bin /srv/acfs-alt/.acfs/bin /srv/acfs-alt/.acfs/scripts/lib
+            cp /home/ubuntu/.local/bin/acfs-update /srv/acfs-alt/.local/bin/acfs-update
+            cp /home/ubuntu/.acfs/bin/acfs-update /srv/acfs-alt/.acfs/bin/acfs-update
+            cat > /srv/acfs-alt/.acfs/state.json <<'"'"'EOF'"'"'
+{"target_user":"altuser","target_home":"/srv/acfs-alt"}
+EOF
+            cat > /srv/acfs-alt/.acfs/scripts/lib/update.sh <<'"'"'EOF'"'"'
+#!/usr/bin/env bash
+set -euo pipefail
+printf "wrapper-user=%s\n" "$(whoami)"
+printf "wrapper-home=%s\n" "${HOME:-}"
+printf "wrapper-args=%s\n" "$*"
+EOF
+            chmod 755 /srv/acfs-alt/.local/bin/acfs-update /srv/acfs-alt/.acfs/bin/acfs-update /srv/acfs-alt/.acfs/scripts/lib/update.sh
+            chown -R altuser:altuser /srv/acfs-alt
+            alt_probe_output=""
+            alt_probe_status=0
+            alt_probe_output=$(/srv/acfs-alt/.local/bin/acfs-update --help 2>&1) || alt_probe_status=$?
+            if [[ $alt_probe_status -ne 0 ]]; then
+                echo "ERROR: nonstandard-home wrapper dispatch failed" >&2
+                echo "$alt_probe_output" >&2
+                exit 1
+            fi
+            if ! echo "$alt_probe_output" | grep -q "^wrapper-user=altuser$"; then
+                echo "ERROR: nonstandard-home wrapper did not run update.sh as altuser" >&2
+                echo "$alt_probe_output" >&2
+                exit 1
+            fi
+            if ! echo "$alt_probe_output" | grep -q "^wrapper-home=/srv/acfs-alt$"; then
+                echo "ERROR: nonstandard-home wrapper did not preserve altuser HOME" >&2
+                echo "$alt_probe_output" >&2
+                exit 1
+            fi
+
             # Switch to ubuntu user and run update tests
             echo ""
             echo "Running acfs-update E2E tests..."
