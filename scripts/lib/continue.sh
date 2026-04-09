@@ -122,17 +122,19 @@ current_user_state_file() {
 
 find_scanned_install_state_file() {
     local candidate=""
+    local candidate_home=""
     local matches=()
     local newest=""
     local newest_mtime=-1
     local mtime=""
 
-    shopt -s nullglob
-    for candidate in /home/*/.acfs/state.json; do
+    while IFS=: read -r _ _ _ _ _ candidate_home _; do
+        [[ -n "$candidate_home" ]] || continue
+        [[ "$candidate_home" == /* ]] || continue
+        candidate="${candidate_home%/}/.acfs/state.json"
         [[ -f "$candidate" ]] || continue
         matches+=("$candidate")
-    done
-    shopt -u nullglob
+    done < <(getent passwd 2>/dev/null || true)
 
     if [[ ${#matches[@]} -eq 1 ]]; then
         echo "${matches[0]}"

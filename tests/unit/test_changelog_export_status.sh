@@ -703,6 +703,50 @@ test_continue_live_log_hint_uses_installed_layout_log_dir() {
     cleanup_mock_env
 }
 
+test_continue_scans_nonstandard_homes_via_getent() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_TARGET_HOME/.acfs"
+    cat > "$TEST_TARGET_HOME/.acfs/state.json" <<'JSON'
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z"
+}
+JSON
+
+    cat > "$TEST_FAKE_BIN/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "passwd" && \$# -eq 1 ]]; then
+    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
+    exit 0
+fi
+if [[ "\$1" == "passwd" && "\$2" == "tester" ]]; then
+    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TEST_CONTINUE_SCRIPT="$CONTINUE_SH" \
+        bash -lc '
+            source "$TEST_CONTINUE_SCRIPT"
+            get_install_state_file
+        ' 2>&1)
+
+    if [[ "$output" == "$TEST_TARGET_HOME/.acfs/state.json" ]]; then
+        harness_pass "continue scans nonstandard homes via getent"
+    else
+        harness_fail "continue scans nonstandard homes via getent" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_doctor_dispatches_installed_layout_under_root_home() {
     setup_installed_layout_env
 
@@ -882,6 +926,7 @@ main() {
     test_continue_failed_state_beats_runtime_probe || true
     test_continue_reports_installed_layout_log_locations || true
     test_continue_live_log_hint_uses_installed_layout_log_dir || true
+    test_continue_scans_nonstandard_homes_via_getent || true
 
     harness_section "Dashboard"
     test_dashboard_generation_is_atomic_on_failure || true
