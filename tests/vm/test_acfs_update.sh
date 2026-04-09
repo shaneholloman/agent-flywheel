@@ -613,6 +613,74 @@ EOF
                 exit 1
             fi
 
+            # Verify the system-wide acfs wrapper also handles nonstandard-home
+            # installs correctly when root carries stale state for another user.
+            echo ""
+            echo "Verifying nonstandard-home global acfs wrapper dispatch..."
+            global_probe_output=""
+            global_probe_status=0
+            global_probe_output="$(
+                (
+                    set -euo pipefail
+                    backup_local=""
+                    backup_acfs=""
+
+                    cleanup() {
+                        if [[ -n "$backup_local" ]] && [[ -e "$backup_local" ]]; then
+                            mv "$backup_local" /home/ubuntu/.local/bin/acfs
+                        fi
+                        if [[ -n "$backup_acfs" ]] && [[ -e "$backup_acfs" ]]; then
+                            mv "$backup_acfs" /home/ubuntu/.acfs/bin/acfs
+                        fi
+                    }
+                    trap cleanup EXIT
+
+                    if [[ -e /home/ubuntu/.local/bin/acfs ]]; then
+                        backup_local=/home/ubuntu/.local/bin/acfs.real
+                        mv /home/ubuntu/.local/bin/acfs "$backup_local"
+                    fi
+                    if [[ -e /home/ubuntu/.acfs/bin/acfs ]]; then
+                        backup_acfs=/home/ubuntu/.acfs/bin/acfs.real
+                        mv /home/ubuntu/.acfs/bin/acfs "$backup_acfs"
+                    fi
+
+                    mkdir -p /root/.acfs
+                    cat > /root/.acfs/state.json <<\EOF
+{"target_user":"ubuntu","target_home":"/home/ubuntu"}
+EOF
+                    mkdir -p /srv/acfs-alt/.local/bin
+                    cat > /srv/acfs-alt/.acfs/state.json <<\EOF
+{"target_user":"altuser","target_home":"/srv/acfs-alt"}
+EOF
+                    cat > /srv/acfs-alt/.local/bin/acfs <<\EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf "global-wrapper-user=%s\n" "$(whoami)"
+printf "global-wrapper-home=%s\n" "${HOME:-}"
+printf "global-wrapper-args=%s\n" "$*"
+EOF
+                    chmod 755 /srv/acfs-alt/.local/bin/acfs
+                    chown altuser:altuser /srv/acfs-alt/.local/bin/acfs /srv/acfs-alt/.acfs/state.json
+
+                    /usr/local/bin/acfs --help
+                ) 2>&1
+            )" || global_probe_status=$?
+            if [[ $global_probe_status -ne 0 ]]; then
+                echo "ERROR: global acfs wrapper dispatch failed" >&2
+                echo "$global_probe_output" >&2
+                exit 1
+            fi
+            if ! echo "$global_probe_output" | grep -q "^global-wrapper-user=altuser$"; then
+                echo "ERROR: global acfs wrapper did not run as altuser" >&2
+                echo "$global_probe_output" >&2
+                exit 1
+            fi
+            if ! echo "$global_probe_output" | grep -q "^global-wrapper-home=/srv/acfs-alt$"; then
+                echo "ERROR: global acfs wrapper did not preserve altuser HOME" >&2
+                echo "$global_probe_output" >&2
+                exit 1
+            fi
+
             # Switch to ubuntu user and run update tests
             echo ""
             echo "Running acfs-update E2E tests..."
