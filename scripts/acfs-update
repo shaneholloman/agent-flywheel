@@ -59,6 +59,28 @@ read_target_user_from_state_file() {
   return 1
 }
 
+read_target_home_from_state_file() {
+  local state_file="$1"
+  local target_home=""
+
+  [[ -f "$state_file" ]] || return 1
+
+  if command -v jq &>/dev/null; then
+    target_home="$(jq -r '.target_home // empty' "$state_file" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$target_home" ]]; then
+    target_home="$(sed -n 's/.*"target_home"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
+  fi
+
+  if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+    printf '%s\n' "${target_home%/}"
+    return 0
+  fi
+
+  return 1
+}
+
 find_wrapper_installed_home() {
   local candidate_home=""
 
@@ -85,14 +107,12 @@ find_wrapper_installed_home() {
 read_user_for_home() {
   local user_home="$1"
   local candidate_user=""
+  local state_file=""
+  local state_home=""
 
   [[ -n "$user_home" ]] || return 1
-
-  candidate_user="$(read_target_user_from_state_file "$user_home/.acfs/state.json" 2>/dev/null || true)"
-  if [[ -n "$candidate_user" ]]; then
-    printf '%s\n' "$candidate_user"
-    return 0
-  fi
+  state_file="$user_home/.acfs/state.json"
+  user_home="${user_home%/}"
 
   candidate_user="$(
     getent passwd 2>/dev/null \
@@ -109,6 +129,20 @@ read_user_for_home() {
       printf '%s\n' "$candidate_user"
       return 0
     fi
+  fi
+
+  candidate_user="$(read_target_user_from_state_file "$state_file" 2>/dev/null || true)"
+  [[ -n "$candidate_user" ]] || return 1
+
+  state_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
+  if [[ -z "$state_home" ]]; then
+    state_home="$(getent passwd "$candidate_user" 2>/dev/null | cut -d: -f6)" || true
+    state_home="${state_home%/}"
+  fi
+
+  if [[ -n "$state_home" ]] && [[ "$state_home" == "$user_home" ]]; then
+    printf '%s\n' "$candidate_user"
+    return 0
   fi
 
   return 1

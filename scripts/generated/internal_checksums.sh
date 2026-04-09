@@ -22,7 +22,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/tools.sh]="c1c8acfd5adc4baedcf2b19bae95e4515ddb3209dd7adb9405fb1ec3c0909a2c"
   [scripts/lib/export-config.sh]="93abca7e8c5edd4b8541e421f2ca691a5182ba3990d16268eb95c560df748de5"
   [scripts/acfs-global]="5e637de89cab23bbdee9f52f442e47d50333cfc9eab221e38db5e0f029a47bf9"
-  [scripts/acfs-update]="b3e00e1f0af58edb7ce103b9951c12e3530c2f002d908df16456add2d33358ba"
+  [scripts/acfs-update]="7b47e53dc98d5ed848fd4c3fd57293965b2554b09fabf9c5678e381d564c4a6a"
 )
 
 ACFS_INTERNAL_CHECKSUMS_COUNT=15

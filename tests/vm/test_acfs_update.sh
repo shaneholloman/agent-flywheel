@@ -587,6 +587,32 @@ EOF
                 exit 1
             fi
 
+            # Verify stale adjacent state does not override the wrapper home
+            # and force an incorrect cross-user handoff.
+            echo ""
+            echo "Verifying stale-state acfs-update wrapper dispatch..."
+            cat > /srv/acfs-alt/.acfs/state.json <<\EOF
+{"target_user":"ubuntu","target_home":"/home/ubuntu"}
+EOF
+            stale_probe_output=""
+            stale_probe_status=0
+            stale_probe_output=$(sudo -u altuser -H /srv/acfs-alt/.local/bin/acfs-update --help 2>&1) || stale_probe_status=$?
+            if [[ $stale_probe_status -ne 0 ]]; then
+                echo "ERROR: stale-state wrapper dispatch failed" >&2
+                echo "$stale_probe_output" >&2
+                exit 1
+            fi
+            if ! echo "$stale_probe_output" | grep -q "^wrapper-user=altuser$"; then
+                echo "ERROR: stale-state wrapper trusted mismatched target_user" >&2
+                echo "$stale_probe_output" >&2
+                exit 1
+            fi
+            if ! echo "$stale_probe_output" | grep -q "^wrapper-home=/srv/acfs-alt$"; then
+                echo "ERROR: stale-state wrapper lost altuser HOME context" >&2
+                echo "$stale_probe_output" >&2
+                exit 1
+            fi
+
             # Switch to ubuntu user and run update tests
             echo ""
             echo "Running acfs-update E2E tests..."
