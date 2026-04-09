@@ -11,6 +11,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHANGELOG_SH="$REPO_ROOT/scripts/lib/changelog.sh"
 EXPORT_CONFIG_SH="$REPO_ROOT/scripts/lib/export-config.sh"
 STATUS_SH="$REPO_ROOT/scripts/lib/status.sh"
+INFO_SH="$REPO_ROOT/scripts/lib/info.sh"
+SUPPORT_SH="$REPO_ROOT/scripts/lib/support.sh"
 DASHBOARD_SH="$REPO_ROOT/scripts/lib/dashboard.sh"
 DOCTOR_SH="$REPO_ROOT/scripts/lib/doctor.sh"
 CONTINUE_SH="$REPO_ROOT/scripts/lib/continue.sh"
@@ -118,6 +120,8 @@ setup_installed_layout_env() {
         "$TEST_INSTALLED_ACFS/bin" \
         "$TEST_INSTALLED_ACFS/scripts/lib" \
         "$TEST_INSTALLED_ACFS/scripts/generated" \
+        "$TEST_INSTALLED_ACFS/onboard/lessons" \
+        "$TEST_TARGET_HOME/.oh-my-zsh" \
         "$TEST_TARGET_HOME/.local/bin" \
         "$TEST_TARGET_HOME/.bun/bin" \
         "$TEST_TARGET_HOME/.cargo/bin" \
@@ -129,6 +133,8 @@ setup_installed_layout_env() {
     cp "$STATUS_SH" "$TEST_INSTALLED_ACFS/scripts/lib/status.sh"
     cp "$CHANGELOG_SH" "$TEST_INSTALLED_ACFS/scripts/lib/changelog.sh"
     cp "$EXPORT_CONFIG_SH" "$TEST_INSTALLED_ACFS/scripts/lib/export-config.sh"
+    cp "$INFO_SH" "$TEST_INSTALLED_ACFS/scripts/lib/info.sh"
+    cp "$SUPPORT_SH" "$TEST_INSTALLED_ACFS/scripts/lib/support.sh"
     cp "$CONTINUE_SH" "$TEST_INSTALLED_ACFS/scripts/lib/continue.sh"
 
     cat > "$TEST_INSTALLED_ACFS/state.json" <<'JSON'
@@ -156,6 +162,7 @@ JSON
 ### Added
 - Older entry that should be filtered out by last_updated
 EOF
+    printf '# Installed Lesson\n' > "$TEST_INSTALLED_ACFS/onboard/lessons/01_intro.md"
 
     cat > "$TEST_INSTALLED_HELPERS" <<EOF
 #!/usr/bin/env bash
@@ -209,6 +216,11 @@ EOF
     write_fake_command "$TEST_TARGET_HOME/.local/bin/tmux" "tmux 3.4"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/rg" "ripgrep 14.1.0"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/claude" "claude 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/codex" "codex 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/uv" "uv 0.8.0"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/rustc" "rustc 1.85.0"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/ntm" "ntm 1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.bun/bin/bun" "1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.cargo/bin/cargo" "cargo 1.85.0"
     write_fake_command "$TEST_TARGET_HOME/go/bin/go" "go version go1.24.0 linux/amd64"
@@ -747,6 +759,73 @@ EOF
     cleanup_mock_env
 }
 
+test_info_uses_installed_layout_under_root_home() {
+    setup_installed_layout_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/info.sh" --json)
+
+    if printf '%s\n' "$output" | jq -e \
+        '.installation.date == "2026-03-09" and .onboard.total_lessons == 1 and .onboard.next_lesson == "Lesson 1 - Installed Lesson"' \
+        >/dev/null 2>&1; then
+        harness_pass "info uses installed-layout state and lessons under root home"
+    else
+        harness_fail "info uses installed-layout state and lessons under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_info_uses_target_user_path_under_root_home() {
+    setup_installed_layout_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TEST_INFO_SCRIPT="$TEST_INSTALLED_ACFS/scripts/lib/info.sh" \
+        bash -lc '
+            source "$TEST_INFO_SCRIPT"
+            info_prepare_context
+            info_get_installed_tools_summary
+        ' 2>/dev/null)
+
+    if [[ "$output" == "shell:✓|lang:✓|agents:✓|stack:✓" ]]; then
+        harness_pass "info augments PATH from target-user install under root home"
+    else
+        harness_fail "info augments PATH from target-user install under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_support_bundle_uses_installed_layout_under_root_home() {
+    setup_installed_layout_env
+
+    local output_dir="$TEST_HOME/support-out"
+    mkdir -p "$output_dir"
+
+    local archive_path=""
+    archive_path=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/support.sh" --output "$output_dir")
+
+    local bundle_dir="$archive_path"
+    if [[ "$bundle_dir" == *.tar.gz ]]; then
+        bundle_dir="${bundle_dir%.tar.gz}"
+    fi
+
+    if [[ -f "$bundle_dir/environment.json" ]] \
+        && [[ -f "$bundle_dir/state.json" ]] \
+        && jq -e --arg acfs_home "$TEST_INSTALLED_ACFS" --arg target_home "$TEST_TARGET_HOME" \
+            '.acfs_home == $acfs_home and .home == $target_home and .user == "tester"' \
+            "$bundle_dir/environment.json" >/dev/null 2>&1; then
+        harness_pass "support bundle uses installed-layout home and target user under root home"
+    else
+        harness_fail "support bundle uses installed-layout home and target user under root home" "$archive_path"
+    fi
+
+    cleanup_mock_env
+}
+
 test_doctor_dispatches_installed_layout_under_root_home() {
     setup_installed_layout_env
 
@@ -933,9 +1012,12 @@ main() {
     test_dashboard_rejects_invalid_ports_before_serving || true
     test_dashboard_prefers_repo_local_info_script || true
 
-    harness_section "Info / Onboard"
+    harness_section "Info / Support / Onboard"
+    test_info_uses_installed_layout_under_root_home || true
+    test_info_uses_target_user_path_under_root_home || true
     test_info_zero_lessons_hides_onboard_prompt_and_explains_state || true
     test_info_reads_skipped_tools_without_jq || true
+    test_support_bundle_uses_installed_layout_under_root_home || true
     test_onboard_cli_aliases_work_in_zero_lessons_mode || true
     test_onboard_repairs_malformed_progress_before_showing_lesson || true
     test_onboard_accepts_sparse_lesson_numbers || true

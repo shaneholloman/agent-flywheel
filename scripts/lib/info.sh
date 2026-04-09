@@ -114,6 +114,19 @@ info_home_for_user() {
     return 1
 }
 
+info_candidate_has_acfs_data() {
+    local candidate="$1"
+    [[ -n "$candidate" ]] || return 1
+    [[ -e "$candidate/state.json" || -e "$candidate/onboard_progress.json" || -d "$candidate/onboard" ]]
+}
+
+info_script_acfs_home() {
+    local candidate=""
+    candidate=$(cd "$_INFO_SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
+    [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
+    printf '%s\n' "$candidate"
+}
+
 info_read_target_user_from_state() {
     local state_file="${1:-$_INFO_SYSTEM_STATE_FILE}"
     local target_user=""
@@ -146,10 +159,23 @@ info_get_data_home() {
     local target_home=""
     local target_user=""
 
+    candidate=$(info_script_acfs_home 2>/dev/null || true)
+    if info_candidate_has_acfs_data "$candidate"; then
+        _INFO_RESOLVED_ACFS_HOME="$candidate"
+        echo "$_INFO_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    if info_candidate_has_acfs_data "$ACFS_HOME"; then
+        _INFO_RESOLVED_ACFS_HOME="$ACFS_HOME"
+        echo "$_INFO_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(info_home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs"
-        if [[ -n "$target_home" ]] && [[ -e "$candidate/state.json" || -e "$candidate/onboard_progress.json" || -d "$candidate/onboard" ]]; then
+        if [[ -n "$target_home" ]] && info_candidate_has_acfs_data "$candidate"; then
             _INFO_RESOLVED_ACFS_HOME="$candidate"
             echo "$_INFO_RESOLVED_ACFS_HOME"
             return 0
@@ -160,7 +186,7 @@ info_get_data_home() {
     if [[ -n "$target_user" ]]; then
         target_home=$(info_home_for_user "$target_user" || true)
         candidate="${target_home}/.acfs"
-        if [[ -n "$target_home" ]] && [[ -e "$candidate/state.json" || -e "$candidate/onboard_progress.json" || -d "$candidate/onboard" ]]; then
+        if [[ -n "$target_home" ]] && info_candidate_has_acfs_data "$candidate"; then
             _INFO_RESOLVED_ACFS_HOME="$candidate"
             echo "$_INFO_RESOLVED_ACFS_HOME"
             return 0
@@ -186,6 +212,58 @@ info_get_install_state_file() {
     fi
 
     echo "$data_home/state.json"
+}
+
+info_prepend_user_paths() {
+    local base_home="$1"
+    local dir=""
+
+    [[ -n "$base_home" ]] || return 0
+
+    for dir in \
+        "$base_home/.local/bin" \
+        "$base_home/.bun/bin" \
+        "$base_home/.cargo/bin" \
+        "$base_home/go/bin" \
+        "$base_home/.atuin/bin"; do
+        case ":$PATH:" in
+            *":$dir:"*) ;;
+            *) export PATH="$dir:$PATH" ;;
+        esac
+    done
+}
+
+info_prepare_context() {
+    local data_home=""
+    local state_file=""
+    local target_home=""
+
+    data_home=$(info_get_data_home)
+    state_file=$(info_get_install_state_file)
+
+    if [[ -z "${TARGET_USER:-}" ]]; then
+        TARGET_USER=$(info_read_target_user_from_state "$state_file" 2>/dev/null || \
+            info_read_target_user_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || true)
+        [[ -n "${TARGET_USER:-}" ]] && export TARGET_USER
+    fi
+
+    if [[ -z "${TARGET_HOME:-}" ]]; then
+        if [[ -n "${TARGET_USER:-}" ]]; then
+            target_home=$(info_home_for_user "$TARGET_USER" 2>/dev/null || true)
+        fi
+        if [[ -z "$target_home" ]] && [[ "$data_home" == */.acfs ]]; then
+            target_home="${data_home%/.acfs}"
+        fi
+        if [[ -n "$target_home" ]]; then
+            TARGET_HOME="$target_home"
+            export TARGET_HOME
+        fi
+    fi
+
+    info_prepend_user_paths "$HOME"
+    if [[ -n "${TARGET_HOME:-}" ]] && [[ "$TARGET_HOME" != "$HOME" ]]; then
+        info_prepend_user_paths "$TARGET_HOME"
+    fi
 }
 
 # Get system hostname
@@ -552,10 +630,11 @@ EOF
 
 info_get_installed_tools_summary() {
     local shell_ok lang_ok agents_ok stack_ok
+    local shell_home="${TARGET_HOME:-$HOME}"
 
     # Shell tools
     shell_ok="○"
-    if command -v zsh &>/dev/null && [[ -d "$HOME/.oh-my-zsh" ]]; then
+    if command -v zsh &>/dev/null && [[ -d "$shell_home/.oh-my-zsh" ]]; then
         shell_ok="✓"
     fi
 
@@ -1059,6 +1138,8 @@ info_main() {
         esac
         shift
     done
+
+    info_prepare_context
 
     # Render based on output mode
     case "$output_mode" in

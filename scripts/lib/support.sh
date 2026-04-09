@@ -123,6 +123,13 @@ support_candidate_has_acfs_data() {
     [[ -e "$candidate/state.json" || -e "$candidate/onboard_progress.json" || -d "$candidate/logs" || -d "$candidate/onboard" ]]
 }
 
+support_script_acfs_home() {
+    local candidate=""
+    candidate=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
+    [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
+    printf '%s\n' "$candidate"
+}
+
 support_read_target_user_from_state() {
     local state_file="${1:-$SUPPORT_SYSTEM_STATE_FILE}"
     local target_user=""
@@ -139,6 +146,22 @@ support_read_target_user_from_state() {
     printf '%s\n' "$target_user"
 }
 
+support_get_install_state_file() {
+    local candidate="${ACFS_HOME}/state.json"
+
+    if [[ -f "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    if [[ -f "$SUPPORT_SYSTEM_STATE_FILE" ]]; then
+        printf '%s\n' "$SUPPORT_SYSTEM_STATE_FILE"
+        return 0
+    fi
+
+    printf '%s\n' "$candidate"
+}
+
 support_resolve_acfs_home() {
     local target_home=""
     local candidate=""
@@ -146,6 +169,12 @@ support_resolve_acfs_home() {
 
     if [[ -n "$ACFS_HOME" ]]; then
         printf '%s\n' "$ACFS_HOME"
+        return 0
+    fi
+
+    candidate=$(support_script_acfs_home 2>/dev/null || true)
+    if support_candidate_has_acfs_data "$candidate"; then
+        printf '%s\n' "$candidate"
         return 0
     fi
 
@@ -172,18 +201,22 @@ support_resolve_acfs_home() {
 }
 
 support_initialize_context() {
+    local state_file=""
+
     ACFS_HOME=$(support_resolve_acfs_home)
+    state_file=$(support_get_install_state_file)
 
     if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
         SUPPORT_TARGET_USER="$SUDO_USER"
     else
-        SUPPORT_TARGET_USER=$(support_read_target_user_from_state || whoami 2>/dev/null || echo unknown)
+        SUPPORT_TARGET_USER=$(support_read_target_user_from_state "$state_file" || \
+            support_read_target_user_from_state || \
+            whoami 2>/dev/null || echo unknown)
     fi
 
-    if [[ "$ACFS_HOME" == */.acfs ]]; then
+    SUPPORT_TARGET_HOME=$(support_home_for_user "$SUPPORT_TARGET_USER" || true)
+    if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ "$ACFS_HOME" == */.acfs ]]; then
         SUPPORT_TARGET_HOME="${ACFS_HOME%/.acfs}"
-    else
-        SUPPORT_TARGET_HOME=$(support_home_for_user "$SUPPORT_TARGET_USER" || true)
     fi
 
     [[ -n "$SUPPORT_TARGET_HOME" ]] || SUPPORT_TARGET_HOME="$HOME"
