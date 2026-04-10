@@ -1893,20 +1893,20 @@ _doctor_run_manifest_check() {
     case "$run_as" in
         target_user)
             if [[ "$(id -un 2>/dev/null || true)" == "$target_user" ]]; then
-                HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
+                TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
                 return $?
             fi
             if [[ $EUID -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
-                runuser -u "$target_user" -- env HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
+                runuser -u "$target_user" -- env TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
                 return $?
             fi
             if command -v sudo >/dev/null 2>&1; then
-                sudo -n -u "$target_user" env HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
+                sudo -n -u "$target_user" env TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
                 return $?
             fi
             # Absolute fallback
             if [[ $EUID -eq 0 ]]; then
-                su "$target_user" -c "env HOME=$(printf '%q' "$target_home") PATH=$(printf '%q' "$target_path") bash -o pipefail -c $(printf '%q' "$cmd")"
+                su "$target_user" -c "env TARGET_USER=$(printf '%q' "$target_user") TARGET_HOME=$(printf '%q' "$target_home") HOME=$(printf '%q' "$target_home") PATH=$(printf '%q' "$target_path") bash -o pipefail -c $(printf '%q' "$cmd")"
                 return $?
             fi
             return 1

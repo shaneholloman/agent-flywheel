@@ -224,11 +224,14 @@ _source_ubuntu_upgrade_lib() {
         if command -v mktemp &>/dev/null; then
             tmp_upgrade="$(mktemp "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade.XXXXXX" 2>/dev/null)" || tmp_upgrade=""
         fi
-        if [[ -n "$tmp_upgrade" ]] && curl "${ACFS_EARLY_CURL_ARGS[@]}" "$ACFS_RAW/scripts/lib/ubuntu_upgrade.sh" -o "$tmp_upgrade" 2>/dev/null; then
-            source "$tmp_upgrade"
+        if [[ -n "$tmp_upgrade" ]]; then
+            if curl "${ACFS_EARLY_CURL_ARGS[@]}" "$ACFS_RAW/scripts/lib/ubuntu_upgrade.sh" -o "$tmp_upgrade" 2>/dev/null; then
+                source "$tmp_upgrade"
+                rm -f "$tmp_upgrade"
+                export ACFS_UBUNTU_UPGRADE_LOADED=1
+                return 0
+            fi
             rm -f "$tmp_upgrade"
-            export ACFS_UBUNTU_UPGRADE_LOADED=1
-            return 0
         fi
     fi
 
@@ -947,6 +950,10 @@ cleanup() {
 
     # Cleanup must never abort — disable errexit for the entire function.
     set +e
+
+    if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -d "$ACFS_BOOTSTRAP_DIR" ]]; then
+        rm -rf "$ACFS_BOOTSTRAP_DIR" 2>/dev/null || true
+    fi
 
     # If a signal triggered this cleanup, mark state as interrupted so
     # resume logic does not see a partially-started phase.
@@ -1855,6 +1862,9 @@ run_preflight_checks() {
         echo "" >&2
         log_info "Use --skip-preflight to bypass (not recommended)"
         echo "" >&2
+        if [[ -n "$preflight_tmp" ]]; then
+            rm -f "$preflight_tmp"
+        fi
         exit 1
     fi
 
@@ -2004,6 +2014,7 @@ bootstrap_repo_archive() {
     tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-bootstrap-${ref_safe}.XXXXXX" 2>/dev/null)" || {
         log_fatal "Failed to create temp dir for extraction"
     }
+    ACFS_BOOTSTRAP_DIR="$tmp_dir"
     # Make bootstrap dir world-readable so ubuntu user can access scripts
     chmod 755 "$tmp_dir"
 
@@ -2012,6 +2023,8 @@ bootstrap_repo_archive() {
 
     if ! acfs_curl_with_retry "$archive_url" "$tmp_archive"; then
         log_error "Failed to download ACFS archive. Try again, or pin ACFS_REF to a tag/sha."
+        rm -f "$tmp_archive"
+        rm -rf "$tmp_dir"
         return 1
     fi
 
@@ -2024,8 +2037,10 @@ bootstrap_repo_archive() {
         "*/acfs.manifest.yaml" \
         "*/VERSION"; then
         log_error "Failed to extract ACFS bootstrap archive (tar error)"
+        rm -f "$tmp_archive"
         return 1
     fi
+    rm -f "$tmp_archive"
 
     if [[ ! -f "$tmp_dir/acfs.manifest.yaml" ]] || [[ ! -f "$tmp_dir/checksums.yaml" ]] || [[ ! -f "$tmp_dir/VERSION" ]]; then
         log_error "Bootstrap archive missing required manifest/checksums/VERSION files"

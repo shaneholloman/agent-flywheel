@@ -142,6 +142,7 @@ esac
 
 LG_URL="https://github.com/jesseduffield/lazygit/releases/download/v${LG_VER}/lazygit_${LG_VER}_Linux_${ARCH}.tar.gz"
 TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/acfs_install.XXXXXX")"
+trap 'rm -f "$TMP_FILE"' EXIT
 
 curl -fsSL "$LG_URL" -o "$TMP_FILE"
 echo "$LG_SHA $TMP_FILE" | sha256sum -c - || { echo "Checksum failed"; rm "$TMP_FILE"; exit 1; }
@@ -192,6 +193,7 @@ esac
 
 LD_URL="https://github.com/jesseduffield/lazydocker/releases/download/v${LD_VER}/lazydocker_${LD_VER}_Linux_${ARCH}.tar.gz"
 TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/acfs_install.XXXXXX")"
+trap 'rm -f "$TMP_FILE"' EXIT
 
 curl -fsSL "$LD_URL" -o "$TMP_FILE"
 echo "$LD_SHA $TMP_FILE" | sha256sum -c - || { echo "Checksum failed"; rm "$TMP_FILE"; exit 1; }

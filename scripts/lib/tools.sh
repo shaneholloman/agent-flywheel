@@ -265,7 +265,12 @@ handle_tool_failure() {
                 echo -e "\033[0;33m$error\033[0m" >&2
                 echo -e "\033[0;33mContinuing without $tool\033[0m" >&2
             fi
-            SKIPPED_TOOLS+=("$tool")
+            if declare -f record_skipped_tool &>/dev/null; then
+                record_skipped_tool "$tool" "$error"
+            else
+                SKIPPED_TOOLS+=("$tool")
+                SKIPPED_TOOL_DETAILS["$tool"]="$error|"
+            fi
             return 0
             ;;
     esac

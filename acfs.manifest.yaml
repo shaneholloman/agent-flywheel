@@ -385,6 +385,7 @@ modules:
         
         LG_URL="https://github.com/jesseduffield/lazygit/releases/download/v${LG_VER}/lazygit_${LG_VER}_Linux_${ARCH}.tar.gz"
         TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/acfs_install.XXXXXX")"
+        trap 'rm -f "$TMP_FILE"' EXIT
         
         curl -fsSL "$LG_URL" -o "$TMP_FILE"
         echo "$LG_SHA $TMP_FILE" | sha256sum -c - || { echo "Checksum failed"; rm "$TMP_FILE"; exit 1; }
@@ -420,6 +421,7 @@ modules:
         
         LD_URL="https://github.com/jesseduffield/lazydocker/releases/download/v${LD_VER}/lazydocker_${LD_VER}_Linux_${ARCH}.tar.gz"
         TMP_FILE="$(mktemp "${TMPDIR:-/tmp}/acfs_install.XXXXXX")"
+        trap 'rm -f "$TMP_FILE"' EXIT
         
         curl -fsSL "$LD_URL" -o "$TMP_FILE"
         echo "$LD_SHA $TMP_FILE" | sha256sum -c - || { echo "Checksum failed"; rm "$TMP_FILE"; exit 1; }
@@ -990,6 +992,8 @@ modules:
         tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-supabase.XXXXXX")"
         tmp_tgz="$(mktemp "${TMPDIR:-/tmp}/acfs-supabase.tgz.XXXXXX")"
         tmp_checksums="$(mktemp "${TMPDIR:-/tmp}/acfs-supabase.sha.XXXXXX")"
+        
+        trap "rm -rf '$tmp_dir' '$tmp_tgz' '$tmp_checksums'" EXIT
 
         if [[ -z "$tmp_dir" ]] || [[ -z "$tmp_tgz" ]] || [[ -z "$tmp_checksums" ]]; then
           echo "Supabase CLI: failed to create temp files" >&2
@@ -1790,6 +1794,7 @@ modules:
       - |
         mkdir -p ~/go/bin
         SLB_TMP="$(mktemp -d "${TMPDIR:-/tmp}/slb_build.XXXXXX")"
+        trap 'rm -rf "$SLB_TMP"' EXIT
         cd "$SLB_TMP"
         git clone --depth 1 https://github.com/Dicklesworthstone/simultaneous_launch_button.git .
         go build -o ~/go/bin/slb ./cmd/slb
@@ -2025,6 +2030,7 @@ modules:
       # No install.sh yet - build from source via cargo
       - |
         WA_TMP="$(mktemp -d "${TMPDIR:-/tmp}/wa_build.XXXXXX")"
+        trap 'rm -rf "$WA_TMP"' EXIT
         cd "$WA_TMP"
         git clone --depth 1 https://github.com/Dicklesworthstone/wezterm_automata.git .
         cargo build --release -p wa

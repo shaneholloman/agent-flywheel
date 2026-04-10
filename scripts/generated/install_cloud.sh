@@ -204,6 +204,8 @@ tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-supabase.XXXXXX")"
 tmp_tgz="$(mktemp "${TMPDIR:-/tmp}/acfs-supabase.tgz.XXXXXX")"
 tmp_checksums="$(mktemp "${TMPDIR:-/tmp}/acfs-supabase.sha.XXXXXX")"
 
+trap "rm -rf '$tmp_dir' '$tmp_tgz' '$tmp_checksums'" EXIT
+
 if [[ -z "$tmp_dir" ]] || [[ -z "$tmp_tgz" ]] || [[ -z "$tmp_checksums" ]]; then
   echo "Supabase CLI: failed to create temp files" >&2
   exit 1

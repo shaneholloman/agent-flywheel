@@ -488,8 +488,12 @@ prompt_ssh_key() {
     chmod 700 /root/.ssh
 
     # Ensure authorized_keys ends with a newline before appending.
-    if [[ -s "$authorized_keys" ]] && [[ -n "$(tail -c 1 "$authorized_keys")" ]]; then
-        printf '\n' >> "$authorized_keys"
+    if [[ -s "$authorized_keys" ]]; then
+        local last_char
+        last_char=$(tail -c 1 "$authorized_keys" | od -An -t u1 | tr -d ' ' 2>/dev/null || true)
+        if [[ "$last_char" != "10" ]]; then
+            printf '\n' >> "$authorized_keys"
+        fi
     fi
 
     printf '%s\n' "$pubkey" >> "$authorized_keys"

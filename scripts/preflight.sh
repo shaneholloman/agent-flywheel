@@ -130,7 +130,7 @@ while [[ $# -gt 0 ]]; do
                     exit 1
                     ;;
             esac
-            shift
+            shift 2
             ;;
         --help|-h)
             echo "Usage: $0 [--quiet] [--json|--format json|toon]"

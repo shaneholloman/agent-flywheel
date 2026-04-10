@@ -315,7 +315,7 @@ dashboard_serve() {
                     return 1
                 fi
                 port="$2"
-                shift
+                shift 2
                 ;;
             --host)
                 if [[ -z "${2:-}" || "$2" == -* ]]; then
@@ -323,7 +323,7 @@ dashboard_serve() {
                     return 1
                 fi
                 host="$2"
-                shift
+                shift 2
                 ;;
             --public)
                 host="0.0.0.0"

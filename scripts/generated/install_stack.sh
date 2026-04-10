@@ -1357,6 +1357,7 @@ install_stack_slb() {
         if ! run_as_target_shell <<'INSTALL_STACK_SLB'
 mkdir -p ~/go/bin
 SLB_TMP="$(mktemp -d "${TMPDIR:-/tmp}/slb_build.XXXXXX")"
+trap 'rm -rf "$SLB_TMP"' EXIT
 cd "$SLB_TMP"
 git clone --depth 1 https://github.com/Dicklesworthstone/simultaneous_launch_button.git .
 go build -o ~/go/bin/slb ./cmd/slb
@@ -1759,10 +1760,11 @@ install_stack_wezterm_automata() {
     log_step "Installing stack.wezterm_automata"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: cd \"\$WA_TMP\" (target_user)"
+        log_info "dry-run: install: trap 'rm -rf \"\$WA_TMP\"' EXIT (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_STACK_WEZTERM_AUTOMATA'
 WA_TMP="$(mktemp -d "${TMPDIR:-/tmp}/wa_build.XXXXXX")"
+trap 'rm -rf "$WA_TMP"' EXIT
 cd "$WA_TMP"
 git clone --depth 1 https://github.com/Dicklesworthstone/wezterm_automata.git .
 cargo build --release -p wa
@@ -1770,9 +1772,9 @@ cp target/release/wa ~/.cargo/bin/
 rm -rf "$WA_TMP"
 INSTALL_STACK_WEZTERM_AUTOMATA
         then
-            log_warn "stack.wezterm_automata: install command failed: cd \"\$WA_TMP\""
+            log_warn "stack.wezterm_automata: install command failed: trap 'rm -rf \"\$WA_TMP\"' EXIT"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "stack.wezterm_automata" "install command failed: cd \"\$WA_TMP\""
+              record_skipped_tool "stack.wezterm_automata" "install command failed: trap 'rm -rf \"\$WA_TMP\"' EXIT"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "stack.wezterm_automata"
             fi
