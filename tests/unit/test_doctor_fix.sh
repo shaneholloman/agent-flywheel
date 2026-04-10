@@ -106,6 +106,8 @@ setup_test_env() {
     export ORIGINAL_HOME="$HOME"
     export ORIGINAL_PATH="$PATH"
     export HOME="$TEST_HOME"
+    unset TARGET_HOME
+    unset ACFS_HOME
 }
 
 # Cleanup test environment
@@ -117,6 +119,8 @@ cleanup_test_env() {
     if [[ -n "${ORIGINAL_PATH:-}" ]]; then
         export PATH="$ORIGINAL_PATH"
     fi
+    unset TARGET_HOME
+    unset ACFS_HOME
     rm -rf "/tmp/test_doctor_fix_"* 2>/dev/null || true
 }
 
@@ -611,6 +615,90 @@ test_fix_acfs_sourcing_idempotent() {
     # Counter should not increment
     if [[ $FIX_APPLIED -ne 0 ]]; then
         echo "  FIX_APPLIED should be 0, got $FIX_APPLIED"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+test_fix_acfs_sourcing_uses_target_home() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.acfs/zsh"
+    echo "# Target ACFS config" > "$TARGET_HOME/.acfs/zsh/acfs.zshrc"
+    echo "# Target zshrc" > "$TARGET_HOME/.zshrc"
+    echo "# Caller zshrc" > "$HOME/.zshrc"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    fix_acfs_sourcing "shell.acfs_sourced" >/dev/null 2>&1
+
+    if ! grep -q "source ~/.acfs/zsh/acfs.zshrc" "$TARGET_HOME/.zshrc"; then
+        echo "  Target-home .zshrc was not updated"
+        cleanup_test_env
+        return 1
+    fi
+
+    if grep -q "source ~/.acfs/zsh/acfs.zshrc" "$HOME/.zshrc"; then
+        echo "  Caller HOME .zshrc was modified unexpectedly"
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null
+    cleanup_test_env
+    return 0
+}
+
+test_dispatch_fix_config_copy_uses_target_home() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.acfs"
+
+    dispatch_fix "config.acfs_zshrc" "warn" >/dev/null 2>&1
+
+    if [[ ! -f "$TARGET_HOME/.acfs/zsh/acfs.zshrc" ]]; then
+        echo "  Config copy did not write into TARGET_HOME"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -e "$HOME/.acfs/zsh/acfs.zshrc" ]]; then
+        echo "  Config copy wrote into caller HOME unexpectedly"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+test_dispatch_fix_symlink_uses_target_home() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.cargo/bin" "$TARGET_HOME/.local/bin"
+    printf '#!/usr/bin/env bash\necho br\n' > "$TARGET_HOME/.cargo/bin/br"
+    chmod +x "$TARGET_HOME/.cargo/bin/br"
+
+    dispatch_fix "symlink.br" "warn" >/dev/null 2>&1
+
+    if [[ ! -L "$TARGET_HOME/.local/bin/br" ]]; then
+        echo "  Symlink fix did not write into TARGET_HOME"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -e "$HOME/.local/bin/br" ]]; then
+        echo "  Symlink fix wrote into caller HOME unexpectedly"
         cleanup_test_env
         return 1
     fi
@@ -1144,6 +1232,7 @@ main() {
     # fix_acfs_sourcing tests
     run_test test_fix_acfs_sourcing_applies
     run_test test_fix_acfs_sourcing_idempotent
+    run_test test_fix_acfs_sourcing_uses_target_home
     run_test test_fix_acfs_sourcing_missing_acfs_config
     run_test test_fix_acfs_sourcing_dry_run
 
@@ -1158,6 +1247,8 @@ main() {
     run_test test_dispatch_fix_skips_pass
     run_test test_dispatch_fix_skips_skip
     run_test test_dispatch_fix_routes_path
+    run_test test_dispatch_fix_config_copy_uses_target_home
+    run_test test_dispatch_fix_symlink_uses_target_home
     run_test test_dispatch_fix_routes_manual
     run_test test_dispatch_fix_unknown_skipped
 
