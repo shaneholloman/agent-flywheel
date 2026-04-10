@@ -231,7 +231,6 @@ function shellQuote(str: string): string {
  * However, we allow specific runtime variables to be expanded:
  * - TARGET_HOME
  * - TARGET_USER
- * - TARGET_HOME with dynamic HOME/target-user fallback
  * - TARGET_USER with Ubuntu default fallback
  *
  * SECURITY:
@@ -246,7 +245,7 @@ function shellQuoteVerifiedInstallerArg(str: string): string {
   // Regex to capture allowed variables.
   // Order matters: match longest tokens first (${VAR} before $VAR).
   // capturing group () is included in split output.
-  const variablePattern = /(\$\{TARGET_HOME:-\$\{HOME:-\/home\/\$\{TARGET_USER:-ubuntu\}\}\}|\$\{TARGET_USER:-ubuntu\}|\$\{TARGET_HOME\}|\$TARGET_HOME|\$\{TARGET_USER\}|\$TARGET_USER)/g;
+  const variablePattern = /(\$\{TARGET_USER:-ubuntu\}|\$\{TARGET_HOME\}|\$TARGET_HOME|\$\{TARGET_USER\}|\$TARGET_USER)/g;
 
   const parts = str.split(variablePattern);
 
@@ -254,7 +253,6 @@ function shellQuoteVerifiedInstallerArg(str: string): string {
     .map((part) => {
       // If it's one of our allowed variables, wrap in double quotes to allow expansion
       if (
-        part === '${TARGET_HOME:-${HOME:-/home/${TARGET_USER:-ubuntu}}}' ||
         part === '${TARGET_USER:-ubuntu}' ||
         part === '${TARGET_HOME}' ||
         part === '$TARGET_HOME' ||

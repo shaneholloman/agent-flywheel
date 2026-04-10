@@ -210,15 +210,18 @@ describe('Generated verified installer args', () => {
     expect(stackContent).not.toContain('TARGET_USER="${TARGET_USER:-ubuntu}"');
   });
 
-  test('stack.mcp_agent_mail keeps TARGET_HOME fallback as an expandable variable', () => {
+  test('stack.mcp_agent_mail dest uses TARGET_HOME directly without caller HOME fallback', () => {
     const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
     expect(existsSync(stackPath)).toBe(true);
     const stackContent = readFileSync(stackPath, 'utf-8');
 
-    // Regression guard: this used to be single-quoted as one literal token,
-    // which passed `${TARGET_HOME:-...}` verbatim to the installer.
-    expect(stackContent).not.toContain("'${TARGET_HOME:-/home/ubuntu}/mcp_agent_mail'");
-    expect(stackContent).toContain('"${TARGET_HOME:-/home/ubuntu}"');
+    // Regression guard: the outer shell expands verified-installer args before
+    // run_as_target_runner switches users, so any HOME fallback here can route
+    // the install into the caller home instead of TARGET_HOME.
+    expect(stackContent).not.toContain('${TARGET_HOME:-${HOME:-/home/${TARGET_USER:-ubuntu}}}');
+    expect(stackContent).not.toContain('${HOME:-/home/${TARGET_USER:-ubuntu}}');
+    expect(stackContent).toContain('"$TARGET_HOME"');
+    expect(stackContent).toContain("'/mcp_agent_mail'");
   });
 
   test('stack.mcp_agent_mail writes an explicit managed no-auth service instead of tmux', () => {
