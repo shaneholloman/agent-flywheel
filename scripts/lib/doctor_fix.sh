@@ -1080,7 +1080,7 @@ fix_mcp_agent_mail() {
 
     if command -v systemctl &>/dev/null; then
         local uid runtime_dir user_bus
-        local -a service_env=("HOME=$HOME")
+        local -a service_env=("HOME=$runtime_home")
 
         uid="$(id -u)"
         runtime_dir="/run/user/$uid"

@@ -995,6 +995,99 @@ EOF
     return 0
 }
 
+test_fix_mcp_agent_mail_uses_target_home_for_systemctl_env() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin" "$TARGET_HOME/mcp_agent_mail"
+    export PATH="$TARGET_HOME/.local/bin:$PATH"
+
+    cat > "$TARGET_HOME/.local/bin/am" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version)
+        echo "am 1.0.0"
+        ;;
+    doctor)
+        case "${2:-}" in
+            repair|fix)
+                exit 0
+                ;;
+            check)
+                echo '{"healthy":true}'
+                ;;
+            *)
+                exit 1
+                ;;
+        esac
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+EOF
+    chmod +x "$TARGET_HOME/.local/bin/am"
+
+    cat > "$TARGET_HOME/.local/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$HOME" >> "${TARGET_HOME}/systemctl-home.log"
+case "${2:-}" in
+    show-environment|daemon-reload|enable|restart|is-active)
+        exit 0
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$TARGET_HOME/.local/bin/systemctl"
+
+    cat > "$TARGET_HOME/.local/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$TARGET_HOME/.local/bin/curl"
+
+    if ! fix_mcp_agent_mail "fix.stack.mcp_agent_mail" >/dev/null 2>&1; then
+        echo "  fix_mcp_agent_mail should succeed"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -f "$TARGET_HOME/.config/systemd/user/agent-mail.service" ]]; then
+        echo "  Agent Mail user unit was not written into TARGET_HOME"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -f "$HOME/.config/systemd/user/agent-mail.service" ]]; then
+        echo "  Agent Mail user unit was written into caller HOME unexpectedly"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -f "$TARGET_HOME/systemctl-home.log" ]]; then
+        echo "  systemctl stub did not record HOME"
+        cleanup_test_env
+        return 1
+    fi
+
+    if grep -Fxq "$HOME" "$TARGET_HOME/systemctl-home.log"; then
+        echo "  systemctl received caller HOME unexpectedly"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -Fxq "$TARGET_HOME" "$TARGET_HOME/systemctl-home.log"; then
+        echo "  systemctl did not receive TARGET_HOME"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
 # ============================================================
 # Test: dispatch_fix routing
 # ============================================================
@@ -1242,6 +1335,7 @@ main() {
     run_test test_fix_verified_install_ms_arm64_fallback_uses_cargo
     run_test test_dcg_hook_already_installed_detects_hook_wiring
     run_test test_agent_mail_fix_stop_fallback_cleans_up_matching_pid
+    run_test test_fix_mcp_agent_mail_uses_target_home_for_systemctl_env
 
     # dispatch_fix tests
     run_test test_dispatch_fix_skips_pass
