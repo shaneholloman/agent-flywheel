@@ -959,6 +959,10 @@ cleanup() {
         rm -f "$ACFS_TMP_ARCHIVE" 2>/dev/null || true
     fi
 
+    if [[ -n "${ACFS_TMP_SLB:-}" ]] && [[ -d "$ACFS_TMP_SLB" ]]; then
+        rm -rf "$ACFS_TMP_SLB" 2>/dev/null || true
+    fi
+
     # If a signal triggered this cleanup, mark state as interrupted so
     # resume logic does not see a partially-started phase.
     if [[ -n "${_ACFS_SIGNAL_RECEIVED:-}" ]]; then
@@ -4657,6 +4661,7 @@ install_supabase_cli_release() {
         log_error "Supabase CLI: failed to create temp files"
         return 1
     fi
+    trap 'rm -rf "$tmp_dir" "$tmp_tgz" "$tmp_checksums" 2>/dev/null || true' RETURN
 
     if ! acfs_curl -o "$tmp_tgz" "${base_url}/${tarball}" 2>/dev/null; then
         log_error "Supabase CLI: failed to download ${tarball}"
@@ -5241,17 +5246,17 @@ UNIT_EOF
         [[ "$(uname -m)" == "aarch64" ]] && slb_arch="arm64"
         local slb_deb="slb_${slb_version}_linux_${slb_arch}.deb"
         local slb_url="https://github.com/Dicklesworthstone/slb/releases/download/v${slb_version}/${slb_deb}"
-        local slb_tmp
-        slb_tmp="$(mktemp -d "${TMPDIR:-/tmp}/acfs-slb.XXXXXX" 2>/dev/null)" || slb_tmp=""
-        if [[ -n "$slb_tmp" ]] && [[ -d "$slb_tmp" ]]; then
-            if acfs_curl -o "${slb_tmp}/${slb_deb}" "$slb_url" && \
-               $SUDO dpkg -i "${slb_tmp}/${slb_deb}"; then
+        ACFS_TMP_SLB="$(mktemp -d "${TMPDIR:-/tmp}/acfs-slb.XXXXXX" 2>/dev/null)" || ACFS_TMP_SLB=""
+        if [[ -n "$ACFS_TMP_SLB" ]] && [[ -d "$ACFS_TMP_SLB" ]]; then
+            if acfs_curl -o "${ACFS_TMP_SLB}/${slb_deb}" "$slb_url" && \
+               $SUDO dpkg -i "${ACFS_TMP_SLB}/${slb_deb}"; then
                 log_success "SLB installed via .deb"
             else
                 log_warn "SLB .deb install failed, trying upstream script"
                 try_step "Installing SLB (upstream)" acfs_run_verified_upstream_script_as_target "slb" "bash" || log_warn "SLB installation may have failed"
             fi
-            rm -rf "$slb_tmp"
+            rm -rf "$ACFS_TMP_SLB" 2>/dev/null || true
+            ACFS_TMP_SLB=""
         else
             log_warn "Failed to create temp directory for SLB, trying upstream script"
             try_step "Installing SLB (upstream)" acfs_run_verified_upstream_script_as_target "slb" "bash" || log_warn "SLB installation may have failed"
