@@ -1265,6 +1265,34 @@ EOF
     cleanup_mock_env
 }
 
+test_acfs_update_wrapper_repairs_runtime_home_on_direct_exec() {
+    setup_system_state_target_home_only_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.acfs/scripts/lib"
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    cat > "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s ARG1=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_ROOT_HOME/.acfs" TARGET_HOME="$TEST_ROOT_HOME" \
+        ACFS_STATE_FILE="$TEST_ROOT_HOME/.acfs/state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs-update" --dry-run 2>&1)
+
+    if [[ "$output" == "HOME=$TEST_TARGET_HOME TARGET_HOME=$TEST_TARGET_HOME ACFS_HOME=$TEST_INSTALLED_ACFS ARG1=--dry-run" ]]; then
+        harness_pass "acfs-update wrapper repairs runtime home on direct exec"
+    else
+        harness_fail "acfs-update wrapper repairs runtime home on direct exec" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user() {
     setup_mock_env
 
@@ -1365,6 +1393,34 @@ EOF
         harness_pass "global acfs wrapper uses system-state target_home when getent is unavailable"
     else
         harness_fail "global acfs wrapper uses system-state target_home when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_global_wrapper_repairs_runtime_home_on_direct_exec() {
+    setup_system_state_target_home_only_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.local/bin"
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    cat > "$TEST_TARGET_HOME/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s ARG1=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.local/bin/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_ROOT_HOME/.acfs" TARGET_HOME="$TEST_ROOT_HOME" \
+        ACFS_STATE_FILE="$TEST_ROOT_HOME/.acfs/state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "HOME=$TEST_TARGET_HOME TARGET_HOME=$TEST_TARGET_HOME ACFS_HOME=$TEST_INSTALLED_ACFS ARG1=version" ]]; then
+        harness_pass "global acfs wrapper repairs runtime home on direct exec"
+    else
+        harness_fail "global acfs wrapper repairs runtime home on direct exec" "$output"
     fi
 
     cleanup_mock_env
@@ -1961,8 +2017,10 @@ main() {
     test_doctor_entrypoint_dispatches_helper_commands || true
     test_doctor_dispatches_installed_layout_under_root_home || true
     test_acfs_update_wrapper_uses_system_state_target_home_when_getent_unavailable || true
+    test_acfs_update_wrapper_repairs_runtime_home_on_direct_exec || true
     test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user || true
     test_acfs_global_wrapper_uses_system_state_target_home_when_getent_unavailable || true
+    test_acfs_global_wrapper_repairs_runtime_home_on_direct_exec || true
     test_acfs_global_wrapper_ignores_stale_home_adjacent_target_user || true
     test_doctor_agent_checks_use_target_context_under_root_home || true
     test_doctor_deep_agent_auth_uses_target_context_under_root_home || true

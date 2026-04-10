@@ -246,6 +246,41 @@ find_update_script_for_home() {
   return 1
 }
 
+home_from_update_script() {
+  local update_script="$1"
+  local user_home=""
+
+  [[ -n "$update_script" ]] || return 1
+
+  case "$update_script" in
+    */.acfs/scripts/lib/update.sh)
+      user_home="${update_script%/.acfs/scripts/lib/update.sh}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  [[ -n "$user_home" ]] || return 1
+  [[ "$user_home" == /* ]] || return 1
+  [[ "$user_home" != "/" ]] || return 1
+  printf '%s\n' "${user_home%/}"
+}
+
+prepare_runtime_context_from_home() {
+  local user_home="$1"
+
+  [[ -n "$user_home" ]] || return 1
+  [[ "$user_home" == /* ]] || return 1
+  [[ "$user_home" != "/" ]] || return 1
+
+  TARGET_HOME="$user_home"
+  ACFS_HOME="$user_home/.acfs"
+  ACFS_STATE_FILE="$ACFS_HOME/state.json"
+
+  export TARGET_HOME ACFS_HOME ACFS_STATE_FILE
+}
+
 find_repo_local_update_script() {
   local candidate=""
 
@@ -371,6 +406,7 @@ exec_as_target_user() {
 
   [[ -n "${ACFS_STATE_FILE:-}" ]] && env_args+=("ACFS_STATE_FILE=$ACFS_STATE_FILE")
   [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$ACFS_SYSTEM_STATE_FILE")
+  [[ -n "${TARGET_HOME:-}" ]] && env_args+=("TARGET_HOME=$TARGET_HOME")
   [[ -n "${ACFS_HOME:-}" ]] && env_args+=("ACFS_HOME=$ACFS_HOME")
   [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
   [[ -n "${ACFS_RAW:-}" ]] && env_args+=("ACFS_RAW=$ACFS_RAW")
@@ -408,6 +444,8 @@ main() {
   local target_user=""
   local current_user=""
   local wrapper_home=""
+  local runtime_home=""
+  local runtime_user=""
   local candidate_script=""
 
   repo_update_script="$(find_repo_local_update_script || true)"
@@ -454,8 +492,20 @@ main() {
     exit 1
   fi
 
+  runtime_home="$(home_from_update_script "$update_script" 2>/dev/null || true)"
+  if [[ -n "$runtime_home" ]]; then
+    prepare_runtime_context_from_home "$runtime_home"
+    runtime_user="$(read_user_for_home "$runtime_home" 2>/dev/null || true)"
+    if [[ -n "$runtime_user" ]]; then
+      target_user="$runtime_user"
+    fi
+  fi
+
   current_user="$(whoami)"
   if [[ -z "$target_user" || "$current_user" == "$target_user" ]]; then
+    if [[ -n "${TARGET_HOME:-}" ]]; then
+      exec env HOME="$TARGET_HOME" TARGET_HOME="$TARGET_HOME" ACFS_HOME="${ACFS_HOME:-$TARGET_HOME/.acfs}" bash "$update_script" "$@"
+    fi
     exec bash "$update_script" "$@"
   fi
 
