@@ -16,11 +16,146 @@
 
 set -euo pipefail
 
+# Resolve the physical script path so installed symlinks (e.g. ~/.local/bin/onboard)
+# still map back to the real ~/.acfs/onboard tree.
+resolve_onboard_script_path() {
+    local source_path="${BASH_SOURCE[0]}"
+    local dir=""
+    local target=""
+
+    while command -v readlink >/dev/null 2>&1 && [[ -L "$source_path" ]]; do
+        dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+        target="$(readlink "$source_path" 2>/dev/null || true)"
+        [[ -n "$target" ]] || break
+        if [[ "$target" == /* ]]; then
+            source_path="$target"
+        else
+            source_path="$dir/$target"
+        fi
+    done
+
+    dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+    printf '%s/%s\n' "$dir" "$(basename "$source_path")"
+}
+
+SCRIPT_PATH="$(resolve_onboard_script_path)"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-ACFS_HOME="${ACFS_HOME:-$HOME/.acfs}"
+_ONBOARD_EXPLICIT_ACFS_HOME="${ACFS_HOME:-}"
+_ONBOARD_DEFAULT_ACFS_HOME="$HOME/.acfs"
+_ONBOARD_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
+
+onboard_home_for_user() {
+    local user="$1"
+    local passwd_entry=""
+
+    [[ -n "$user" ]] || return 1
+
+    if command -v getent >/dev/null 2>&1; then
+        passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            printf '%s\n' "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            return 0
+        fi
+    fi
+
+    if [[ "$user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s\n' "$user"
+        return 0
+    fi
+
+    return 1
+}
+
+onboard_read_state_string() {
+    local state_file="$1"
+    local key="$2"
+    local value=""
+
+    [[ -f "$state_file" ]] || return 1
+
+    if command -v jq >/dev/null 2>&1; then
+        value="$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)"
+    else
+        value="$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)"
+    fi
+
+    [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+onboard_candidate_has_acfs_data() {
+    local candidate="$1"
+    [[ -n "$candidate" ]] || return 1
+    [[ -d "$candidate/onboard" || -f "$candidate/state.json" || -f "$candidate/VERSION" ]]
+}
+
+onboard_script_acfs_home() {
+    local candidate=""
+
+    candidate="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)" || return 1
+    [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
+    [[ -d "$candidate/onboard" ]] || return 1
+    printf '%s\n' "$candidate"
+}
+
+onboard_resolve_acfs_home() {
+    if [[ -n "$_ONBOARD_EXPLICIT_ACFS_HOME" ]]; then
+        printf '%s\n' "$_ONBOARD_EXPLICIT_ACFS_HOME"
+        return 0
+    fi
+
+    local installed_home=""
+    local target_home=""
+    local target_user=""
+    local candidate=""
+
+    installed_home="$(onboard_script_acfs_home 2>/dev/null || true)"
+    if onboard_candidate_has_acfs_data "$installed_home"; then
+        printf '%s\n' "$installed_home"
+        return 0
+    fi
+
+    if onboard_candidate_has_acfs_data "$_ONBOARD_DEFAULT_ACFS_HOME"; then
+        printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
+        return 0
+    fi
+
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        target_home="$(onboard_home_for_user "$SUDO_USER" 2>/dev/null || true)"
+        candidate="${target_home}/.acfs"
+        if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
+    target_user="$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
+    if [[ -n "$target_user" ]]; then
+        target_home="$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)"
+        if [[ -z "$target_home" ]]; then
+            target_home="$(onboard_home_for_user "$target_user" 2>/dev/null || true)"
+        fi
+        candidate="${target_home}/.acfs"
+        if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
+    printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
+}
+
+ACFS_HOME="$(onboard_resolve_acfs_home)"
 LESSONS_DIR="${ACFS_LESSONS_DIR:-$ACFS_HOME/onboard/lessons}"
 PROGRESS_FILE="${ACFS_PROGRESS_FILE:-$ACFS_HOME/onboard_progress.json}"
 PROGRESS_LOCK_FILE="${PROGRESS_FILE}.lock"
@@ -39,11 +174,10 @@ _onboard_cleanup() {
 trap _onboard_cleanup INT TERM HUP
 
 # Source gum_ui library if available for consistent theming
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 for candidate in \
     "$SCRIPT_DIR/../scripts/lib/gum_ui.sh" \
     "$SCRIPT_DIR/../../scripts/lib/gum_ui.sh" \
-    "$HOME/.acfs/scripts/lib/gum_ui.sh"; do
+    "$ACFS_HOME/scripts/lib/gum_ui.sh"; do
     if [[ -f "$candidate" ]]; then
         # shellcheck disable=SC1090,SC1091
         source "$candidate"
@@ -2123,7 +2257,7 @@ case "$arg" in
         shift || true
         cheatsheet_script=""
         for candidate in \
-            "$HOME/.acfs/scripts/lib/cheatsheet.sh" \
+            "$ACFS_HOME/scripts/lib/cheatsheet.sh" \
             "$SCRIPT_DIR/../../scripts/lib/cheatsheet.sh" \
             "$SCRIPT_DIR/../scripts/lib/cheatsheet.sh"; do
             if [[ -f "$candidate" ]]; then

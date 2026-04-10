@@ -1182,6 +1182,57 @@ test_onboard_accepts_sparse_lesson_numbers() {
     cleanup_mock_env
 }
 
+test_onboard_uses_installed_layout_under_root_home() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_INSTALLED_ACFS/onboard"
+    cp "$ONBOARD_SH" "$TEST_INSTALLED_ACFS/onboard/onboard.sh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/onboard/onboard.sh" status 2>&1)
+
+    if [[ -f "$TEST_INSTALLED_ACFS/onboard_progress.json" ]] \
+        && [[ ! -e "$TEST_ROOT_HOME/.acfs/onboard_progress.json" ]] \
+        && [[ "$output" != *"No lessons available"* ]] \
+        && [[ "$output" != *"$TEST_ROOT_HOME/.acfs/onboard/lessons"* ]]; then
+        harness_pass "onboard uses installed layout under root home"
+    else
+        harness_fail "onboard uses installed layout under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_onboard_cheatsheet_uses_installed_layout_under_root_home() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_INSTALLED_ACFS/onboard" "$TEST_INSTALLED_ACFS/zsh" "$TEST_INSTALLED_ACFS/scripts/lib"
+    cp "$ONBOARD_SH" "$TEST_INSTALLED_ACFS/onboard/onboard.sh"
+    cp "$CHEATSHEET_SH" "$TEST_INSTALLED_ACFS/scripts/lib/cheatsheet.sh"
+
+    cat > "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" <<'EOF'
+if command -v claude >/dev/null 2>&1; then
+  alias cc='claude'
+fi
+alias cod='codex'
+EOF
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/onboard/onboard.sh" cheatsheet --json)
+
+    if printf '%s\n' "$output" | jq -e --arg zshrc "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" '
+        .source == $zshrc and ([.entries[].name] | index("cc")) != null and ([.entries[].name] | index("cod")) != null
+    ' >/dev/null 2>&1; then
+        harness_pass "onboard cheatsheet uses installed layout under root home"
+    else
+        harness_fail "onboard cheatsheet uses installed layout under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 main() {
     harness_init "ACFS Changelog/Export/Status Tests"
 
@@ -1238,6 +1289,8 @@ main() {
     test_onboard_cli_aliases_work_in_zero_lessons_mode || true
     test_onboard_repairs_malformed_progress_before_showing_lesson || true
     test_onboard_accepts_sparse_lesson_numbers || true
+    test_onboard_uses_installed_layout_under_root_home || true
+    test_onboard_cheatsheet_uses_installed_layout_under_root_home || true
 
     harness_section "Entrypoint Dispatch"
     test_doctor_entrypoint_dispatches_helper_commands || true
