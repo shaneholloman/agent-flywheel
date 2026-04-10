@@ -166,8 +166,8 @@ onboard_resolve_runtime_home() {
         return 0
     fi
 
-    target_home="$(onboard_read_state_string "$ACFS_HOME/state.json" "target_home" 2>/dev/null || \
-        onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)"
+    target_home="$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || \
+        onboard_read_state_string "$ACFS_HOME/state.json" "target_home" 2>/dev/null || true)"
     if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
         printf '%s\n' "${target_home%/}"
         return 0

@@ -247,6 +247,123 @@ setup_system_state_only_env() {
 JSON
 }
 
+setup_system_state_target_home_env() {
+    setup_mock_env
+
+    TEST_ROOT_HOME="$TEST_HOME/root-home"
+    TEST_TARGET_HOME="$TEST_HOME/custom-home"
+    TEST_INSTALLED_ACFS="$TEST_TARGET_HOME/.acfs"
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    TEST_SYSTEM_STATE_FILE="$TEST_HOME/system-state/state.json"
+    TEST_INSTALLED_HELPERS="$TEST_HOME/installed_helpers.sh"
+    TEST_INSTALLED_MANIFEST_INDEX="$TEST_HOME/installed_manifest_index.sh"
+
+    mkdir -p \
+        "$TEST_ROOT_HOME" \
+        "$TEST_INSTALLED_ACFS/onboard/lessons" \
+        "$TEST_TARGET_HOME/.oh-my-zsh" \
+        "$TEST_TARGET_HOME/.local/bin" \
+        "$TEST_TARGET_HOME/.bun/bin" \
+        "$TEST_TARGET_HOME/.cargo/bin" \
+        "$TEST_TARGET_HOME/go/bin" \
+        "$TEST_TARGET_HOME/.atuin/bin" \
+        "$TEST_FAKE_BIN" \
+        "$(dirname "$TEST_SYSTEM_STATE_FILE")"
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<'JSON'
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "/placeholder/overridden/by/system/state",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+JSON
+    printf '2.0.0\n' > "$TEST_INSTALLED_ACFS/VERSION"
+
+    cat > "$TEST_INSTALLED_ACFS/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [2.0.0] - 2026-03-10
+
+### Fixed
+- System-state target_home fallback now finds the real install
+EOF
+
+    printf '# Installed Lesson\n' > "$TEST_INSTALLED_ACFS/onboard/lessons/01_intro.md"
+
+    cat > "$TEST_SYSTEM_STATE_FILE" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+
+    cat > "$TEST_INSTALLED_HELPERS" <<EOF
+#!/usr/bin/env bash
+acfs_module_is_installed() {
+    [[ "\${TARGET_USER:-}" == "tester" ]] || return 1
+    [[ "\${TARGET_HOME:-}" == "$TEST_TARGET_HOME" ]] || return 1
+
+    case "\$1" in
+        alpha|'module "beta" \\\\ path') return 0 ;;
+        *) return 1 ;;
+    esac
+}
+EOF
+    chmod +x "$TEST_INSTALLED_HELPERS"
+
+    cat > "$TEST_INSTALLED_MANIFEST_INDEX" <<'EOF'
+#!/usr/bin/env bash
+ACFS_MODULES_IN_ORDER=(
+  "alpha"
+  "module \"beta\" \\\\ path"
+  "gamma"
+)
+ACFS_MANIFEST_INDEX_LOADED=true
+EOF
+    chmod +x "$TEST_INSTALLED_MANIFEST_INDEX"
+
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    cat > "$TEST_FAKE_BIN/pgrep" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$TEST_FAKE_BIN/pgrep"
+
+    cat > "$TEST_FAKE_BIN/systemctl" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$TEST_FAKE_BIN/systemctl"
+
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/zsh" "zsh 5.9"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/git" "git version 2.43.0"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/tmux" "tmux 3.4"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/rg" "ripgrep 14.1.0"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/claude" "claude 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/codex" "codex 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/uv" "uv 0.8.0"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/rustc" "rustc 1.85.0"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/ntm" "ntm 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.bun/bin/bun" "1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.cargo/bin/cargo" "cargo 1.85.0"
+    write_fake_command "$TEST_TARGET_HOME/go/bin/go" "go version go1.24.0 linux/amd64"
+}
+
 cleanup_mock_env() {
     if [[ -n "$TEST_HOME" ]] && [[ -d "$TEST_HOME" ]]; then
         rm -rf "$TEST_HOME"
@@ -594,6 +711,22 @@ test_status_uses_system_state_when_user_state_missing() {
     cleanup_mock_env
 }
 
+test_status_uses_system_state_target_home_when_getent_unavailable() {
+    setup_system_state_target_home_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$STATUS_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '.status == "ok" and .last_update == "2026-03-10T12:34:56Z" and (.errors | length == 0)' >/dev/null 2>&1; then
+        harness_pass "status uses target_home from system state when getent is unavailable"
+    else
+        harness_fail "status uses target_home from system state when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_changelog_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
 
@@ -622,6 +755,22 @@ test_changelog_uses_system_state_when_user_state_missing() {
         harness_pass "changelog falls back to system state when user state is missing"
     else
         harness_fail "changelog falls back to system state when user state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_changelog_uses_system_state_target_home_when_getent_unavailable() {
+    setup_system_state_target_home_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$CHANGELOG_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '.changes | (length == 1 and .[0].version == "2.0.0")' >/dev/null 2>&1; then
+        harness_pass "changelog uses target_home from system state when getent is unavailable"
+    else
+        harness_fail "changelog uses target_home from system state when getent is unavailable" "$output"
     fi
 
     cleanup_mock_env
@@ -664,6 +813,30 @@ test_export_config_uses_system_state_when_user_state_missing() {
     cleanup_mock_env
 }
 
+test_export_config_uses_system_state_target_home_when_getent_unavailable() {
+    setup_system_state_target_home_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        ACFS_INSTALL_HELPERS_SH="$TEST_INSTALLED_HELPERS" ACFS_MANIFEST_INDEX_SH="$TEST_INSTALLED_MANIFEST_INDEX" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$EXPORT_CONFIG_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '
+        .metadata.acfs_version == "2.0.0" and
+        (.modules | length) == 2 and
+        .modules == ["alpha", "module \"beta\" \\\\ path"] and
+        .tools.bun.version == "1.2.3" and
+        .agents.claude.version == "1.2.3"
+    ' >/dev/null 2>&1; then
+        harness_pass "export-config uses target_home from system state when getent is unavailable"
+    else
+        harness_fail "export-config uses target_home from system state when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_continue_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
 
@@ -675,6 +848,26 @@ test_continue_uses_installed_layout_under_root_home() {
         harness_pass "continue discovers installed-layout state under root home"
     else
         harness_fail "continue discovers installed-layout state under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_continue_uses_system_state_target_home_when_getent_unavailable() {
+    setup_system_state_target_home_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TEST_CONTINUE_SCRIPT="$CONTINUE_SH" \
+        bash -lc '
+            source "$TEST_CONTINUE_SCRIPT"
+            get_install_state_file
+        ' 2>&1)
+
+    if [[ "$output" == "$TEST_TARGET_HOME/.acfs/state.json" ]]; then
+        harness_pass "continue uses target_home from system state when getent is unavailable"
+    else
+        harness_fail "continue uses target_home from system state when getent is unavailable" "$output"
     fi
 
     cleanup_mock_env
@@ -850,6 +1043,25 @@ test_info_uses_installed_layout_under_root_home() {
     cleanup_mock_env
 }
 
+test_info_uses_system_state_target_home_when_getent_unavailable() {
+    setup_system_state_target_home_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_TARGET_HOME/.local/bin:$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$INFO_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e \
+        '.installation.date == "2026-03-09" and .onboard.total_lessons == 1 and .onboard.next_lesson == "Lesson 1 - Installed Lesson"' \
+        >/dev/null 2>&1; then
+        harness_pass "info uses target_home from system state when getent is unavailable"
+    else
+        harness_fail "info uses target_home from system state when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_info_uses_target_user_path_under_root_home() {
     setup_installed_layout_env
 
@@ -894,6 +1106,34 @@ test_support_bundle_uses_installed_layout_under_root_home() {
         harness_pass "support bundle uses installed-layout home and target user under root home"
     else
         harness_fail "support bundle uses installed-layout home and target user under root home" "$archive_path"
+    fi
+
+    cleanup_mock_env
+}
+
+test_support_bundle_uses_system_state_target_home_when_getent_unavailable() {
+    setup_system_state_target_home_env
+
+    local output_dir="$TEST_HOME/support-out"
+    mkdir -p "$output_dir"
+
+    local archive_path=""
+    archive_path=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" SUPPORT_BUNDLE_DOCTOR_TIMEOUT=1 PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$SUPPORT_SH" --output "$output_dir")
+
+    local bundle_dir="$archive_path"
+    if [[ "$bundle_dir" == *.tar.gz ]]; then
+        bundle_dir="${bundle_dir%.tar.gz}"
+    fi
+
+    if [[ -f "$bundle_dir/environment.json" ]] \
+        && [[ -f "$bundle_dir/state.json" ]] \
+        && jq -e --arg acfs_home "$TEST_INSTALLED_ACFS" --arg target_home "$TEST_TARGET_HOME" \
+            '.acfs_home == $acfs_home and .home == $target_home and .user == "tester"' \
+            "$bundle_dir/environment.json" >/dev/null 2>&1; then
+        harness_pass "support bundle uses target_home from system state when getent is unavailable"
+    else
+        harness_fail "support bundle uses target_home from system state when getent is unavailable" "$archive_path"
     fi
 
     cleanup_mock_env
@@ -1345,6 +1585,7 @@ main() {
     test_export_config_json_is_valid || true
     test_export_config_uses_installed_layout_under_root_home || true
     test_export_config_uses_system_state_when_user_state_missing || true
+    test_export_config_uses_system_state_target_home_when_getent_unavailable || true
 
     harness_section "Status"
     test_status_rejects_unknown_flags || true
@@ -1353,13 +1594,16 @@ main() {
     test_status_errors_on_malformed_state_json || true
     test_status_uses_installed_layout_under_root_home || true
     test_status_uses_system_state_when_user_state_missing || true
+    test_status_uses_system_state_target_home_when_getent_unavailable || true
 
     harness_section "Changelog Root Context"
     test_changelog_uses_installed_layout_under_root_home || true
     test_changelog_uses_system_state_when_user_state_missing || true
+    test_changelog_uses_system_state_target_home_when_getent_unavailable || true
 
     harness_section "Continue"
     test_continue_uses_installed_layout_under_root_home || true
+    test_continue_uses_system_state_target_home_when_getent_unavailable || true
     test_continue_ignores_generic_install_process_matches || true
     test_continue_failed_state_beats_runtime_probe || true
     test_continue_reports_installed_layout_log_locations || true
@@ -1378,10 +1622,12 @@ main() {
 
     harness_section "Info / Support / Onboard"
     test_info_uses_installed_layout_under_root_home || true
+    test_info_uses_system_state_target_home_when_getent_unavailable || true
     test_info_uses_target_user_path_under_root_home || true
     test_info_zero_lessons_hides_onboard_prompt_and_explains_state || true
     test_info_reads_skipped_tools_without_jq || true
     test_support_bundle_uses_installed_layout_under_root_home || true
+    test_support_bundle_uses_system_state_target_home_when_getent_unavailable || true
     test_onboard_cli_aliases_work_in_zero_lessons_mode || true
     test_onboard_repairs_malformed_progress_before_showing_lesson || true
     test_onboard_accepts_sparse_lesson_numbers || true

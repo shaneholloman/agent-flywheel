@@ -134,18 +134,29 @@ changelog_home_for_user() {
 
 changelog_read_target_user_from_state() {
     local state_file="$1"
-    local target_user=""
+    changelog_read_state_string "$state_file" "target_user"
+}
+
+changelog_read_state_string() {
+    local state_file="$1"
+    local key="$2"
+    local value=""
 
     [[ -f "$state_file" ]] || return 1
 
     if command -v jq &>/dev/null; then
-        target_user=$(jq -r '.target_user // empty' "$state_file" 2>/dev/null || true)
+        value=$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)
     else
-        target_user=$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" 2>/dev/null | head -n 1)
+        value=$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)
     fi
 
-    [[ -n "$target_user" ]] && [[ "$target_user" != "null" ]] || return 1
-    printf '%s\n' "$target_user"
+    [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+changelog_read_target_home_from_state() {
+    local state_file="$1"
+    changelog_read_state_string "$state_file" "target_home"
 }
 
 changelog_script_acfs_home() {
@@ -188,6 +199,16 @@ resolve_changelog_acfs_home() {
         target_home=$(changelog_home_for_user "$SUDO_USER" 2>/dev/null || true)
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -f "$candidate/CHANGELOG.md" ]]; then
+            _CHANGELOG_RESOLVED_ACFS_HOME="$candidate"
+            printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    target_home=$(changelog_read_target_home_from_state "$_CHANGELOG_SYSTEM_STATE_FILE" 2>/dev/null || true)
+    if [[ -n "$target_home" ]]; then
+        candidate="${target_home}/.acfs"
+        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -f "$candidate/CHANGELOG.md" ]]; then
             _CHANGELOG_RESOLVED_ACFS_HOME="$candidate"
             printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
             return 0

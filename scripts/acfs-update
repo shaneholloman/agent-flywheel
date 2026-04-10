@@ -7,6 +7,7 @@
 set -euo pipefail
 
 ACFS_STATE_FILE="${ACFS_STATE_FILE:-}"
+ACFS_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 is_valid_username() {
@@ -264,7 +265,7 @@ detect_target_user() {
     fi
   done < <(getent passwd 2>/dev/null || true)
 
-  candidate_user="$(read_target_user_from_state_file "/var/lib/acfs/state.json" 2>/dev/null || true)"
+  candidate_user="$(read_target_user_from_state_file "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
   if [[ -n "$candidate_user" ]] && user_has_installed_update_script "$candidate_user"; then
     printf '%s\n' "$candidate_user"
     return 0
@@ -285,6 +286,7 @@ exec_as_target_user() {
   local -a env_args=()
 
   [[ -n "${ACFS_STATE_FILE:-}" ]] && env_args+=("ACFS_STATE_FILE=$ACFS_STATE_FILE")
+  [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$ACFS_SYSTEM_STATE_FILE")
   [[ -n "${ACFS_HOME:-}" ]] && env_args+=("ACFS_HOME=$ACFS_HOME")
   [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
   [[ -n "${ACFS_RAW:-}" ]] && env_args+=("ACFS_RAW=$ACFS_RAW")

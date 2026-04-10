@@ -129,18 +129,42 @@ info_script_acfs_home() {
 
 info_read_target_user_from_state() {
     local state_file="${1:-$_INFO_SYSTEM_STATE_FILE}"
-    local target_user=""
+    info_read_state_string "$state_file" "target_user"
+}
+
+info_read_state_string() {
+    local state_file="$1"
+    local key="$2"
+    local value=""
 
     [[ -f "$state_file" ]] || return 1
 
     if command -v jq &>/dev/null; then
-        target_user=$(jq -r '.target_user // empty' "$state_file" 2>/dev/null || true)
+        value=$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)
     else
-        target_user=$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" 2>/dev/null | head -n 1)
+        value=$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)
     fi
 
-    [[ -n "$target_user" ]] && [[ "$target_user" != "null" ]] || return 1
-    echo "$target_user"
+    [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+    echo "$value"
+}
+
+info_read_target_home_from_state() {
+    local state_file="${1:-$_INFO_SYSTEM_STATE_FILE}"
+    info_read_state_string "$state_file" "target_home"
+}
+
+info_resolve_target_home() {
+    local state_file="${1:-}"
+    local target_home=""
+
+    target_home=$(info_read_target_home_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || true)
+    if [[ -z "$target_home" ]] && [[ -n "$state_file" ]]; then
+        target_home=$(info_read_target_home_from_state "$state_file" 2>/dev/null || true)
+    fi
+
+    [[ -n "$target_home" ]] || return 1
+    printf '%s\n' "$target_home"
 }
 
 info_get_data_home() {
@@ -176,6 +200,16 @@ info_get_data_home() {
         target_home=$(info_home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && info_candidate_has_acfs_data "$candidate"; then
+            _INFO_RESOLVED_ACFS_HOME="$candidate"
+            echo "$_INFO_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    target_home=$(info_read_target_home_from_state || true)
+    if [[ -n "$target_home" ]]; then
+        candidate="${target_home}/.acfs"
+        if info_candidate_has_acfs_data "$candidate"; then
             _INFO_RESOLVED_ACFS_HOME="$candidate"
             echo "$_INFO_RESOLVED_ACFS_HOME"
             return 0
@@ -248,8 +282,9 @@ info_prepare_context() {
     fi
 
     if [[ -z "${TARGET_HOME:-}" ]]; then
+        target_home=$(info_resolve_target_home "$state_file" 2>/dev/null || true)
         if [[ -n "${TARGET_USER:-}" ]]; then
-            target_home=$(info_home_for_user "$TARGET_USER" 2>/dev/null || true)
+            [[ -n "$target_home" ]] || target_home=$(info_home_for_user "$TARGET_USER" 2>/dev/null || true)
         fi
         if [[ -z "$target_home" ]] && [[ "$data_home" == */.acfs ]]; then
             target_home="${data_home%/.acfs}"

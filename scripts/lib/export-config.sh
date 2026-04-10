@@ -156,6 +156,24 @@ read_target_user_from_state() {
     read_state_string_from_file "$state_file" "target_user"
 }
 
+read_target_home_from_state() {
+    local state_file="$1"
+    read_state_string_from_file "$state_file" "target_home"
+}
+
+resolve_target_home() {
+    local state_file="${1:-}"
+    local detected_home=""
+
+    detected_home=$(read_target_home_from_state "$_EXPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
+    if [[ -z "$detected_home" ]] && [[ -n "$state_file" ]]; then
+        detected_home=$(read_target_home_from_state "$state_file" 2>/dev/null || true)
+    fi
+
+    [[ -n "$detected_home" ]] || return 1
+    printf '%s\n' "$detected_home"
+}
+
 script_acfs_home() {
     local candidate=""
     candidate=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
@@ -196,6 +214,16 @@ resolve_acfs_home() {
         detected_home=$(home_for_user "$SUDO_USER" 2>/dev/null || true)
         candidate="${detected_home}/.acfs"
         if [[ -n "$detected_home" ]] && [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+            _EXPORT_RESOLVED_ACFS_HOME="$candidate"
+            printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    detected_home=$(read_target_home_from_state "$_EXPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
+    if [[ -n "$detected_home" ]]; then
+        candidate="${detected_home}/.acfs"
+        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
             _EXPORT_RESOLVED_ACFS_HOME="$candidate"
             printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
             return 0
@@ -286,6 +314,13 @@ prepare_target_context() {
     if detected_user=$(get_target_user 2>/dev/null || true); then
         if [[ -n "$detected_user" ]] && [[ -z "${TARGET_USER:-}" ]]; then
             export TARGET_USER="$detected_user"
+        fi
+    fi
+
+    if [[ -z "${TARGET_HOME:-}" ]]; then
+        detected_home=$(resolve_target_home "$STATE_FILE" 2>/dev/null || true)
+        if [[ -n "$detected_home" ]]; then
+            export TARGET_HOME="$detected_home"
         fi
     fi
 

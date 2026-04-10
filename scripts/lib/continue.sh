@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACFS_LOG_DIR="/var/log/acfs"
 ACFS_INSTALL_LOG="${ACFS_LOG_DIR}/install.log"
 ACFS_UPGRADE_LOG="${ACFS_LOG_DIR}/upgrade_resume.log"
-ACFS_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+ACFS_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
 _CONTINUE_EXPLICIT_ACFS_HOME="${ACFS_HOME:-}"
 _CONTINUE_DEFAULT_ACFS_HOME="$HOME/.acfs"
 SERVICE_NAME="acfs-upgrade-resume"
@@ -95,18 +95,29 @@ home_for_user() {
 
 read_target_user_from_state() {
     local state_file="${1:-$ACFS_SYSTEM_STATE_FILE}"
-    local target_user=""
+    read_state_string_from_state "$state_file" "target_user"
+}
+
+read_state_string_from_state() {
+    local state_file="$1"
+    local key="$2"
+    local value=""
 
     [[ -f "$state_file" ]] || return 1
 
     if command -v jq &>/dev/null; then
-        target_user=$(jq -r '.target_user // empty' "$state_file" 2>/dev/null || true)
+        value=$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)
     else
-        target_user=$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" 2>/dev/null | head -n 1)
+        value=$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)
     fi
 
-    [[ -n "$target_user" ]] && [[ "$target_user" != "null" ]] || return 1
-    echo "$target_user"
+    [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+    echo "$value"
+}
+
+read_target_home_from_state() {
+    local state_file="${1:-$ACFS_SYSTEM_STATE_FILE}"
+    read_state_string_from_state "$state_file" "target_home"
 }
 
 script_acfs_home() {
@@ -184,6 +195,15 @@ get_install_state_file() {
         target_home=$(home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs/state.json"
         if [[ -n "$target_home" ]] && [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    fi
+
+    target_home=$(read_target_home_from_state "$ACFS_SYSTEM_STATE_FILE" || true)
+    if [[ -n "$target_home" ]]; then
+        candidate="${target_home}/.acfs/state.json"
+        if [[ -f "$candidate" ]]; then
             echo "$candidate"
             return 0
         fi

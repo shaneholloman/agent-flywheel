@@ -120,20 +120,44 @@ _status_home_for_user() {
     return 1
 }
 
-_status_read_target_user_from_state() {
+_status_read_state_string() {
     local state_file="$1"
-    local target_user=""
+    local key="$2"
+    local value=""
 
     [[ -f "$state_file" ]] || return 1
 
     if command -v jq &>/dev/null; then
-        target_user=$(jq -r '.target_user // empty' "$state_file" 2>/dev/null || true)
+        value=$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)
     else
-        target_user=$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" 2>/dev/null | head -n 1)
+        value=$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)
     fi
 
-    [[ -n "$target_user" ]] && [[ "$target_user" != "null" ]] || return 1
-    printf '%s\n' "$target_user"
+    [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+_status_read_target_user_from_state() {
+    local state_file="$1"
+    _status_read_state_string "$state_file" "target_user"
+}
+
+_status_read_target_home_from_state() {
+    local state_file="$1"
+    _status_read_state_string "$state_file" "target_home"
+}
+
+_status_resolve_target_home() {
+    local state_file="${1:-}"
+    local target_home=""
+
+    target_home=$(_status_read_target_home_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)
+    if [[ -z "$target_home" ]] && [[ -n "$state_file" ]]; then
+        target_home=$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)
+    fi
+
+    [[ -n "$target_home" ]] || return 1
+    printf '%s\n' "$target_home"
 }
 
 _status_script_acfs_home() {
@@ -182,6 +206,16 @@ _status_resolve_acfs_home() {
         fi
     fi
 
+    target_home=$(_status_read_target_home_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)
+    if [[ -n "$target_home" ]]; then
+        candidate="${target_home}/.acfs"
+        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+            _STATUS_RESOLVED_ACFS_HOME="$candidate"
+            printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
     target_user=$(_status_read_target_user_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)
     if [[ -n "$target_user" ]]; then
         target_home=$(_status_home_for_user "$target_user" 2>/dev/null || true)
@@ -224,10 +258,16 @@ _status_prepare_context() {
         [[ -n "${TARGET_USER:-}" ]] && export TARGET_USER
     fi
 
+    if [[ -z "${TARGET_HOME:-}" ]]; then
+        TARGET_HOME=$(_status_resolve_target_home "$state_file" 2>/dev/null || true)
+    fi
+
     if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "${TARGET_USER:-}" ]]; then
         TARGET_HOME=$(_status_home_for_user "$TARGET_USER" 2>/dev/null || true)
         [[ -n "${TARGET_HOME:-}" ]] && export TARGET_HOME
     fi
+
+    [[ -n "${TARGET_HOME:-}" ]] && export TARGET_HOME
 
     _status_ensure_path
 }

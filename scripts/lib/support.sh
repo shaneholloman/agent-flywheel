@@ -132,18 +132,42 @@ support_script_acfs_home() {
 
 support_read_target_user_from_state() {
     local state_file="${1:-$SUPPORT_SYSTEM_STATE_FILE}"
-    local target_user=""
+    support_read_state_string "$state_file" "target_user"
+}
+
+support_read_state_string() {
+    local state_file="$1"
+    local key="$2"
+    local value=""
 
     [[ -f "$state_file" ]] || return 1
 
     if command -v jq &>/dev/null; then
-        target_user=$(jq -r '.target_user // empty' "$state_file" 2>/dev/null || true)
+        value=$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)
     else
-        target_user=$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" 2>/dev/null | head -n 1)
+        value=$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)
     fi
 
-    [[ -n "$target_user" ]] && [[ "$target_user" != "null" ]] || return 1
-    printf '%s\n' "$target_user"
+    [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+support_read_target_home_from_state() {
+    local state_file="${1:-$SUPPORT_SYSTEM_STATE_FILE}"
+    support_read_state_string "$state_file" "target_home"
+}
+
+support_resolve_target_home() {
+    local state_file="${1:-}"
+    local target_home=""
+
+    target_home=$(support_read_target_home_from_state "$SUPPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
+    if [[ -z "$target_home" ]] && [[ -n "$state_file" ]]; then
+        target_home=$(support_read_target_home_from_state "$state_file" 2>/dev/null || true)
+    fi
+
+    [[ -n "$target_home" ]] || return 1
+    printf '%s\n' "$target_home"
 }
 
 support_get_install_state_file() {
@@ -187,6 +211,15 @@ support_resolve_acfs_home() {
         fi
     fi
 
+    target_home=$(support_read_target_home_from_state || true)
+    if [[ -n "$target_home" ]]; then
+        candidate="${target_home}/.acfs"
+        if support_candidate_has_acfs_data "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
     target_user=$(support_read_target_user_from_state || true)
     if [[ -n "$target_user" ]]; then
         target_home=$(support_home_for_user "$target_user" || true)
@@ -214,7 +247,10 @@ support_initialize_context() {
             whoami 2>/dev/null || echo unknown)
     fi
 
-    SUPPORT_TARGET_HOME=$(support_home_for_user "$SUPPORT_TARGET_USER" || true)
+    SUPPORT_TARGET_HOME=$(support_resolve_target_home "$state_file" || true)
+    if [[ -z "$SUPPORT_TARGET_HOME" ]]; then
+        SUPPORT_TARGET_HOME=$(support_home_for_user "$SUPPORT_TARGET_USER" || true)
+    fi
     if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ "$ACFS_HOME" == */.acfs ]]; then
         SUPPORT_TARGET_HOME="${ACFS_HOME%/.acfs}"
     fi

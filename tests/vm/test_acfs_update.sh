@@ -613,6 +613,61 @@ EOF
                 exit 1
             fi
 
+            # Verify acfs-update also honors ACFS_SYSTEM_STATE_FILE when the
+            # default system state path is unavailable and NSS lookup is blocked.
+            echo ""
+            echo "Verifying acfs-update ACFS_SYSTEM_STATE_FILE override..."
+            state_override_probe_output="$(
+                (
+                    set -euo pipefail
+                    state_backup=""
+                    probe_wrapper=/tmp/acfs-update-state-env
+                    fake_bin=/tmp/acfs-update-state-env-bin
+                    clean_home=/tmp/acfs-update-state-env-home
+                    custom_state=/tmp/acfs-update-state-env.json
+
+                    cleanup() {
+                        rm -f "$probe_wrapper" "$custom_state"
+                        rm -rf "$fake_bin" "$clean_home"
+                        if [[ -n "$state_backup" ]] && [[ -e "$state_backup" ]]; then
+                            mv "$state_backup" /var/lib/acfs/state.json
+                        fi
+                    }
+                    trap cleanup EXIT
+
+                    if [[ -e /var/lib/acfs/state.json ]]; then
+                        state_backup=/var/lib/acfs/state.json.state-env-backup
+                        mv /var/lib/acfs/state.json "$state_backup"
+                    fi
+
+                    mkdir -p "$fake_bin" "$clean_home"
+                    cat > "$fake_bin/getent" <<\EOF
+#!/usr/bin/env bash
+exit 2
+EOF
+                    chmod 755 "$fake_bin/getent"
+
+                    cat > "$custom_state" <<\EOF
+{"target_user":"ubuntu"}
+EOF
+                    cp /home/ubuntu/.local/bin/acfs-update "$probe_wrapper"
+                    chmod 755 "$probe_wrapper"
+
+                    HOME="$clean_home" PATH="$fake_bin:/usr/bin:/bin" \
+                        ACFS_SYSTEM_STATE_FILE="$custom_state" \
+                        "$probe_wrapper" --help
+                ) 2>&1
+            )" || {
+                echo "ERROR: acfs-update ignored ACFS_SYSTEM_STATE_FILE override" >&2
+                echo "$state_override_probe_output" >&2
+                exit 1
+            }
+            if ! echo "$state_override_probe_output" | grep -q "USAGE:"; then
+                echo "ERROR: acfs-update override probe did not dispatch to update.sh" >&2
+                echo "$state_override_probe_output" >&2
+                exit 1
+            fi
+
             # Verify the system-wide acfs wrapper also handles nonstandard-home
             # installs correctly when root carries stale state for another user.
             echo ""
@@ -678,6 +733,62 @@ EOF
             if ! echo "$global_probe_output" | grep -q "^global-wrapper-home=/srv/acfs-alt$"; then
                 echo "ERROR: global acfs wrapper did not preserve altuser HOME" >&2
                 echo "$global_probe_output" >&2
+                exit 1
+            fi
+
+            # Verify the global acfs wrapper also honors ACFS_SYSTEM_STATE_FILE
+            # when the default system state path is unavailable and NSS lookup
+            # is blocked.
+            echo ""
+            echo "Verifying global acfs ACFS_SYSTEM_STATE_FILE override..."
+            global_state_override_output="$(
+                (
+                    set -euo pipefail
+                    state_backup=""
+                    probe_wrapper=/tmp/acfs-global-state-env
+                    fake_bin=/tmp/acfs-global-state-env-bin
+                    clean_home=/tmp/acfs-global-state-env-home
+                    custom_state=/tmp/acfs-global-state-env.json
+
+                    cleanup() {
+                        rm -f "$probe_wrapper" "$custom_state"
+                        rm -rf "$fake_bin" "$clean_home"
+                        if [[ -n "$state_backup" ]] && [[ -e "$state_backup" ]]; then
+                            mv "$state_backup" /var/lib/acfs/state.json
+                        fi
+                    }
+                    trap cleanup EXIT
+
+                    if [[ -e /var/lib/acfs/state.json ]]; then
+                        state_backup=/var/lib/acfs/state.json.global-state-env-backup
+                        mv /var/lib/acfs/state.json "$state_backup"
+                    fi
+
+                    mkdir -p "$fake_bin" "$clean_home"
+                    cat > "$fake_bin/getent" <<\EOF
+#!/usr/bin/env bash
+exit 2
+EOF
+                    chmod 755 "$fake_bin/getent"
+
+                    cat > "$custom_state" <<\EOF
+{"target_user":"ubuntu"}
+EOF
+                    cp /usr/local/bin/acfs "$probe_wrapper"
+                    chmod 755 "$probe_wrapper"
+
+                    HOME="$clean_home" PATH="$fake_bin:/usr/bin:/bin" \
+                        ACFS_SYSTEM_STATE_FILE="$custom_state" \
+                        "$probe_wrapper" version
+                ) 2>&1
+            )" || {
+                echo "ERROR: global acfs wrapper ignored ACFS_SYSTEM_STATE_FILE override" >&2
+                echo "$global_state_override_output" >&2
+                exit 1
+            }
+            if ! echo "$global_state_override_output" | grep -q '^0\\.'; then
+                echo "ERROR: global acfs override probe did not dispatch to ACFS" >&2
+                echo "$global_state_override_output" >&2
                 exit 1
             fi
 
