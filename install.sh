@@ -955,6 +955,10 @@ cleanup() {
         rm -rf "$ACFS_BOOTSTRAP_DIR" 2>/dev/null || true
     fi
 
+    if [[ -n "${ACFS_TMP_ARCHIVE:-}" ]] && [[ -f "$ACFS_TMP_ARCHIVE" ]]; then
+        rm -f "$ACFS_TMP_ARCHIVE" 2>/dev/null || true
+    fi
+
     # If a signal triggered this cleanup, mark state as interrupted so
     # resume logic does not see a partially-started phase.
     if [[ -n "${_ACFS_SIGNAL_RECEIVED:-}" ]]; then
@@ -1998,7 +2002,6 @@ bootstrap_repo_archive() {
     cache_buster="$(date +%s)"
     local archive_url="https://github.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/archive/${ref}.tar.gz?cb=${cache_buster}"
     local ref_safe="${ref//[^a-zA-Z0-9._-]/_}"
-    local tmp_archive
     local tmp_dir
 
     if ! command_exists tar; then
@@ -2007,7 +2010,7 @@ bootstrap_repo_archive() {
     fi
 
     # mktemp portability: BSD mktemp requires Xs at end of template; tar doesn't need a .tar.gz suffix.
-    tmp_archive="$(mktemp "${TMPDIR:-/tmp}/acfs-archive-${ref_safe}.XXXXXX" 2>/dev/null)" || {
+    ACFS_TMP_ARCHIVE="$(mktemp "${TMPDIR:-/tmp}/acfs-archive-${ref_safe}.XXXXXX" 2>/dev/null)" || {
         log_fatal "Failed to create temp file for archive"
     }
 
@@ -2021,15 +2024,15 @@ bootstrap_repo_archive() {
     log_step "Bootstrapping ACFS archive (${ref})"
     log_detail "Downloading ${archive_url}"
 
-    if ! acfs_curl_with_retry "$archive_url" "$tmp_archive"; then
+    if ! acfs_curl_with_retry "$archive_url" "$ACFS_TMP_ARCHIVE"; then
         log_error "Failed to download ACFS archive. Try again, or pin ACFS_REF to a tag/sha."
-        rm -f "$tmp_archive"
+        rm -f "$ACFS_TMP_ARCHIVE"
         rm -rf "$tmp_dir"
         return 1
     fi
 
     log_detail "Extracting runtime assets"
-    if ! tar -xzf "$tmp_archive" -C "$tmp_dir" --strip-components=1 \
+    if ! tar -xzf "$ACFS_TMP_ARCHIVE" -C "$tmp_dir" --strip-components=1 \
         --wildcards --wildcards-match-slash \
         "*/scripts/**" \
         "*/acfs/**" \
@@ -2037,10 +2040,10 @@ bootstrap_repo_archive() {
         "*/acfs.manifest.yaml" \
         "*/VERSION"; then
         log_error "Failed to extract ACFS bootstrap archive (tar error)"
-        rm -f "$tmp_archive"
+        rm -f "$ACFS_TMP_ARCHIVE"
         return 1
     fi
-    rm -f "$tmp_archive"
+    rm -f "$ACFS_TMP_ARCHIVE"
 
     if [[ ! -f "$tmp_dir/acfs.manifest.yaml" ]] || [[ ! -f "$tmp_dir/checksums.yaml" ]] || [[ ! -f "$tmp_dir/VERSION" ]]; then
         log_error "Bootstrap archive missing required manifest/checksums/VERSION files"
@@ -3567,8 +3570,12 @@ normalize_user() {
                     continue
                 fi
                 # Ensure destination file ends with newline before appending
-                if [[ -s "$dst" ]] && [[ -n "$(tail -c 1 "$dst")" ]]; then
-                    echo "" >> "$dst"
+                if [[ -s "$dst" ]]; then
+                    local last_char
+                    last_char=$(tail -c 1 "$dst" | od -An -t u1 | tr -d ' ' 2>/dev/null || true)
+                    if [[ "$last_char" != "10" ]]; then
+                        echo "" >> "$dst"
+                    fi
                 fi
                 printf "%s\n" "$line" >> "$dst"
             done < "$src"
