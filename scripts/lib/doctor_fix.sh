@@ -10,21 +10,51 @@
 [[ -n "${_ACFS_DOCTOR_FIX_LOADED:-}" ]] && return 0
 _ACFS_DOCTOR_FIX_LOADED=1
 
+doctor_fix_runtime_home() {
+    local resolved_home="${TARGET_HOME:-$HOME}"
+
+    if [[ -n "$resolved_home" ]] && [[ "$resolved_home" == /* ]] && [[ "$resolved_home" != "/" ]]; then
+        printf '%s\n' "${resolved_home%/}"
+    else
+        printf '%s\n' "$HOME"
+    fi
+}
+
+doctor_fix_runtime_acfs_home() {
+    local resolved_acfs_home="${ACFS_HOME:-}"
+
+    if [[ -n "$resolved_acfs_home" ]] && [[ "$resolved_acfs_home" == /* ]] && [[ "$resolved_acfs_home" != "/" ]]; then
+        printf '%s\n' "${resolved_acfs_home%/}"
+        return 0
+    fi
+
+    printf '%s/.acfs\n' "$(doctor_fix_runtime_home)"
+}
+
+doctor_fix_log_file_path() {
+    if [[ -n "${DOCTOR_FIX_LOG:-}" ]]; then
+        printf '%s\n' "$DOCTOR_FIX_LOG"
+        return 0
+    fi
+
+    printf '%s/.local/share/acfs/doctor.log\n' "$(doctor_fix_runtime_home)"
+}
+
 # Source autofix library for change tracking
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 if [[ -f "$SCRIPT_DIR/autofix.sh" ]]; then
     # shellcheck source=autofix.sh
     source "$SCRIPT_DIR/autofix.sh"
-elif [[ -f "$HOME/.acfs/scripts/lib/autofix.sh" ]]; then
+elif [[ -f "$(doctor_fix_runtime_acfs_home)/scripts/lib/autofix.sh" ]]; then
     # shellcheck source=autofix.sh
-    source "$HOME/.acfs/scripts/lib/autofix.sh"
+    source "$(doctor_fix_runtime_acfs_home)/scripts/lib/autofix.sh"
 fi
 
 # ============================================================
 # Configuration
 # ============================================================
 
-DOCTOR_FIX_LOG="${HOME}/.local/share/acfs/doctor.log"
+DOCTOR_FIX_LOG="${DOCTOR_FIX_LOG:-}"
 DOCTOR_FIX_DRY_RUN=false
 DOCTOR_FIX_YES=false
 DOCTOR_FIX_PROMPT=false
@@ -50,13 +80,15 @@ doctor_fix_log() {
     shift
     local message="$*"
     local timestamp
+    local log_file=""
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    log_file="$(doctor_fix_log_file_path)"
 
     # Ensure log directory exists
-    mkdir -p "$(dirname "$DOCTOR_FIX_LOG")"
+    mkdir -p "$(dirname "$log_file")"
 
     # Log to file
-    echo "[$timestamp] [$level] $message" >> "$DOCTOR_FIX_LOG"
+    echo "[$timestamp] [$level] $message" >> "$log_file"
 
     # Output to user
     case "$level" in
@@ -95,7 +127,7 @@ doctor_fix_require_security() {
 
     local security_script="$SCRIPT_DIR/security.sh"
     if [[ ! -r "$security_script" ]]; then
-        security_script="$HOME/.acfs/scripts/lib/security.sh"
+        security_script="$(doctor_fix_runtime_acfs_home)/scripts/lib/security.sh"
     fi
 
     if [[ ! -r "$security_script" ]]; then
@@ -155,7 +187,9 @@ doctor_fix_run_verified_installer() {
 # Ensures ~/.local/bin and other ACFS dirs are at front of PATH
 fix_path_ordering() {
     local check_id="$1"
-    local target_file="${HOME}/.zshrc"
+    local runtime_home=""
+    runtime_home="$(doctor_fix_runtime_home)"
+    local target_file="${runtime_home}/.zshrc"
 
     # Required directories in order
     local -a path_dirs=(
@@ -376,8 +410,10 @@ fix_plugin_clone() {
     local check_id="$1"
     local plugin_name="$2"
     local repo_url="$3"
+    local runtime_home=""
+    runtime_home="$(doctor_fix_runtime_home)"
 
-    local plugins_dir="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins"
+    local plugins_dir="${ZSH_CUSTOM:-$runtime_home/.oh-my-zsh/custom}/plugins"
     local target_dir="$plugins_dir/$plugin_name"
 
     # Guard: Must not already exist
@@ -387,7 +423,7 @@ fix_plugin_clone() {
     fi
 
     # Guard: Oh-my-zsh must be installed
-    if [[ ! -d "$HOME/.oh-my-zsh" ]]; then
+    if [[ ! -d "$runtime_home/.oh-my-zsh" ]]; then
         doctor_fix_log WARN "Oh-my-zsh not installed, cannot install plugins"
         FIXES_MANUAL+=("fix.plugin.clone|Install Oh-my-zsh first|curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash")
         FIX_MANUAL=$((FIX_MANUAL + 1))
@@ -428,7 +464,11 @@ fix_plugin_clone() {
 # Add ACFS config sourcing to .zshrc
 fix_acfs_sourcing() {
     local check_id="$1"
-    local zshrc="$HOME/.zshrc"
+    local runtime_home=""
+    local runtime_acfs_home=""
+    runtime_home="$(doctor_fix_runtime_home)"
+    runtime_acfs_home="$(doctor_fix_runtime_acfs_home)"
+    local zshrc="$runtime_home/.zshrc"
     local source_line='[[ -f ~/.acfs/zsh/acfs.zshrc ]] && source ~/.acfs/zsh/acfs.zshrc'
     local marker="# ACFS configuration (added by doctor --fix)"
 
@@ -439,7 +479,7 @@ fix_acfs_sourcing() {
     fi
 
     # Guard: Check if acfs.zshrc exists
-    if [[ ! -f "$HOME/.acfs/zsh/acfs.zshrc" ]]; then
+    if [[ ! -f "$runtime_acfs_home/zsh/acfs.zshrc" ]]; then
         doctor_fix_log WARN "ACFS config not found at ~/.acfs/zsh/acfs.zshrc"
         return 1
     fi
@@ -503,12 +543,12 @@ dispatch_fix() {
         config.acfs_zshrc)
             fix_config_copy "$check_id" \
                 "$SCRIPT_DIR/../../acfs/zsh/acfs.zshrc" \
-                "$HOME/.acfs/zsh/acfs.zshrc"
+                "$(doctor_fix_runtime_acfs_home)/zsh/acfs.zshrc"
             ;;
         config.tmux)
             fix_config_copy "$check_id" \
                 "$SCRIPT_DIR/../../acfs/tmux/tmux.conf" \
-                "$HOME/.acfs/tmux/tmux.conf"
+                "$(doctor_fix_runtime_acfs_home)/tmux/tmux.conf"
             ;;
 
         # DCG hook
@@ -526,13 +566,13 @@ dispatch_fix() {
 
         # Symlinks
         symlink.br)
-            fix_symlink_create "$check_id" "$HOME/.cargo/bin/br" "$HOME/.local/bin/br"
+            fix_symlink_create "$check_id" "$(doctor_fix_runtime_home)/.cargo/bin/br" "$(doctor_fix_runtime_home)/.local/bin/br"
             ;;
         symlink.bv)
-            fix_symlink_create "$check_id" "$HOME/.cargo/bin/bv" "$HOME/.local/bin/bv"
+            fix_symlink_create "$check_id" "$(doctor_fix_runtime_home)/.cargo/bin/bv" "$(doctor_fix_runtime_home)/.local/bin/bv"
             ;;
         symlink.am)
-            fix_symlink_create "$check_id" "$HOME/mcp_agent_mail/am" "$HOME/.local/bin/am"
+            fix_symlink_create "$check_id" "$(doctor_fix_runtime_home)/mcp_agent_mail/am" "$(doctor_fix_runtime_home)/.local/bin/am"
             ;;
 
         # Zsh plugins
@@ -825,8 +865,10 @@ agent_mail_fix_wait_for_health() {
 }
 
 agent_mail_fix_write_unit() {
-    local storage_root="$HOME/.mcp_agent_mail_git_mailbox_repo"
-    local unit_dir="$HOME/.config/systemd/user"
+    local runtime_home=""
+    runtime_home="$(doctor_fix_runtime_home)"
+    local storage_root="$runtime_home/.mcp_agent_mail_git_mailbox_repo"
+    local unit_dir="$runtime_home/.config/systemd/user"
     local unit_file="$unit_dir/agent-mail.service"
     local am_bin=""
     local db_url=""
@@ -867,7 +909,7 @@ UNIT_EOF
 }
 
 agent_mail_fix_launch_fallback() {
-    local storage_root="$HOME/.mcp_agent_mail_git_mailbox_repo"
+    local storage_root="$(doctor_fix_runtime_home)/.mcp_agent_mail_git_mailbox_repo"
     local fallback_pid_file="$storage_root/agent-mail.pid"
     local fallback_log_file="$storage_root/agent-mail.log"
     local am_bin=""
@@ -910,7 +952,7 @@ agent_mail_fix_launch_fallback() {
 }
 
 agent_mail_fix_stop_fallback() {
-    local storage_root="$HOME/.mcp_agent_mail_git_mailbox_repo"
+    local storage_root="$(doctor_fix_runtime_home)/.mcp_agent_mail_git_mailbox_repo"
     local fallback_pid_file="$storage_root/agent-mail.pid"
     local am_bin=""
     local existing_pid=""
@@ -944,18 +986,20 @@ fix_mcp_agent_mail() {
     local service_healthy=false
     local doctor_healthy=false
     local project_path=""
+    local runtime_home=""
+    runtime_home="$(doctor_fix_runtime_home)"
 
     if ! command -v am &>/dev/null; then
         # Quick symlink repair: if binary exists at install dest but not on PATH
-        local am_src="$HOME/mcp_agent_mail/am"
-        local am_dst="$HOME/.local/bin/am"
+        local am_src="$runtime_home/mcp_agent_mail/am"
+        local am_dst="$runtime_home/.local/bin/am"
         if [[ -x "$am_src" ]]; then
             if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
                 FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail.symlink|Create am symlink: $am_dst -> $am_src|$am_dst|ln -sf $am_src $am_dst")
                 doctor_fix_log DRY "Create am symlink: $am_dst -> $am_src"
                 return 0
             fi
-            mkdir -p "$HOME/.local/bin"
+            mkdir -p "$runtime_home/.local/bin"
             ln -sf "$am_src" "$am_dst"
             hash -r
             if command -v am &>/dev/null; then
@@ -969,12 +1013,12 @@ fix_mcp_agent_mail() {
         # If symlink repair did not resolve the issue, fall back to full reinstall
         if ! command -v am &>/dev/null; then
             if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
-                FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail|Install MCP Agent Mail via verified installer, then repair service state|$HOME/.mcp_agent_mail_git_mailbox_repo|verified:mcp_agent_mail --dest $HOME/mcp_agent_mail --yes")
+                FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail|Install MCP Agent Mail via verified installer, then repair service state|$runtime_home/.mcp_agent_mail_git_mailbox_repo|verified:mcp_agent_mail --dest $runtime_home/mcp_agent_mail --yes")
                 doctor_fix_log DRY "Install MCP Agent Mail via verified installer, then repair service state"
                 return 0
             fi
 
-            if doctor_fix_run_verified_installer "mcp_agent_mail" --dest "$HOME/mcp_agent_mail" --yes >/dev/null 2>&1; then
+            if doctor_fix_run_verified_installer "mcp_agent_mail" --dest "$runtime_home/mcp_agent_mail" --yes >/dev/null 2>&1; then
                 hash -r
                 if command -v am &>/dev/null; then
                     doctor_fix_log INFO "Installed MCP Agent Mail CLI via verified installer"
@@ -984,7 +1028,7 @@ fix_mcp_agent_mail() {
                 else
                     # Installer succeeded but am still not on PATH - try symlink one more time
                     if [[ -x "$am_src" ]]; then
-                        mkdir -p "$HOME/.local/bin"
+                        mkdir -p "$runtime_home/.local/bin"
                         ln -sf "$am_src" "$am_dst"
                         hash -r
                         if command -v am &>/dev/null; then
@@ -1007,7 +1051,7 @@ fix_mcp_agent_mail() {
             fi
         fi
     elif [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
-        FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail|Repair MCP Agent Mail and apply upstream doctor fixes|$HOME/.mcp_agent_mail_git_mailbox_repo|am doctor repair --yes && am doctor fix --yes")
+        FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail|Repair MCP Agent Mail and apply upstream doctor fixes|$runtime_home/.mcp_agent_mail_git_mailbox_repo|am doctor repair --yes && am doctor fix --yes")
         doctor_fix_log DRY "Repair MCP Agent Mail database, apply upstream doctor fixes, and restart the service"
         return 0
     fi
