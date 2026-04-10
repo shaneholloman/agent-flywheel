@@ -1054,6 +1054,35 @@ EOF
     cleanup_mock_env
 }
 
+test_doctor_deep_optional_probes_use_target_home_under_root_home() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_TARGET_HOME/.asb"
+    cat > "$TEST_TARGET_HOME/.local/bin/asb" <<EOF
+#!/usr/bin/env bash
+if [[ "\${HOME:-}" != "$TEST_TARGET_HOME" ]]; then
+    exit 1
+fi
+echo "asb ok"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.local/bin/asb"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --deep --json || true)
+
+    if printf '%s\n' "$output" | jq -e '
+        .deep_mode == true and
+        ([.checks[] | select(.id == "deep.stack.asb") | .status] | first) == "pass"
+    ' >/dev/null 2>&1; then
+        harness_pass "doctor deep optional probes use installed target HOME under root home"
+    else
+        harness_fail "doctor deep optional probes use installed target HOME under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_info_zero_lessons_hides_onboard_prompt_and_explains_state() {
     setup_mock_env
 
@@ -1339,6 +1368,7 @@ main() {
     test_doctor_dispatches_installed_layout_under_root_home || true
     test_doctor_agent_checks_use_target_context_under_root_home || true
     test_doctor_deep_agent_auth_uses_target_context_under_root_home || true
+    test_doctor_deep_optional_probes_use_target_home_under_root_home || true
 
     harness_summary
 }

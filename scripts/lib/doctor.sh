@@ -2111,6 +2111,8 @@ deep_check_optional_probe() {
     local binary="$3"
     local fix="$4"
     shift 4
+    local runtime_home=""
+    runtime_home="$(doctor_runtime_home)"
 
     if ! command -v "$binary" &>/dev/null; then
         check "$id" "$label" "warn" "not installed" "$fix"
@@ -2132,7 +2134,7 @@ deep_check_optional_probe() {
     local last_timeout=false
 
     for cmd in "$@"; do
-        output=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$label via $cmd" env PATH="$PATH" bash -o pipefail -c "$cmd")
+        output=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$label via $cmd" env HOME="$runtime_home" PATH="$PATH" bash -o pipefail -c "$cmd")
         status=$?
 
         if ((status == 0)); then
