@@ -13,6 +13,7 @@ EXPORT_CONFIG_SH="$REPO_ROOT/scripts/lib/export-config.sh"
 STATUS_SH="$REPO_ROOT/scripts/lib/status.sh"
 INFO_SH="$REPO_ROOT/scripts/lib/info.sh"
 SUPPORT_SH="$REPO_ROOT/scripts/lib/support.sh"
+CHEATSHEET_SH="$REPO_ROOT/scripts/lib/cheatsheet.sh"
 DASHBOARD_SH="$REPO_ROOT/scripts/lib/dashboard.sh"
 DOCTOR_SH="$REPO_ROOT/scripts/lib/doctor.sh"
 CONTINUE_SH="$REPO_ROOT/scripts/lib/continue.sh"
@@ -507,6 +508,33 @@ EOF
     cleanup_mock_env
 }
 
+test_cheatsheet_uses_installed_layout_and_target_path_under_root_home() {
+    setup_installed_layout_env
+    cp "$CHEATSHEET_SH" "$TEST_INSTALLED_ACFS/scripts/lib/cheatsheet.sh"
+
+    mkdir -p "$TEST_INSTALLED_ACFS/zsh"
+    cat > "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" <<'EOF'
+if command -v claude >/dev/null 2>&1; then
+  alias cc='claude'
+fi
+alias cod='codex'
+EOF
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/cheatsheet.sh" --json)
+
+    if printf '%s\n' "$output" | jq -e --arg zshrc "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" \
+        '.source == $zshrc and ([.entries[].name] | index("cc")) != null and ([.entries[].name] | index("cod")) != null' \
+        >/dev/null 2>&1; then
+        harness_pass "cheatsheet uses installed layout and target-user PATH under root home"
+    else
+        harness_fail "cheatsheet uses installed layout and target-user PATH under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_doctor_entrypoint_dispatches_helper_commands() {
     setup_mock_env
 
@@ -887,6 +915,134 @@ test_doctor_dispatches_installed_layout_under_root_home() {
     cleanup_mock_env
 }
 
+test_doctor_agent_checks_use_target_context_under_root_home() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_INSTALLED_ACFS/zsh" "$TEST_TARGET_HOME/.claude"
+    cat > "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" <<'EOF'
+alias cc='claude'
+alias cod='codex'
+gmi() { gemini "$@"; }
+EOF
+
+    cat > "$TEST_TARGET_HOME/.claude/settings.json" <<'JSON'
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dcg test \"$CLAUDE_TOOL_INPUT\""
+          }
+        ]
+      }
+    ]
+  }
+}
+JSON
+
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/dcg" "dcg 1.2.3"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --json)
+
+    if printf '%s\n' "$output" | jq -e --arg native_path "$TEST_TARGET_HOME/.local/bin/claude" '
+        ([.checks[] | select(.id == "agent.alias.cc") | .status] | first) == "pass" and
+        ([.checks[] | select(.id == "agent.alias.cod") | .status] | first) == "pass" and
+        ([.checks[] | select(.id == "agent.alias.gmi") | .status] | first) == "pass" and
+        ([.checks[] | select(.id == "agent.path.claude") | .details] | first) == ("native (" + $native_path + ")") and
+        ([.checks[] | select(.id == "stack.dcg") | .status] | first) == "pass"
+    ' >/dev/null 2>&1; then
+        harness_pass "doctor agent checks use installed target context under root home"
+    else
+        harness_fail "doctor agent checks use installed target context under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_doctor_deep_agent_auth_uses_target_context_under_root_home() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_TARGET_HOME/.claude" "$TEST_TARGET_HOME/.codex" "$TEST_TARGET_HOME/.gemini"
+
+    cat > "$TEST_TARGET_HOME/.claude/.credentials.json" <<'JSON'
+{
+  "claudeAiOauth": {
+    "accessToken": "claude-token"
+  }
+}
+JSON
+
+    cat > "$TEST_TARGET_HOME/.codex/auth.json" <<'JSON'
+{
+  "tokens": {
+    "access_token": "codex-token"
+  }
+}
+JSON
+
+    cat > "$TEST_TARGET_HOME/.gemini/.env" <<'EOF'
+GEMINI_API_KEY=gemini-token
+EOF
+
+    cat > "$TEST_FAKE_BIN/curl" <<'EOF'
+#!/usr/bin/env bash
+printf '200'
+EOF
+    chmod +x "$TEST_FAKE_BIN/curl"
+
+    cat > "$TEST_FAKE_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$TEST_FAKE_BIN/gh"
+
+    cat > "$TEST_FAKE_BIN/wrangler" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$TEST_FAKE_BIN/wrangler"
+
+    cat > "$TEST_FAKE_BIN/vercel" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$TEST_FAKE_BIN/vercel"
+
+    cat > "$TEST_FAKE_BIN/supabase" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$TEST_FAKE_BIN/supabase"
+
+    cat > "$TEST_FAKE_BIN/vault" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    chmod +x "$TEST_FAKE_BIN/vault"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --deep --json || true)
+
+    if printf '%s\n' "$output" | jq -e '
+        .deep_mode == true and
+        ([.checks[] | select(.id == "deep.agent.claude_auth") | .status] | first) == "pass" and
+        ([.checks[] | select(.id == "deep.agent.codex_auth") | .status] | first) == "pass" and
+        ([.checks[] | select(.id == "deep.agent.gemini_auth") | .status] | first) == "pass"
+    ' >/dev/null 2>&1; then
+        harness_pass "doctor deep agent auth uses installed target context under root home"
+    else
+        harness_fail "doctor deep agent auth uses installed target context under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_info_zero_lessons_hides_onboard_prompt_and_explains_state() {
     setup_mock_env
 
@@ -1059,6 +1215,9 @@ main() {
     test_dashboard_uses_installed_layout_under_root_home || true
     test_dashboard_serve_uses_target_user_in_ssh_hint || true
 
+    harness_section "Cheatsheet"
+    test_cheatsheet_uses_installed_layout_and_target_path_under_root_home || true
+
     harness_section "Info / Support / Onboard"
     test_info_uses_installed_layout_under_root_home || true
     test_info_uses_target_user_path_under_root_home || true
@@ -1072,6 +1231,8 @@ main() {
     harness_section "Entrypoint Dispatch"
     test_doctor_entrypoint_dispatches_helper_commands || true
     test_doctor_dispatches_installed_layout_under_root_home || true
+    test_doctor_agent_checks_use_target_context_under_root_home || true
+    test_doctor_deep_agent_auth_uses_target_context_under_root_home || true
 
     harness_summary
 }

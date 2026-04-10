@@ -14,19 +14,35 @@ ACFS_VERSION="${ACFS_VERSION:-0.1.0}"
 ensure_path() {
     local dir
     local to_add=()
+    local primary_home="${TARGET_HOME:-$HOME}"
 
     # Priority order for ACFS tools
     local candidate_dirs=(
-        "$HOME/.local/bin"
-        "$HOME/.acfs/bin"
-        "$HOME/.bun/bin"
-        "$HOME/.cargo/bin"
-        "$HOME/.atuin/bin"
-        "$HOME/go/bin"
+        "$primary_home/.local/bin"
+        "$primary_home/.acfs/bin"
+        "$primary_home/.bun/bin"
+        "$primary_home/.cargo/bin"
+        "$primary_home/.atuin/bin"
+        "$primary_home/go/bin"
         "/usr/local/bin"
         "/usr/bin"
         "/bin"
     )
+
+    if [[ -n "${ACFS_HOME:-}" ]]; then
+        candidate_dirs=("$ACFS_HOME/bin" "${candidate_dirs[@]}")
+    fi
+
+    if [[ "$primary_home" != "$HOME" ]]; then
+        candidate_dirs+=(
+            "$HOME/.local/bin"
+            "$HOME/.acfs/bin"
+            "$HOME/.bun/bin"
+            "$HOME/.cargo/bin"
+            "$HOME/.atuin/bin"
+            "$HOME/go/bin"
+        )
+    fi
 
     for dir in "${candidate_dirs[@]}"; do
         [[ -d "$dir" ]] || continue
@@ -203,6 +219,8 @@ fi
 
 export TARGET_USER
 export TARGET_HOME
+
+ensure_path
 
 _acfs_doctor_source_first "gum_ui.sh" || true
 
@@ -824,12 +842,24 @@ configured_truthy_value() {
     return 1
 }
 
+doctor_runtime_home() {
+    local resolved_home="${TARGET_HOME:-$HOME}"
+
+    if [[ -n "$resolved_home" ]] && [[ "$resolved_home" == /* ]] && [[ "$resolved_home" != "/" ]]; then
+        printf '%s\n' "${resolved_home%/}"
+    else
+        printf '%s\n' "$HOME"
+    fi
+}
+
 default_auth_config_files() {
+    local auth_home=""
+    auth_home="$(doctor_runtime_home)"
     printf '%s\n' \
-        "$HOME/.zshrc.local" \
-        "$HOME/.zshrc" \
-        "$HOME/.bashrc" \
-        "$HOME/.profile"
+        "$auth_home/.zshrc.local" \
+        "$auth_home/.zshrc" \
+        "$auth_home/.bashrc" \
+        "$auth_home/.profile"
 }
 
 # Run a check with cache support
@@ -1166,21 +1196,23 @@ check_agents() {
 
     # Check aliases are defined in the zshrc
     local alias_fix
+    local target_zshrc=""
     alias_fix="$(fix_for_module "shell.omz")"
-    if grep -q "^alias cc=" ~/.acfs/zsh/acfs.zshrc 2>/dev/null; then
+    target_zshrc="$(_acfs_doctor_find_project_path "zsh/acfs.zshrc" 2>/dev/null || true)"
+    if grep -q "^alias cc=" "$target_zshrc" 2>/dev/null; then
         check "agent.alias.cc" "cc alias" "pass"
     else
         check "agent.alias.cc" "cc alias" "warn" "not in zshrc" "$alias_fix"
     fi
 
-    if grep -q "^alias cod=" ~/.acfs/zsh/acfs.zshrc 2>/dev/null; then
+    if grep -q "^alias cod=" "$target_zshrc" 2>/dev/null; then
         check "agent.alias.cod" "cod alias" "pass"
     else
         check "agent.alias.cod" "cod alias" "warn" "not in zshrc" "$alias_fix"
     fi
 
     # gmi is defined as a shell function (not an alias) in acfs.zshrc
-    if grep -q "^gmi()" ~/.acfs/zsh/acfs.zshrc 2>/dev/null || grep -q "^alias gmi=" ~/.acfs/zsh/acfs.zshrc 2>/dev/null; then
+    if grep -q "^gmi()" "$target_zshrc" 2>/dev/null || grep -q "^alias gmi=" "$target_zshrc" 2>/dev/null; then
         check "agent.alias.gmi" "gmi function" "pass"
     else
         check "agent.alias.gmi" "gmi function" "warn" "not in zshrc" "$alias_fix"
@@ -1197,6 +1229,7 @@ check_agents() {
 # Native installations should take precedence over package manager versions
 check_agent_path_conflicts() {
     local doctor_ci="${ACFS_DOCTOR_CI:-false}"
+    local expected_native_path="${TARGET_HOME:-$HOME}/.local/bin/claude"
 
     local claude_path
     claude_path=$(command -v claude 2>/dev/null) || true
@@ -1206,7 +1239,7 @@ check_agent_path_conflicts() {
     fi
 
     # Native install should be in ~/.local/bin
-    if [[ "$claude_path" == "$HOME/.local/bin/claude" ]]; then
+    if [[ "$claude_path" == "$expected_native_path" ]]; then
         check "agent.path.claude" "Claude Code path" "pass" "native ($claude_path)"
     elif [[ "$claude_path" == *".bun"* ]] || [[ "$claude_path" == *"node_modules"* ]]; then
         if [[ "$doctor_ci" == "true" ]]; then
@@ -1241,9 +1274,14 @@ check_dcg_hook_status() {
     fi
 
     local settings_file=""
-    if [[ -f "$HOME/.claude/settings.json" ]]; then
+    local settings_home="${TARGET_HOME:-$HOME}"
+    if [[ -f "$settings_home/.claude/settings.json" ]]; then
+        settings_file="$settings_home/.claude/settings.json"
+    elif [[ -f "$settings_home/.config/claude/settings.json" ]]; then
+        settings_file="$settings_home/.config/claude/settings.json"
+    elif [[ "$settings_home" != "$HOME" ]] && [[ -f "$HOME/.claude/settings.json" ]]; then
         settings_file="$HOME/.claude/settings.json"
-    elif [[ -f "$HOME/.config/claude/settings.json" ]]; then
+    elif [[ "$settings_home" != "$HOME" ]] && [[ -f "$HOME/.config/claude/settings.json" ]]; then
         settings_file="$HOME/.config/claude/settings.json"
     fi
 
@@ -2296,6 +2334,9 @@ deep_check_agent_auth() {
 # Fixed: Check correct credentials file (.credentials.json, not config.json)
 # Fixed: Removed non-existent --print-system-info flag
 check_claude_auth() {
+    local auth_home=""
+    auth_home="$(doctor_runtime_home)"
+
     # Skip if not installed
     if ! command -v claude &>/dev/null; then
         check "deep.agent.claude_auth" "Claude Code" "warn" "not installed" "acfs update --force --agents-only"
@@ -2310,7 +2351,7 @@ check_claude_auth() {
 
     # Check for credentials file (indicates previous auth)
     # Claude Code stores OAuth credentials in ~/.claude/.credentials.json (note leading dot)
-    local creds_file="$HOME/.claude/.credentials.json"
+    local creds_file="$auth_home/.claude/.credentials.json"
     if [[ ! -f "$creds_file" ]]; then
         check "deep.agent.claude_auth" "Claude Code auth" "warn" "not authenticated" "Run: claude to authenticate"
         return
@@ -2339,10 +2380,13 @@ check_claude_auth() {
 
 # check_codex_auth - Thorough Codex CLI authentication check
 # Codex CLI uses OAuth (ChatGPT accounts), NOT OPENAI_API_KEY environment variable.
-# Token location: ~/.codex/auth.json (or $CODEEX_HOME/auth.json)
+# Token location: ~/.codex/auth.json (or $CODEX_HOME/auth.json)
 # Returns via check(): pass (auth OK), warn (partial/skipped), fail (auth broken)
 # Related: bead 325, ua5 (Codex auth documentation fix)
 check_codex_auth() {
+    local auth_home=""
+    auth_home="$(doctor_runtime_home)"
+
     # Skip if not installed
     if ! command -v codex &>/dev/null; then
         check "deep.agent.codex_auth" "Codex CLI" "warn" "not installed" "bun install -g --trust @openai/codex@latest"
@@ -2355,8 +2399,8 @@ check_codex_auth() {
         return
     fi
 
-    # Determine auth.json location (respects CODEEX_HOME if set)
-    local auth_file="${CODEEX_HOME:-$HOME/.codex}/auth.json"
+    # Determine auth.json location (respects CODEX_HOME if set)
+    local auth_file="${CODEX_HOME:-$auth_home/.codex}/auth.json"
 
     # Check if auth.json exists
     if [[ ! -f "$auth_file" ]]; then
@@ -2403,6 +2447,9 @@ check_codex_auth() {
 # Related: bead 325
 # Fixed: Check actual Gemini CLI credential files (oauth_creds.json, google_accounts.json)
 check_gemini_auth() {
+    local auth_home=""
+    auth_home="$(doctor_runtime_home)"
+
     # Skip if not installed
     if ! command -v gemini &>/dev/null; then
         check "deep.agent.gemini_auth" "Gemini CLI" "warn" "not installed" "bun install -g --trust @google/gemini-cli@latest"
@@ -2415,7 +2462,7 @@ check_gemini_auth() {
         return
     fi
 
-    local gemini_home="${GEMINI_CLI_HOME:-$HOME}"
+    local gemini_home="${GEMINI_CLI_HOME:-$auth_home}"
     local shell_config_files=()
     mapfile -t shell_config_files < <(default_auth_config_files)
     local gemini_config_files=(
@@ -2781,7 +2828,9 @@ check_network_apt_mirror() {
 # deep_check_notifications - Verify ntfy.sh notification configuration and connectivity
 # Related: GitHub issue #131
 deep_check_notifications() {
-    local config_file="${HOME}/.config/acfs/config.yaml"
+    local runtime_home=""
+    runtime_home="$(doctor_runtime_home)"
+    local config_file="${runtime_home}/.config/acfs/config.yaml"
     local enabled="" topic="" server=""
 
     # Read config (same logic as notify.sh)
@@ -2836,6 +2885,9 @@ deep_check_notifications() {
 # check_vault_configured - Check if Vault is configured and reachable
 # Related: bead azw
 check_vault_configured() {
+    local auth_home=""
+    auth_home="$(doctor_runtime_home)"
+
     # Skip if not installed
     if ! command -v vault &>/dev/null; then
         check "deep.cloud.vault_status" "Vault" "warn" "not installed" "Install from https://www.vaultproject.io/"
@@ -2845,7 +2897,7 @@ check_vault_configured() {
     # Check if VAULT_ADDR is set (required for vault to work)
     if [[ -z "${VAULT_ADDR:-}" ]]; then
         # Check common config locations
-        if [[ -f "$HOME/.zshrc.local" ]] && grep -q "VAULT_ADDR" "$HOME/.zshrc.local" 2>/dev/null; then
+        if [[ -f "$auth_home/.zshrc.local" ]] && grep -q "VAULT_ADDR" "$auth_home/.zshrc.local" 2>/dev/null; then
             check "deep.cloud.vault_config" "Vault config" "pass" "VAULT_ADDR in ~/.zshrc.local"
         else
             check "deep.cloud.vault_config" "Vault config" "warn" "VAULT_ADDR not set" "export VAULT_ADDR=https://your-vault-server:8200"
@@ -2899,6 +2951,9 @@ check_gh_auth() {
 # Related: bead azw
 # Enhanced: Caching and timeout support (bead lz1)
 check_wrangler_auth() {
+    local auth_home=""
+    auth_home="$(doctor_runtime_home)"
+
     if ! command -v wrangler &>/dev/null; then
         check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare)" "warn" "not installed" "bun install -g --trust wrangler@latest"
         return
@@ -2937,7 +2992,7 @@ check_wrangler_auth() {
     else
         # A wrangler config file alone does not prove the user is still
         # authenticated, so do not treat it as a pass if `whoami` failed.
-        if [[ -f "$HOME/.wrangler/config/default.toml" ]]; then
+        if [[ -f "$auth_home/.wrangler/config/default.toml" ]]; then
             check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare) auth" "warn" "config file present but auth could not be verified" "Set CLOUDFLARE_API_TOKEN or rerun wrangler login from a browser-capable session"
         else
             check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare) auth" "warn" "not authenticated" "Set CLOUDFLARE_API_TOKEN or run wrangler login from a browser-capable session"
@@ -2948,6 +3003,9 @@ check_wrangler_auth() {
 # check_supabase_auth - Supabase CLI authentication check
 # Related: bead azw
 check_supabase_auth() {
+    local auth_home=""
+    auth_home="$(doctor_runtime_home)"
+
     if ! command -v supabase &>/dev/null; then
         check "deep.cloud.supabase_auth" "Supabase CLI" "warn" "not installed" "acfs update --cloud-only --force"
         return
@@ -2970,10 +3028,10 @@ check_supabase_auth() {
     fi
 
     local token_file=""
-    if [[ -f "$HOME/.supabase/access-token" ]]; then
-        token_file="$HOME/.supabase/access-token"
-    elif [[ -f "$HOME/.config/supabase/access-token" ]]; then
-        token_file="$HOME/.config/supabase/access-token"
+    if [[ -f "$auth_home/.supabase/access-token" ]]; then
+        token_file="$auth_home/.supabase/access-token"
+    elif [[ -f "$auth_home/.config/supabase/access-token" ]]; then
+        token_file="$auth_home/.config/supabase/access-token"
     fi
 
     if [[ -n "$token_file" ]] && [[ -s "$token_file" ]]; then
@@ -2987,6 +3045,9 @@ check_supabase_auth() {
 # check_vercel_auth - Vercel CLI authentication check
 # Related: bead azw
 check_vercel_auth() {
+    local auth_home=""
+    auth_home="$(doctor_runtime_home)"
+
     if ! command -v vercel &>/dev/null; then
         check "deep.cloud.vercel_auth" "Vercel CLI" "warn" "not installed" "bun install -g --trust vercel@latest"
         return
@@ -3022,10 +3083,10 @@ check_vercel_auth() {
         check "deep.cloud.vercel_auth" "Vercel CLI auth" "pass" "$vercel_user"
     else
         local auth_file=""
-        if [[ -f "$HOME/.config/vercel/auth.json" ]]; then
-            auth_file="$HOME/.config/vercel/auth.json"
-        elif [[ -f "$HOME/.vercel/auth.json" ]]; then
-            auth_file="$HOME/.vercel/auth.json"
+        if [[ -f "$auth_home/.config/vercel/auth.json" ]]; then
+            auth_file="$auth_home/.config/vercel/auth.json"
+        elif [[ -f "$auth_home/.vercel/auth.json" ]]; then
+            auth_file="$auth_home/.vercel/auth.json"
         fi
 
         if [[ -n "$auth_file" ]] && command -v jq &>/dev/null && jq -e '((.token // .user.email // "") | strings | length) > 0' "$auth_file" >/dev/null 2>&1; then

@@ -6,9 +6,15 @@
 
 set -euo pipefail
 
-ACFS_HOME="${ACFS_HOME:-$HOME/.acfs}"
+_CHEATSHEET_EXPLICIT_ACFS_HOME="${ACFS_HOME:-}"
+_CHEATSHEET_DEFAULT_ACFS_HOME="$HOME/.acfs"
+ACFS_HOME="${_CHEATSHEET_EXPLICIT_ACFS_HOME:-$_CHEATSHEET_DEFAULT_ACFS_HOME}"
 ACFS_VERSION="${ACFS_VERSION:-0.1.0}"
 CHEATSHEET_DELIM=$'\t'
+_CHEATSHEET_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
+_CHEATSHEET_RESOLVED_ACFS_HOME=""
+_CHEATSHEET_RESOLVED_TARGET_USER=""
+_CHEATSHEET_RESOLVED_TARGET_HOME=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -58,6 +64,183 @@ Examples:
   acfs cheatsheet --search docker
   acfs cheatsheet --format toon --stats
 EOF
+}
+
+cheatsheet_home_for_user() {
+  local user="$1"
+  local passwd_entry=""
+
+  [[ -n "$user" ]] || return 1
+
+  if command -v getent &>/dev/null; then
+    passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
+    if [[ -n "$passwd_entry" ]]; then
+      printf '%s\n' "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+      return 0
+    fi
+  fi
+
+  if [[ "$user" == "root" ]]; then
+    echo "/root"
+    return 0
+  fi
+
+  if [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    echo "/home/$user"
+    return 0
+  fi
+
+  return 1
+}
+
+cheatsheet_read_state_string() {
+  local state_file="$1"
+  local key="$2"
+  local value=""
+
+  [[ -f "$state_file" ]] || return 1
+
+  if command -v jq &>/dev/null; then
+    value=$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)
+  else
+    value=$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)
+  fi
+
+  [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+  printf '%s\n' "$value"
+}
+
+cheatsheet_candidate_has_acfs_data() {
+  local candidate="$1"
+  [[ -n "$candidate" ]] || return 1
+  [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -f "$candidate/zsh/acfs.zshrc" ]]
+}
+
+cheatsheet_script_acfs_home() {
+  local candidate=""
+  candidate=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
+  [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
+  printf '%s\n' "$candidate"
+}
+
+cheatsheet_resolve_acfs_home() {
+  if [[ -n "$_CHEATSHEET_RESOLVED_ACFS_HOME" ]]; then
+    printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+    return 0
+  fi
+
+  local candidate=""
+  local target_home=""
+  local target_user=""
+
+  if [[ -n "$_CHEATSHEET_EXPLICIT_ACFS_HOME" ]]; then
+    _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_EXPLICIT_ACFS_HOME"
+    printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+    return 0
+  fi
+
+  candidate=$(cheatsheet_script_acfs_home 2>/dev/null || true)
+  if cheatsheet_candidate_has_acfs_data "$candidate"; then
+    _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
+    printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+    return 0
+  fi
+
+  if cheatsheet_candidate_has_acfs_data "$ACFS_HOME"; then
+    _CHEATSHEET_RESOLVED_ACFS_HOME="$ACFS_HOME"
+    printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+    return 0
+  fi
+
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    target_home=$(cheatsheet_home_for_user "$SUDO_USER" 2>/dev/null || true)
+    candidate="${target_home}/.acfs"
+    if [[ -n "$target_home" ]] && cheatsheet_candidate_has_acfs_data "$candidate"; then
+      _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
+      printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+      return 0
+    fi
+  fi
+
+  target_user=$(cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)
+  if [[ -n "$target_user" ]]; then
+    target_home=$(cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)
+    if [[ -z "$target_home" ]]; then
+      target_home=$(cheatsheet_home_for_user "$target_user" 2>/dev/null || true)
+    fi
+    candidate="${target_home}/.acfs"
+    if [[ -n "$target_home" ]] && cheatsheet_candidate_has_acfs_data "$candidate"; then
+      _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
+      printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+      return 0
+    fi
+  fi
+
+  _CHEATSHEET_RESOLVED_ACFS_HOME="$ACFS_HOME"
+  printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+}
+
+cheatsheet_resolve_state_file() {
+  local candidate="${ACFS_HOME}/state.json"
+
+  if [[ -f "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  if [[ -f "$_CHEATSHEET_SYSTEM_STATE_FILE" ]]; then
+    printf '%s\n' "$_CHEATSHEET_SYSTEM_STATE_FILE"
+    return 0
+  fi
+
+  printf '%s\n' "$candidate"
+}
+
+cheatsheet_prepend_user_paths() {
+  local base_home="$1"
+  local dir=""
+
+  [[ -n "$base_home" ]] || return 0
+
+  for dir in \
+    "$base_home/.local/bin" \
+    "$base_home/.bun/bin" \
+    "$base_home/.cargo/bin" \
+    "$base_home/go/bin" \
+    "$base_home/.atuin/bin"; do
+    case ":$PATH:" in
+      *":$dir:"*) ;;
+      *) export PATH="$dir:$PATH" ;;
+    esac
+  done
+}
+
+cheatsheet_prepare_context() {
+  local state_file=""
+
+  ACFS_HOME="$(cheatsheet_resolve_acfs_home)"
+  state_file="$(cheatsheet_resolve_state_file)"
+
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_USER" ]]; then
+    _CHEATSHEET_RESOLVED_TARGET_USER="$(cheatsheet_read_state_string "$state_file" "target_user" 2>/dev/null || \
+      cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]]; then
+    _CHEATSHEET_RESOLVED_TARGET_HOME="$(cheatsheet_read_state_string "$state_file" "target_home" 2>/dev/null || \
+      cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)"
+    if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ -n "$_CHEATSHEET_RESOLVED_TARGET_USER" ]]; then
+      _CHEATSHEET_RESOLVED_TARGET_HOME="$(cheatsheet_home_for_user "$_CHEATSHEET_RESOLVED_TARGET_USER" 2>/dev/null || true)"
+    fi
+    if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ "$ACFS_HOME" == */.acfs ]]; then
+      _CHEATSHEET_RESOLVED_TARGET_HOME="${ACFS_HOME%/.acfs}"
+    fi
+  fi
+
+  cheatsheet_prepend_user_paths "$HOME"
+  if [[ -n "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ "$_CHEATSHEET_RESOLVED_TARGET_HOME" != "$HOME" ]]; then
+    cheatsheet_prepend_user_paths "$_CHEATSHEET_RESOLVED_TARGET_HOME"
+  fi
 }
 
 json_escape() {
@@ -403,7 +586,7 @@ cheatsheet_render_json() {
 }
 
 main() {
-  local zshrc="$ACFS_HOME/zsh/acfs.zshrc"
+  local zshrc=""
   local category_filter=""
   local search_filter=""
   local json_mode=false
@@ -484,6 +667,12 @@ main() {
         ;;
     esac
   done
+
+  cheatsheet_prepare_context
+
+  if [[ -z "$zshrc" ]]; then
+    zshrc="$ACFS_HOME/zsh/acfs.zshrc"
+  fi
 
   if [[ ! -f "$zshrc" ]]; then
     echo "Error: zshrc not found: $zshrc" >&2
