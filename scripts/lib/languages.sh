@@ -414,6 +414,7 @@ install_go_latest() {
         log_warn "mktemp failed; cannot install Go"
         return 1
     fi
+    trap 'rm -rf -- "$tmpdir" 2>/dev/null' RETURN
     local tarball="${version}.linux-${arch}.tar.gz"
 
     log_detail "Downloading $tarball..."

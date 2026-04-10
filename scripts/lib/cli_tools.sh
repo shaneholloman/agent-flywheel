@@ -386,6 +386,7 @@ install_lazygit() {
         log_warn "mktemp failed; cannot install lazygit"
         return 1
     fi
+    trap 'rm -rf -- "$tmpdir" 2>/dev/null' RETURN
     curl --proto '=https' --proto-redir '=https' -fsSL -o "$tmpdir/lazygit.tar.gz" \
         "https://github.com/jesseduffield/lazygit/releases/download/v${version}/lazygit_${version}_Linux_${arch}.tar.gz" || {
         log_warn "Could not download lazygit"
@@ -439,6 +440,7 @@ install_lazydocker() {
         log_warn "mktemp failed; cannot install lazydocker"
         return 1
     fi
+    trap 'rm -rf -- "$tmpdir" 2>/dev/null' RETURN
     curl --proto '=https' --proto-redir '=https' -fsSL -o "$tmpdir/lazydocker.tar.gz" \
         "https://github.com/jesseduffield/lazydocker/releases/download/v${version}/lazydocker_${version}_Linux_${arch}.tar.gz" || {
         log_warn "Could not download lazydocker"
@@ -492,6 +494,7 @@ install_yq() {
         log_warn "mktemp failed; cannot install yq"
         return 1
     fi
+    trap 'rm -rf -- "$tmpdir" 2>/dev/null' RETURN
     curl --proto '=https' --proto-redir '=https' -fsSL -o "$tmpdir/yq" \
         "https://github.com/mikefarah/yq/releases/download/${version}/yq_linux_${arch}" || {
         log_warn "Could not download yq"
