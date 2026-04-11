@@ -1351,7 +1351,7 @@ update_run_slb_source_install() {
 set -euo pipefail
 mkdir -p "$HOME/go/bin"
 SLB_TMP="$(mktemp -d "${TMPDIR:-/tmp}/slb_build.XXXXXX")"
-trap 'rm -rf "$SLB_TMP"' EXIT
+trap '[ -n "$SLB_TMP" ] && rm -rf "$SLB_TMP"' EXIT
 cd "$SLB_TMP"
 git clone --depth 1 https://github.com/Dicklesworthstone/simultaneous_launch_button.git .
 go build -o "$HOME/go/bin/slb" ./cmd/slb
@@ -1417,24 +1417,21 @@ update_run_verified_installer_with_env() {
         echo "Failed to create temp file for verified $tool installer" >&2
         return 1
     fi
+    trap 'rm -f "$tmp_install" 2>/dev/null || true' RETURN
 
     if verify_checksum "$url" "$expected_sha256" "$tool" > "$tmp_install"; then
         :
     else
-        local exit_code=$?
-        rm -f "$tmp_install"
-        return "$exit_code"
+        return $?
     fi
 
     if ! chmod +x "$tmp_install"; then
-        rm -f "$tmp_install"
         return 1
     fi
 
     local exit_code=0
     update_run_in_target_context "$bash_env_assignment" bash "$tmp_install" "$@" </dev/null || exit_code=$?
 
-    rm -f "$tmp_install"
     return "$exit_code"
 }
 
@@ -2994,14 +2991,14 @@ EOF
     # ASCII Art Diagram Corrector (aadc) - update when installed, or install with --force
     if cmd_exists aadc || [[ "$FORCE_MODE" == "true" ]]; then
         capture_version_before "aadc"
-        run_cmd "AADC" bash -c 'ACFS_TMP_DIR="$(mktemp -d)"; trap "rm -rf \"$ACFS_TMP_DIR\"" EXIT; git clone --depth 1 https://github.com/Dicklesworthstone/aadc.git "$ACFS_TMP_DIR/aadc" && cd "$ACFS_TMP_DIR/aadc" && cargo build --release && cp target/release/aadc ~/.cargo/bin/'
+        run_cmd "AADC" bash -c 'ACFS_TMP_DIR="$(mktemp -d)"; trap "[ -n \\\"$ACFS_TMP_DIR\\\" ] && rm -rf \\\"$ACFS_TMP_DIR\\\"" EXIT; git clone --depth 1 https://github.com/Dicklesworthstone/aadc.git "$ACFS_TMP_DIR/aadc" && cd "$ACFS_TMP_DIR/aadc" && cargo build --release && cp target/release/aadc ~/.cargo/bin/'
         capture_version_after "aadc"
     fi
 
     # Rust Proxy (rust_proxy) - update when installed, or install with --force
     if cmd_exists rust_proxy || [[ "$FORCE_MODE" == "true" ]]; then
         capture_version_before "rust_proxy"
-        run_cmd "Rust Proxy" bash -c 'ACFS_TMP_DIR="$(mktemp -d)"; trap "rm -rf \"$ACFS_TMP_DIR\"" EXIT; git clone --depth 1 https://github.com/Dicklesworthstone/rust_proxy.git "$ACFS_TMP_DIR/rust_proxy" && cd "$ACFS_TMP_DIR/rust_proxy" && cargo build --release && cp target/release/rust_proxy ~/.cargo/bin/'
+        run_cmd "Rust Proxy" bash -c 'ACFS_TMP_DIR="$(mktemp -d)"; trap "[ -n \\\"$ACFS_TMP_DIR\\\" ] && rm -rf \\\"$ACFS_TMP_DIR\\\"" EXIT; git clone --depth 1 https://github.com/Dicklesworthstone/rust_proxy.git "$ACFS_TMP_DIR/rust_proxy" && cd "$ACFS_TMP_DIR/rust_proxy" && cargo build --release && cp target/release/rust_proxy ~/.cargo/bin/'
         capture_version_after "rust_proxy"
     fi
 

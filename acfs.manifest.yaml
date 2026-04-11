@@ -2746,7 +2746,7 @@ modules:
       - |
         # Build rust_proxy from source (no install.sh available)
         ACFS_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acfs_proxy.XXXXXX")"
-        trap 'rm -rf "$ACFS_TMP_DIR"' EXIT
+        trap '[ -n "$ACFS_TMP_DIR" ] && rm -rf "$ACFS_TMP_DIR"' EXIT
         git clone --depth 1 https://github.com/Dicklesworthstone/rust_proxy.git "$ACFS_TMP_DIR/rust_proxy"
         cd "$ACFS_TMP_DIR/rust_proxy"
         cargo build --release
@@ -2791,7 +2791,7 @@ modules:
       - |
         # Build aadc from source (no install.sh available)
         ACFS_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acfs_aadc.XXXXXX")"
-        trap 'rm -rf "$ACFS_TMP_DIR"' EXIT
+        trap '[ -n "$ACFS_TMP_DIR" ] && rm -rf "$ACFS_TMP_DIR"' EXIT
         git clone --depth 1 https://github.com/Dicklesworthstone/aadc.git "$ACFS_TMP_DIR/aadc"
         cd "$ACFS_TMP_DIR/aadc"
         cargo build --release
@@ -2836,7 +2836,7 @@ modules:
       - |
         # Build caut from source (no install.sh available)
         ACFS_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acfs_caut.XXXXXX")"
-        trap 'rm -rf "$ACFS_TMP_DIR"' EXIT
+        trap '[ -n "$ACFS_TMP_DIR" ] && rm -rf "$ACFS_TMP_DIR"' EXIT
         git clone --depth 1 https://github.com/Dicklesworthstone/coding_agent_usage_tracker.git "$ACFS_TMP_DIR/caut"
         cd "$ACFS_TMP_DIR/caut"
         cargo build --release
