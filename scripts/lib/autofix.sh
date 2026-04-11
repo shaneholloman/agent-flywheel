@@ -117,7 +117,9 @@ write_atomic() {
         log_error "Failed to create temp file for atomic write: $target_file"
         return 1
     }
-    trap 'rm -f "$temp_file" 2>/dev/null || true' RETURN
+    # Use ${temp_file:-} to avoid "unbound variable" under set -u when the
+    # RETURN trap leaks to a calling scope (bash < 5.1 bug, or functrace).
+    trap 'rm -f "${temp_file:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     # Write content to temp file
     if ! printf '%s\n' "$content" > "$temp_file"; then
@@ -156,7 +158,9 @@ append_atomic() {
         log_error "Failed to create temp file for atomic append: $target_file"
         return 1
     }
-    trap 'rm -f "$temp_file" 2>/dev/null || true' RETURN
+    # Use ${temp_file:-} to avoid "unbound variable" under set -u when the
+    # RETURN trap leaks to a calling scope (bash < 5.1 bug, or functrace).
+    trap 'rm -f "${temp_file:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     # Copy existing content + new line to temp
     if [[ -f "$target_file" ]]; then
@@ -296,7 +300,7 @@ repair_state_files() {
             log_error "Failed to create temp file for changes repair"
             return 1
         }
-        trap 'rm -f "$temp_file" 2>/dev/null || true' RETURN
+        trap 'rm -f "${temp_file:-}" 2>/dev/null || true; trap - RETURN' RETURN
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             if echo "$line" | jq -e . >/dev/null 2>&1; then
@@ -333,7 +337,7 @@ repair_state_files() {
             log_error "Failed to create temp file for undos repair"
             return 1
         }
-        trap 'rm -f "$temp_file" 2>/dev/null || true' RETURN
+        trap 'rm -f "${temp_file:-}" 2>/dev/null || true; trap - RETURN' RETURN
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             if echo "$line" | jq -e . >/dev/null 2>&1; then

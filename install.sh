@@ -34,6 +34,9 @@
 #   --skip <module>       Skip a specific module (repeatable)
 #   --no-deps             Disable automatic dependency closure (expert/debug)
 #   --checksums-ref <ref> Fetch checksums.yaml from this ref (default: main for pinned tags/SHAs)
+#   --ref <ref>          Git ref to install (branch, tag, or SHA). Equivalent to
+#                        ACFS_REF env var but works reliably in curl|bash pipelines.
+#   --pin-ref            Print resolved SHA and pinned command, then exit
 # ============================================================
 
 set -euo pipefail
@@ -873,6 +876,12 @@ generate_resume_hint() {
         cmd="$cmd --mode $MODE"
     fi
 
+    # Propagate --ref so the resume uses the same git ref (avoids the
+    # curl|bash env-var pitfall where ACFS_REF only reaches curl, not bash)
+    if [[ -n "${ACFS_REF_INPUT:-}" && "${ACFS_REF_INPUT}" != "main" ]]; then
+        cmd="$cmd --ref ${ACFS_REF_INPUT}"
+    fi
+
     # Add skip flags that were used
     [[ "${SKIP_POSTGRES:-false}" == "true" ]] && cmd="$cmd --skip-postgres"
     [[ "${SKIP_VAULT:-false}" == "true" ]] && cmd="$cmd --skip-vault"
@@ -1130,6 +1139,31 @@ parse_args() {
                 # Print resolved SHA and pinned command, then exit
                 PIN_REF_MODE=true
                 shift
+                ;;
+            --ref|--ref=*)
+                # Set ACFS_REF from CLI (fixes curl|bash where env vars
+                # bind to curl, not bash: ACFS_REF=v1 curl ... | bash
+                # doesn't propagate to the bash process)
+                if [[ "$1" == "--ref" ]]; then
+                    if [[ -z "${2:-}" || "$2" == -* ]]; then
+                        log_fatal "--ref requires a git ref (branch, tag, or SHA)"
+                    fi
+                    ACFS_REF="$2"
+                    shift 2
+                else
+                    ACFS_REF="${1#*=}"
+                    shift
+                fi
+                ACFS_REF_INPUT="$ACFS_REF"
+                ACFS_RAW="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/${ACFS_REF}"
+                # Recalculate checksums ref for the new ref
+                if [[ "$ACFS_REF" =~ ^v[0-9]+(\.[0-9]+){1,2}([.-][A-Za-z0-9]+)*$ ]] || [[ "$ACFS_REF" =~ ^[0-9a-f]{7,40}$ ]]; then
+                    ACFS_CHECKSUMS_REF="main"
+                else
+                    ACFS_CHECKSUMS_REF="$ACFS_REF"
+                fi
+                ACFS_CHECKSUMS_RAW="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/${ACFS_CHECKSUMS_REF}"
+                export ACFS_REF ACFS_RAW ACFS_CHECKSUMS_REF ACFS_CHECKSUMS_RAW
                 ;;
             --skip-ubuntu-upgrade)
                 # Skip automatic Ubuntu version upgrade (nb4)
