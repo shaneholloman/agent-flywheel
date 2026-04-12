@@ -1840,10 +1840,10 @@ update_apt() {
         log_item "ok" "apt upgrade" "all packages up to date"
     else
         log_to_file "Upgrading $upgrade_count packages..."
-        run_cmd_sudo "apt upgrade ($upgrade_count packages)" apt-get upgrade -y
+        run_cmd_sudo "apt upgrade ($upgrade_count packages)" env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
     fi
 
-    run_cmd_sudo "apt autoremove" apt-get autoremove -y
+    run_cmd_sudo "apt autoremove" env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
 
     # Check if reboot is required (kernel updates, etc.)
     check_reboot_required
@@ -1950,7 +1950,7 @@ fix_apt_issues() {
         log_item "fix" "dpkg" "configuring interrupted packages"
         log_to_file "Running: $sudo_cmd dpkg --configure -a"
         local dpkg_output
-        dpkg_output=$($sudo_cmd dpkg --configure -a 2>&1) || true
+        dpkg_output=$(DEBIAN_FRONTEND=noninteractive $sudo_cmd dpkg --configure -a 2>&1) || true
         [[ -n "$dpkg_output" ]] && log_to_file "dpkg output: $dpkg_output"
     fi
 
@@ -1976,7 +1976,7 @@ fix_apt_issues() {
         sudo_cmd=$(get_sudo)
         log_to_file "Running: $sudo_cmd apt-get -f install -y"
         local apt_output
-        apt_output=$($sudo_cmd apt-get -f install -y 2>&1) || true
+        apt_output=$(DEBIAN_FRONTEND=noninteractive $sudo_cmd apt-get -f install -y 2>&1) || true
         [[ -n "$apt_output" ]] && log_to_file "apt-get -f output: $apt_output"
     fi
 }
@@ -2263,6 +2263,28 @@ update_agents() {
     fi
 }
 
+# Run update_run_verified_installer for Claude with a bounded timeout.
+# Uses a background-process approach so that shell functions remain available.
+# Returns 124 on timeout (matching timeout(1) convention).
+_run_claude_installer_with_timeout() {
+    local seconds="${1:-300}"
+    update_run_verified_installer claude latest &
+    local pid=$!
+    local elapsed=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ $elapsed -ge $seconds ]]; then
+            kill -TERM "$pid" 2>/dev/null || true
+            sleep 1
+            kill -KILL "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            return 124
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    wait "$pid"
+}
+
 # Helper for Claude update with proper error handling
 # FIX(bd-gsjqf.2): Replaced bare "claude update --channel latest" (flag does not exist)
 # with update_run_verified_installer which uses the official install.sh script.
@@ -2270,8 +2292,9 @@ update_agents() {
 run_cmd_claude_update() {
     local desc="Claude Code (verified installer)"
     local cmd_display="update_run_verified_installer claude latest"
+    local claude_installer_timeout="${CLAUDE_INSTALLER_TIMEOUT:-300}"
 
-    log_to_file "Running: $cmd_display"
+    log_to_file "Running: $cmd_display (timeout: ${claude_installer_timeout}s)"
 
     if [[ "$DRY_RUN" == "true" ]]; then
         log_item "skip" "$desc" "dry-run: $cmd_display"
@@ -2286,33 +2309,42 @@ run_cmd_claude_update() {
         if [[ -n "${UPDATE_LOG_FILE:-}" ]]; then
             {
                 echo ""
-                echo "----- COMMAND: $cmd_display"
+                echo "----- COMMAND: $cmd_display (timeout: ${claude_installer_timeout}s)"
             } >> "$UPDATE_LOG_FILE"
         fi
 
         if [[ "$QUIET" != "true" ]] && [[ -n "${UPDATE_LOG_FILE:-}" ]]; then
-            if update_run_verified_installer claude latest 2>&1 | tee -a "$UPDATE_LOG_FILE"; then
+            if _run_claude_installer_with_timeout "$claude_installer_timeout" 2>&1 | tee -a "$UPDATE_LOG_FILE"; then
                 exit_code=0
             else
                 exit_code=${PIPESTATUS[0]}
             fi
         elif [[ -n "${UPDATE_LOG_FILE:-}" ]]; then
-            if update_run_verified_installer claude latest >> "$UPDATE_LOG_FILE" 2>&1; then
+            if _run_claude_installer_with_timeout "$claude_installer_timeout" >> "$UPDATE_LOG_FILE" 2>&1; then
                 exit_code=0
             else
                 exit_code=$?
             fi
         else
             if [[ "$QUIET" != "true" ]]; then
-                update_run_verified_installer claude latest || exit_code=$?
+                _run_claude_installer_with_timeout "$claude_installer_timeout" || exit_code=$?
             else
-                update_run_verified_installer claude latest >/dev/null 2>&1 || exit_code=$?
+                _run_claude_installer_with_timeout "$claude_installer_timeout" >/dev/null 2>&1 || exit_code=$?
             fi
         fi
     else
         local output=""
-        output=$(update_run_verified_installer claude latest 2>&1) || exit_code=$?
+        output=$(_run_claude_installer_with_timeout "$claude_installer_timeout" 2>&1) || exit_code=$?
         [[ -n "$output" ]] && log_to_file "Output: $output"
+    fi
+
+    # Detect timeout specifically (exit code 124 from timeout(1))
+    if [[ $exit_code -eq 124 ]]; then
+        log_to_file "TIMEOUT: Claude installer exceeded ${claude_installer_timeout}s limit"
+        if [[ "$QUIET" != "true" ]]; then
+            echo -e "  ${YELLOW}[timeout]${NC} $desc (exceeded ${claude_installer_timeout}s)"
+        fi
+        return 1
     fi
 
     if [[ $exit_code -eq 0 ]]; then
