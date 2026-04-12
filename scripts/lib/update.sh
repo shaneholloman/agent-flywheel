@@ -1950,7 +1950,7 @@ fix_apt_issues() {
         log_item "fix" "dpkg" "configuring interrupted packages"
         log_to_file "Running: $sudo_cmd dpkg --configure -a"
         local dpkg_output
-        dpkg_output=$(DEBIAN_FRONTEND=noninteractive $sudo_cmd dpkg --configure -a 2>&1) || true
+        dpkg_output=$($sudo_cmd env DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>&1) || true
         [[ -n "$dpkg_output" ]] && log_to_file "dpkg output: $dpkg_output"
     fi
 
@@ -1976,7 +1976,7 @@ fix_apt_issues() {
         sudo_cmd=$(get_sudo)
         log_to_file "Running: $sudo_cmd apt-get -f install -y"
         local apt_output
-        apt_output=$(DEBIAN_FRONTEND=noninteractive $sudo_cmd apt-get -f install -y 2>&1) || true
+        apt_output=$($sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -f install -y 2>&1) || true
         [[ -n "$apt_output" ]] && log_to_file "apt-get -f output: $apt_output"
     fi
 }
