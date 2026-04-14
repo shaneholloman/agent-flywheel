@@ -4338,7 +4338,11 @@ install_languages_legacy_tools() {
     fi
 
     if [[ -x "$TARGET_HOME/.atuin/bin/atuin" ]]; then
-        try_step "Normalizing Atuin shim" run_as_target bash -c "mkdir -p '$ACFS_BIN_DIR' && ln -sf '$TARGET_HOME/.atuin/bin/atuin' '$ACFS_BIN_DIR/atuin'" || true
+        if run_as_target bash -c "mkdir -p '$ACFS_BIN_DIR' && ln -sf '$TARGET_HOME/.atuin/bin/atuin' '$ACFS_BIN_DIR/atuin'" >/dev/null 2>&1; then
+            log_detail "Atuin shim normalized in $ACFS_BIN_DIR"
+        else
+            log_detail "Skipping Atuin shim normalization for $ACFS_BIN_DIR"
+        fi
     fi
 
     # Zoxide - prefer apt to avoid GitHub API rate limits in CI
@@ -5043,7 +5047,15 @@ NTM_CONFIG_EOF
     local target_dir="$TARGET_HOME/mcp_agent_mail"
     local am_service_ready=false
     if run_as_target bash -c 'set -euo pipefail
-        command -v am >/dev/null 2>&1
+        am_bin=""
+        preferred_am="$HOME/mcp_agent_mail/am"
+        if [[ -x "$preferred_am" ]]; then
+            am_bin="$preferred_am"
+        elif command -v am >/dev/null 2>&1; then
+            am_bin="$(command -v am)"
+        else
+            exit 1
+        fi
         runtime_dir="/run/user/$(id -u)"
         if [[ -d "$runtime_dir" ]]; then
             export XDG_RUNTIME_DIR="$runtime_dir"
@@ -5055,6 +5067,8 @@ NTM_CONFIG_EOF
             systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1
         fi
         curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1
+        readiness_body="$(curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null)"
+        printf "%s\n" "$readiness_body" | grep -Eq "\"status\"[[:space:]]*:[[:space:]]*\"ready\""
     '; then
         log_success "MCP Agent Mail service already running on http://127.0.0.1:8765"
         am_service_ready=true
@@ -5078,22 +5092,66 @@ NTM_CONFIG_EOF
                     # This fixes the case where the installer placed the binary in
                     # ~/mcp_agent_mail/am but nothing links it into PATH.
                     run_as_target bash -c "
-                        if ! command -v am >/dev/null 2>&1; then
-                            am_src=\"$target_dir/am\"
-                            am_dst=\"\$HOME/.local/bin/am\"
-                            if [[ -x \"\$am_src\" ]]; then
-                                mkdir -p \"\$HOME/.local/bin\"
+                        am_src=\"$target_dir/am\"
+                        am_dst=\"\$HOME/.local/bin/am\"
+                        resolved_am=\"\$(command -v am 2>/dev/null || true)\"
+                        if [[ -x \"\$am_src\" ]]; then
+                            mkdir -p \"\$HOME/.local/bin\"
+                            if [[ \"\$resolved_am\" != \"\$am_src\" ]]; then
                                 ln -sf \"\$am_src\" \"\$am_dst\"
-                                echo \"ACFS: repaired missing am symlink: \$am_dst -> \$am_src\" >&2
+                                echo \"ACFS: ensured am symlink points at installed binary: \$am_dst -> \$am_src\" >&2
                             fi
                         fi
                     " || true
                     if run_as_target bash -c 'set -euo pipefail
-                        command -v am >/dev/null 2>&1
+                        sqlite_user_table_count() {
+                            local db_path="$1"
+                            [[ -f "$db_path" ]] || {
+                                printf "0\n"
+                                return 0
+                            }
+                            if command -v python3 >/dev/null 2>&1; then
+                                python3 - "$db_path" <<'"'"'PY'"'"'
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+try:
+    conn = sqlite3.connect(db_path)
+    cur = conn.execute("SELECT count(*) FROM sqlite_master WHERE type='\''table'\'' AND name NOT LIKE '\''sqlite_%'\''")
+    row = cur.fetchone()
+    print(int(row[0]) if row and row[0] is not None else 0)
+except Exception:
+    print(0)
+PY
+                                return 0
+                            fi
+                            if command -v sqlite3 >/dev/null 2>&1; then
+                                sqlite3 "$db_path" "SELECT count(*) FROM sqlite_master WHERE type='\''table'\'' AND name NOT LIKE '\''sqlite_%'\'';" 2>/dev/null || printf "0\n"
+                                return 0
+                            fi
+                            printf "0\n"
+                        }
+
                         storage_root="$HOME/.mcp_agent_mail_git_mailbox_repo"
+                        install_storage_root="$HOME/mcp_agent_mail"
+                        install_db="$install_storage_root/storage.sqlite3"
+                        legacy_db="$storage_root/storage.sqlite3"
                         unit_dir="$HOME/.config/systemd/user"
                         unit_file="$unit_dir/agent-mail.service"
-                        am_bin="$(command -v am)"
+                        preferred_am="$HOME/mcp_agent_mail/am"
+                        if [[ -x "$preferred_am" ]]; then
+                            am_bin="$preferred_am"
+                        else
+                            am_bin="$(command -v am)"
+                        fi
+                        if [[ -f "$install_db" ]]; then
+                            install_tables="$(sqlite_user_table_count "$install_db")"
+                            legacy_tables="$(sqlite_user_table_count "$legacy_db")"
+                            if [[ "$install_tables" -gt 0 && "$legacy_tables" -eq 0 ]]; then
+                                storage_root="$install_storage_root"
+                            fi
+                        fi
                         db_url="sqlite:///${storage_root}/storage.sqlite3"
                         # Detect MCP base path: Rust am uses /mcp/, Python mcp_agent_mail uses /api/
                         if "$am_bin" --version 2>/dev/null | grep -q "^am "; then
@@ -5115,7 +5173,7 @@ Environment=STORAGE_ROOT=$storage_root
 Environment=DATABASE_URL=$db_url
 Environment=HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true
 ExecStartPre=$am_bin migrate
-ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path
+ExecStart=$am_bin serve-http --no-tui --host 127.0.0.1 --port 8765 --path $am_mcp_path
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
@@ -5169,51 +5227,55 @@ UNIT_EOF
                             systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1
                         else
                             existing_pid=""
-                            if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+                            if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
+                               curl -fsS --max-time 5 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq "\"status\"[[:space:]]*:[[:space:]]*\"ready\""; then
                                 :
                             elif [[ -f "$fallback_pid_file" ]]; then
                                 existing_pid="$(cat "$fallback_pid_file" 2>/dev/null || true)"
                                 if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
                                    ps -p "$existing_pid" -o args= 2>/dev/null | grep -Fq "$am_bin serve-http"; then
-                                    :
+                                    kill "$existing_pid" >/dev/null 2>&1 || true
+                                    for _ in {1..10}; do
+                                        if ! kill -0 "$existing_pid" 2>/dev/null; then
+                                            break
+                                        fi
+                                        sleep 1
+                                    done
+                                    if kill -0 "$existing_pid" 2>/dev/null; then
+                                        kill -9 "$existing_pid" >/dev/null 2>&1 || true
+                                    fi
+                                    rm -f "$fallback_pid_file"
                                 else
                                     rm -f "$fallback_pid_file"
-                                    nohup env \
-                                        RUST_LOG=info \
-                                        STORAGE_ROOT="$storage_root" \
-                                        DATABASE_URL="$db_url" \
-                                        HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
-                                        bash -c "$am_bin migrate && $am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path" \
-                                        >>"$fallback_log_file" 2>&1 < /dev/null &
-                                    echo $! > "$fallback_pid_file"
                                 fi
-                            else
-                                nohup env \
-                                    RUST_LOG=info \
-                                    STORAGE_ROOT="$storage_root" \
-                                    DATABASE_URL="$db_url" \
-                                    HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
-                                    bash -c "$am_bin migrate && $am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path" \
-                                    >>"$fallback_log_file" 2>&1 < /dev/null &
-                                echo $! > "$fallback_pid_file"
                             fi
+                            nohup env \
+                                RUST_LOG=info \
+                                STORAGE_ROOT="$storage_root" \
+                                DATABASE_URL="$db_url" \
+                                HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
+                                bash -c "$am_bin migrate && $am_bin serve-http --no-tui --host 127.0.0.1 --port 8765 --path $am_mcp_path" \
+                                >>"$fallback_log_file" 2>&1 < /dev/null &
+                            echo $! > "$fallback_pid_file"
                         fi
                     '; then
                         local am_waited=0
                         local am_max_wait=30
-                        until curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; do
+                        until curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
+                              curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; do
                             if [[ "$am_waited" -ge "$am_max_wait" ]]; then
-                                log_error "MCP Agent Mail service did not become healthy on http://127.0.0.1:8765 after ${am_max_wait}s"
+                                log_error "MCP Agent Mail service did not become ready on http://127.0.0.1:8765 after ${am_max_wait}s"
                                 break
                             fi
                             sleep 2
                             am_waited=$((am_waited + 2))
                         done
-                        if curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+                        if curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
+                           curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; then
                             log_success "MCP Agent Mail service running on http://127.0.0.1:8765"
                             am_service_ready=true
                         else
-                            log_error "MCP Agent Mail installed but service did not become healthy"
+                            log_error "MCP Agent Mail installed but service did not become ready"
                         fi
                     else
                         log_error "MCP Agent Mail installed but managed service setup failed"

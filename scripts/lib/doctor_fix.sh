@@ -32,6 +32,11 @@ doctor_fix_runtime_acfs_home() {
 }
 
 doctor_fix_runtime_user() {
+    if [[ -n "${TARGET_USER:-}" ]]; then
+        printf '%s\n' "$TARGET_USER"
+        return 0
+    fi
+
     id -un 2>/dev/null || whoami 2>/dev/null || printf 'ubuntu\n'
 }
 

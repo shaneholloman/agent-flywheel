@@ -604,7 +604,8 @@ fi
 storage_root="$HOME/.mcp_agent_mail_git_mailbox_repo"
 unit_dir="$HOME/.config/systemd/user"
 unit_file="$unit_dir/agent-mail.service"
-db_url="sqlite:///${storage_root}/storage.sqlite3"
+db_path="$storage_root/storage.sqlite3"
+db_url="sqlite:///${db_path}"
 env_file=""
 for candidate in "$HOME/.config/mcp-agent-mail/config.env" "$HOME/.config/mcp-agent-mail/.env"; do
     if [[ -f "$candidate" ]]; then
@@ -629,10 +630,14 @@ if [[ -n "$cfg_storage_root" ]]; then
     esac
 fi
 
+db_path="$storage_root/storage.sqlite3"
+db_url="sqlite:///${db_path}"
+
 if [[ -n "$cfg_db_url" ]]; then
     cfg_db_path="$(printf '%s\n' "$cfg_db_url" | sed -n 's|^sqlite[^:]*:///||p')"
     cfg_db_path="${cfg_db_path/#\~/$HOME}"
     if [[ -n "$cfg_db_path" && "$cfg_db_path" != ":memory:" && "$cfg_db_path" != "/:memory:" ]]; then
+        db_path="$cfg_db_path"
         db_url="$cfg_db_url"
         storage_root="$(dirname "$cfg_db_path")"
     fi
@@ -640,12 +645,15 @@ fi
 
 install_storage_root="$HOME/mcp_agent_mail"
 install_db="$install_storage_root/storage.sqlite3"
-legacy_db="$storage_root/storage.sqlite3"
-if [[ -z "$cfg_storage_root" && -z "$cfg_db_url" && -f "$install_db" ]]; then
+default_legacy_db="$HOME/.mcp_agent_mail_git_mailbox_repo/storage.sqlite3"
+selected_tables="$(sqlite_user_table_count "$db_path")"
+if [[ -f "$install_db" ]]; then
     install_tables="$(sqlite_user_table_count "$install_db")"
-    legacy_tables="$(sqlite_user_table_count "$legacy_db")"
-    if [[ "$install_tables" -gt 0 && "$legacy_tables" -eq 0 ]]; then
+    if [[ "$install_tables" -gt 0 ]] && [[ "$selected_tables" -eq 0 ]] && {
+        [[ -z "$cfg_storage_root" && -z "$cfg_db_url" ]] || [[ "$db_path" == "$default_legacy_db" ]];
+    }; then
         storage_root="$install_storage_root"
+        db_path="$install_db"
         db_url="sqlite:///${install_db}"
     fi
 fi
@@ -673,13 +681,13 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$storage_root
+${env_file_line}
 Environment=RUST_LOG=info
 Environment=STORAGE_ROOT=$storage_root
 Environment=DATABASE_URL=$db_url
 Environment=HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true
-$env_file_line
 ExecStartPre=$am_bin migrate
-ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path
+ExecStart=$am_bin serve-http --no-tui --host 127.0.0.1 --port 8765 --path $am_mcp_path
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
@@ -720,8 +728,10 @@ stop_agent_mail_fallback() {
 }
 
 launch_agent_mail_fallback() {
-    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
-       curl -fsS --max-time 5 http://127.0.0.1:8765/healthz >/dev/null 2>&1; then
+    if {
+        curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
+        curl -fsS --max-time 5 http://127.0.0.1:8765/healthz >/dev/null 2>&1;
+    } && curl -fsS --max-time 5 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; then
         return 0
     fi
 
@@ -729,9 +739,10 @@ launch_agent_mail_fallback() {
         existing_pid="$(cat "$fallback_pid_file" 2>/dev/null || true)"
         if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
            ps -p "$existing_pid" -o args= 2>/dev/null | grep -Fq "$am_bin serve-http"; then
-            return 0
+            stop_agent_mail_fallback
+        else
+            rm -f "$fallback_pid_file"
         fi
-        rm -f "$fallback_pid_file"
     fi
 
     nohup env \
@@ -747,7 +758,7 @@ launch_agent_mail_fallback() {
         STORAGE_ROOT="$storage_root" \
         DATABASE_URL="$db_url" \
         HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
-        "$am_bin" serve-http --host 127.0.0.1 --port 8765 --path "$am_mcp_path" \
+        "$am_bin" serve-http --no-tui --host 127.0.0.1 --port 8765 --path "$am_mcp_path" \
         >>"$fallback_log_file" 2>&1 < /dev/null &
     echo $! > "$fallback_pid_file"
 }
