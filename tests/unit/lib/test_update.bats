@@ -263,6 +263,106 @@ EOF
     [[ "$FAIL_COUNT" -eq 0 ]]
 }
 
+@test "update_repair_atuin_install: normalizes custom and local shims" {
+    export ACFS_BIN_DIR="$HOME/custom-bin"
+    mkdir -p "$HOME/.atuin/bin"
+
+    cat > "$HOME/.atuin/bin/atuin" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  echo "atuin 18.14.1"
+else
+  echo "atuin 18.14.1"
+fi
+EOF
+    chmod +x "$HOME/.atuin/bin/atuin"
+
+    run update_repair_atuin_install
+    assert_success
+
+    [[ -L "$ACFS_BIN_DIR/atuin" ]]
+    [[ -L "$HOME/.local/bin/atuin" ]]
+
+    run readlink "$ACFS_BIN_DIR/atuin"
+    assert_output "$HOME/.atuin/bin/atuin"
+
+    run readlink "$HOME/.local/bin/atuin"
+    assert_output "$HOME/.atuin/bin/atuin"
+}
+
+@test "acfs.zshrc: loads atuin env before atuin init" {
+    local zshrc="$PROJECT_ROOT/acfs/zsh/acfs.zshrc"
+    local env_line=""
+    local init_line=""
+
+    env_line="$(grep -nF 'source "$HOME/.atuin/bin/env"' "$zshrc" | cut -d: -f1)"
+    init_line="$(grep -nF 'eval "$("$_ACFS_ATUIN_BIN" init zsh)"' "$zshrc" | cut -d: -f1)"
+
+    [[ -n "$env_line" ]]
+    [[ -n "$init_line" ]]
+    (( env_line < init_line ))
+}
+
+@test "acfs.zshrc: resolves atuin binary once for init and bindings" {
+    local zshrc="$PROJECT_ROOT/acfs/zsh/acfs.zshrc"
+
+    run grep -F '_ACFS_ATUIN_BIN=""' "$zshrc"
+    assert_success
+
+    run grep -F 'eval "$("$_ACFS_ATUIN_BIN" init zsh)"' "$zshrc"
+    assert_success
+
+    run grep -F 'if [[ -n "$_ACFS_ATUIN_BIN" ]]; then' "$zshrc"
+    assert_success
+}
+
+@test "sync_acfs_zsh_loader: removes duplicate local override sourcing" {
+    cat > "$HOME/.zshrc" <<'EOF'
+# ACFS loader
+source "$HOME/.acfs/zsh/acfs.zshrc"
+
+# User overrides live here forever
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
+EOF
+
+    run sync_acfs_zsh_loader
+    assert_success
+
+    run cat "$HOME/.zshrc"
+    refute_output --partial '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
+    assert_output --partial 'source "$HOME/.acfs/zsh/acfs.zshrc"'
+}
+
+@test "sync_acfs_zsh_loader: leaves non-ACFS zshrc untouched" {
+    cat > "$HOME/.zshrc" <<'EOF'
+# custom zshrc
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
+EOF
+
+    run sync_acfs_zsh_loader
+    assert_success
+
+    run cat "$HOME/.zshrc"
+    assert_output --partial '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
+    refute_output --partial 'source "$HOME/.acfs/zsh/acfs.zshrc"'
+}
+
+@test "sync_acfs_profile_paths: upgrades legacy ACFS login PATH line" {
+    cat > "$HOME/.profile" <<'EOF'
+# ~/.profile: executed by bash for login shells
+
+# User binary paths
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+EOF
+
+    run sync_acfs_profile_paths
+    assert_success
+
+    run cat "$HOME/.profile"
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+    refute_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+}
+
 @test "update_zoxide: retries transient reinstall failures before succeeding" {
     init_stub_dir
     export PATH="$STUB_DIR:$PATH"

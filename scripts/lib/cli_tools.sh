@@ -111,6 +111,30 @@ _cli_target_home() {
     printf '/home/%s\n' "$target_user"
 }
 
+_cli_normalize_atuin_shims() {
+    local target_user="${TARGET_USER:-ubuntu}"
+    local target_home=""
+    target_home="$(_cli_target_home "$target_user")"
+    local preferred_src="$target_home/.atuin/bin/atuin"
+    local primary_dir="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    local fallback_dir="$target_home/.local/bin"
+
+    [[ -x "$preferred_src" ]] || return 0
+
+    _cli_run_as_user "
+        set -e
+        preferred_src='$preferred_src'
+        primary_dir='$primary_dir'
+        fallback_dir='$fallback_dir'
+        mkdir -p \"\$primary_dir\"
+        ln -sf \"\$preferred_src\" \"\$primary_dir/atuin\"
+        if [[ \"\$fallback_dir\" != \"\$primary_dir\" ]]; then
+            mkdir -p \"\$fallback_dir\"
+            ln -sf \"\$preferred_src\" \"\$fallback_dir/atuin\"
+        fi
+    " >/dev/null 2>&1 || true
+}
+
 # Fetch latest version tag from GitHub
 # Usage: _fetch_github_version "owner/repo" [strip_v]
 _fetch_github_version() {
@@ -525,6 +549,7 @@ install_atuin() {
 
     if [[ -d "$target_home/.atuin" ]] || _cli_command_exists atuin; then
         log_detail "atuin already installed"
+        _cli_normalize_atuin_shims
         return 0
     fi
 
@@ -546,6 +571,7 @@ install_atuin() {
     fi
 
     if [[ -d "$target_home/.atuin" ]] || _cli_command_exists atuin; then
+        _cli_normalize_atuin_shims
         log_success "atuin installed"
         return 0
     fi

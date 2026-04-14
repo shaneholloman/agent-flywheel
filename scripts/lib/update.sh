@@ -1350,6 +1350,52 @@ sync_acfs_zshrc() {
     log_to_file "Deployed $repo_zshrc -> $deployed_zshrc"
 }
 
+sync_acfs_zsh_loader() {
+    local user_zshrc="$HOME/.zshrc"
+    local acfs_loader_source='source "$HOME/.acfs/zsh/acfs.zshrc"'
+    local stale_local_source='[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
+
+    [[ -f "$user_zshrc" ]] || return 0
+
+    if ! grep -Fq "$acfs_loader_source" "$user_zshrc" 2>/dev/null; then
+        return 0
+    fi
+
+    if ! grep -Fq "$stale_local_source" "$user_zshrc" 2>/dev/null; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_item "ok" "acfs.zsh loader" "would remove duplicate ~/.zshrc.local sourcing from ~/.zshrc"
+        return 0
+    fi
+
+    sed -i '\|^\[ -f "\$HOME/\.zshrc\.local" \] && source "\$HOME/\.zshrc\.local"$|d' "$user_zshrc"
+    log_item "ok" "acfs.zsh loader" "removed duplicate ~/.zshrc.local sourcing from ~/.zshrc"
+    log_to_file "Removed duplicate .zshrc.local sourcing from $user_zshrc"
+}
+
+sync_acfs_profile_paths() {
+    local user_profile="$HOME/.profile"
+    local legacy_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+    local current_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+
+    [[ -f "$user_profile" ]] || return 0
+
+    if ! grep -Fq "$legacy_path_line" "$user_profile" 2>/dev/null; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_item "ok" "acfs.profile" "would update login PATH to include ~/.atuin/bin"
+        return 0
+    fi
+
+    sed -i "s|$(printf '%s' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$current_path_line|" "$user_profile"
+    log_item "ok" "acfs.profile" "updated login PATH to include ~/.atuin/bin"
+    log_to_file "Updated ACFS-managed PATH line in $user_profile"
+}
+
 # Sync critical scripts from the git repo to ~/.acfs/ so that subsequent
 # runs of 'acfs update' (invoked from ~/.acfs/scripts/lib/update.sh) use
 # the latest code.  Without this, fleet machines that run from the
@@ -3489,6 +3535,8 @@ update_shell() {
     update_zoxide
 
     # Keep deployed files in sync with repo (acfs.zshrc, update.sh, etc.)
+    sync_acfs_profile_paths
+    sync_acfs_zsh_loader
     sync_acfs_zshrc
     sync_acfs_deployed
 }

@@ -3892,17 +3892,15 @@ setup_shell() {
     cat > "$user_zshrc" << 'EOF'
 # ACFS loader
 source "$HOME/.acfs/zsh/acfs.zshrc"
-
-# User overrides live here forever
-[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
 EOF
     try_step "Setting .zshrc ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zshrc" || return 1
 
-    # Ensure ~/.local/bin is in PATH for bash login shells (used by installers)
+    # Ensure core user-installed tool paths are present for login shells.
     # This prevents warnings from tools like Claude's installer that check PATH
     local user_profile="$TARGET_HOME/.profile"
+    local legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
     # shellcheck disable=SC2016  # We want $HOME/$PATH to expand when .profile is sourced, not during install.
-    local profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+    local profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
     if [[ ! -f "$user_profile" ]]; then
         # Create new .profile
         {
@@ -3912,7 +3910,10 @@ EOF
             echo "$profile_path_line"
         } > "$user_profile"
         $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_profile"
-    elif ! grep -q '\.local/bin' "$user_profile" 2>/dev/null; then
+    elif grep -Fq "$legacy_profile_path_line" "$user_profile" 2>/dev/null; then
+        sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" "$user_profile"
+    elif ! grep -q '\.local/bin' "$user_profile" 2>/dev/null || \
+         ! grep -q '\.atuin/bin' "$user_profile" 2>/dev/null; then
         # Append to existing .profile
         {
             echo ""
@@ -4338,8 +4339,19 @@ install_languages_legacy_tools() {
     fi
 
     if [[ -x "$TARGET_HOME/.atuin/bin/atuin" ]]; then
-        if run_as_target bash -c "mkdir -p '$ACFS_BIN_DIR' && ln -sf '$TARGET_HOME/.atuin/bin/atuin' '$ACFS_BIN_DIR/atuin'" >/dev/null 2>&1; then
-            log_detail "Atuin shim normalized in $ACFS_BIN_DIR"
+        if run_as_target bash -c '
+            set -euo pipefail
+            preferred_src="$HOME/.atuin/bin/atuin"
+            primary_dir="'"$ACFS_BIN_DIR"'"
+            fallback_dir="$HOME/.local/bin"
+            mkdir -p "$primary_dir"
+            ln -sf "$preferred_src" "$primary_dir/atuin"
+            if [[ "$fallback_dir" != "$primary_dir" ]]; then
+                mkdir -p "$fallback_dir"
+                ln -sf "$preferred_src" "$fallback_dir/atuin"
+            fi
+        ' >/dev/null 2>&1; then
+            log_detail "Atuin shim normalized in $ACFS_BIN_DIR and ~/.local/bin"
         else
             log_detail "Skipping Atuin shim normalization for $ACFS_BIN_DIR"
         fi
@@ -5087,10 +5099,8 @@ NTM_CONFIG_EOF
                 chmod 755 "$ACFS_TMP_INSTALL" 2>/dev/null || true
 
                 if try_step "Installing MCP Agent Mail" run_as_target bash "$ACFS_TMP_INSTALL" --dest "$target_dir" --yes; then
-                    # Symlink repair: if the binary exists at the install dest but
-                    # is not reachable via PATH, create a symlink in ~/.local/bin.
-                    # This fixes the case where the installer placed the binary in
-                    # ~/mcp_agent_mail/am but nothing links it into PATH.
+                    # Symlink repair/normalization: prefer the freshly installed
+                    # Rust CLI even if an older am is already on PATH.
                     run_as_target bash -c "
                         am_src=\"$target_dir/am\"
                         am_dst=\"\$HOME/.local/bin/am\"

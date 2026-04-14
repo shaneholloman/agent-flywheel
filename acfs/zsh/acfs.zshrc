@@ -37,12 +37,25 @@ export BUN_INSTALL="$HOME/.bun"
 [[ -s "$HOME/.bun/_bun" ]] && source "$HOME/.bun/_bun"
 
 # Atuin (installer default)
-[[ -d "$HOME/.atuin/bin" ]] && export PATH="$HOME/.atuin/bin:$PATH"
+if [[ -f "$HOME/.atuin/bin/env" ]]; then
+  source "$HOME/.atuin/bin/env"
+elif [[ -d "$HOME/.atuin/bin" ]]; then
+  export PATH="$HOME/.atuin/bin:$PATH"
+fi
 
 # Ensure user-local binaries take precedence (e.g., native Claude install).
 export PATH="$HOME/.local/bin:$PATH"
 if command -v zsh &>/dev/null; then
   export SHELL="$(command -v zsh)"
+fi
+
+_ACFS_ATUIN_BIN=""
+if command -v atuin &>/dev/null; then
+  _ACFS_ATUIN_BIN="$(command -v atuin)"
+elif [[ -x "$HOME/.local/bin/atuin" ]]; then
+  _ACFS_ATUIN_BIN="$HOME/.local/bin/atuin"
+elif [[ -x "$HOME/.atuin/bin/atuin" ]]; then
+  _ACFS_ATUIN_BIN="$HOME/.atuin/bin/atuin"
 fi
 
 # --- Oh My Zsh ---
@@ -211,8 +224,8 @@ export NVM_DIR="$HOME/.nvm"
 [[ -s "$NVM_DIR/bash_completion" ]] && source "$NVM_DIR/bash_completion"
 
 # Atuin init (after PATH)
-if command -v atuin &>/dev/null; then
-  eval "$(atuin init zsh)"
+if [[ -n "$_ACFS_ATUIN_BIN" ]]; then
+  eval "$("$_ACFS_ATUIN_BIN" init zsh)"
 fi
 
 # Zoxide (better cd)
@@ -238,7 +251,7 @@ fi
 
 # --- Force Atuin bindings (must be last) ---
 bindkey -e
-if command -v atuin &>/dev/null; then
+if [[ -n "$_ACFS_ATUIN_BIN" ]]; then
   bindkey -M emacs '^R' atuin-search 2>/dev/null
   bindkey -M viins '^R' atuin-search-viins 2>/dev/null
   bindkey -M vicmd '^R' atuin-search-vicmd 2>/dev/null
