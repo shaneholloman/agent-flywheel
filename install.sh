@@ -4337,6 +4337,10 @@ install_languages_legacy_tools() {
         try_step "Installing Atuin" acfs_run_verified_upstream_script_as_target "atuin" "sh" "--non-interactive" || return 1
     fi
 
+    if [[ -x "$TARGET_HOME/.atuin/bin/atuin" ]]; then
+        try_step "Normalizing Atuin shim" run_as_target bash -c "mkdir -p '$ACFS_BIN_DIR' && ln -sf '$TARGET_HOME/.atuin/bin/atuin' '$ACFS_BIN_DIR/atuin'" || true
+    fi
+
     # Zoxide - prefer apt to avoid GitHub API rate limits in CI
     # Check multiple possible locations
     if [[ -x "$ACFS_BIN_DIR/zoxide" ]] || [[ -x "/usr/local/bin/zoxide" ]] || command -v zoxide &>/dev/null; then

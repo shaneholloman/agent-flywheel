@@ -31,6 +31,32 @@ doctor_fix_runtime_acfs_home() {
     printf '%s/.acfs\n' "$(doctor_fix_runtime_home)"
 }
 
+doctor_fix_runtime_user() {
+    id -un 2>/dev/null || whoami 2>/dev/null || printf 'ubuntu\n'
+}
+
+doctor_fix_source_stack_lib() {
+    if declare -f _stack_configure_agent_mail_service >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [[ -f "$SCRIPT_DIR/stack.sh" ]]; then
+        # shellcheck source=stack.sh
+        source "$SCRIPT_DIR/stack.sh"
+        return 0
+    fi
+
+    local runtime_stack_lib
+    runtime_stack_lib="$(doctor_fix_runtime_acfs_home)/scripts/lib/stack.sh"
+    if [[ -f "$runtime_stack_lib" ]]; then
+        # shellcheck source=stack.sh
+        source "$runtime_stack_lib"
+        return 0
+    fi
+
+    return 1
+}
+
 doctor_fix_log_file_path() {
     if [[ -n "${DOCTOR_FIX_LOG:-}" ]]; then
         printf '%s\n' "$DOCTOR_FIX_LOG"
@@ -867,14 +893,8 @@ agent_mail_fix_doctor_healthy() {
 }
 
 agent_mail_fix_wait_for_health() {
-    local attempt
-    for attempt in {1..15}; do
-        if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
-            return 0
-        fi
-        sleep 1
-    done
-    return 1
+    doctor_fix_source_stack_lib || return 1
+    TARGET_USER="$(doctor_fix_runtime_user)" TARGET_HOME="$(doctor_fix_runtime_home)" _stack_wait_for_agent_mail_health
 }
 
 agent_mail_fix_write_unit() {
@@ -1000,68 +1020,65 @@ fix_mcp_agent_mail() {
     local doctor_healthy=false
     local project_path=""
     local runtime_home=""
+    local runtime_user=""
+    local am_src=""
+    local am_dst=""
     runtime_home="$(doctor_fix_runtime_home)"
+    runtime_user="$(doctor_fix_runtime_user)"
+    am_src="$runtime_home/mcp_agent_mail/am"
+    am_dst="$runtime_home/.local/bin/am"
 
-    if ! command -v am &>/dev/null; then
-        # Quick symlink repair: if binary exists at install dest but not on PATH
-        local am_src="$runtime_home/mcp_agent_mail/am"
-        local am_dst="$runtime_home/.local/bin/am"
-        if [[ -x "$am_src" ]]; then
+    doctor_fix_source_stack_lib || {
+        doctor_fix_log ERROR "Unable to load stack helper library for MCP Agent Mail repair"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    }
+
+    if [[ -x "$am_src" ]]; then
+        local resolved_am=""
+        resolved_am="$(command -v am 2>/dev/null || true)"
+        if [[ "$resolved_am" != "$am_src" ]]; then
             if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
-                FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail.symlink|Create am symlink: $am_dst -> $am_src|$am_dst|ln -sf $am_src $am_dst")
-                doctor_fix_log DRY "Create am symlink: $am_dst -> $am_src"
+                FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail.symlink|Ensure am symlink points at installed Rust CLI|$am_dst|ln -sf $am_src $am_dst")
+                doctor_fix_log DRY "Ensure am symlink points at $am_src"
                 return 0
             fi
-            mkdir -p "$runtime_home/.local/bin"
-            ln -sf "$am_src" "$am_dst"
-            hash -r
-            if command -v am &>/dev/null; then
-                doctor_fix_log INFO "Repaired missing am symlink: $am_dst -> $am_src"
-                FIXES_APPLIED+=("fix.stack.mcp_agent_mail.symlink|Repaired missing am symlink")
+            if TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
+                hash -r
+                doctor_fix_log INFO "Ensured am resolves to the installed Rust CLI"
+                FIXES_APPLIED+=("fix.stack.mcp_agent_mail.symlink|Ensured am resolves to installed Rust CLI")
                 FIX_APPLIED=$((FIX_APPLIED + 1))
                 fixed_any=true
             fi
         fi
+    fi
 
-        # If symlink repair did not resolve the issue, fall back to full reinstall
-        if ! command -v am &>/dev/null; then
-            if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
-                FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail|Install MCP Agent Mail via verified installer, then repair service state|$runtime_home/.mcp_agent_mail_git_mailbox_repo|verified:mcp_agent_mail --dest $runtime_home/mcp_agent_mail --yes")
-                doctor_fix_log DRY "Install MCP Agent Mail via verified installer, then repair service state"
-                return 0
-            fi
+    if ! command -v am &>/dev/null; then
+        if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
+            FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail|Install MCP Agent Mail via verified installer, then repair service state|$runtime_home/mcp_agent_mail|verified:mcp_agent_mail --dest $runtime_home/mcp_agent_mail --yes")
+            doctor_fix_log DRY "Install MCP Agent Mail via verified installer, then repair service state"
+            return 0
+        fi
 
-            if doctor_fix_run_verified_installer "mcp_agent_mail" --dest "$runtime_home/mcp_agent_mail" --yes >/dev/null 2>&1; then
+        if doctor_fix_run_verified_installer "mcp_agent_mail" --dest "$runtime_home/mcp_agent_mail" --yes >/dev/null 2>&1; then
+            hash -r
+            if TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
                 hash -r
-                if command -v am &>/dev/null; then
-                    doctor_fix_log INFO "Installed MCP Agent Mail CLI via verified installer"
-                    FIXES_APPLIED+=("fix.stack.mcp_agent_mail.install|Installed MCP Agent Mail CLI via verified installer")
-                    FIX_APPLIED=$((FIX_APPLIED + 1))
-                    fixed_any=true
-                else
-                    # Installer succeeded but am still not on PATH - try symlink one more time
-                    if [[ -x "$am_src" ]]; then
-                        mkdir -p "$runtime_home/.local/bin"
-                        ln -sf "$am_src" "$am_dst"
-                        hash -r
-                        if command -v am &>/dev/null; then
-                            doctor_fix_log INFO "Repaired missing am symlink after install: $am_dst -> $am_src"
-                            FIXES_APPLIED+=("fix.stack.mcp_agent_mail.symlink|Repaired missing am symlink after install")
-                            FIX_APPLIED=$((FIX_APPLIED + 1))
-                            fixed_any=true
-                        fi
-                    fi
-                    if ! command -v am &>/dev/null; then
-                        doctor_fix_log ERROR "Verified MCP Agent Mail install completed without providing 'am'"
-                        FIX_FAILED=$((FIX_FAILED + 1))
-                        return 1
-                    fi
-                fi
+            fi
+            if command -v am &>/dev/null; then
+                doctor_fix_log INFO "Installed MCP Agent Mail CLI via verified installer"
+                FIXES_APPLIED+=("fix.stack.mcp_agent_mail.install|Installed MCP Agent Mail CLI via verified installer")
+                FIX_APPLIED=$((FIX_APPLIED + 1))
+                fixed_any=true
             else
-                doctor_fix_log ERROR "Failed to install MCP Agent Mail via verified installer"
+                doctor_fix_log ERROR "Verified MCP Agent Mail install completed without providing 'am'"
                 FIX_FAILED=$((FIX_FAILED + 1))
                 return 1
             fi
+        else
+            doctor_fix_log ERROR "Failed to install MCP Agent Mail via verified installer"
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
         fi
     elif [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
         FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail|Repair MCP Agent Mail and apply upstream doctor fixes|$runtime_home/.mcp_agent_mail_git_mailbox_repo|am doctor repair --yes && am doctor fix --yes")
@@ -1087,58 +1104,25 @@ fix_mcp_agent_mail() {
         doctor_fix_log WARN "MCP Agent Mail doctor fix did not complete cleanly"
     fi
 
-    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
+       curl -fsS --max-time 5 http://127.0.0.1:8765/health >/dev/null 2>&1; then
         service_healthy=true
     fi
 
-    if command -v systemctl &>/dev/null; then
-        local uid runtime_dir user_bus
-        local -a service_env=("HOME=$runtime_home")
+    if TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_configure_agent_mail_service; then
+        doctor_fix_log INFO "Repaired MCP Agent Mail managed service"
+        FIXES_APPLIED+=("fix.stack.mcp_agent_mail.service|Repaired MCP Agent Mail managed service")
+        FIX_APPLIED=$((FIX_APPLIED + 1))
+        fixed_any=true
 
-        uid="$(id -u)"
-        runtime_dir="/run/user/$uid"
-        user_bus="$runtime_dir/bus"
-        if [[ -d "$runtime_dir" ]]; then
-            service_env+=("XDG_RUNTIME_DIR=$runtime_dir")
-            if [[ -S "$user_bus" ]]; then
-                service_env+=("DBUS_SESSION_BUS_ADDRESS=unix:path=$user_bus")
-            fi
-        fi
-
-        if agent_mail_fix_write_unit; then
-            doctor_fix_log INFO "Rewrote MCP Agent Mail user service unit"
-            FIXES_APPLIED+=("fix.stack.mcp_agent_mail.service|Rewrote MCP Agent Mail user service unit")
-            FIX_APPLIED=$((FIX_APPLIED + 1))
-            fixed_any=true
-
-            if env "${service_env[@]}" systemctl --user show-environment >/dev/null 2>&1; then
-                service_healthy=false
-                agent_mail_fix_stop_fallback
-                env "${service_env[@]}" systemctl --user daemon-reload >/dev/null 2>&1 || true
-                if env "${service_env[@]}" systemctl --user enable --now agent-mail.service >/dev/null 2>&1 || \
-                   env "${service_env[@]}" systemctl --user restart agent-mail.service >/dev/null 2>&1; then
-                    if env "${service_env[@]}" systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1 && \
-                       agent_mail_fix_wait_for_health; then
-                        doctor_fix_log INFO "Agent Mail service is healthy after restart"
-                        service_healthy=true
-                    else
-                        doctor_fix_log WARN "Agent Mail user service is still inactive after restart"
-                    fi
-                fi
-            elif [[ "$service_healthy" != "true" ]]; then
-                if agent_mail_fix_launch_fallback && agent_mail_fix_wait_for_health; then
-                    doctor_fix_log INFO "Agent Mail service is healthy after fallback launch"
-                    service_healthy=true
-                fi
-            fi
+        if agent_mail_fix_wait_for_health; then
+            doctor_fix_log INFO "Agent Mail service is healthy after restart"
+            service_healthy=true
         else
-            doctor_fix_log WARN "Failed to rewrite MCP Agent Mail user service unit"
+            doctor_fix_log WARN "Agent Mail service did not reach readiness after repair"
         fi
     elif [[ "$service_healthy" != "true" ]]; then
-        if agent_mail_fix_launch_fallback && agent_mail_fix_wait_for_health; then
-            doctor_fix_log INFO "Agent Mail service is healthy after fallback launch"
-            service_healthy=true
-        fi
+        doctor_fix_log WARN "Failed to rewrite MCP Agent Mail user service unit"
     fi
 
     if [[ "$service_healthy" == "true" ]] && agent_mail_fix_doctor_healthy; then

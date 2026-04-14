@@ -151,6 +151,82 @@ ensure_path() {
     fi
 }
 
+update_source_stack_lib() {
+    if declare -f _stack_configure_agent_mail_service >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [[ -r "$SCRIPT_DIR/stack.sh" ]]; then
+        # shellcheck source=stack.sh
+        source "$SCRIPT_DIR/stack.sh"
+        return 0
+    fi
+
+    echo "Stack library not found at $SCRIPT_DIR/stack.sh" >&2
+    return 1
+}
+
+update_preferred_user_bin_dir() {
+    printf '%s\n' "$HOME/.local/bin"
+}
+
+update_tool_binary_path() {
+    local tool="$1"
+    local user_bin
+    user_bin="$(update_preferred_user_bin_dir)"
+    local primary_bin="${ACFS_BIN_DIR:-$user_bin}"
+
+    case "$tool" in
+        atuin)
+            for candidate in \
+                "$primary_bin/atuin" \
+                "$user_bin/atuin" \
+                "$HOME/.atuin/bin/atuin"; do
+                [[ -x "$candidate" ]] || continue
+                printf '%s\n' "$candidate"
+                return 0
+            done
+            ;;
+        zoxide)
+            for candidate in \
+                "$primary_bin/zoxide" \
+                "$user_bin/zoxide"; do
+                [[ -x "$candidate" ]] || continue
+                printf '%s\n' "$candidate"
+                return 0
+            done
+            ;;
+        *)
+            ;;
+    esac
+
+    if cmd_exists "$tool"; then
+        command -v "$tool"
+        return 0
+    fi
+
+    return 1
+}
+
+update_tool_version_from_path() {
+    local tool="$1"
+    local binary_path="${2:-}"
+
+    [[ -n "$binary_path" ]] || {
+        printf 'unknown\n'
+        return 0
+    }
+
+    case "$tool" in
+        atuin|zoxide)
+            "$binary_path" --version 2>/dev/null | awk '{print $2}' || echo "unknown"
+            ;;
+        *)
+            "$binary_path" --version 2>/dev/null | head -1 || echo "unknown"
+            ;;
+    esac
+}
+
 update_has_nvm_node() {
     compgen -G "$HOME/.nvm/versions/node/*/bin/node" >/dev/null 2>&1
 }
@@ -320,10 +396,10 @@ get_version() {
             version=$("$tool" --version 2>/dev/null | head -1 || echo "unknown")
             ;;
         atuin)
-            version=$(atuin --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+            version=$(update_tool_version_from_path "atuin" "$(update_tool_binary_path "atuin" 2>/dev/null || true)")
             ;;
         zoxide)
-            version=$(zoxide --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+            version=$(update_tool_version_from_path "zoxide" "$(update_tool_binary_path "zoxide" 2>/dev/null || true)")
             ;;
         omz)
             # OMZ version from .oh-my-zsh git tag or commit
@@ -454,6 +530,176 @@ log_item() {
     esac
 
     return 0
+}
+
+update_finish_cmd_ok() {
+    local desc="$1"
+    local details="${2:-}"
+
+    if [[ "$QUIET" != "true" ]] && [[ "$VERBOSE" != "true" ]]; then
+        printf "\033[1A\033[2K  ${GREEN}[ok]${NC} %s\n" "$desc"
+    elif [[ "$QUIET" != "true" ]]; then
+        printf "  ${GREEN}[ok]${NC} %s\n" "$desc"
+    fi
+    [[ -n "$details" && "$QUIET" != "true" ]] && printf "       ${DIM}%s${NC}\n" "$details"
+
+    log_to_file "Success: $desc${details:+ - $details}"
+    ((SUCCESS_COUNT += 1))
+}
+
+update_finish_cmd_fail() {
+    local desc="$1"
+    local details="${2:-}"
+
+    if [[ "$QUIET" != "true" ]] && [[ "$VERBOSE" != "true" ]]; then
+        printf "\033[1A\033[2K  ${RED}[fail]${NC} %s\n" "$desc"
+    else
+        printf "  ${RED}[fail]${NC} %s\n" "$desc"
+    fi
+    [[ -n "$details" ]] && printf "       ${DIM}%s${NC}\n" "$details"
+
+    log_to_file "Failed: $desc${details:+ - $details}"
+    ((FAIL_COUNT += 1))
+
+    if [[ "$ABORT_ON_FAILURE" == "true" ]]; then
+        echo -e "${RED}Aborting due to failure (--abort-on-failure)${NC}"
+        log_to_file "ABORT: Stopping due to --abort-on-failure"
+        exit 1
+    fi
+}
+
+update_run_command_capture_with_retry() {
+    local desc="$1"
+    shift
+
+    local max_attempts=3
+    local attempt=1
+    local exit_code=0
+    local output=""
+    local cmd_display=""
+    cmd_display=$(printf '%q ' "$@")
+
+    log_to_file "Running (captured with retry): $cmd_display"
+
+    while [[ $attempt -le $max_attempts ]]; do
+        exit_code=0
+        output=$("$@" 2>&1) || exit_code=$?
+        [[ -n "$output" ]] && log_to_file "Output: $output"
+        [[ "$VERBOSE" == "true" && "$QUIET" != "true" && -n "$output" ]] && printf "%s\n" "$output"
+
+        if [[ $exit_code -eq 0 ]]; then
+            return 0
+        fi
+
+        if update_is_transient_failure_output "$output" && [[ $attempt -lt $max_attempts ]]; then
+            local sleep_secs
+            sleep_secs="$(update_retry_sleep_seconds "$attempt")"
+            log_to_file "Transient error detected for $desc, retrying in ${sleep_secs}s (attempt $attempt/$max_attempts)"
+            sleep "$sleep_secs"
+            ((attempt += 1))
+            continue
+        fi
+
+        break
+    done
+
+    return "$exit_code"
+}
+
+update_shell_tool_state_improved() {
+    local before_path="${1:-}"
+    local before_version="${2:-unknown}"
+    local after_path="${3:-}"
+    local after_version="${4:-unknown}"
+
+    [[ -n "$after_path" && -x "$after_path" ]] || return 1
+    [[ -n "$after_version" && "$after_version" != "unknown" ]] || return 1
+
+    [[ -z "$before_path" || "$after_path" != "$before_path" || "$after_version" != "$before_version" ]]
+}
+
+update_repair_atuin_install() {
+    local preferred_src="$HOME/.atuin/bin/atuin"
+    local primary_dir="${ACFS_BIN_DIR:-$(update_preferred_user_bin_dir)}"
+    local user_bin
+    user_bin="$(update_preferred_user_bin_dir)"
+    local -a bin_dirs=("$primary_dir")
+    local dir=""
+
+    if [[ "$user_bin" != "$primary_dir" ]]; then
+        bin_dirs+=("$user_bin")
+    fi
+
+    if [[ -x "$preferred_src" ]]; then
+        for dir in "${bin_dirs[@]}"; do
+            [[ -n "$dir" ]] || continue
+            mkdir -p "$dir" 2>/dev/null || true
+            if ln -sf "$preferred_src" "$dir/atuin" 2>/dev/null; then
+                log_to_file "Atuin symlink normalized: $dir/atuin -> $preferred_src"
+            fi
+        done
+    fi
+
+    hash -r 2>/dev/null || true
+
+    local resolved_bin=""
+    resolved_bin="$(update_tool_binary_path "atuin" 2>/dev/null || true)"
+    [[ -n "$resolved_bin" && -x "$resolved_bin" ]] || return 1
+    "$resolved_bin" --version >/dev/null 2>&1
+}
+
+update_repair_zoxide_install() {
+    hash -r 2>/dev/null || true
+
+    local resolved_bin=""
+    resolved_bin="$(update_tool_binary_path "zoxide" 2>/dev/null || true)"
+    [[ -n "$resolved_bin" && -x "$resolved_bin" ]] || return 1
+    "$resolved_bin" --version >/dev/null 2>&1
+}
+
+update_run_verified_installer_with_shell_repair() {
+    local desc="$1"
+    local tool="$2"
+    local repair_fn="$3"
+    shift 3
+
+    local before_path=""
+    local before_version="unknown"
+    local after_path=""
+    local after_version="unknown"
+    local exit_code=0
+
+    before_path="$(update_tool_binary_path "$tool" 2>/dev/null || true)"
+    before_version="$(get_version "$tool")"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_item "skip" "$desc" "dry-run: verified installer + repair"
+        return 0
+    fi
+
+    log_item "run" "$desc"
+    update_run_command_capture_with_retry "$desc" update_run_verified_installer "$tool" "$@" || exit_code=$?
+
+    "$repair_fn" >/dev/null 2>&1 || true
+    after_path="$(update_tool_binary_path "$tool" 2>/dev/null || true)"
+    after_version="$(get_version "$tool")"
+
+    if [[ $exit_code -eq 0 ]]; then
+        if [[ -n "$after_path" && -x "$after_path" && "$after_version" != "unknown" ]]; then
+            update_finish_cmd_ok "$desc"
+            return 0
+        fi
+        update_finish_cmd_fail "$desc" "installer completed but binary verification failed"
+        return 1
+    fi
+
+    if update_shell_tool_state_improved "$before_path" "$before_version" "$after_path" "$after_version"; then
+        update_finish_cmd_ok "$desc" "verified repaired binary at ${after_path} (${after_version})"
+        return 0
+    fi
+
+    update_finish_cmd_fail "$desc" "installer exited ${exit_code}"
+    return 1
 }
 
 run_cmd() {
@@ -2763,151 +3009,12 @@ update_stack() {
                 target_home="$(update_target_home "$target_user")"
 
                 if update_run_in_target_context "" bash "$tmp_install" --dest "$target_home/mcp_agent_mail" --yes; then
-                    if update_run_in_target_context "" bash -o pipefail -s <<'EOF'; then
-set -euo pipefail
-
-am_bin="$(command -v am 2>/dev/null)" || {
-    echo "am CLI missing after install" >&2
-    exit 1
-}
-
-uid="$(id -u)"
-runtime_dir="/run/user/$uid"
-user_bus="$runtime_dir/bus"
-storage_root="$HOME/.mcp_agent_mail_git_mailbox_repo"
-unit_dir="$HOME/.config/systemd/user"
-unit_file="$unit_dir/agent-mail.service"
-db_url="sqlite:///${storage_root}/storage.sqlite3"
-am_systemd_activation_failed=false
-
-# Detect MCP base path: Rust am uses /mcp/, Python mcp_agent_mail uses /api/
-if "$am_bin" --version 2>/dev/null | grep -q '^am '; then
-    am_mcp_path="/mcp/"
-else
-    am_mcp_path="/api/"
-fi
-
-service_env=("HOME=$HOME")
-if [[ -d "$runtime_dir" ]]; then
-    service_env+=("XDG_RUNTIME_DIR=$runtime_dir")
-    if [[ -S "$user_bus" ]]; then
-        service_env+=("DBUS_SESSION_BUS_ADDRESS=unix:path=$user_bus")
-    fi
-fi
-
-mkdir -p "$storage_root" "$unit_dir"
-cat > "$unit_file" <<UNIT_EOF
-[Unit]
-Description=MCP Agent Mail Server
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=$storage_root
-Environment=RUST_LOG=info
-Environment=STORAGE_ROOT=$storage_root
-Environment=DATABASE_URL=$db_url
-Environment=HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true
-ExecStartPre=$am_bin migrate
-ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path
-Restart=always
-RestartSec=5
-LimitNOFILE=65536
-
-[Install]
-WantedBy=default.target
-UNIT_EOF
-
-env "${service_env[@]}" systemctl --user daemon-reload >/dev/null 2>&1 || true
-fallback_pid_file="$storage_root/agent-mail.pid"
-fallback_log_file="$storage_root/agent-mail.log"
-
-stop_agent_mail_fallback() {
-    existing_pid=""
-    if [[ -f "$fallback_pid_file" ]]; then
-        existing_pid="$(cat "$fallback_pid_file" 2>/dev/null || true)"
-        if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
-           ps -p "$existing_pid" -o args= 2>/dev/null | grep -Fq "$am_bin serve-http"; then
-            kill "$existing_pid" >/dev/null 2>&1 || true
-            for _ in {1..10}; do
-                if ! kill -0 "$existing_pid" 2>/dev/null; then
-                    break
-                fi
-                sleep 1
-            done
-            if kill -0 "$existing_pid" 2>/dev/null; then
-                kill -9 "$existing_pid" >/dev/null 2>&1 || true
-            fi
-        fi
-        rm -f "$fallback_pid_file"
-    fi
-}
-
-if env "${service_env[@]}" systemctl --user show-environment >/dev/null 2>&1; then
-    stop_agent_mail_fallback
-    if ! env "${service_env[@]}" systemctl --user enable --now agent-mail.service >/dev/null 2>&1; then
-        env "${service_env[@]}" systemctl --user restart agent-mail.service >/dev/null 2>&1
-    fi
-    am_active_waited=0
-    am_active_max_wait=10
-    until env "${service_env[@]}" systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1; do
-        if [[ "$am_active_waited" -ge "$am_active_max_wait" ]]; then
-            break
-        fi
-        sleep 1
-        am_active_waited=$((am_active_waited + 1))
-    done
-    if ! env "${service_env[@]}" systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1; then
-        echo "systemd user service failed to become active" >&2
-        exit 1
-    fi
-else
-    existing_pid=""
-    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
-        :
-    elif [[ -f "$fallback_pid_file" ]]; then
-        existing_pid="$(cat "$fallback_pid_file" 2>/dev/null || true)"
-        if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null && \
-           ps -p "$existing_pid" -o args= 2>/dev/null | grep -Fq "$am_bin serve-http"; then
-            :
-        else
-            rm -f "$fallback_pid_file"
-            nohup env \
-                RUST_LOG=info \
-                STORAGE_ROOT="$storage_root" \
-                DATABASE_URL="$db_url" \
-                HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
-                bash -c "$am_bin migrate && $am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path" \
-                >>"$fallback_log_file" 2>&1 < /dev/null &
-            echo $! > "$fallback_pid_file"
-        fi
-    else
-        nohup env \
-            RUST_LOG=info \
-            STORAGE_ROOT="$storage_root" \
-            DATABASE_URL="$db_url" \
-            HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
-            bash -c "$am_bin migrate && $am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path" \
-            >>"$fallback_log_file" 2>&1 < /dev/null &
-        echo $! > "$fallback_pid_file"
-    fi
-fi
-
-am_waited=0
-am_max_wait=30
-until curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; do
-    if [[ "$am_waited" -ge "$am_max_wait" ]]; then
-        break
-    fi
-    sleep 2
-    am_waited=$((am_waited + 2))
-done
-
-if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
-    echo "service not healthy on 127.0.0.1:8765" >&2
-    exit 1
-fi
-EOF
+                    if update_source_stack_lib; then
+                        TARGET_USER="$target_user" TARGET_HOME="$target_home" _stack_repair_agent_mail_cli_symlink >/dev/null 2>&1 || true
+                    fi
+                    if update_source_stack_lib && \
+                       TARGET_USER="$target_user" TARGET_HOME="$target_home" _stack_configure_agent_mail_service && \
+                       TARGET_USER="$target_user" TARGET_HOME="$target_home" _stack_wait_for_agent_mail_health; then
                         if [[ "$QUIET" != "true" ]] && [[ "$VERBOSE" != "true" ]]; then
                             printf "\033[1A\033[2K  ${GREEN}[ok]${NC} %s\n" "MCP Agent Mail"
                         elif [[ "$QUIET" != "true" ]]; then
@@ -2921,7 +3028,7 @@ EOF
                         elif [[ "$QUIET" != "true" ]]; then
                             printf "  ${RED}[FAIL]${NC} %s\n" "MCP Agent Mail"
                         fi
-                        log_to_file "Failed: MCP Agent Mail - service setup failed"
+                        log_to_file "Failed: MCP Agent Mail - service setup/readiness failed"
                         ((FAIL_COUNT += 1))
                     fi
                 else
@@ -3261,7 +3368,9 @@ update_zsh_plugins() {
 
 # Update Atuin - try self-update first, fallback to installer
 update_atuin() {
-    if ! cmd_exists atuin; then
+    local atuin_bin=""
+    atuin_bin="$(update_tool_binary_path "atuin" 2>/dev/null || true)"
+    if [[ -z "$atuin_bin" ]]; then
         log_item "skip" "Atuin" "not installed"
         return 0
     fi
@@ -3270,8 +3379,9 @@ update_atuin() {
     local needs_reinstall=false
 
     # Try atuin self-update first (available in newer versions)
-    if atuin --help 2>&1 | grep -q "self-update"; then
-        if run_cmd_attempt_with_retry "Atuin self-update" atuin self-update; then
+    if "$atuin_bin" --help 2>&1 | grep -q "self-update"; then
+        if run_cmd_attempt_with_retry "Atuin self-update" "$atuin_bin" self-update; then
+            update_repair_atuin_install >/dev/null 2>&1 || true
             # If self-update succeeded, check whether version is now current;
             # skip the heavier reinstall path to avoid a stalling curl download.
             local ver_after
@@ -3293,7 +3403,7 @@ update_atuin() {
 
     if [[ "$needs_reinstall" == "true" ]]; then
         if update_require_security; then
-            if ! run_cmd_with_retry_status "Atuin (reinstall)" update_run_verified_installer atuin --non-interactive; then
+            if ! update_run_verified_installer_with_shell_repair "Atuin (reinstall)" "atuin" update_repair_atuin_install --non-interactive; then
                 :
             fi
         else
@@ -3323,7 +3433,9 @@ update_atuin() {
 
 # Update Zoxide via reinstall (checksum verified)
 update_zoxide() {
-    if ! cmd_exists zoxide; then
+    local zoxide_bin=""
+    zoxide_bin="$(update_tool_binary_path "zoxide" 2>/dev/null || true)"
+    if [[ -z "$zoxide_bin" ]]; then
         log_item "skip" "Zoxide" "not installed"
         return 0
     fi
@@ -3332,7 +3444,7 @@ update_zoxide() {
 
     # Zoxide doesn't have self-update, reinstall via official installer
     if update_require_security; then
-        if ! run_cmd_with_retry_status "Zoxide (reinstall)" update_run_verified_installer zoxide; then
+        if ! update_run_verified_installer_with_shell_repair "Zoxide (reinstall)" "zoxide" update_repair_zoxide_install; then
             :
         fi
     else

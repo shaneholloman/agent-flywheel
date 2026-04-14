@@ -130,6 +130,154 @@ _stack_target_home() {
     printf '/home/%s\n' "$target_user"
 }
 
+_stack_trim_ascii_whitespace() {
+    local value="${1:-}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s\n' "$value"
+}
+
+_stack_strip_wrapping_quotes() {
+    local value
+    value="$(_stack_trim_ascii_whitespace "${1:-}")"
+    if [[ "${#value}" -ge 2 ]]; then
+        case "$value" in
+            \"*\"|\'*\')
+                if [[ "${value:0:1}" == "${value: -1}" ]]; then
+                    value="${value:1:${#value}-2}"
+                fi
+                ;;
+        esac
+    fi
+    printf '%s\n' "$value"
+}
+
+_stack_parse_env_assignment_rhs() {
+    local raw="$1"
+    local out=""
+    local quote=""
+    local prev=""
+    local char=""
+    local raw_len="${#raw}"
+    local i=0
+
+    while [[ "$i" -lt "$raw_len" ]]; do
+        char="${raw:i:1}"
+        if [[ -n "$quote" ]]; then
+            out="${out}${char}"
+            if [[ "$char" == "$quote" ]]; then
+                quote=""
+            fi
+        else
+            if [[ "$char" == '"' || "$char" == "'" ]]; then
+                quote="$char"
+                out="${out}${char}"
+            elif [[ "$char" == "#" ]]; then
+                if [[ -z "$prev" || "$prev" =~ [[:space:]] ]]; then
+                    break
+                fi
+                out="${out}${char}"
+            else
+                out="${out}${char}"
+            fi
+        fi
+        prev="$char"
+        i=$((i + 1))
+    done
+
+    out="$(_stack_trim_ascii_whitespace "$out")"
+    _stack_strip_wrapping_quotes "$out"
+}
+
+_stack_read_env_assignment_value() {
+    local file="$1"
+    local key="$2"
+    local value=""
+
+    [[ -f "$file" ]] || return 0
+    value="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$file" 2>/dev/null | tail -1 | sed -E "s/^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=[[:space:]]*//" || true)"
+    [[ -n "$value" ]] || return 0
+    _stack_parse_env_assignment_rhs "$value"
+}
+
+_stack_normalize_http_path() {
+    local value="${1:-/mcp/}"
+    case "$value" in
+        mcp|/mcp|/mcp/) printf '/mcp/\n' ;;
+        api|/api|/api/) printf '/api/\n' ;;
+        *)
+            [[ -n "$value" ]] || value="/mcp/"
+            [[ "$value" == /* ]] || value="/${value}"
+            [[ "$value" == */ ]] || value="${value}/"
+            printf '%s\n' "$value"
+            ;;
+    esac
+}
+
+_stack_agent_mail_cli_path() {
+    local target_home=""
+    target_home="$(_stack_target_home "${TARGET_USER:-ubuntu}")"
+
+    local preferred="$target_home/mcp_agent_mail/am"
+    local primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}/am"
+    local fallback_bin="$target_home/.local/bin/am"
+
+    if [[ -x "$preferred" ]]; then
+        printf '%s\n' "$preferred"
+        return 0
+    fi
+    if [[ -x "$primary_bin" ]]; then
+        printf '%s\n' "$primary_bin"
+        return 0
+    fi
+    if [[ "$fallback_bin" != "$primary_bin" ]] && [[ -x "$fallback_bin" ]]; then
+        printf '%s\n' "$fallback_bin"
+        return 0
+    fi
+    if _stack_command_exists am; then
+        command -v am
+        return 0
+    fi
+
+    return 1
+}
+
+_stack_repair_agent_mail_cli_symlink() {
+    local target_home=""
+    target_home="$(_stack_target_home "${TARGET_USER:-ubuntu}")"
+
+    local am_src="$target_home/mcp_agent_mail/am"
+    [[ -x "$am_src" ]] || return 1
+
+    local primary_dir="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    local fallback_dir="$target_home/.local/bin"
+    local -a bin_dirs=("$primary_dir")
+
+    if [[ "$fallback_dir" != "$primary_dir" ]]; then
+        bin_dirs+=("$fallback_dir")
+    fi
+
+    local dir=""
+    local repaired=0
+    for dir in "${bin_dirs[@]}"; do
+        [[ -n "$dir" ]] || continue
+        _stack_run_as_user "mkdir -p '$dir' 2>/dev/null || true; if [[ -w '$dir' || ! -e '$dir/am' ]]; then ln -sf '$am_src' '$dir/am'; fi" || repaired=1
+    done
+
+    return "$repaired"
+}
+
+_stack_agent_mail_liveness() {
+    curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
+        curl -fsS --max-time 10 http://127.0.0.1:8765/healthz >/dev/null 2>&1
+}
+
+_stack_agent_mail_readiness() {
+    local readiness_body=""
+    readiness_body="$(curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null)" || return 1
+    printf '%s\n' "$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'
+}
+
 # Run a command as target user
 _stack_run_as_user() {
     local target_user="${TARGET_USER:-ubuntu}"
@@ -269,18 +417,29 @@ _stack_run_installer() {
 
 # Check whether the local Agent Mail HTTP service is healthy.
 _stack_agent_mail_healthy() {
-    curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1
+    _stack_agent_mail_liveness
 }
 
 _stack_agent_mail_ready() {
     local check_cmd
     check_cmd="$(cat <<'EOF'
 set -euo pipefail
-command -v am >/dev/null 2>&1
-
-if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+preferred_am="$HOME/mcp_agent_mail/am"
+if [[ -x "$preferred_am" ]]; then
+    am_bin="$preferred_am"
+elif command -v am >/dev/null 2>&1; then
+    am_bin="$(command -v am)"
+else
     exit 1
 fi
+
+if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
+   ! curl -fsS --max-time 10 http://127.0.0.1:8765/healthz >/dev/null 2>&1; then
+    exit 1
+fi
+
+readiness_body="$(curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null)" || exit 1
+printf '%s\n' "$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' || exit 1
 
 runtime_dir="/run/user/$(id -u)"
 if [[ -d "$runtime_dir" ]]; then
@@ -304,12 +463,192 @@ _stack_configure_agent_mail_service() {
     local service_cmd
     service_cmd="$(cat <<'EOF'
 set -euo pipefail
-command -v am >/dev/null 2>&1
+
+trim_ascii_whitespace() {
+    local value="${1:-}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s\n' "$value"
+}
+
+strip_wrapping_quotes() {
+    local value
+    value="$(trim_ascii_whitespace "${1:-}")"
+    if [[ "${#value}" -ge 2 ]]; then
+        case "$value" in
+            \"*\"|\'*\')
+                if [[ "${value:0:1}" == "${value: -1}" ]]; then
+                    value="${value:1:${#value}-2}"
+                fi
+                ;;
+        esac
+    fi
+    printf '%s\n' "$value"
+}
+
+parse_env_assignment_rhs() {
+    local raw="$1"
+    local out=""
+    local quote=""
+    local prev=""
+    local char=""
+    local raw_len="${#raw}"
+    local i=0
+
+    while [[ "$i" -lt "$raw_len" ]]; do
+        char="${raw:i:1}"
+        if [[ -n "$quote" ]]; then
+            out="${out}${char}"
+            if [[ "$char" == "$quote" ]]; then
+                quote=""
+            fi
+        else
+            if [[ "$char" == '"' || "$char" == "'" ]]; then
+                quote="$char"
+                out="${out}${char}"
+            elif [[ "$char" == "#" ]]; then
+                if [[ -z "$prev" || "$prev" =~ [[:space:]] ]]; then
+                    break
+                fi
+                out="${out}${char}"
+            else
+                out="${out}${char}"
+            fi
+        fi
+        prev="$char"
+        i=$((i + 1))
+    done
+
+    out="$(trim_ascii_whitespace "$out")"
+    strip_wrapping_quotes "$out"
+}
+
+read_env_assignment_value() {
+    local file="$1"
+    local key="$2"
+    local value=""
+
+    [[ -f "$file" ]] || return 0
+    value="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$file" 2>/dev/null | tail -1 | sed -E "s/^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=[[:space:]]*//" || true)"
+    [[ -n "$value" ]] || return 0
+    parse_env_assignment_rhs "$value"
+}
+
+normalize_http_path() {
+    local value="${1:-/mcp/}"
+    case "$value" in
+        mcp|/mcp|/mcp/) printf '/mcp/\n' ;;
+        api|/api|/api/) printf '/api/\n' ;;
+        *)
+            [[ -n "$value" ]] || value="/mcp/"
+            [[ "$value" == /* ]] || value="/${value}"
+            [[ "$value" == */ ]] || value="${value}/"
+            printf '%s\n' "$value"
+            ;;
+    esac
+}
+
+sqlite_user_table_count() {
+    local db_path="$1"
+    [[ -f "$db_path" ]] || {
+        printf '0\n'
+        return 0
+    }
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$db_path" <<'PY'
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+try:
+    conn = sqlite3.connect(db_path)
+    cur = conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+    row = cur.fetchone()
+    print(int(row[0]) if row and row[0] is not None else 0)
+except Exception:
+    print(0)
+PY
+        return 0
+    fi
+    if command -v sqlite3 >/dev/null 2>&1; then
+        sqlite3 "$db_path" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';" 2>/dev/null || printf '0\n'
+        return 0
+    fi
+    printf '0\n'
+}
+
+am_bin=""
+preferred_am="$HOME/mcp_agent_mail/am"
+if [[ -x "$preferred_am" ]]; then
+    am_bin="$preferred_am"
+else
+    am_bin="$(command -v am 2>/dev/null || true)"
+fi
+[[ -n "$am_bin" ]] || {
+    echo "am CLI missing after install" >&2
+    exit 1
+}
+
+primary_bin_dir="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+fallback_bin_dir="$HOME/.local/bin"
+mkdir -p "$primary_bin_dir" 2>/dev/null || true
+if [[ -x "$preferred_am" ]]; then
+    ln -sf "$preferred_am" "$primary_bin_dir/am" 2>/dev/null || true
+    if [[ "$fallback_bin_dir" != "$primary_bin_dir" ]]; then
+        mkdir -p "$fallback_bin_dir" 2>/dev/null || true
+        ln -sf "$preferred_am" "$fallback_bin_dir/am" 2>/dev/null || true
+    fi
+    am_bin="$preferred_am"
+fi
+
 storage_root="$HOME/.mcp_agent_mail_git_mailbox_repo"
 unit_dir="$HOME/.config/systemd/user"
 unit_file="$unit_dir/agent-mail.service"
-am_bin="$(command -v am)"
-db_url="sqlite+aiosqlite:///${storage_root}/storage.sqlite3"
+db_url="sqlite:///${storage_root}/storage.sqlite3"
+env_file=""
+for candidate in "$HOME/.config/mcp-agent-mail/config.env" "$HOME/.config/mcp-agent-mail/.env"; do
+    if [[ -f "$candidate" ]]; then
+        env_file="$candidate"
+        break
+    fi
+done
+
+cfg_db_url=""
+cfg_storage_root=""
+cfg_http_path=""
+if [[ -n "$env_file" ]]; then
+    cfg_db_url="$(read_env_assignment_value "$env_file" "DATABASE_URL")"
+    cfg_storage_root="$(read_env_assignment_value "$env_file" "STORAGE_ROOT")"
+    cfg_http_path="$(read_env_assignment_value "$env_file" "HTTP_PATH")"
+fi
+
+if [[ -n "$cfg_storage_root" ]]; then
+    cfg_storage_root="${cfg_storage_root/#\~/$HOME}"
+    case "$cfg_storage_root" in
+        /*) storage_root="$cfg_storage_root" ;;
+    esac
+fi
+
+if [[ -n "$cfg_db_url" ]]; then
+    cfg_db_path="$(printf '%s\n' "$cfg_db_url" | sed -n 's|^sqlite[^:]*:///||p')"
+    cfg_db_path="${cfg_db_path/#\~/$HOME}"
+    if [[ -n "$cfg_db_path" && "$cfg_db_path" != ":memory:" && "$cfg_db_path" != "/:memory:" ]]; then
+        db_url="$cfg_db_url"
+        storage_root="$(dirname "$cfg_db_path")"
+    fi
+fi
+
+install_storage_root="$HOME/mcp_agent_mail"
+install_db="$install_storage_root/storage.sqlite3"
+legacy_db="$storage_root/storage.sqlite3"
+if [[ -z "$cfg_storage_root" && -z "$cfg_db_url" && -f "$install_db" ]]; then
+    install_tables="$(sqlite_user_table_count "$install_db")"
+    legacy_tables="$(sqlite_user_table_count "$legacy_db")"
+    if [[ "$install_tables" -gt 0 && "$legacy_tables" -eq 0 ]]; then
+        storage_root="$install_storage_root"
+        db_url="sqlite:///${install_db}"
+    fi
+fi
 
 # Detect MCP base path: Rust am uses /mcp/, Python mcp_agent_mail uses /api/
 if "$am_bin" --version 2>/dev/null | grep -q '^am '; then
@@ -317,8 +656,15 @@ if "$am_bin" --version 2>/dev/null | grep -q '^am '; then
 else
     am_mcp_path="/api/"
 fi
+if [[ -n "$cfg_http_path" ]]; then
+    am_mcp_path="$(normalize_http_path "$cfg_http_path")"
+fi
 
 mkdir -p "$storage_root" "$unit_dir"
+env_file_line=""
+if [[ -n "$env_file" ]]; then
+    env_file_line="EnvironmentFile=-$env_file"
+fi
 cat > "$unit_file" <<UNIT_EOF
 [Unit]
 Description=MCP Agent Mail Server
@@ -330,8 +676,10 @@ WorkingDirectory=$storage_root
 Environment=RUST_LOG=info
 Environment=STORAGE_ROOT=$storage_root
 Environment=DATABASE_URL=$db_url
-Environment=HTTP_PATH=$am_mcp_path
-ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path --no-auth --no-tui
+Environment=HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true
+$env_file_line
+ExecStartPre=$am_bin migrate
+ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
@@ -372,7 +720,8 @@ stop_agent_mail_fallback() {
 }
 
 launch_agent_mail_fallback() {
-    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
+       curl -fsS --max-time 5 http://127.0.0.1:8765/healthz >/dev/null 2>&1; then
         return 0
     fi
 
@@ -389,8 +738,16 @@ launch_agent_mail_fallback() {
         RUST_LOG=info \
         STORAGE_ROOT="$storage_root" \
         DATABASE_URL="$db_url" \
-        HTTP_PATH="$am_mcp_path" \
-        "$am_bin" serve-http --host 127.0.0.1 --port 8765 --path "$am_mcp_path" --no-auth --no-tui \
+        HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
+        "$am_bin" migrate \
+        >>"$fallback_log_file" 2>&1 < /dev/null || true
+
+    nohup env \
+        RUST_LOG=info \
+        STORAGE_ROOT="$storage_root" \
+        DATABASE_URL="$db_url" \
+        HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
+        "$am_bin" serve-http --host 127.0.0.1 --port 8765 --path "$am_mcp_path" \
         >>"$fallback_log_file" 2>&1 < /dev/null &
     echo $! > "$fallback_pid_file"
 }
@@ -426,7 +783,7 @@ _stack_wait_for_agent_mail_health() {
     local waited=0
     local max_wait=30
 
-    until _stack_agent_mail_healthy; do
+    until _stack_agent_mail_healthy && _stack_agent_mail_readiness; do
         if [[ "$waited" -ge "$max_wait" ]]; then
             return 1
         fi
@@ -558,15 +915,8 @@ install_mcp_agent_mail() {
         fi
     fi
 
-    # Symlink repair: if binary exists at install dest but is not on PATH,
-    # create a symlink in ~/.local/bin so `command -v am` succeeds.
-    if ! _stack_is_installed "$tool"; then
-        local am_src="$target_dir/am"
-        local am_dst="$target_home/.local/bin/am"
-        if [[ -x "$am_src" ]]; then
-            _stack_run_as_user "mkdir -p '$target_home/.local/bin' && ln -sf '$am_src' '$am_dst'" || true
-            log_detail "${STACK_NAMES[$tool]}: repaired missing am symlink ($am_dst -> $am_src)"
-        fi
+    if _stack_repair_agent_mail_cli_symlink; then
+        log_detail "${STACK_NAMES[$tool]}: ensured am resolves to $target_dir/am"
     fi
 
     if ! _stack_is_installed "$tool"; then
