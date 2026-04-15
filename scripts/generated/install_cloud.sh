@@ -43,6 +43,14 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         TARGET_USER="$_ACFS_DETECTED_USER"
     fi
     unset _ACFS_DETECTED_USER
+
+    if declare -f _acfs_validate_target_user >/dev/null 2>&1; then
+        _acfs_validate_target_user "${TARGET_USER}" "TARGET_USER" || exit 1
+    elif [[ -z "${TARGET_USER:-}" ]] || [[ ! "${TARGET_USER}" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        log_error "Invalid TARGET_USER '${TARGET_USER:-<empty>}' (expected: lowercase user name like 'ubuntu')"
+        exit 1
+    fi
+
     MODE="${MODE:-vibe}"
 
     if [[ -z "${TARGET_HOME:-}" ]]; then
