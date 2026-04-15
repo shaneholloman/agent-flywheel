@@ -698,6 +698,8 @@ clean_shell_configs() {
     local restore_command=""
     local temp_file=""
     local orig_mode=""
+    local orig_owner=""
+    local temp_owner=""
     local grep_exit=0
     local failed=0
 
@@ -727,6 +729,7 @@ clean_shell_configs() {
 
                 # Preserve original permissions by copying mode
                 orig_mode=$(stat -c '%a' "$config" 2>/dev/null || stat -f '%Lp' "$config" 2>/dev/null)
+                orig_owner=$(stat -c '%u:%g' "$config" 2>/dev/null || stat -f '%u:%g' "$config" 2>/dev/null)
 
                 grep_exit=0
                 grep -vE '# ACFS|\.acfs|acfs_' "$config" > "$temp_file" || grep_exit=$?
@@ -743,6 +746,16 @@ clean_shell_configs() {
                     rm -f "$temp_file" 2>/dev/null || true
                     failed=1
                     continue
+                fi
+
+                temp_owner=$(stat -c '%u:%g' "$temp_file" 2>/dev/null || stat -f '%u:%g' "$temp_file" 2>/dev/null)
+                if [[ -n "$orig_owner" && -n "$temp_owner" && "$orig_owner" != "$temp_owner" ]]; then
+                    if ! chown "$orig_owner" "$temp_file" 2>/dev/null; then
+                        log_error "[CLEAN] Failed to preserve ownership for $config"
+                        rm -f "$temp_file" 2>/dev/null || true
+                        failed=1
+                        continue
+                    fi
                 fi
 
                 if ! mv "$temp_file" "$config"; then
