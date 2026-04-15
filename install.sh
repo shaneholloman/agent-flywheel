@@ -3017,6 +3017,8 @@ acfs_home_for_user() {
 # Set up target-specific paths
 # Must be called after ensure_root
 init_target_paths() {
+    validate_target_user
+
     # Respect an explicit TARGET_HOME env override; otherwise resolve the
     # target user's actual home directory through NSS/getent first.
     if [[ -z "${TARGET_HOME:-}" ]]; then

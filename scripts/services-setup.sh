@@ -49,7 +49,7 @@ services_setup_resolve_current_home() {
             fi
         fi
 
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
             printf '/home/%s\n' "$current_user"
             return 0
         fi
@@ -118,6 +118,24 @@ TARGET_USER="${TARGET_USER:-${SUDO_USER:-$(whoami)}}"
 SERVICES_SETUP_ACTION="${SERVICES_SETUP_ACTION:-}"
 SERVICES_SETUP_NONINTERACTIVE="${SERVICES_SETUP_NONINTERACTIVE:-false}"
 
+services_setup_valid_target_user() {
+    local user="${1:-}"
+    [[ -n "$user" ]] || return 1
+    [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+services_setup_validate_target_user() {
+    local user="${1:-${TARGET_USER:-}}"
+    local display="${user:-<empty>}"
+
+    if services_setup_valid_target_user "$user"; then
+        return 0
+    fi
+
+    log_error "Invalid TARGET_USER '$display' (expected: lowercase user name like 'ubuntu')"
+    return 1
+}
+
 resolve_home_dir() {
     local user="$1"
     local home=""
@@ -140,7 +158,7 @@ resolve_home_dir() {
         printf '/root'
         return 0
     fi
-    if [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    if [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
         printf '/home/%s' "$user"
         return 0
     fi
@@ -151,6 +169,8 @@ resolve_home_dir() {
 BUN_BIN="${BUN_BIN:-}"
 
 init_target_context() {
+    services_setup_validate_target_user "$TARGET_USER" || return 1
+
     if [[ -z "${TARGET_HOME:-}" ]]; then
         TARGET_HOME="$(resolve_home_dir "$TARGET_USER")"
     fi
@@ -174,6 +194,8 @@ declare -A SERVICE_STATUS
 # Run a command as target user
 run_as_user() {
     local -a env_cmd=()
+
+    services_setup_validate_target_user "$TARGET_USER" || return 1
 
     env_cmd=("env" "TARGET_USER=$TARGET_USER")
     [[ -n "${TARGET_HOME:-}" ]] && env_cmd+=("TARGET_HOME=$TARGET_HOME" "HOME=$TARGET_HOME")
@@ -207,6 +229,8 @@ run_as_user() {
 run_as_user_shell() {
     local cmd="$1"
     local -a env_cmd=()
+
+    services_setup_validate_target_user "$TARGET_USER" || return 1
 
     env_cmd=("env" "TARGET_USER=$TARGET_USER")
     [[ -n "${TARGET_HOME:-}" ]] && env_cmd+=("TARGET_HOME=$TARGET_HOME" "HOME=$TARGET_HOME")

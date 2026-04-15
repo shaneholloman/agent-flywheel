@@ -214,3 +214,19 @@ teardown() {
     run state_resolve_target_home
     assert_failure
 }
+
+@test "state: resolve target home accepts dotted fallback usernames" {
+    unset ACFS_HOME
+    unset ACFS_STATE_FILE
+    export TARGET_HOME=""
+    export TARGET_USER="john.doe"
+    export HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    run state_resolve_target_home
+    assert_success
+    assert_output "/home/john.doe"
+}

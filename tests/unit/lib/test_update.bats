@@ -441,6 +441,9 @@ EOF
     local generated="$PROJECT_ROOT/scripts/generated/install_all.sh"
     local doctor_checks="$PROJECT_ROOT/scripts/generated/doctor_checks.sh"
 
+    run grep -F '_acfs_validate_target_user "${TARGET_USER}" "TARGET_USER" || exit 1' "$generated"
+    assert_success
+
     run grep -F '[[ "${TARGET_HOME}" == "/" ]]' "$generated"
     assert_success
 
@@ -465,6 +468,9 @@ EOF
     run grep -F 'target_home="${HOME%/}"' "$doctor_checks"
     assert_success
 
+    run grep -F '_acfs_validate_target_user "$target_user" "TARGET_USER" || return 1' "$doctor_checks"
+    assert_success
+
     run grep -F "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: \${target_bin:-<empty>})" "$doctor_checks"
     assert_success
 }
@@ -484,6 +490,12 @@ EOF
 
 @test "services-setup: probes custom and ACFS bin dirs for target-user commands" {
     local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+
+    run grep -F "services_setup_validate_target_user() {" "$services_setup"
+    assert_success
+
+    run grep -F 'services_setup_validate_target_user "$TARGET_USER" || return 1' "$services_setup"
+    assert_success
 
     run grep -F 'local target_path_prefix="$primary_bin_dir:$TARGET_HOME/.local/bin:$TARGET_HOME/.acfs/bin:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.atuin/bin:$TARGET_HOME/go/bin"' "$services_setup"
     assert_success
@@ -578,6 +590,35 @@ EOF
     run grep -F '[[ -n "$sanitized_state_file" ]] && env_args+=("ACFS_STATE_FILE=$sanitized_state_file")' "$update_wrapper"
     assert_success
     run grep -F '[[ -n "$sanitized_system_state_file" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$sanitized_system_state_file")' "$update_wrapper"
+    assert_success
+}
+
+@test "username helpers and wrappers allow dotted usernames and validate before re-exec" {
+    local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
+    local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local onboard="$PROJECT_ROOT/packages/onboard/onboard.sh"
+
+    run grep -F '[[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$update_wrapper"
+    assert_success
+
+    run grep -F '[[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$global_wrapper"
+    assert_success
+
+    run grep -F "validate_target_user_or_die \"\$user\"" "$update_wrapper"
+    assert_success
+
+    run grep -F "validate_target_user_or_die \"\$user\"" "$global_wrapper"
+    assert_success
+
+    run grep -F '[[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$preflight"
+    assert_success
+
+    run grep -F '[[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$services_setup"
+    assert_success
+
+    run grep -F '[[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$onboard"
     assert_success
 }
 

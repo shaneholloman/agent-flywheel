@@ -51,7 +51,7 @@ _smoke_resolve_current_home() {
             fi
         fi
 
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
             printf '/home/%s\n' "$current_user"
             return 0
         fi
@@ -87,7 +87,7 @@ if [[ -z "${TARGET_HOME:-}" ]]; then
         TARGET_HOME="/root"
     elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
         TARGET_HOME="$_SMOKE_CURRENT_HOME"
-    elif [[ "${TARGET_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    elif [[ "${TARGET_USER}" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
         TARGET_HOME="/home/$TARGET_USER"
     fi
     unset _smoke_target_passwd_entry
@@ -97,7 +97,7 @@ if [[ "${TARGET_HOME:-}" != /* ]]; then
         TARGET_HOME="/root"
     elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
         TARGET_HOME="$_SMOKE_CURRENT_HOME"
-    elif [[ "${TARGET_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    elif [[ "${TARGET_USER}" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
         TARGET_HOME="/home/$TARGET_USER"
     else
         TARGET_HOME=""

@@ -64,6 +64,19 @@ teardown() {
     fi
 }
 
+@test "ensure_user: rejects invalid TARGET_USER before useradd" {
+    export TARGET_USER="../bad user"
+    spy_command "useradd"
+
+    run ensure_user
+    assert_failure
+    assert_output --partial "Invalid TARGET_USER '../bad user'"
+
+    if [[ -f "$STUB_DIR/useradd.log" ]] && [[ -s "$STUB_DIR/useradd.log" ]]; then
+        fail "useradd should not be called for invalid TARGET_USER"
+    fi
+}
+
 @test "enable_passwordless_sudo: writes sudoers" {
     # Stub tee to write to file
     local capture_file="$ACFS_TARGET_HOME/sudoers_capture"
@@ -81,6 +94,19 @@ EOF
     
     run cat "$capture_file"
     assert_output "testuser ALL=(ALL) NOPASSWD:ALL"
+}
+
+@test "enable_passwordless_sudo: rejects invalid TARGET_USER before tee" {
+    export TARGET_USER="../bad user"
+    spy_command "tee"
+
+    run enable_passwordless_sudo
+    assert_failure
+    assert_output --partial "Invalid TARGET_USER '../bad user'"
+
+    if [[ -f "$STUB_DIR/tee.log" ]] && [[ -s "$STUB_DIR/tee.log" ]]; then
+        fail "tee should not be called for invalid TARGET_USER"
+    fi
 }
 
 @test "migrate_ssh_keys: copies keys" {
@@ -128,4 +154,16 @@ EOF
 
     run user_home_for_user "../bad-user"
     assert_failure
+}
+
+@test "user_home_for_user: accepts dotted fallback usernames" {
+    export HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    run user_home_for_user "john.doe"
+    assert_success
+    assert_output "/home/john.doe"
 }

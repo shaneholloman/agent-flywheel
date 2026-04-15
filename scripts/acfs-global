@@ -27,7 +27,17 @@ sanitize_abs_nonroot_path() {
 
 is_valid_username() {
     local username="$1"
-    [[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]]
+    [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+validate_target_user_or_die() {
+    local user="${1:-}"
+    local display="${user:-<empty>}"
+    if is_valid_username "$user"; then
+        return 0
+    fi
+    echo "Error: invalid TARGET_USER '$display' (expected: lowercase user name like 'ubuntu')" >&2
+    exit 1
 }
 
 resolve_home_for_user() {
@@ -555,6 +565,8 @@ main() {
         fi
     fi
 
+    validate_target_user_or_die "$target_user"
+
     if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
         local state_candidate=""
         state_candidates=(
@@ -585,6 +597,8 @@ main() {
         sanitized_target_home="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
         sanitized_acfs_home="$(sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
         sanitized_bin_dir="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+
+        validate_target_user_or_die "$user"
 
         [[ -n "$sanitized_state_file" ]] && env_args+=("ACFS_STATE_FILE=$sanitized_state_file")
         [[ -n "$sanitized_system_state_file" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$sanitized_system_state_file")

@@ -85,6 +85,14 @@ if [[ "\${BASH_SOURCE[0]}" = "\${0}" ]]; then
         TARGET_USER="\$_ACFS_DETECTED_USER"
     fi
     unset _ACFS_DETECTED_USER
+
+    if declare -f _acfs_validate_target_user >/dev/null 2>&1; then
+        _acfs_validate_target_user "\${TARGET_USER}" "TARGET_USER" || exit 1
+    elif [[ -z "\${TARGET_USER:-}" ]] || [[ ! "\${TARGET_USER}" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        log_error "Invalid TARGET_USER '\${TARGET_USER:-<empty>}' (expected: lowercase user name like 'ubuntu')"
+        exit 1
+    fi
+
     MODE="\${MODE:-vibe}"
 
     if [[ -z "\${TARGET_HOME:-}" ]]; then
@@ -1276,6 +1284,13 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('    local target_user="${TARGET_USER:-ubuntu}"');
   lines.push('    local target_home="${TARGET_HOME:-}"');
   lines.push('    local target_path=""');
+  lines.push('');
+  lines.push('    if declare -f _acfs_validate_target_user >/dev/null 2>&1; then');
+  lines.push('        _acfs_validate_target_user "$target_user" "TARGET_USER" || return 1');
+  lines.push('    elif [[ -z "$target_user" ]] || [[ ! "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then');
+  lines.push('        log_error "Invalid TARGET_USER \'${target_user:-<empty>}\' (expected: lowercase user name like \'ubuntu\')"');
+  lines.push('        return 1');
+  lines.push('    fi');
   lines.push('');
   lines.push('    if [[ -z "$target_home" ]]; then');
   lines.push('        if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then');

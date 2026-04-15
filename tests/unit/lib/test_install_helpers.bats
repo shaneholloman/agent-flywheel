@@ -196,6 +196,20 @@ EOF
     fi
 }
 
+@test "run_as_target: rejects invalid TARGET_USER before sudo" {
+    export TARGET_USER="../bad user"
+    export TARGET_HOME="/home/testuser"
+    spy_command "sudo"
+
+    run run_as_target env
+    assert_failure
+    assert_output --partial "Invalid TARGET_USER '../bad user'"
+
+    if [[ -f "$STUB_DIR/sudo.log" ]] && [[ -s "$STUB_DIR/sudo.log" ]]; then
+        fail "run_as_target should not invoke sudo for invalid TARGET_USER"
+    fi
+}
+
 @test "acfs_ensure_primary_bin_dir: rejects invalid ACFS_BIN_DIR before mkdir" {
     export TARGET_USER="testuser"
     export TARGET_HOME="/home/testuser"

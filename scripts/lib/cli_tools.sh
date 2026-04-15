@@ -108,7 +108,7 @@ _cli_target_home() {
         return 0
     fi
 
-    if [[ "$target_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    if [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
         printf '/home/%s\n' "$target_user"
         return 0
     fi

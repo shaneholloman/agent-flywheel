@@ -64,7 +64,7 @@ preflight_sanitize_abs_nonroot_path() {
 
 preflight_is_valid_username() {
     local username="${1:-}"
-    [[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]]
+    [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
 }
 
 resolve_home_dir() {

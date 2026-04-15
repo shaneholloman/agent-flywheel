@@ -591,6 +591,37 @@ EOF
     cleanup_mock_env
 }
 
+test_services_setup_rejects_invalid_target_user_before_sudo() {
+    setup_mock_env
+
+    local root_home="$TEST_HOME/root-home"
+    local target_home="$TEST_HOME/target-home"
+    local fake_bin="$TEST_HOME/fake-bin"
+    local sudo_log="$TEST_HOME/sudo.log"
+    local output=""
+
+    mkdir -p "$root_home" "$target_home" "$fake_bin"
+
+    cat > "$fake_bin/sudo" <<EOF
+#!/usr/bin/env bash
+printf 'sudo-called\n' >> "$sudo_log"
+exit 0
+EOF
+    chmod +x "$fake_bin/sudo"
+
+    output=$(HOME="$root_home" TARGET_HOME="$target_home" PATH="$fake_bin:/usr/bin:/bin" \
+        bash -c 'source "$1"; TARGET_USER="../bad user"; run_as_user env' _ "$SERVICES_SETUP_SH" 2>&1 || true)
+
+    if [[ "$output" == *"Invalid TARGET_USER '../bad user'"* ]] \
+        && [[ ! -s "$sudo_log" ]]; then
+        harness_pass "services-setup rejects invalid TARGET_USER before sudo"
+    else
+        harness_fail "services-setup rejects invalid TARGET_USER before sudo" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_changelog_defaults_to_last_updated() {
     setup_mock_env
 
@@ -2884,6 +2915,7 @@ main() {
     harness_section "Services Setup"
     test_services_setup_prefers_target_home_libs_under_root_home || true
     test_services_setup_runs_target_user_commands_with_target_home || true
+    test_services_setup_rejects_invalid_target_user_before_sudo || true
 
     harness_section "Export Config"
     test_export_config_json_is_valid || true

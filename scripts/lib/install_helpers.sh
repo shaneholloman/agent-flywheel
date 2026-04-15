@@ -599,6 +599,33 @@ _run_shell_with_strict_mode() {
 }
 
 # Resolve a target user's home via NSS/getent with safe fallbacks.
+if ! declare -f _acfs_valid_target_username >/dev/null 2>&1; then
+    _acfs_valid_target_username() {
+        local user="${1:-}"
+        [[ -n "$user" ]] || return 1
+        [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]
+    }
+fi
+
+if ! declare -f _acfs_validate_target_user >/dev/null 2>&1; then
+    _acfs_validate_target_user() {
+        local user="${1:-${TARGET_USER:-}}"
+        local label="${2:-TARGET_USER}"
+        local display="${user:-<empty>}"
+
+        if _acfs_valid_target_username "$user"; then
+            return 0
+        fi
+
+        if declare -f log_error >/dev/null 2>&1; then
+            log_error "Invalid ${label} '$display' (expected: lowercase user name like 'ubuntu')"
+        else
+            printf "ERROR: Invalid %s '%s' (expected: lowercase user name like 'ubuntu')\n" "$label" "$display" >&2
+        fi
+        return 1
+    }
+fi
+
 if ! declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
     _acfs_resolve_target_home() {
         local user="${1:-ubuntu}"
@@ -639,6 +666,8 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
     run_as_target() {
         local user="${TARGET_USER:-ubuntu}"
         local user_home="${TARGET_HOME:-}"
+
+        _acfs_validate_target_user "$user" "TARGET_USER" || return 1
 
         if [[ -z "$user_home" ]]; then
             user_home="$(_acfs_resolve_target_home "$user" || true)"

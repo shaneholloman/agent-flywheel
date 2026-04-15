@@ -72,7 +72,7 @@ changelog_resolve_current_home() {
         fi
     fi
 
-    if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
         printf '/home/%s\n' "$current_user"
         return 0
     fi
@@ -186,7 +186,7 @@ changelog_home_for_user() {
         return 0
     fi
 
-    if [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    if [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
         echo "/home/$user"
         return 0
     fi

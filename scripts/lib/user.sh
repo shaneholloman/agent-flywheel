@@ -27,6 +27,23 @@ if ! declare -f log_fatal &>/dev/null; then
     log_step() { printf "[%s] %s\n" "$1" "$2" >&2; }
 fi
 
+user_valid_target_name() {
+    local user="${1:-}"
+    [[ -n "$user" ]] || return 1
+    [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+user_require_valid_target_user() {
+    local user="${1:-${TARGET_USER:-}}"
+    local display="${user:-<empty>}"
+
+    if user_valid_target_name "$user"; then
+        return 0
+    fi
+
+    log_fatal "Invalid TARGET_USER '$display' (expected: lowercase user name like 'ubuntu')"
+}
+
 # Ensure SUDO is set (empty string for root, "sudo" otherwise)
 if [[ $EUID -eq 0 ]]; then
     SUDO=""
@@ -59,7 +76,7 @@ user_home_for_user() {
         return 0
     fi
 
-    if [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    if [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
         printf '/home/%s\n' "$user"
         return 0
     fi
@@ -69,6 +86,7 @@ user_home_for_user() {
 
 # Target user for ACFS installations
 TARGET_USER="${TARGET_USER:-ubuntu}"
+user_require_valid_target_user "$TARGET_USER"
 if [[ -z "${TARGET_HOME:-}" ]]; then
     TARGET_HOME="$(user_home_for_user "$TARGET_USER")"
 fi
@@ -102,6 +120,8 @@ _generate_random_password() {
 # Creates user if missing, adds to required groups
 ensure_user() {
     local target="$TARGET_USER"
+
+    user_require_valid_target_user "$target"
 
     if ! id "$target" &>/dev/null; then
         log_detail "Creating user: $target"
@@ -149,6 +169,8 @@ enable_passwordless_sudo() {
     local target="$TARGET_USER"
     local sudoers_file="/etc/sudoers.d/90-ubuntu-acfs"
 
+    user_require_valid_target_user "$target"
+
     log_detail "Enabling passwordless sudo for $target"
 
     echo "$target ALL=(ALL) NOPASSWD:ALL" | $SUDO tee "$sudoers_file" > /dev/null
@@ -170,6 +192,8 @@ migrate_ssh_keys() {
     local current_user
     current_user=$(whoami)
     local target="$TARGET_USER"
+
+    user_require_valid_target_user "$target"
 
     # Nothing to do if we're already the target user
     if [[ "$current_user" == "$target" ]]; then
@@ -317,6 +341,8 @@ set_default_shell() {
     local target_home="${TARGET_HOME:-}"
     local passwd_entry=""
     local local_entry=""
+
+    user_require_valid_target_user "$target"
 
     if [[ -z "$shell" ]]; then
         shell=$(command -v zsh)

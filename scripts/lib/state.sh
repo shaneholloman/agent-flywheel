@@ -181,7 +181,7 @@ state_resolve_current_home() {
             fi
         fi
 
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
             printf '/home/%s\n' "$current_user"
             return 0
         fi
@@ -223,7 +223,7 @@ state_resolve_target_home() {
             fi
         fi
 
-        if [[ "$TARGET_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        if [[ "$TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
             printf '/home/%s\n' "$TARGET_USER"
             return 0
         fi

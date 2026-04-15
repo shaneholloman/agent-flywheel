@@ -48,7 +48,7 @@ _acfs_doctor_resolve_current_home() {
             fi
         fi
 
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
             printf '/home/%s\n' "$current_user"
             return 0
         fi
@@ -235,7 +235,7 @@ if [[ -z "${TARGET_USER:-}" ]]; then
     unset _acfs_current_user
 fi
 TARGET_USER="${TARGET_USER:-ubuntu}"
-if [[ ! "$TARGET_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+if [[ ! "$TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
     TARGET_USER="ubuntu"
 fi
 
@@ -1967,7 +1967,7 @@ _doctor_run_manifest_check() {
             target_home="/root"
         elif [[ "$target_user" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
             target_home="$_acfs_doctor_current_home"
-        elif [[ "$target_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        elif [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
             target_home="/home/$target_user"
         fi
     fi

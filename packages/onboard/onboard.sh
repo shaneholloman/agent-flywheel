@@ -84,7 +84,7 @@ onboard_resolve_current_home() {
             fi
         fi
 
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
             printf '/home/%s\n' "$current_user"
             return 0
         fi
@@ -128,7 +128,7 @@ onboard_home_for_user() {
         return 0
     fi
 
-    if [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    if [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
         printf '/home/%s\n' "$user"
         return 0
     fi
