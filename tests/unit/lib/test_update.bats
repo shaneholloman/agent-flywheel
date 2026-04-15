@@ -488,6 +488,29 @@ EOF
     assert_success
 }
 
+@test "wrappers and nightly update sanitize invalid path env" {
+    local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"
+    local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
+
+    run grep -F 'sanitize_abs_nonroot_path()' "$nightly"
+    assert_success
+    run grep -F 'HOME="$(resolve_current_home)" || {' "$nightly"
+    assert_success
+    run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$nightly"
+    assert_success
+
+    run grep -F 'sanitize_abs_nonroot_path()' "$global_wrapper"
+    assert_success
+    run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$global_wrapper"
+    assert_success
+
+    run grep -F 'sanitize_abs_nonroot_path()' "$update_wrapper"
+    assert_success
+    run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update_wrapper"
+    assert_success
+}
+
 @test "install and update deploy all acfs doctor-dispatched runtime scripts" {
     local installer="$PROJECT_ROOT/install.sh"
     local update="$PROJECT_ROOT/scripts/lib/update.sh"
@@ -543,6 +566,8 @@ EOF
     assert_success
 
     run grep -F 'ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$state_candidate" 2>/dev/null || true)"' "$nightly"
+    assert_success
+    run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$nightly"
     assert_success
     run grep -F '"$HOME/.acfs/bin/acfs-update"' "$nightly"
     assert_success
