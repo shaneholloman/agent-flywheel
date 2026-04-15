@@ -12,6 +12,9 @@ _AUTOFIX_EXISTING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=autofix.sh
 source "${_AUTOFIX_EXISTING_DIR}/autofix.sh"
 
+ACFS_CLEAN_RELOCATED_STATE_ORIG="${ACFS_CLEAN_RELOCATED_STATE_ORIG:-}"
+ACFS_CLEAN_RELOCATED_STATE_NEW="${ACFS_CLEAN_RELOCATED_STATE_NEW:-}"
+
 # =============================================================================
 # Runtime Path Helpers
 # =============================================================================
@@ -147,6 +150,27 @@ autofix_existing_mv_undo_command() {
     local undo_command=""
 
     printf -v undo_command 'mv %q %q' "$source_path" "$dest_path"
+    printf '%s\n' "$undo_command"
+}
+
+autofix_existing_mv_undo_with_optional_dir_cleanup_command() {
+    local source_path="$1"
+    local dest_path="$2"
+    local acfs_home="$3"
+    local acfs_home_existed="${4:-false}"
+    local config_dir_existed="${5:-false}"
+    local undo_command=""
+
+    undo_command="$(autofix_existing_mv_undo_command "$source_path" "$dest_path" 2>/dev/null || true)"
+    [[ -n "$undo_command" ]] || return 1
+
+    if [[ "$config_dir_existed" != "true" ]]; then
+        printf -v undo_command '%s && { rmdir %q 2>/dev/null || true; }' "$undo_command" "$acfs_home/config"
+    fi
+    if [[ "$acfs_home_existed" != "true" ]]; then
+        printf -v undo_command '%s && { rmdir %q 2>/dev/null || true; }' "$undo_command" "$acfs_home"
+    fi
+
     printf '%s\n' "$undo_command"
 }
 
@@ -447,7 +471,14 @@ run_migrations() {
             return 1
         fi
         files_json="$(jq -cn --arg old "$legacy_config" --arg new "$settings_path" '[$old, $new]')"
-        legacy_move_undo="$(autofix_existing_mv_undo_command "$settings_path" "$legacy_config" 2>/dev/null || true)"
+        legacy_move_undo="$(
+            autofix_existing_mv_undo_with_optional_dir_cleanup_command \
+                "$settings_path" \
+                "$legacy_config" \
+                "$acfs_home" \
+                "$acfs_home_existed" \
+                "$config_dir_existed" 2>/dev/null || true
+        )"
         if [[ -z "$legacy_move_undo" ]]; then
             log_error "[MIGRATE] Failed to build undo command for legacy config migration"
             if ! mv "$settings_path" "$legacy_config"; then
@@ -674,6 +705,9 @@ upgrade_existing_installation() {
     fi
     if ! printf '%s\n' "$new_version" > "$version_file"; then
         log_error "[UPGRADE] Failed to update version file: $version_file"
+        if ! autofix_existing_restore_upgrade_version_file "$version_file" "$version_backup" "$version_file_existed" "$acfs_home_existed"; then
+            log_error "[UPGRADE] Failed to restore version file after write failure"
+        fi
         return 1
     fi
 
@@ -996,10 +1030,51 @@ autofix_existing_relocate_state_for_clean_reinstall() {
             ACFS_BACKUPS_DIR="$ACFS_STATE_DIR/backups"
             ACFS_LOCK_FILE="$ACFS_STATE_DIR/.lock"
             ACFS_INTEGRITY_FILE="$ACFS_STATE_DIR/.integrity"
+            ACFS_CLEAN_RELOCATED_STATE_ORIG="$state_dir"
+            ACFS_CLEAN_RELOCATED_STATE_NEW="$relocated_state_dir"
 
             log_info "[CLEAN] Relocated autofix state to $ACFS_STATE_DIR"
             ;;
     esac
+}
+
+autofix_existing_restore_relocated_state_after_clean_abort() {
+    local original_state_dir="${ACFS_CLEAN_RELOCATED_STATE_ORIG:-}"
+    local relocated_state_dir="${ACFS_CLEAN_RELOCATED_STATE_NEW:-}"
+    local original_parent=""
+    local relocated_parent=""
+
+    [[ -n "$original_state_dir" && -n "$relocated_state_dir" ]] || return 0
+    [[ -d "$relocated_state_dir" ]] || return 0
+
+    original_parent="$(dirname "$original_state_dir")"
+    relocated_parent="$(dirname "$relocated_state_dir")"
+
+    if ! mkdir -p "$original_parent"; then
+        log_error "[CLEAN] Failed to recreate autofix state parent directory: $original_parent"
+        return 1
+    fi
+    if autofix_path_exists "$original_state_dir"; then
+        log_error "[CLEAN] Refusing to restore relocated autofix state over existing path: $original_state_dir"
+        return 1
+    fi
+    if ! mv "$relocated_state_dir" "$original_state_dir"; then
+        log_error "[CLEAN] Failed to restore relocated autofix state to $original_state_dir"
+        return 1
+    fi
+
+    fsync_directory "$original_parent" >/dev/null 2>&1 || true
+    fsync_directory "$relocated_parent" >/dev/null 2>&1 || true
+
+    ACFS_STATE_DIR="$original_state_dir"
+    ACFS_CHANGES_FILE="$ACFS_STATE_DIR/changes.jsonl"
+    ACFS_UNDOS_FILE="$ACFS_STATE_DIR/undos.jsonl"
+    ACFS_BACKUPS_DIR="$ACFS_STATE_DIR/backups"
+    ACFS_LOCK_FILE="$ACFS_STATE_DIR/.lock"
+    ACFS_INTEGRITY_FILE="$ACFS_STATE_DIR/.integrity"
+    ACFS_CLEAN_RELOCATED_STATE_ORIG=""
+    ACFS_CLEAN_RELOCATED_STATE_NEW=""
+    return 0
 }
 
 # Perform clean reinstall
@@ -1037,6 +1112,9 @@ clean_reinstall() {
         '[]' \
         false >/dev/null; then
         log_error "[CLEAN] Failed to record clean reinstall operation"
+        if ! autofix_existing_restore_relocated_state_after_clean_abort; then
+            log_error "[CLEAN] Failed to restore relocated autofix state after journaling failure"
+        fi
         return 1
     fi
 
