@@ -2194,6 +2194,9 @@ install_asset() {
 
     # Security: Validate dest_path is under expected directories
     local allowed_prefixes=("$ACFS_HOME" "$TARGET_HOME" "/data" "/usr/local/bin")
+    if [[ -n "${ACFS_BIN_DIR:-}" ]] && [[ "$ACFS_BIN_DIR" == /* ]] && [[ "$ACFS_BIN_DIR" != "/" ]]; then
+        allowed_prefixes+=("$ACFS_BIN_DIR")
+    fi
     local valid_dest=false
     for prefix in "${allowed_prefixes[@]}"; do
         [[ -n "$prefix" ]] || continue
@@ -2230,6 +2233,12 @@ install_asset() {
         if _acfs_install_asset_has_symlink_component_under_prefix "$ACFS_HOME" "$dest_path" || \
            _acfs_install_asset_has_symlink_component_under_prefix "$TARGET_HOME" "$dest_path" || \
            _acfs_install_asset_has_symlink_component_under_prefix "/usr/local/bin" "$dest_path"; then
+            log_error "install_asset: Refusing to write through symlink path component: $dest_path"
+            return 1
+        fi
+        if [[ -n "${ACFS_BIN_DIR:-}" ]] && [[ "$ACFS_BIN_DIR" == /* ]] && [[ "$ACFS_BIN_DIR" != "/" ]] && \
+           [[ "$ACFS_BIN_DIR" != "/usr/local/bin" ]] && \
+           _acfs_install_asset_has_symlink_component_under_prefix "$ACFS_BIN_DIR" "$dest_path"; then
             log_error "install_asset: Refusing to write through symlink path component: $dest_path"
             return 1
         fi
@@ -2416,7 +2425,7 @@ run_as_target() {
         log_error "Unable to resolve TARGET_HOME for '$user'; export TARGET_HOME explicitly"
         return 1
     fi
-    local target_path_prefix="${ACFS_BIN_DIR:-$user_home/.local/bin}:$user_home/.cargo/bin:$user_home/.bun/bin:$user_home/.atuin/bin:$user_home/go/bin"
+    local target_path_prefix="${ACFS_BIN_DIR:-$user_home/.local/bin}:$user_home/.local/bin:$user_home/.acfs/bin:$user_home/.cargo/bin:$user_home/.bun/bin:$user_home/.atuin/bin:$user_home/go/bin"
     local current_path="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 
     # Environment variables to set for target user commands
@@ -2441,6 +2450,7 @@ run_as_target() {
 
     # Pass ACFS context variables to target user environment
     if [[ -n "${ACFS_HOME:-}" ]]; then env_args+=("ACFS_HOME=$ACFS_HOME"); fi
+    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR"); fi
     if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]]; then env_args+=("ACFS_BOOTSTRAP_DIR=$ACFS_BOOTSTRAP_DIR"); fi
     if [[ -n "${SCRIPT_DIR:-}" ]]; then env_args+=("SCRIPT_DIR=$SCRIPT_DIR"); fi
     if [[ -n "${ACFS_RAW:-}" ]]; then env_args+=("ACFS_RAW=$ACFS_RAW"); fi
@@ -3028,6 +3038,9 @@ init_target_paths() {
     # Override via ACFS_BIN_DIR for shared/multi-user machines:
     #   ACFS_BIN_DIR=/usr/local/bin ./install.sh
     ACFS_BIN_DIR="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    if [[ -z "$ACFS_BIN_DIR" ]] || [[ "$ACFS_BIN_DIR" == "/" ]] || [[ "$ACFS_BIN_DIR" != /* ]]; then
+        log_fatal "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
+    fi
 
     # ACFS directories for target user
     ACFS_HOME="${ACFS_HOME:-$TARGET_HOME/.acfs}"
@@ -3047,7 +3060,66 @@ init_target_paths() {
 
     # Add target user's bin directories to PATH early so that tools installed
     # later (like Claude Code) see the correct PATH and don't warn about it.
-    export PATH="$ACFS_BIN_DIR:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$PATH"
+    export PATH="$ACFS_BIN_DIR:$TARGET_HOME/.local/bin:$TARGET_HOME/.acfs/bin:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.atuin/bin:$TARGET_HOME/go/bin:$PATH"
+}
+
+acfs_primary_bin_dir_uses_root() {
+    [[ -n "${ACFS_BIN_DIR:-}" ]] || return 1
+    [[ -n "${TARGET_HOME:-}" ]] || return 1
+
+    case "$ACFS_BIN_DIR" in
+        "$TARGET_HOME"|"$TARGET_HOME"/*)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+acfs_ensure_primary_bin_dir() {
+    if acfs_primary_bin_dir_uses_root; then
+        "$SUDO" mkdir -p "$ACFS_BIN_DIR"
+        return $?
+    fi
+
+    run_as_target mkdir -p "$ACFS_BIN_DIR"
+}
+
+acfs_link_primary_bin_command() {
+    local source_path="$1"
+    local command_name="$2"
+    local dest_path="$ACFS_BIN_DIR/$command_name"
+
+    acfs_ensure_primary_bin_dir || return 1
+
+    if acfs_primary_bin_dir_uses_root; then
+        "$SUDO" ln -sf "$source_path" "$dest_path"
+        return $?
+    fi
+
+    run_as_target ln -sf "$source_path" "$dest_path"
+}
+
+acfs_install_executable_into_primary_bin() {
+    local src_path="$1"
+    local command_name="$2"
+    local dest_path="$ACFS_BIN_DIR/$command_name"
+
+    acfs_ensure_primary_bin_dir || return 1
+
+    if acfs_primary_bin_dir_uses_root; then
+        "$SUDO" install -m 0755 "$src_path" "$dest_path"
+        return $?
+    fi
+
+    if [[ $EUID -eq 0 ]]; then
+        "$SUDO" install -m 0755 "$src_path" "$dest_path" || return 1
+        "$SUDO" chown "$TARGET_USER:$TARGET_USER" "$dest_path"
+        return $?
+    fi
+
+    run_as_target install -m 0755 "$src_path" "$dest_path"
 }
 
 validate_target_user() {
@@ -3728,7 +3800,7 @@ setup_filesystem() {
 
     # Create user's bin and .bun directories early - many installers need them
     # This prevents NTM, UBS, CASS, Bun, etc. from creating them as root via sudo
-    try_step "Creating bin directory ($ACFS_BIN_DIR)" run_as_target mkdir -p "$ACFS_BIN_DIR" || return 1
+    try_step "Creating bin directory ($ACFS_BIN_DIR)" acfs_ensure_primary_bin_dir || return 1
     try_step "Creating .bun directory" run_as_target mkdir -p "$TARGET_HOME/.bun" || return 1
 
     log_success "Filesystem setup complete"
@@ -3898,6 +3970,7 @@ EOF
     # Ensure core user-installed tool paths are present for login shells.
     # This prevents warnings from tools like Claude's installer that check PATH
     local user_profile="$TARGET_HOME/.profile"
+    local user_zprofile="$TARGET_HOME/.zprofile"
     local legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
     # shellcheck disable=SC2016  # We want $HOME/$PATH to expand when .profile is sourced, not during install.
     local profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
@@ -3923,6 +3996,27 @@ EOF
     fi
     # Ensure correct ownership (handles edge case where file was created by root)
     [[ -f "$user_profile" ]] && $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_profile" 2>/dev/null || true
+
+    # zsh login shells do not read ~/.profile, so mirror the login PATH there.
+    if [[ ! -f "$user_zprofile" ]]; then
+        {
+            echo "# ~/.zprofile: executed by zsh for login shells"
+            echo ""
+            echo "# User binary paths"
+            echo "$profile_path_line"
+        } > "$user_zprofile"
+        $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zprofile"
+    elif grep -Fq "$legacy_profile_path_line" "$user_zprofile" 2>/dev/null; then
+        sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" "$user_zprofile"
+    elif ! grep -q '\.local/bin' "$user_zprofile" 2>/dev/null || \
+         ! grep -q '\.atuin/bin' "$user_zprofile" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Added by ACFS - user binary paths"
+            echo "$profile_path_line"
+        } >> "$user_zprofile"
+    fi
+    [[ -f "$user_zprofile" ]] && $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zprofile" 2>/dev/null || true
 
     # Set zsh as default shell for target user. Some environments expose user
     # entries via NSS but do not allow local chsh updates, so fall back to an
@@ -4421,7 +4515,7 @@ install_agents_phase() {
         # The native installer can choose non-standard paths, and bun installs land in ~/.bun/bin.
         local claude_bin_local="$ACFS_BIN_DIR/claude"
         if [[ ! -x "$claude_bin_local" ]]; then
-            run_as_target mkdir -p "$ACFS_BIN_DIR" 2>/dev/null || true
+            acfs_ensure_primary_bin_dir 2>/dev/null || true
 
             local claude_candidate=""
             local candidates=(
@@ -4441,7 +4535,7 @@ install_agents_phase() {
             fi
 
             if [[ -n "$claude_candidate" ]] && [[ -x "$claude_candidate" ]]; then
-                try_step "Linking Claude Code into ~/.local/bin" run_as_target ln -sf "$claude_candidate" "$claude_bin_local" || true
+                try_step "Linking Claude Code into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$claude_candidate" "claude" || true
             fi
         fi
 
@@ -4467,7 +4561,7 @@ install_agents_phase() {
     elif [[ -x "$claude_bin_bun" ]]; then
         log_detail "Claude Code already installed ($claude_bin_bun)"
     else
-        run_as_target mkdir -p "$ACFS_BIN_DIR" 2>/dev/null || true
+        acfs_ensure_primary_bin_dir 2>/dev/null || true
 
         log_detail "Installing Claude Code (native) for $TARGET_USER"
         try_step "Installing Claude Code (native)" acfs_run_verified_upstream_script_as_target "claude" "bash" latest || true
@@ -4496,7 +4590,7 @@ install_agents_phase() {
             fi
 
             if [[ -n "$claude_candidate" ]] && [[ -x "$claude_candidate" ]]; then
-                try_step "Linking Claude Code into ~/.local/bin" run_as_target ln -sf "$claude_candidate" "$claude_bin_local" || true
+                try_step "Linking Claude Code into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$claude_candidate" "claude" || true
             fi
         fi
 
@@ -4510,8 +4604,8 @@ install_agents_phase() {
     # Prefer ~/.local/bin for Claude to avoid PATH conflict warnings in acfs doctor.
     # (If Claude was installed via bun, link it into ~/.local/bin which is earlier in PATH.)
     if [[ ! -x "$claude_bin_local" && -x "$claude_bin_bun" ]]; then
-        run_as_target mkdir -p "$ACFS_BIN_DIR" 2>/dev/null || true
-        try_step "Linking Claude Code into ~/.local/bin" run_as_target ln -sf "$claude_bin_bun" "$claude_bin_local" || true
+        acfs_ensure_primary_bin_dir 2>/dev/null || true
+        try_step "Linking Claude Code into $ACFS_BIN_DIR" acfs_link_primary_bin_command "$claude_bin_bun" "claude" || true
     fi
 
     # Codex CLI (install as target user)
@@ -4536,14 +4630,13 @@ install_agents_phase() {
     # Create wrapper script that uses bun as runtime (avoids node PATH issues)
     local codex_bin_local="$ACFS_BIN_DIR/codex"
     if [[ -x "$TARGET_HOME/.bun/bin/codex" ]] && [[ ! -x "$codex_bin_local" ]]; then
-        run_as_target mkdir -p "$ACFS_BIN_DIR" 2>/dev/null || true
-        # shellcheck disable=SC2016  # Variables expand inside the bash -c script, not here.
-        try_step "Creating Codex bun wrapper" run_as_target bash -c '
-            set -euo pipefail
-            wrapper_path="$1"
-            printf "%s\n" "#!/bin/bash" "exec ~/.bun/bin/bun ~/.bun/bin/codex \"\$@\"" > "$wrapper_path"
-            chmod +x "$wrapper_path"
-        ' _ "$codex_bin_local" || true
+        local codex_wrapper_tmp=""
+        codex_wrapper_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-codex-wrapper.XXXXXX")" || true
+        if [[ -n "$codex_wrapper_tmp" ]]; then
+            printf '%s\n' '#!/bin/bash' "exec \"$TARGET_HOME/.bun/bin/bun\" \"$TARGET_HOME/.bun/bin/codex\" \"\$@\"" > "$codex_wrapper_tmp"
+            try_step "Creating Codex bun wrapper" acfs_install_executable_into_primary_bin "$codex_wrapper_tmp" "codex" || true
+            rm -f "$codex_wrapper_tmp" 2>/dev/null || true
+        fi
     fi
 
     # Gemini CLI (install as target user)
@@ -4553,14 +4646,13 @@ install_agents_phase() {
     # Create wrapper script that uses bun as runtime (avoids node PATH issues)
     local gemini_bin_local="$ACFS_BIN_DIR/gemini"
     if [[ -x "$TARGET_HOME/.bun/bin/gemini" ]] && [[ ! -x "$gemini_bin_local" ]]; then
-        run_as_target mkdir -p "$ACFS_BIN_DIR" 2>/dev/null || true
-        # shellcheck disable=SC2016  # Variables expand inside the bash -c script, not here.
-        try_step "Creating Gemini bun wrapper" run_as_target bash -c '
-            set -euo pipefail
-            wrapper_path="$1"
-            printf "%s\n" "#!/bin/bash" "exec ~/.bun/bin/bun ~/.bun/bin/gemini \"\$@\"" > "$wrapper_path"
-            chmod +x "$wrapper_path"
-        ' _ "$gemini_bin_local" || true
+        local gemini_wrapper_tmp=""
+        gemini_wrapper_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-gemini-wrapper.XXXXXX")" || true
+        if [[ -n "$gemini_wrapper_tmp" ]]; then
+            printf '%s\n' '#!/bin/bash' "exec \"$TARGET_HOME/.bun/bin/bun\" \"$TARGET_HOME/.bun/bin/gemini\" \"\$@\"" > "$gemini_wrapper_tmp"
+            try_step "Creating Gemini bun wrapper" acfs_install_executable_into_primary_bin "$gemini_wrapper_tmp" "gemini" || true
+            rm -f "$gemini_wrapper_tmp" 2>/dev/null || true
+        fi
     fi
 
     # Apply Gemini CLI patches (EBADF crash fix, rate-limit retry, quota retry)
@@ -4766,8 +4858,8 @@ install_supabase_cli_release() {
     chmod 755 "$tmp_dir" 2>/dev/null || true
     chmod 755 "$extracted_bin" 2>/dev/null || true
 
-    run_as_target mkdir -p "$ACFS_BIN_DIR" 2>/dev/null || true
-    if ! run_as_target install -m 0755 "$extracted_bin" "$ACFS_BIN_DIR/supabase"; then
+    acfs_ensure_primary_bin_dir 2>/dev/null || true
+    if ! acfs_install_executable_into_primary_bin "$extracted_bin" "supabase"; then
         log_error "Supabase CLI: failed to install into $ACFS_BIN_DIR"
         return 1
     fi
@@ -4823,16 +4915,22 @@ install_cloud_db_legacy_cloud() {
                         # The shim uses `bun x` to run wrangler, avoiding the node dependency.
                         if [[ "$cli" == "wrangler" ]] && ! command -v node &>/dev/null; then
                             local shim_dir="$ACFS_BIN_DIR"
-                            mkdir -p "$shim_dir" 2>/dev/null || true
+                            local wrangler_wrapper_tmp=""
+                            acfs_ensure_primary_bin_dir 2>/dev/null || true
                             if [[ ! -f "$shim_dir/wrangler" ]] || grep -q 'bun x wrangler' "$shim_dir/wrangler" 2>/dev/null; then
-                                cat > "$shim_dir/wrangler" <<'WRANGLER_SHIM'
+                                wrangler_wrapper_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-wrangler-wrapper.XXXXXX")" || true
+                                if [[ -n "$wrangler_wrapper_tmp" ]]; then
+                                    cat > "$wrangler_wrapper_tmp" <<WRANGLER_SHIM
 #!/usr/bin/env bash
 # Wrangler shim: uses bun to run wrangler when node is not available.
 # Created by ACFS installer (issue #152).
-exec "${HOME}/.bun/bin/bun" x wrangler@latest "$@"
+exec "$TARGET_HOME/.bun/bin/bun" x wrangler@latest "\$@"
 WRANGLER_SHIM
-                                chmod +x "$shim_dir/wrangler"
-                                log_detail "Created bun-based wrangler shim at $shim_dir/wrangler (node not found)"
+                                    if acfs_install_executable_into_primary_bin "$wrangler_wrapper_tmp" "wrangler"; then
+                                        log_detail "Created bun-based wrangler shim at $shim_dir/wrangler (node not found)"
+                                    fi
+                                    rm -f "$wrangler_wrapper_tmp" 2>/dev/null || true
+                                fi
                             fi
                         fi
                     else
@@ -5617,8 +5715,7 @@ finalize() {
     if acfs_use_generated_category "acfs"; then
         log_detail "Using generated installers for acfs (phase 10)"
         acfs_run_generated_category_phase "acfs" "10" || return 1
-        log_success "Final wiring complete"
-        return 0
+        log_detail "Generated acfs modules are supplemental; continuing legacy finalize for full runtime deployment parity"
     fi
 
     # Copy tmux config
@@ -5664,8 +5761,8 @@ finalize() {
     try_step "Setting onboard permissions" $SUDO chmod 755 "$ACFS_HOME/onboard/onboard.sh" || return 1
     try_step "Setting onboard ownership" acfs_chown_tree "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/onboard" || return 1
 
-    try_step "Creating bin directory ($ACFS_BIN_DIR)" run_as_target mkdir -p "$ACFS_BIN_DIR" || return 1
-    try_step "Linking onboard command" run_as_target ln -sf "$ACFS_HOME/onboard/onboard.sh" "$ACFS_BIN_DIR/onboard" || return 1
+    try_step "Creating bin directory ($ACFS_BIN_DIR)" acfs_ensure_primary_bin_dir || return 1
+    try_step "Linking onboard command" acfs_link_primary_bin_command "$ACFS_HOME/onboard/onboard.sh" "onboard" || return 1
 
     # Install acfs scripts (for acfs CLI subcommands)
     log_detail "Installing acfs scripts"
@@ -5688,11 +5785,15 @@ finalize() {
     try_step "Installing session.sh" install_asset "scripts/lib/session.sh" "$ACFS_HOME/scripts/lib/session.sh" || return 1
     try_step "Installing continue.sh" install_asset "scripts/lib/continue.sh" "$ACFS_HOME/scripts/lib/continue.sh" || return 1
     try_step "Installing info.sh" install_asset "scripts/lib/info.sh" "$ACFS_HOME/scripts/lib/info.sh" || return 1
+    try_step "Installing status.sh" install_asset "scripts/lib/status.sh" "$ACFS_HOME/scripts/lib/status.sh" || return 1
+    try_step "Installing changelog.sh" install_asset "scripts/lib/changelog.sh" "$ACFS_HOME/scripts/lib/changelog.sh" || return 1
+    try_step "Installing export-config.sh" install_asset "scripts/lib/export-config.sh" "$ACFS_HOME/scripts/lib/export-config.sh" || return 1
     try_step "Installing cheatsheet.sh" install_asset "scripts/lib/cheatsheet.sh" "$ACFS_HOME/scripts/lib/cheatsheet.sh" || return 1
     try_step "Installing webhook.sh" install_asset "scripts/lib/webhook.sh" "$ACFS_HOME/scripts/lib/webhook.sh" || return 1
     try_step "Installing notify.sh" install_asset "scripts/lib/notify.sh" "$ACFS_HOME/scripts/lib/notify.sh" || return 1
     try_step "Installing notifications.sh" install_asset "scripts/lib/notifications.sh" "$ACFS_HOME/scripts/lib/notifications.sh" || return 1
     try_step "Installing dashboard.sh" install_asset "scripts/lib/dashboard.sh" "$ACFS_HOME/scripts/lib/dashboard.sh" || return 1
+    try_step "Installing support.sh" install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh" || return 1
     try_step "Installing acfs-nightly-update.service template" install_asset "scripts/templates/acfs-nightly-update.service" "$ACFS_HOME/scripts/templates/acfs-nightly-update.service" || return 1
     try_step "Installing acfs-nightly-update.timer template" install_asset "scripts/templates/acfs-nightly-update.timer" "$ACFS_HOME/scripts/templates/acfs-nightly-update.timer" || return 1
 
@@ -5714,7 +5815,7 @@ finalize() {
     try_step "Installing acfs-update" install_asset "scripts/acfs-update" "$ACFS_HOME/bin/acfs-update" || return 1
     try_step "Setting acfs-update permissions" $SUDO chmod 755 "$ACFS_HOME/bin/acfs-update" || return 1
     try_step "Setting acfs-update ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs-update" || return 1
-    try_step "Linking acfs-update command" run_as_target ln -sf "$ACFS_HOME/bin/acfs-update" "$ACFS_BIN_DIR/acfs-update" || return 1
+    try_step "Linking acfs-update command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs-update" "acfs-update" || return 1
 
     # Install root AGENTS.md generator (if available) and generate /AGENTS.md once
     if try_step "Installing flywheel-update-agents-md" install_asset "scripts/generate-root-agents-md.sh" "$ACFS_HOME/bin/flywheel-update-agents-md"; then
@@ -5771,7 +5872,7 @@ finalize() {
     try_step "Installing acfs CLI" install_asset "scripts/lib/doctor.sh" "$ACFS_HOME/bin/acfs" || return 1
     try_step "Setting acfs permissions" $SUDO chmod 755 "$ACFS_HOME/bin/acfs" || return 1
     try_step "Setting acfs ownership" $SUDO chown "$TARGET_USER:$TARGET_USER" "$ACFS_HOME/bin/acfs" || return 1
-    try_step "Linking acfs command" run_as_target ln -sf "$ACFS_HOME/bin/acfs" "$ACFS_BIN_DIR/acfs" || return 1
+    try_step "Linking acfs command" acfs_link_primary_bin_command "$ACFS_HOME/bin/acfs" "acfs" || return 1
 
     # Install global acfs wrapper (works for root and all users)
     # This wrapper finds the target user from state and runs acfs as that user
@@ -5897,6 +5998,8 @@ GEMINI_FOLDERS_EOF
   "installed_at": "$(date -Iseconds)",
   "mode": "$MODE",
   "target_user": "$TARGET_USER",
+  "target_home": "$TARGET_HOME",
+  "bin_dir": "$ACFS_BIN_DIR",
   "yes_mode": $YES_MODE,
   "skip_postgres": $SKIP_POSTGRES,
   "skip_vault": $SKIP_VAULT,

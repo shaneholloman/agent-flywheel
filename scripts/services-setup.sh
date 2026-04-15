@@ -135,11 +135,13 @@ run_as_user_shell() {
 # More robust than checking binary paths directly - respects user's PATH
 user_command_exists() {
     local cmd="$1"
+    local primary_bin_dir="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    local target_path_prefix="$primary_bin_dir:$TARGET_HOME/.local/bin:$TARGET_HOME/.acfs/bin:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.atuin/bin:$TARGET_HOME/go/bin"
     # Include common user install locations (bun/cargo/etc) even when running
     # via sudo, which may otherwise provide a restricted PATH.
     # shellcheck disable=SC2016  # $HOME/$PATH expand inside the target user's bash -c
-    run_as_user bash -c \
-        'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin:$PATH"; command -v -- "$1" >/dev/null 2>&1' \
+    run_as_user env ACFS_TARGET_PATH_PREFIX="$target_path_prefix" bash -c \
+        'export PATH="$ACFS_TARGET_PATH_PREFIX:$PATH"; command -v -- "$1" >/dev/null 2>&1' \
         _ "$cmd"
 }
 
@@ -172,9 +174,12 @@ user_dir_has_content() {
 
 find_user_bin() {
     local name="$1"
+    local primary_bin_dir="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
 
     local candidates=(
+        "$primary_bin_dir/$name"
         "$TARGET_HOME/.local/bin/$name"
+        "$TARGET_HOME/.acfs/bin/$name"
         "$TARGET_HOME/.cargo/bin/$name"
         "$TARGET_HOME/.bun/bin/$name"
         "$TARGET_HOME/.atuin/bin/$name"

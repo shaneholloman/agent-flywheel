@@ -105,8 +105,8 @@ if [[ "\${BASH_SOURCE[0]}" = "\${0}" ]]; then
         fi
     fi
 
-    if [[ -z "\${TARGET_HOME:-}" ]] || [[ "\${TARGET_HOME}" != /* ]]; then
-        log_error "Unable to resolve TARGET_HOME for '\${TARGET_USER}'; export TARGET_HOME explicitly"
+    if [[ -z "\${TARGET_HOME:-}" ]] || [[ "\${TARGET_HOME}" == "/" ]] || [[ "\${TARGET_HOME}" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '\${TARGET_USER}': \${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
         exit 1
     fi
 
@@ -115,13 +115,18 @@ if [[ "\${BASH_SOURCE[0]}" = "\${0}" ]]; then
         ACFS_BOOTSTRAP_DIR="\$(cd "\$ACFS_GENERATED_SCRIPT_DIR/../.." && pwd)"
     fi
 
+    ACFS_BIN_DIR="\${ACFS_BIN_DIR:-\$TARGET_HOME/.local/bin}"
+    if [[ -z "\${ACFS_BIN_DIR:-}" ]] || [[ "\${ACFS_BIN_DIR}" == "/" ]] || [[ "\${ACFS_BIN_DIR}" != /* ]]; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: \${ACFS_BIN_DIR:-<empty>})"
+        exit 1
+    fi
     ACFS_LIB_DIR="\${ACFS_LIB_DIR:-\$ACFS_BOOTSTRAP_DIR/scripts/lib}"
     ACFS_GENERATED_DIR="\${ACFS_GENERATED_DIR:-\$ACFS_BOOTSTRAP_DIR/scripts/generated}"
     ACFS_ASSETS_DIR="\${ACFS_ASSETS_DIR:-\$ACFS_BOOTSTRAP_DIR/acfs}"
     ACFS_CHECKSUMS_YAML="\${ACFS_CHECKSUMS_YAML:-\$ACFS_BOOTSTRAP_DIR/checksums.yaml}"
     ACFS_MANIFEST_YAML="\${ACFS_MANIFEST_YAML:-\$ACFS_BOOTSTRAP_DIR/acfs.manifest.yaml}"
 
-    export TARGET_USER TARGET_HOME MODE
+    export TARGET_USER TARGET_HOME MODE ACFS_BIN_DIR
     export ACFS_BOOTSTRAP_DIR ACFS_LIB_DIR ACFS_GENERATED_DIR ACFS_ASSETS_DIR ACFS_CHECKSUMS_YAML ACFS_MANIFEST_YAML
 fi
 
@@ -1289,10 +1294,15 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('    case "$run_as" in');
   lines.push('        target_user)');
   lines.push('            if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then');
-  lines.push('                log_error "Unable to resolve TARGET_HOME for \'$target_user\'; export TARGET_HOME explicitly"');
+  lines.push('                log_error "Invalid TARGET_HOME for \'$target_user\': ${target_home:-<empty>} (must be an absolute path and cannot be \'/\')"');
   lines.push('                return 1');
   lines.push('            fi');
-  lines.push('            target_path="$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"');
+  lines.push('            local target_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"');
+  lines.push('            if [[ -z "$target_bin" ]] || [[ "$target_bin" != /* ]] || [[ "$target_bin" == "/" ]]; then');
+  lines.push('                log_error "ACFS_BIN_DIR must be an absolute path and cannot be \'/\' (got: ${target_bin:-<empty>})"');
+  lines.push('                return 1');
+  lines.push('            fi');
+  lines.push('            target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"');
   lines.push('            if [[ "$(id -un 2>/dev/null || true)" == "$target_user" ]]; then');
   lines.push('                TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"');
   lines.push('                return $?');

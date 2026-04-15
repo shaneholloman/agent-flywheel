@@ -63,8 +63,8 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         fi
     fi
 
-    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" != /* ]]; then
-        log_error "Unable to resolve TARGET_HOME for '${TARGET_USER}'; export TARGET_HOME explicitly"
+    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
         exit 1
     fi
 
@@ -73,13 +73,18 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         ACFS_BOOTSTRAP_DIR="$(cd "$ACFS_GENERATED_SCRIPT_DIR/../.." && pwd)"
     fi
 
+    ACFS_BIN_DIR="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    if [[ -z "${ACFS_BIN_DIR:-}" ]] || [[ "${ACFS_BIN_DIR}" == "/" ]] || [[ "${ACFS_BIN_DIR}" != /* ]]; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
+        exit 1
+    fi
     ACFS_LIB_DIR="${ACFS_LIB_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/lib}"
     ACFS_GENERATED_DIR="${ACFS_GENERATED_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/generated}"
     ACFS_ASSETS_DIR="${ACFS_ASSETS_DIR:-$ACFS_BOOTSTRAP_DIR/acfs}"
     ACFS_CHECKSUMS_YAML="${ACFS_CHECKSUMS_YAML:-$ACFS_BOOTSTRAP_DIR/checksums.yaml}"
     ACFS_MANIFEST_YAML="${ACFS_MANIFEST_YAML:-$ACFS_BOOTSTRAP_DIR/acfs.manifest.yaml}"
 
-    export TARGET_USER TARGET_HOME MODE
+    export TARGET_USER TARGET_HOME MODE ACFS_BIN_DIR
     export ACFS_BOOTSTRAP_DIR ACFS_LIB_DIR ACFS_GENERATED_DIR ACFS_ASSETS_DIR ACFS_CHECKSUMS_YAML ACFS_MANIFEST_YAML
 fi
 
@@ -152,7 +157,7 @@ declare -a MANIFEST_CHECKS=(
     "network.ssh_keepalive.1	Configure SSH server keepalive to prevent VPN/NAT disconnects	grep -E '^ClientAliveInterval[[:space:]]+60' /etc/ssh/sshd_config	optional	root"
     "network.ssh_keepalive.2	Configure SSH server keepalive to prevent VPN/NAT disconnects	grep -E '^ClientAliveCountMax[[:space:]]+3' /etc/ssh/sshd_config	optional	root"
     "lang.bun	Bun runtime for JS tooling and global CLIs	~/.bun/bin/bun --version	required	target_user"
-    "lang.uv	uv Python tooling (fast venvs)	~/.local/bin/uv --version	required	target_user"
+    "lang.uv	uv Python tooling (fast venvs)	command -v uv >/dev/null 2>&1 && uv --version	required	target_user"
     "lang.rust.1	Rust nightly + cargo	~/.cargo/bin/cargo --version	required	target_user"
     "lang.rust.2	Rust nightly + cargo	~/.cargo/bin/rustup show | grep -q nightly	required	target_user"
     "lang.go	Go toolchain	go version	required	root"
@@ -160,9 +165,9 @@ declare -a MANIFEST_CHECKS=(
     "tools.atuin	Atuin shell history (Ctrl-R superpowers)	~/.atuin/bin/atuin --version	required	target_user"
     "tools.zoxide	Zoxide (better cd)	command -v zoxide	required	target_user"
     "tools.ast_grep	ast-grep (used by UBS for syntax-aware scanning)	sg --version	required	target_user"
-    "agents.claude	Claude Code	~/.local/bin/claude --version || ~/.local/bin/claude --help	required	target_user"
-    "agents.codex	OpenAI Codex CLI	~/.local/bin/codex --version || ~/.local/bin/codex --help	required	target_user"
-    "agents.gemini	Google Gemini CLI	~/.local/bin/gemini --version || ~/.local/bin/gemini --help	required	target_user"
+    "agents.claude	Claude Code	target_bin=\"\${ACFS_BIN_DIR:-\$HOME/.local/bin}\"\\n\"\$target_bin/claude\" --version || \"\$target_bin/claude\" --help	required	target_user"
+    "agents.codex	OpenAI Codex CLI	target_bin=\"\${ACFS_BIN_DIR:-\$HOME/.local/bin}\"\\n\"\$target_bin/codex\" --version || \"\$target_bin/codex\" --help	required	target_user"
+    "agents.gemini	Google Gemini CLI	target_bin=\"\${ACFS_BIN_DIR:-\$HOME/.local/bin}\"\\n\"\$target_bin/gemini\" --version || \"\$target_bin/gemini\" --help	required	target_user"
     "agents.opencode	OpenCode (multi-provider agent harness)	opencode --version || opencode --help	optional	target_user"
     "tools.vault	HashiCorp Vault CLI	vault --version	optional	root"
     "db.postgres18.1	PostgreSQL 18	psql --version	optional	root"
@@ -218,7 +223,7 @@ declare -a MANIFEST_CHECKS=(
     "acfs.workspace.1	Agent workspace with tmux session and project folder	test -d /data/projects/my_first_project	optional	target_user"
     "acfs.workspace.2	Agent workspace with tmux session and project folder	grep -q \"alias agents=\" ~/.zshrc.local || grep -q \"alias agents=\" ~/.zshrc	optional	target_user"
     "acfs.onboard	Onboarding TUI tutorial	onboard --help || command -v onboard	required	target_user"
-    "acfs.update	ACFS update command wrapper	command -v acfs-update	required	target_user"
+    "acfs.update	ACFS update command wrapper	acfs-update --help || command -v acfs-update	required	target_user"
     "acfs.nightly	Nightly auto-update timer (systemd)	systemctl --user is-enabled acfs-nightly-update.timer	optional	target_user"
     "acfs.doctor	ACFS doctor command for health checks	acfs doctor --help || command -v acfs	required	target_user"
 )
@@ -251,10 +256,15 @@ run_manifest_check_command() {
     case "$run_as" in
         target_user)
             if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then
-                log_error "Unable to resolve TARGET_HOME for '$target_user'; export TARGET_HOME explicitly"
+                log_error "Invalid TARGET_HOME for '$target_user': ${target_home:-<empty>} (must be an absolute path and cannot be '/')"
                 return 1
             fi
-            target_path="$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+            local target_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+            if [[ -z "$target_bin" ]] || [[ "$target_bin" != /* ]] || [[ "$target_bin" == "/" ]]; then
+                log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${target_bin:-<empty>})"
+                return 1
+            fi
+            target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
             if [[ "$(id -un 2>/dev/null || true)" == "$target_user" ]]; then
                 TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
                 return $?

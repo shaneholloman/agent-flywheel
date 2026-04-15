@@ -63,8 +63,8 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         fi
     fi
 
-    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" != /* ]]; then
-        log_error "Unable to resolve TARGET_HOME for '${TARGET_USER}'; export TARGET_HOME explicitly"
+    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
         exit 1
     fi
 
@@ -73,13 +73,18 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         ACFS_BOOTSTRAP_DIR="$(cd "$ACFS_GENERATED_SCRIPT_DIR/../.." && pwd)"
     fi
 
+    ACFS_BIN_DIR="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    if [[ -z "${ACFS_BIN_DIR:-}" ]] || [[ "${ACFS_BIN_DIR}" == "/" ]] || [[ "${ACFS_BIN_DIR}" != /* ]]; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
+        exit 1
+    fi
     ACFS_LIB_DIR="${ACFS_LIB_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/lib}"
     ACFS_GENERATED_DIR="${ACFS_GENERATED_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/generated}"
     ACFS_ASSETS_DIR="${ACFS_ASSETS_DIR:-$ACFS_BOOTSTRAP_DIR/acfs}"
     ACFS_CHECKSUMS_YAML="${ACFS_CHECKSUMS_YAML:-$ACFS_BOOTSTRAP_DIR/checksums.yaml}"
     ACFS_MANIFEST_YAML="${ACFS_MANIFEST_YAML:-$ACFS_BOOTSTRAP_DIR/acfs.manifest.yaml}"
 
-    export TARGET_USER TARGET_HOME MODE
+    export TARGET_USER TARGET_HOME MODE ACFS_BIN_DIR
     export ACFS_BOOTSTRAP_DIR ACFS_LIB_DIR ACFS_GENERATED_DIR ACFS_ASSETS_DIR ACFS_CHECKSUMS_YAML ACFS_MANIFEST_YAML
 fi
 
@@ -320,9 +325,6 @@ if [[ -f ~/.zshrc ]] && ! grep -q "ACFS loader" ~/.zshrc; then
 fi
 echo '# ACFS loader' > ~/.zshrc
 echo 'source "$HOME/.acfs/zsh/acfs.zshrc"' >> ~/.zshrc
-echo '' >> ~/.zshrc
-echo '# User overrides live here forever' >> ~/.zshrc
-echo '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"' >> ~/.zshrc
 INSTALL_SHELL_OMZ
         then
             log_error "shell.omz: install command failed: if [[ -f ~/.zshrc ]] && ! grep -q \"ACFS loader\" ~/.zshrc; then"
@@ -334,15 +336,19 @@ INSTALL_SHELL_OMZ
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Setup ~/.profile for bash login shells (prevents PATH warnings from installers)
+legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 if [[ ! -f ~/.profile ]]; then
   echo '# ~/.profile: executed by bash for login shells' > ~/.profile
   echo '' >> ~/.profile
   echo '# User binary paths' >> ~/.profile
-  echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"' >> ~/.profile
-elif ! grep -q '\.local/bin' ~/.profile; then
+  echo "$profile_path_line" >> ~/.profile
+elif grep -Fq "$legacy_profile_path_line" ~/.profile; then
+  sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" ~/.profile
+elif ! grep -q '\.local/bin' ~/.profile || ! grep -q '\.atuin/bin' ~/.profile; then
   echo '' >> ~/.profile
   echo '# Added by ACFS - user binary paths' >> ~/.profile
-  echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"' >> ~/.profile
+  echo "$profile_path_line" >> ~/.profile
 fi
 INSTALL_SHELL_OMZ
         then
@@ -355,15 +361,19 @@ INSTALL_SHELL_OMZ
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Setup ~/.zprofile for zsh login shells (zsh does NOT read ~/.profile)
+legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 if [[ ! -f ~/.zprofile ]]; then
   echo '# ~/.zprofile: executed by zsh for login shells' > ~/.zprofile
   echo '' >> ~/.zprofile
   echo '# User binary paths' >> ~/.zprofile
-  echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"' >> ~/.zprofile
-elif ! grep -q '\.local/bin' ~/.zprofile; then
+  echo "$profile_path_line" >> ~/.zprofile
+elif grep -Fq "$legacy_profile_path_line" ~/.zprofile; then
+  sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" ~/.zprofile
+elif ! grep -q '\.local/bin' ~/.zprofile || ! grep -q '\.atuin/bin' ~/.zprofile; then
   echo '' >> ~/.zprofile
   echo '# Added by ACFS - user binary paths' >> ~/.zprofile
-  echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"' >> ~/.zprofile
+  echo "$profile_path_line" >> ~/.zprofile
 fi
 INSTALL_SHELL_OMZ
         then

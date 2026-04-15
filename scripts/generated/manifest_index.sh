@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="bc4524ea4f244f86cd001ed279e593955c472b4b1a9f708982549516245cd0b0"
+ACFS_MANIFEST_SHA256="fd79d71dbc459ae0fa4bdf6275ffdc985b28895cdfb8321546afd9bd01a1577b"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -579,16 +579,16 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK=(
   ['network.tailscale']="command -v tailscale"
   ['network.ssh_keepalive']="# Check if ClientAliveInterval is configured (non-zero) grep -qE '^ClientAliveInterval[[:space:]]+[1-9]' /etc/ssh/sshd_config 2>/dev/null "
   ['lang.bun']="test -x ~/.bun/bin/bun"
-  ['lang.uv']="test -x ~/.local/bin/uv"
+  ['lang.uv']="test -x \"\${ACFS_BIN_DIR:-\$HOME/.local/bin}/uv\" || test -x \"\$HOME/.local/bin/uv\""
   ['lang.rust']="test -x ~/.cargo/bin/cargo"
   ['lang.go']="command -v go"
   ['lang.nvm']="test -d ~/.nvm && ls ~/.nvm/versions/node/ 2>/dev/null | grep -q ."
   ['tools.atuin']="test -x ~/.atuin/bin/atuin"
   ['tools.zoxide']="command -v zoxide"
   ['tools.ast_grep']="command -v sg"
-  ['agents.claude']="test -x ~/.local/bin/claude"
-  ['agents.codex']="test -x ~/.local/bin/codex"
-  ['agents.gemini']="test -x ~/.local/bin/gemini"
+  ['agents.claude']="test -x \"\${ACFS_BIN_DIR:-\$HOME/.local/bin}/claude\" || test -x \"\$HOME/.local/bin/claude\""
+  ['agents.codex']="test -x \"\${ACFS_BIN_DIR:-\$HOME/.local/bin}/codex\" || test -x \"\$HOME/.local/bin/codex\""
+  ['agents.gemini']="test -x \"\${ACFS_BIN_DIR:-\$HOME/.local/bin}/gemini\" || test -x \"\$HOME/.local/bin/gemini\""
   ['agents.opencode']="command -v opencode"
   ['tools.vault']="command -v vault"
   ['db.postgres18']="command -v psql"

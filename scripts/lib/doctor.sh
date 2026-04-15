@@ -15,9 +15,11 @@ ensure_path() {
     local dir
     local to_add=()
     local primary_home="${TARGET_HOME:-$HOME}"
+    local primary_bin_dir="${ACFS_BIN_DIR:-$primary_home/.local/bin}"
 
     # Priority order for ACFS tools
     local candidate_dirs=(
+        "$primary_bin_dir"
         "$primary_home/.local/bin"
         "$primary_home/.acfs/bin"
         "$primary_home/.bun/bin"
@@ -176,6 +178,12 @@ if [[ ! "$TARGET_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
 fi
 
 TARGET_HOME="${TARGET_HOME:-}"
+if [[ -n "${TARGET_HOME:-}" ]]; then
+    TARGET_HOME="${TARGET_HOME%/}"
+    if [[ -z "$TARGET_HOME" ]] || [[ "$TARGET_HOME" == "/" ]] || [[ "$TARGET_HOME" != /* ]]; then
+        TARGET_HOME=""
+    fi
+fi
 if [[ -z "${TARGET_HOME:-}" ]]; then
     for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
         [[ -f "$_acfs_doctor_state_file" ]] || continue
@@ -184,6 +192,12 @@ if [[ -z "${TARGET_HOME:-}" ]]; then
         fi
         if [[ -z "${TARGET_HOME:-}" ]]; then
             TARGET_HOME="$(sed -n 's/.*"target_home"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+        fi
+        if [[ -n "${TARGET_HOME:-}" ]]; then
+            TARGET_HOME="${TARGET_HOME%/}"
+            if [[ -z "$TARGET_HOME" ]] || [[ "$TARGET_HOME" == "/" ]] || [[ "$TARGET_HOME" != /* ]]; then
+                TARGET_HOME=""
+            fi
         fi
         [[ -n "${TARGET_HOME:-}" ]] && break
     done
@@ -1888,7 +1902,8 @@ _doctor_run_manifest_check() {
         fi
     fi
 
-    target_path="$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+    local target_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
 
     case "$run_as" in
         target_user)

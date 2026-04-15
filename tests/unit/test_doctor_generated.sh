@@ -417,7 +417,7 @@ EOF
         run_manifest_check_command target_user "printf target-user-check-ran\\n"
     ' 2>&1 || true)
 
-    if [[ "$target_user_output" == *"Unable to resolve TARGET_HOME for 'customuser'; export TARGET_HOME explicitly"* ]] \
+    if [[ "$target_user_output" == *"Invalid TARGET_HOME for 'customuser': <empty> (must be an absolute path and cannot be '/')"* ]] \
         && [[ "$target_user_output" != *"sudo-called="* ]]; then
         harness_pass "target_user checks fail closed when TARGET_HOME is unresolved"
     else

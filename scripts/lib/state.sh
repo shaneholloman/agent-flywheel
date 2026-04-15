@@ -256,6 +256,7 @@ state_init() {
             --arg ver "$ACFS_VERSION" \
             --arg user "$TARGET_USER" \
             --arg home "$resolved_target_home" \
+            --arg bin_dir "${ACFS_BIN_DIR:-$resolved_target_home/.local/bin}" \
             --arg ts "$now" \
             --arg mode "${MODE:-${ACFS_MODE:-vibe}}" \
             --argjson skip_pg "$skip_pg" \
@@ -266,6 +267,7 @@ state_init() {
                 version: $ver,
                 target_user: $user,
                 target_home: $home,
+                bin_dir: $bin_dir,
                 started_at: $ts,
                 last_updated: $ts,
                 mode: $mode,
@@ -290,6 +292,7 @@ state_init() {
   "version": "$ACFS_VERSION",
   "target_user": "$TARGET_USER",
   "target_home": "$resolved_target_home",
+  "bin_dir": "${ACFS_BIN_DIR:-$resolved_target_home/.local/bin}",
   "started_at": "$now",
   "last_updated": "$now",
   "mode": "${MODE:-${ACFS_MODE:-vibe}}",

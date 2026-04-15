@@ -63,8 +63,8 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         fi
     fi
 
-    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" != /* ]]; then
-        log_error "Unable to resolve TARGET_HOME for '${TARGET_USER}'; export TARGET_HOME explicitly"
+    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
         exit 1
     fi
 
@@ -73,13 +73,18 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         ACFS_BOOTSTRAP_DIR="$(cd "$ACFS_GENERATED_SCRIPT_DIR/../.." && pwd)"
     fi
 
+    ACFS_BIN_DIR="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    if [[ -z "${ACFS_BIN_DIR:-}" ]] || [[ "${ACFS_BIN_DIR}" == "/" ]] || [[ "${ACFS_BIN_DIR}" != /* ]]; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
+        exit 1
+    fi
     ACFS_LIB_DIR="${ACFS_LIB_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/lib}"
     ACFS_GENERATED_DIR="${ACFS_GENERATED_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/generated}"
     ACFS_ASSETS_DIR="${ACFS_ASSETS_DIR:-$ACFS_BOOTSTRAP_DIR/acfs}"
     ACFS_CHECKSUMS_YAML="${ACFS_CHECKSUMS_YAML:-$ACFS_BOOTSTRAP_DIR/checksums.yaml}"
     ACFS_MANIFEST_YAML="${ACFS_MANIFEST_YAML:-$ACFS_BOOTSTRAP_DIR/acfs.manifest.yaml}"
 
-    export TARGET_USER TARGET_HOME MODE
+    export TARGET_USER TARGET_HOME MODE ACFS_BIN_DIR
     export ACFS_BOOTSTRAP_DIR ACFS_LIB_DIR ACFS_GENERATED_DIR ACFS_ASSETS_DIR ACFS_CHECKSUMS_YAML ACFS_MANIFEST_YAML
 fi
 
@@ -179,16 +184,42 @@ install_agents_claude() {
             return 1
         fi
     fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: for candidate in \"\$HOME/.claude/bin/claude\" \"\$HOME/.claude/local/bin/claude\" \"\$HOME/.bun/bin/claude\"; do (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_AGENTS_CLAUDE'
+claude_candidate=""
+for candidate in "$HOME/.claude/bin/claude" "$HOME/.claude/local/bin/claude" "$HOME/.bun/bin/claude"; do
+  if [[ -x "$candidate" ]]; then
+    claude_candidate="$candidate"
+    break
+  fi
+done
+if [[ -z "$claude_candidate" ]] && [[ -d "$HOME/.claude" ]]; then
+  claude_candidate="$(find "$HOME/.claude" -maxdepth 4 -type f -name claude -perm -111 -print -quit 2>/dev/null || true)"
+fi
+if [[ -z "$claude_candidate" ]] || [[ ! -x "$claude_candidate" ]]; then
+  echo "Claude Code: installed but no runnable claude binary found" >&2
+  exit 1
+fi
+acfs_link_primary_bin_command "$claude_candidate" "claude"
+INSTALL_AGENTS_CLAUDE
+        then
+            log_error "agents.claude: install command failed: for candidate in \"\$HOME/.claude/bin/claude\" \"\$HOME/.claude/local/bin/claude\" \"\$HOME/.bun/bin/claude\"; do"
+            return 1
+        fi
+    fi
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: ~/.local/bin/claude --version || ~/.local/bin/claude --help (target_user)"
+        log_info "dry-run: verify: \"\$target_bin/claude\" --version || \"\$target_bin/claude\" --help (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_AGENTS_CLAUDE'
-~/.local/bin/claude --version || ~/.local/bin/claude --help
+target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+"$target_bin/claude" --version || "$target_bin/claude" --help
 INSTALL_AGENTS_CLAUDE
         then
-            log_error "agents.claude: verify failed: ~/.local/bin/claude --version || ~/.local/bin/claude --help"
+            log_error "agents.claude: verify failed: \"\$target_bin/claude\" --version || \"\$target_bin/claude\" --help"
             return 1
         fi
     fi
@@ -217,31 +248,33 @@ INSTALL_AGENTS_CODEX
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: mkdir -p ~/.local/bin (target_user)"
+        log_info "dry-run: install: trap 'rm -f \"\$wrapper_tmp\"' EXIT (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_AGENTS_CODEX'
-mkdir -p ~/.local/bin
-cat > ~/.local/bin/codex << 'WRAPPER'
+wrapper_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-codex-wrapper.XXXXXX")"
+trap 'rm -f "$wrapper_tmp"' EXIT
+cat > "$wrapper_tmp" << 'WRAPPER'
 #!/bin/bash
-exec ~/.bun/bin/bun ~/.bun/bin/codex "$@"
+exec "$HOME/.bun/bin/bun" "$HOME/.bun/bin/codex" "$@"
 WRAPPER
-chmod +x ~/.local/bin/codex
+acfs_install_executable_into_primary_bin "$wrapper_tmp" "codex"
 INSTALL_AGENTS_CODEX
         then
-            log_error "agents.codex: install command failed: mkdir -p ~/.local/bin"
+            log_error "agents.codex: install command failed: trap 'rm -f \"\$wrapper_tmp\"' EXIT"
             return 1
         fi
     fi
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: ~/.local/bin/codex --version || ~/.local/bin/codex --help (target_user)"
+        log_info "dry-run: verify: \"\$target_bin/codex\" --version || \"\$target_bin/codex\" --help (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_AGENTS_CODEX'
-~/.local/bin/codex --version || ~/.local/bin/codex --help
+target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+"$target_bin/codex" --version || "$target_bin/codex" --help
 INSTALL_AGENTS_CODEX
         then
-            log_error "agents.codex: verify failed: ~/.local/bin/codex --version || ~/.local/bin/codex --help"
+            log_error "agents.codex: verify failed: \"\$target_bin/codex\" --version || \"\$target_bin/codex\" --help"
             return 1
         fi
     fi
@@ -267,18 +300,19 @@ INSTALL_AGENTS_GEMINI
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: mkdir -p ~/.local/bin (target_user)"
+        log_info "dry-run: install: trap 'rm -f \"\$wrapper_tmp\"' EXIT (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_AGENTS_GEMINI'
-mkdir -p ~/.local/bin
-cat > ~/.local/bin/gemini << 'WRAPPER'
+wrapper_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-gemini-wrapper.XXXXXX")"
+trap 'rm -f "$wrapper_tmp"' EXIT
+cat > "$wrapper_tmp" << 'WRAPPER'
 #!/bin/bash
-exec ~/.bun/bin/bun ~/.bun/bin/gemini "$@"
+exec "$HOME/.bun/bin/bun" "$HOME/.bun/bin/gemini" "$@"
 WRAPPER
-chmod +x ~/.local/bin/gemini
+acfs_install_executable_into_primary_bin "$wrapper_tmp" "gemini"
 INSTALL_AGENTS_GEMINI
         then
-            log_error "agents.gemini: install command failed: mkdir -p ~/.local/bin"
+            log_error "agents.gemini: install command failed: trap 'rm -f \"\$wrapper_tmp\"' EXIT"
             return 1
         fi
     fi
@@ -336,13 +370,14 @@ INSTALL_AGENTS_GEMINI
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: ~/.local/bin/gemini --version || ~/.local/bin/gemini --help (target_user)"
+        log_info "dry-run: verify: \"\$target_bin/gemini\" --version || \"\$target_bin/gemini\" --help (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_AGENTS_GEMINI'
-~/.local/bin/gemini --version || ~/.local/bin/gemini --help
+target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+"$target_bin/gemini" --version || "$target_bin/gemini" --help
 INSTALL_AGENTS_GEMINI
         then
-            log_error "agents.gemini: verify failed: ~/.local/bin/gemini --version || ~/.local/bin/gemini --help"
+            log_error "agents.gemini: verify failed: \"\$target_bin/gemini\" --version || \"\$target_bin/gemini\" --help"
             return 1
         fi
     fi

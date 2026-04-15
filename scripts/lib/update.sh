@@ -129,10 +129,12 @@ update_is_read_only_mode() {
 ensure_path() {
     local dir
     local to_add=()
-    local _acfs_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+    local _primary_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
 
     for dir in \
-        "$_acfs_bin" \
+        "$_primary_bin" \
+        "$HOME/.local/bin" \
+        "$HOME/.acfs/bin" \
         "$HOME/.bun/bin" \
         "$HOME/.cargo/bin" \
         "$HOME/go/bin" \
@@ -167,14 +169,46 @@ update_source_stack_lib() {
 }
 
 update_preferred_user_bin_dir() {
+    local state_file=""
+    local bin_dir=""
+
+    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
+        printf '%s\n' "${ACFS_BIN_DIR%/}"
+        return 0
+    fi
+
+    for state_file in \
+        "${ACFS_STATE_FILE:-}" \
+        "${ACFS_HOME:-}/state.json" \
+        "$HOME/.acfs/state.json" \
+        "/var/lib/acfs/state.json"; do
+        [[ -n "$state_file" && -f "$state_file" ]] || continue
+
+        if command -v jq &>/dev/null; then
+            bin_dir="$(jq -r '.bin_dir // empty' "$state_file" 2>/dev/null || true)"
+        else
+            bin_dir="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
+        fi
+
+        if [[ -n "$bin_dir" ]] && [[ "$bin_dir" == /* ]] && [[ "$bin_dir" != "/" ]]; then
+            printf '%s\n' "${bin_dir%/}"
+            return 0
+        fi
+    done
+
+    printf '%s\n' "$HOME/.local/bin"
+}
+
+update_default_user_bin_dir() {
     printf '%s\n' "$HOME/.local/bin"
 }
 
 update_tool_binary_path() {
     local tool="$1"
+    local primary_bin=""
     local user_bin
-    user_bin="$(update_preferred_user_bin_dir)"
-    local primary_bin="${ACFS_BIN_DIR:-$user_bin}"
+    user_bin="$(update_default_user_bin_dir)"
+    primary_bin="$(update_preferred_user_bin_dir)"
 
     case "$tool" in
         atuin)
@@ -620,9 +654,10 @@ update_shell_tool_state_improved() {
 
 update_repair_atuin_install() {
     local preferred_src="$HOME/.atuin/bin/atuin"
-    local primary_dir="${ACFS_BIN_DIR:-$(update_preferred_user_bin_dir)}"
+    local primary_dir=""
     local user_bin
-    user_bin="$(update_preferred_user_bin_dir)"
+    primary_dir="$(update_preferred_user_bin_dir)"
+    user_bin="$(update_default_user_bin_dir)"
     local -a bin_dirs=("$primary_dir")
     local dir=""
 
@@ -1120,7 +1155,7 @@ update_target_path() {
     local target_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
     local current_path="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 
-    printf '%s\n' "$target_bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:$current_path"
+    printf '%s\n' "$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:$current_path"
 }
 
 update_run_in_target_context() {
@@ -1396,6 +1431,27 @@ sync_acfs_profile_paths() {
     log_to_file "Updated ACFS-managed PATH line in $user_profile"
 }
 
+sync_acfs_zprofile_paths() {
+    local user_zprofile="$HOME/.zprofile"
+    local legacy_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+    local current_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+
+    [[ -f "$user_zprofile" ]] || return 0
+
+    if ! grep -Fq "$legacy_path_line" "$user_zprofile" 2>/dev/null; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_item "ok" "acfs.zprofile" "would update login PATH to include ~/.atuin/bin"
+        return 0
+    fi
+
+    sed -i "s|$(printf '%s' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$current_path_line|" "$user_zprofile"
+    log_item "ok" "acfs.zprofile" "updated login PATH to include ~/.atuin/bin"
+    log_to_file "Updated ACFS-managed PATH line in $user_zprofile"
+}
+
 # Sync critical scripts from the git repo to ~/.acfs/ so that subsequent
 # runs of 'acfs update' (invoked from ~/.acfs/scripts/lib/update.sh) use
 # the latest code.  Without this, fleet machines that run from the
@@ -1413,6 +1469,19 @@ sync_acfs_deployed() {
 
     local -a file_pairs=(
         # repo-relative-path : deployed-relative-path
+        "scripts/lib/doctor.sh:scripts/lib/doctor.sh"
+        "scripts/lib/doctor.sh:bin/acfs"
+        "scripts/acfs-update:bin/acfs-update"
+        "scripts/services-setup.sh:scripts/services-setup.sh"
+        "scripts/lib/info.sh:scripts/lib/info.sh"
+        "scripts/lib/status.sh:scripts/lib/status.sh"
+        "scripts/lib/changelog.sh:scripts/lib/changelog.sh"
+        "scripts/lib/export-config.sh:scripts/lib/export-config.sh"
+        "scripts/lib/continue.sh:scripts/lib/continue.sh"
+        "scripts/lib/session.sh:scripts/lib/session.sh"
+        "scripts/lib/cheatsheet.sh:scripts/lib/cheatsheet.sh"
+        "scripts/lib/dashboard.sh:scripts/lib/dashboard.sh"
+        "scripts/lib/support.sh:scripts/lib/support.sh"
         "scripts/lib/update.sh:scripts/lib/update.sh"
         "scripts/lib/contract.sh:scripts/lib/contract.sh"
         "scripts/lib/nightly_update.sh:scripts/lib/nightly_update.sh"
@@ -1453,9 +1522,64 @@ sync_acfs_deployed() {
         synced=$((synced + 1))
     done
 
+    local generated_script=""
+    local generated_name=""
+    for generated_script in "$ACFS_REPO_ROOT/scripts/generated/"*.sh; do
+        [[ -f "$generated_script" ]] || continue
+        generated_name="$(basename "$generated_script")"
+        local deployed_generated="$acfs_home/scripts/generated/$generated_name"
+
+        if [[ -f "$deployed_generated" ]] && cmp -s "$generated_script" "$deployed_generated"; then
+            continue
+        fi
+
+        if [[ "${DRY_RUN:-false}" == "true" ]]; then
+            log_to_file "Would sync scripts/generated/$generated_name -> $deployed_generated"
+            synced=$((synced + 1))
+            continue
+        fi
+
+        mkdir -p "$(dirname "$deployed_generated")"
+        cp "$generated_script" "$deployed_generated"
+        chmod --reference="$generated_script" "$deployed_generated" 2>/dev/null || true
+        log_to_file "Synced scripts/generated/$generated_name -> $deployed_generated"
+        synced=$((synced + 1))
+    done
+
     if [[ $synced -gt 0 ]]; then
         log_to_file "Synced $synced file(s) from repo to $acfs_home"
     fi
+}
+
+sync_acfs_global_wrapper() {
+    local repo_file="$ACFS_REPO_ROOT/scripts/acfs-global"
+    local deployed_file="/usr/local/bin/acfs"
+    local install_cmd=(install -m 0755 "$repo_file" "$deployed_file")
+
+    [[ -f "$repo_file" ]] || return 0
+    if [[ -f "$deployed_file" ]] && cmp -s "$repo_file" "$deployed_file"; then
+        return 0
+    fi
+
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_to_file "Would sync scripts/acfs-global -> $deployed_file"
+        return 0
+    fi
+
+    if [[ $EUID -eq 0 ]]; then
+        "${install_cmd[@]}"
+        log_to_file "Synced scripts/acfs-global -> $deployed_file"
+        return 0
+    fi
+
+    if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+        sudo -n "${install_cmd[@]}"
+        log_to_file "Synced scripts/acfs-global -> $deployed_file"
+        return 0
+    fi
+
+    log_to_file "Skipped syncing scripts/acfs-global -> $deployed_file (needs root)"
+    return 0
 }
 
 # ============================================================
@@ -1808,6 +1932,7 @@ _acfs_refresh_security_from_fetched_remote() {
         log_item "ok" "ACFS checksums" "refreshed from remote"
         update_refresh_installed_security
         sync_acfs_deployed
+        sync_acfs_global_wrapper
     fi
 }
 
@@ -2071,6 +2196,7 @@ update_acfs_self() {
     # copy the new version there first, the hash comparison won't trigger
     # the re-exec and future runs will use the old code.
     sync_acfs_deployed
+    sync_acfs_global_wrapper
 
     # Check if update.sh itself changed - if so, re-exec
     local new_hash=""
@@ -3536,9 +3662,11 @@ update_shell() {
 
     # Keep deployed files in sync with repo (acfs.zshrc, update.sh, etc.)
     sync_acfs_profile_paths
+    sync_acfs_zprofile_paths
     sync_acfs_zsh_loader
     sync_acfs_zshrc
     sync_acfs_deployed
+    sync_acfs_global_wrapper
 }
 
 # ============================================================

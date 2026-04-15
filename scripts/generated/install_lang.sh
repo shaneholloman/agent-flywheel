@@ -63,8 +63,8 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         fi
     fi
 
-    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" != /* ]]; then
-        log_error "Unable to resolve TARGET_HOME for '${TARGET_USER}'; export TARGET_HOME explicitly"
+    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
         exit 1
     fi
 
@@ -73,13 +73,18 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         ACFS_BOOTSTRAP_DIR="$(cd "$ACFS_GENERATED_SCRIPT_DIR/../.." && pwd)"
     fi
 
+    ACFS_BIN_DIR="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    if [[ -z "${ACFS_BIN_DIR:-}" ]] || [[ "${ACFS_BIN_DIR}" == "/" ]] || [[ "${ACFS_BIN_DIR}" != /* ]]; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
+        exit 1
+    fi
     ACFS_LIB_DIR="${ACFS_LIB_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/lib}"
     ACFS_GENERATED_DIR="${ACFS_GENERATED_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/generated}"
     ACFS_ASSETS_DIR="${ACFS_ASSETS_DIR:-$ACFS_BOOTSTRAP_DIR/acfs}"
     ACFS_CHECKSUMS_YAML="${ACFS_CHECKSUMS_YAML:-$ACFS_BOOTSTRAP_DIR/checksums.yaml}"
     ACFS_MANIFEST_YAML="${ACFS_MANIFEST_YAML:-$ACFS_BOOTSTRAP_DIR/acfs.manifest.yaml}"
 
-    export TARGET_USER TARGET_HOME MODE
+    export TARGET_USER TARGET_HOME MODE ACFS_BIN_DIR
     export ACFS_BOOTSTRAP_DIR ACFS_LIB_DIR ACFS_GENERATED_DIR ACFS_ASSETS_DIR ACFS_CHECKSUMS_YAML ACFS_MANIFEST_YAML
 fi
 
@@ -260,13 +265,13 @@ install_lang_uv() {
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: ~/.local/bin/uv --version (target_user)"
+        log_info "dry-run: verify: command -v uv >/dev/null 2>&1 && uv --version (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_LANG_UV'
-~/.local/bin/uv --version
+command -v uv >/dev/null 2>&1 && uv --version
 INSTALL_LANG_UV
         then
-            log_error "lang.uv: verify failed: ~/.local/bin/uv --version"
+            log_error "lang.uv: verify failed: command -v uv >/dev/null 2>&1 && uv --version"
             return 1
         fi
     fi

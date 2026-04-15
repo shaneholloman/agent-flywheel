@@ -63,8 +63,8 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         fi
     fi
 
-    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" != /* ]]; then
-        log_error "Unable to resolve TARGET_HOME for '${TARGET_USER}'; export TARGET_HOME explicitly"
+    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
         exit 1
     fi
 
@@ -73,13 +73,18 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         ACFS_BOOTSTRAP_DIR="$(cd "$ACFS_GENERATED_SCRIPT_DIR/../.." && pwd)"
     fi
 
+    ACFS_BIN_DIR="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    if [[ -z "${ACFS_BIN_DIR:-}" ]] || [[ "${ACFS_BIN_DIR}" == "/" ]] || [[ "${ACFS_BIN_DIR}" != /* ]]; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
+        exit 1
+    fi
     ACFS_LIB_DIR="${ACFS_LIB_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/lib}"
     ACFS_GENERATED_DIR="${ACFS_GENERATED_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/generated}"
     ACFS_ASSETS_DIR="${ACFS_ASSETS_DIR:-$ACFS_BOOTSTRAP_DIR/acfs}"
     ACFS_CHECKSUMS_YAML="${ACFS_CHECKSUMS_YAML:-$ACFS_BOOTSTRAP_DIR/checksums.yaml}"
     ACFS_MANIFEST_YAML="${ACFS_MANIFEST_YAML:-$ACFS_BOOTSTRAP_DIR/acfs.manifest.yaml}"
 
-    export TARGET_USER TARGET_HOME MODE
+    export TARGET_USER TARGET_HOME MODE ACFS_BIN_DIR
     export ACFS_BOOTSTRAP_DIR ACFS_LIB_DIR ACFS_GENERATED_DIR ACFS_ASSETS_DIR ACFS_CHECKSUMS_YAML ACFS_MANIFEST_YAML
 fi
 
@@ -286,37 +291,28 @@ install_acfs_onboard() {
     log_step "Installing acfs.onboard"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: mkdir -p ~/.local/bin (target_user)"
+        log_info "dry-run: install: trap 'rm -f \"\$onboard_tmp\"' EXIT (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_ONBOARD'
-mkdir -p ~/.local/bin
-INSTALL_ACFS_ONBOARD
-        then
-            log_error "acfs.onboard: install command failed: mkdir -p ~/.local/bin"
-            return 1
-        fi
-    fi
-    if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh\" ]]; then (target_user)"
-    else
-        if ! run_as_target_shell <<'INSTALL_ACFS_ONBOARD'
+onboard_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-onboard.XXXXXX")"
+trap 'rm -f "$onboard_tmp"' EXIT
 # Install onboard script
 if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh" ]]; then
-  cp "${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh" ~/.local/bin/onboard
+  cp "${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh" "$onboard_tmp"
 elif [[ -f "packages/onboard/onboard.sh" ]]; then
-  cp "packages/onboard/onboard.sh" ~/.local/bin/onboard
+  cp "packages/onboard/onboard.sh" "$onboard_tmp"
 else
   ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-fsSL)
   if curl --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(--proto '=https' --proto-redir '=https' -fsSL)
   fi
-  curl "${CURL_ARGS[@]}" "${ACFS_RAW}/packages/onboard/onboard.sh" -o ~/.local/bin/onboard
+  curl "${CURL_ARGS[@]}" "${ACFS_RAW}/packages/onboard/onboard.sh" -o "$onboard_tmp"
 fi
-chmod +x ~/.local/bin/onboard
+acfs_install_executable_into_primary_bin "$onboard_tmp" "onboard"
 INSTALL_ACFS_ONBOARD
         then
-            log_error "acfs.onboard: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh\" ]]; then"
+            log_error "acfs.onboard: install command failed: trap 'rm -f \"\$onboard_tmp\"' EXIT"
             return 1
         fi
     fi
@@ -344,13 +340,13 @@ install_acfs_update() {
     log_step "Installing acfs.update"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: mkdir -p ~/.local/bin (target_user)"
+        log_info "dry-run: install: mkdir -p ~/.acfs/scripts (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_UPDATE'
-mkdir -p ~/.local/bin
+mkdir -p ~/.acfs/scripts
 INSTALL_ACFS_UPDATE
         then
-            log_error "acfs.update: install command failed: mkdir -p ~/.local/bin"
+            log_error "acfs.update: install command failed: mkdir -p ~/.acfs/scripts"
             return 1
         fi
     fi
@@ -378,16 +374,41 @@ INSTALL_ACFS_UPDATE
             return 1
         fi
     fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: trap 'rm -f \"\$update_tmp\"' EXIT (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_ACFS_UPDATE'
+update_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-update-wrapper.XXXXXX")"
+trap 'rm -f "$update_tmp"' EXIT
+if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update" ]]; then
+  cp "${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update" "$update_tmp"
+elif [[ -f "scripts/acfs-update" ]]; then
+  cp "scripts/acfs-update" "$update_tmp"
+else
+  ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+  CURL_ARGS=(-fsSL)
+  if curl --help all 2>/dev/null | grep -q -- '--proto'; then
+    CURL_ARGS=(--proto '=https' --proto-redir '=https' -fsSL)
+  fi
+  curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/acfs-update" -o "$update_tmp"
+fi
+acfs_install_executable_into_primary_bin "$update_tmp" "acfs-update"
+INSTALL_ACFS_UPDATE
+        then
+            log_error "acfs.update: install command failed: trap 'rm -f \"\$update_tmp\"' EXIT"
+            return 1
+        fi
+    fi
 
     # Verify
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: command -v acfs-update (target_user)"
+        log_info "dry-run: verify: acfs-update --help || command -v acfs-update (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_UPDATE'
-command -v acfs-update
+acfs-update --help || command -v acfs-update
 INSTALL_ACFS_UPDATE
         then
-            log_error "acfs.update: verify failed: command -v acfs-update"
+            log_error "acfs.update: verify failed: acfs-update --help || command -v acfs-update"
             return 1
         fi
     fi
@@ -549,37 +570,28 @@ install_acfs_doctor() {
     log_step "Installing acfs.doctor"
 
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: mkdir -p ~/.local/bin (target_user)"
+        log_info "dry-run: install: trap 'rm -f \"\$doctor_tmp\"' EXIT (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_DOCTOR'
-mkdir -p ~/.local/bin
-INSTALL_ACFS_DOCTOR
-        then
-            log_error "acfs.doctor: install command failed: mkdir -p ~/.local/bin"
-            return 1
-        fi
-    fi
-    if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh\" ]]; then (target_user)"
-    else
-        if ! run_as_target_shell <<'INSTALL_ACFS_DOCTOR'
+doctor_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-doctor.XXXXXX")"
+trap 'rm -f "$doctor_tmp"' EXIT
 # Install acfs CLI (doctor.sh entrypoint)
 if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh" ]]; then
-  cp "${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh" ~/.local/bin/acfs
+  cp "${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh" "$doctor_tmp"
 elif [[ -f "scripts/lib/doctor.sh" ]]; then
-  cp "scripts/lib/doctor.sh" ~/.local/bin/acfs
+  cp "scripts/lib/doctor.sh" "$doctor_tmp"
 else
   ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
   CURL_ARGS=(-fsSL)
   if curl --help all 2>/dev/null | grep -q -- '--proto'; then
     CURL_ARGS=(--proto '=https' --proto-redir '=https' -fsSL)
   fi
-  curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/lib/doctor.sh" -o ~/.local/bin/acfs
+  curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/lib/doctor.sh" -o "$doctor_tmp"
 fi
-chmod +x ~/.local/bin/acfs
+acfs_install_executable_into_primary_bin "$doctor_tmp" "acfs"
 INSTALL_ACFS_DOCTOR
         then
-            log_error "acfs.doctor: install command failed: if [[ -n \"\${ACFS_BOOTSTRAP_DIR:-}\" ]] && [[ -f \"\${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh\" ]]; then"
+            log_error "acfs.doctor: install command failed: trap 'rm -f \"\$doctor_tmp\"' EXIT"
             return 1
         fi
     fi

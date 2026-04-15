@@ -158,7 +158,13 @@ read_target_user_from_state() {
 
 read_target_home_from_state() {
     local state_file="$1"
-    read_state_string_from_file "$state_file" "target_home"
+    local target_home=""
+
+    target_home="$(read_state_string_from_file "$state_file" "target_home" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+    [[ "$target_home" == /* ]] || return 1
+    [[ "$target_home" != "/" ]] || return 1
+    printf '%s\n' "${target_home%/}"
 }
 
 resolve_target_home() {
@@ -335,11 +341,14 @@ prepare_target_context() {
 augment_path_for_target_user() {
     local dir=""
     local target_home="${TARGET_HOME:-}"
+    local primary_bin_dir="${ACFS_BIN_DIR:-$target_home/.local/bin}"
 
     [[ -n "$target_home" ]] || return 0
 
     for dir in \
+        "$primary_bin_dir" \
         "$target_home/.local/bin" \
+        "$target_home/.acfs/bin" \
         "$target_home/.bun/bin" \
         "$target_home/.cargo/bin" \
         "$target_home/go/bin" \

@@ -212,6 +212,10 @@ install_acfs_zshrc() {
     local acfs_zsh_dir="$HOME/.acfs/zsh"
     local acfs_zshrc="$acfs_zsh_dir/acfs.zshrc"
     local user_zshrc="$HOME/.zshrc"
+    local user_profile="$HOME/.profile"
+    local user_zprofile="$HOME/.zprofile"
+    local legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+    local profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 
     mkdir -p "$acfs_zsh_dir"
 
@@ -240,6 +244,42 @@ install_acfs_zshrc() {
 # ACFS loader — user overrides go in ~/.zshrc.local (sourced by acfs.zshrc)
 source "$HOME/.acfs/zsh/acfs.zshrc"
 EOF
+
+    if [[ ! -f "$user_profile" ]]; then
+        {
+            echo "# ~/.profile: executed by bash for login shells"
+            echo ""
+            echo "# User binary paths"
+            echo "$profile_path_line"
+        } > "$user_profile"
+    elif grep -Fq "$legacy_profile_path_line" "$user_profile" 2>/dev/null; then
+        sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" "$user_profile"
+    elif ! grep -q '\.local/bin' "$user_profile" 2>/dev/null || \
+         ! grep -q '\.atuin/bin' "$user_profile" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Added by ACFS - user binary paths"
+            echo "$profile_path_line"
+        } >> "$user_profile"
+    fi
+
+    if [[ ! -f "$user_zprofile" ]]; then
+        {
+            echo "# ~/.zprofile: executed by zsh for login shells"
+            echo ""
+            echo "# User binary paths"
+            echo "$profile_path_line"
+        } > "$user_zprofile"
+    elif grep -Fq "$legacy_profile_path_line" "$user_zprofile" 2>/dev/null; then
+        sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" "$user_zprofile"
+    elif ! grep -q '\.local/bin' "$user_zprofile" 2>/dev/null || \
+         ! grep -q '\.atuin/bin' "$user_zprofile" 2>/dev/null; then
+        {
+            echo ""
+            echo "# Added by ACFS - user binary paths"
+            echo "$profile_path_line"
+        } >> "$user_zprofile"
+    fi
 
     log_success "ACFS zshrc installed"
 }

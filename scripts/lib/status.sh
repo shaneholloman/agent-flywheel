@@ -69,11 +69,14 @@ done
 _status_prepend_user_paths() {
     local base_home="$1"
     local dir=""
+    local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
 
     [[ -n "$base_home" ]] || return 0
 
     for dir in \
+        "$primary_bin_dir" \
         "$base_home/.local/bin" \
+        "$base_home/.acfs/bin" \
         "$base_home/.bun/bin" \
         "$base_home/.cargo/bin" \
         "$base_home/go/bin" \
@@ -144,7 +147,13 @@ _status_read_target_user_from_state() {
 
 _status_read_target_home_from_state() {
     local state_file="$1"
-    _status_read_state_string "$state_file" "target_home"
+    local target_home=""
+
+    target_home="$(_status_read_state_string "$state_file" "target_home" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+    [[ "$target_home" == /* ]] || return 1
+    [[ "$target_home" != "/" ]] || return 1
+    printf '%s\n' "${target_home%/}"
 }
 
 _status_resolve_target_home() {

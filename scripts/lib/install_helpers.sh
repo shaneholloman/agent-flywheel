@@ -573,10 +573,10 @@ acfs_apply_legacy_skips() {
 _acfs_user_paths() {
     local acfs_bin_prefix="\$HOME/.local/bin"
     if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
-        acfs_bin_prefix="$ACFS_BIN_DIR"
+        acfs_bin_prefix="$ACFS_BIN_DIR:\$HOME/.local/bin"
     fi
 
-    echo "${acfs_bin_prefix}:\$HOME/.cargo/bin:\$HOME/.bun/bin:\$HOME/.atuin/bin:\$HOME/go/bin"
+    echo "${acfs_bin_prefix}:\$HOME/.acfs/bin:\$HOME/.cargo/bin:\$HOME/.bun/bin:\$HOME/.atuin/bin:\$HOME/go/bin"
 }
 
 _run_shell_with_strict_mode() {
@@ -644,12 +644,12 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
             user_home="$(_acfs_resolve_target_home "$user" || true)"
         fi
 
-        if [[ -z "$user_home" ]] || [[ "$user_home" != /* ]]; then
-            log_error "Unable to resolve TARGET_HOME for '$user'; export TARGET_HOME explicitly"
+        if [[ -z "$user_home" ]] || [[ "$user_home" == "/" ]] || [[ "$user_home" != /* ]]; then
+            log_error "Invalid TARGET_HOME for '$user': ${user_home:-<empty>} (must be an absolute path and cannot be '/')"
             return 1
         fi
 
-        local target_path_prefix="${ACFS_BIN_DIR:-$user_home/.local/bin}:$user_home/.cargo/bin:$user_home/.bun/bin:$user_home/.atuin/bin:$user_home/go/bin"
+        local target_path_prefix="${ACFS_BIN_DIR:-$user_home/.local/bin}:$user_home/.local/bin:$user_home/.acfs/bin:$user_home/.cargo/bin:$user_home/.bun/bin:$user_home/.atuin/bin:$user_home/go/bin"
         local current_path="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 
         # UV_NO_CONFIG prevents uv from looking for config in /root when running via sudo/runuser.
@@ -661,6 +661,7 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
         # Pass core ACFS variables to the target user environment
         env_args+=("TARGET_USER=$user" "TARGET_HOME=$user_home")
         [[ -n "${ACFS_HOME:-}" ]] && env_args+=("ACFS_HOME=$ACFS_HOME")
+        [[ -n "${ACFS_BIN_DIR:-}" ]] && env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")
 
         # Pass ACFS context variables to the target user environment when available.
         [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && env_args+=("ACFS_BOOTSTRAP_DIR=$ACFS_BOOTSTRAP_DIR")
@@ -706,6 +707,87 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
         su "$user" -c "cd $user_home_q 2>/dev/null; env $env_assignments $(printf '%q ' "$@")"
     }
 fi
+
+acfs_validate_primary_bin_dir() {
+    local primary_bin_dir="${ACFS_BIN_DIR:-}"
+
+    if [[ -z "$primary_bin_dir" ]] || [[ "$primary_bin_dir" == "/" ]] || [[ "$primary_bin_dir" != /* ]]; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${primary_bin_dir:-<empty>})"
+        return 1
+    fi
+}
+
+acfs_primary_bin_dir_uses_root() {
+    acfs_validate_primary_bin_dir >/dev/null || return 1
+    [[ -n "${ACFS_BIN_DIR:-}" ]] || return 1
+    local target_home="${TARGET_HOME:-$HOME}"
+    [[ -n "$target_home" ]] || return 1
+
+    case "$ACFS_BIN_DIR" in
+        "$target_home"|"$target_home"/*)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+_acfs_run_root_bin_command() {
+    if [[ $EUID -eq 0 ]]; then
+        "$@"
+        return $?
+    fi
+
+    if command -v sudo >/dev/null 2>&1; then
+        sudo -n "$@"
+        return $?
+    fi
+
+    log_error "Primary bin dir requires root, but sudo is unavailable: ${ACFS_BIN_DIR:-<unset>}"
+    return 1
+}
+
+acfs_ensure_primary_bin_dir() {
+    acfs_validate_primary_bin_dir || return 1
+
+    if acfs_primary_bin_dir_uses_root; then
+        _acfs_run_root_bin_command mkdir -p "$ACFS_BIN_DIR"
+        return $?
+    fi
+
+    run_as_target mkdir -p "$ACFS_BIN_DIR"
+}
+
+acfs_link_primary_bin_command() {
+    local source_path="$1"
+    local command_name="$2"
+    local dest_path="${ACFS_BIN_DIR:-$HOME/.local/bin}/$command_name"
+
+    acfs_ensure_primary_bin_dir || return 1
+
+    if acfs_primary_bin_dir_uses_root; then
+        _acfs_run_root_bin_command ln -sf "$source_path" "$dest_path"
+        return $?
+    fi
+
+    run_as_target ln -sf "$source_path" "$dest_path"
+}
+
+acfs_install_executable_into_primary_bin() {
+    local src_path="$1"
+    local command_name="$2"
+    local dest_path="${ACFS_BIN_DIR:-$HOME/.local/bin}/$command_name"
+
+    acfs_ensure_primary_bin_dir || return 1
+
+    if acfs_primary_bin_dir_uses_root; then
+        _acfs_run_root_bin_command install -m 0755 "$src_path" "$dest_path"
+        return $?
+    fi
+
+    run_as_target install -m 0755 "$src_path" "$dest_path"
+}
 
 # Run a shell string (or stdin) as TARGET_USER
 run_as_target_shell() {

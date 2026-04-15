@@ -83,6 +83,28 @@ read_target_home_from_state_file() {
     return 1
 }
 
+read_bin_dir_from_state_file() {
+    local state_file="$1"
+    local bin_dir=""
+
+    [[ -f "$state_file" ]] || return 1
+
+    if command -v jq &>/dev/null; then
+        bin_dir="$(jq -r '.bin_dir // empty' "$state_file" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$bin_dir" ]]; then
+        bin_dir="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
+    fi
+
+    if [[ -n "$bin_dir" ]] && [[ "$bin_dir" == /* ]] && [[ "$bin_dir" != "/" ]]; then
+        printf '%s\n' "${bin_dir%/}"
+        return 0
+    fi
+
+    return 1
+}
+
 find_acfs_bin_from_state_file() {
     local state_file="$1"
     local state_home=""
@@ -174,8 +196,11 @@ prepare_runtime_context_from_home() {
     TARGET_HOME="$user_home"
     ACFS_HOME="$user_home/.acfs"
     ACFS_STATE_FILE="$ACFS_HOME/state.json"
+    if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
+        ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"
+    fi
 
-    export TARGET_HOME ACFS_HOME ACFS_STATE_FILE
+    export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_BIN_DIR
 }
 
 read_user_for_home() {
@@ -472,6 +497,19 @@ main() {
         fi
     fi
 
+    if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
+        local state_candidate=""
+        for state_candidate in \
+            "${ACFS_STATE_FILE:-}" \
+            "${ACFS_SYSTEM_STATE_FILE:-}" \
+            "$HOME/.acfs/state.json"; do
+            [[ -n "$state_candidate" && -f "$state_candidate" ]] || continue
+            ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$state_candidate" 2>/dev/null || true)"
+            [[ -n "$ACFS_BIN_DIR" ]] && break
+        done
+        export ACFS_BIN_DIR
+    fi
+
     exec_as_target_user() {
         local user="$1"
         shift
@@ -481,6 +519,7 @@ main() {
         [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$ACFS_SYSTEM_STATE_FILE")
         [[ -n "${TARGET_HOME:-}" ]] && env_args+=("TARGET_HOME=$TARGET_HOME")
         [[ -n "${ACFS_HOME:-}" ]] && env_args+=("ACFS_HOME=$ACFS_HOME")
+        [[ -n "${ACFS_BIN_DIR:-}" ]] && env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")
         [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
         [[ -n "${ACFS_RAW:-}" ]] && env_args+=("ACFS_RAW=$ACFS_RAW")
 
@@ -514,7 +553,12 @@ main() {
     # If we're already the target user, run directly
     if [[ "$current_user" == "$target_user" ]]; then
         if [[ -n "${TARGET_HOME:-}" ]]; then
-            exec env HOME="$TARGET_HOME" TARGET_HOME="$TARGET_HOME" ACFS_HOME="${ACFS_HOME:-$TARGET_HOME/.acfs}" "$acfs_bin" "$@"
+            exec env \
+                HOME="$TARGET_HOME" \
+                TARGET_HOME="$TARGET_HOME" \
+                ACFS_HOME="${ACFS_HOME:-$TARGET_HOME/.acfs}" \
+                ACFS_BIN_DIR="${ACFS_BIN_DIR:-}" \
+                "$acfs_bin" "$@"
         fi
         exec "$acfs_bin" "$@"
     fi

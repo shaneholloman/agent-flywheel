@@ -47,6 +47,34 @@ if [[ "${TARGET_HOME:-}" != /* ]]; then
     fi
 fi
 
+_smoke_prepend_user_paths() {
+    local base_home="$1"
+    local dir=""
+    local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+
+    [[ -n "$base_home" ]] || return 0
+
+    for dir in \
+        "$primary_bin_dir" \
+        "$base_home/.local/bin" \
+        "$base_home/.acfs/bin" \
+        "$base_home/.bun/bin" \
+        "$base_home/.cargo/bin" \
+        "$base_home/.atuin/bin" \
+        "$base_home/go/bin"; do
+        [[ -d "$dir" ]] || continue
+        case ":$PATH:" in
+            *":$dir:"*) ;;
+            *) export PATH="$dir:$PATH" ;;
+        esac
+    done
+}
+
+_smoke_prepend_user_paths "$TARGET_HOME"
+if [[ -n "${HOME:-}" ]] && [[ "$HOME" != "$TARGET_HOME" ]]; then
+    _smoke_prepend_user_paths "$HOME"
+fi
+
 _smoke_get_local_passwd_entry() {
     local user="${1:-}"
     [[ -n "$user" ]] || return 1

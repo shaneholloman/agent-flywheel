@@ -73,6 +73,17 @@ dashboard_read_state_string() {
     printf '%s\n' "$value"
 }
 
+dashboard_read_target_home_from_state() {
+    local state_file="$1"
+    local target_home=""
+
+    target_home="$(dashboard_read_state_string "$state_file" "target_home" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+    [[ "$target_home" == /* ]] || return 1
+    [[ "$target_home" != "/" ]] || return 1
+    printf '%s\n' "${target_home%/}"
+}
+
 dashboard_candidate_has_acfs_data() {
     local candidate="$1"
     [[ -n "$candidate" ]] || return 1
@@ -125,7 +136,7 @@ dashboard_resolve_acfs_home() {
         fi
     fi
 
-    target_home=$(dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)
+    target_home=$(dashboard_read_target_home_from_state "$_DASHBOARD_SYSTEM_STATE_FILE" 2>/dev/null || true)
     candidate="${target_home}/.acfs"
     if [[ -n "$target_home" ]] && dashboard_candidate_has_acfs_data "$candidate"; then
         _DASHBOARD_RESOLVED_ACFS_HOME="$candidate"
@@ -178,8 +189,8 @@ dashboard_prepare_context() {
     fi
 
     if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
-        _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_read_state_string "$state_file" "target_home" 2>/dev/null || \
-            dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)"
+        _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_read_target_home_from_state "$state_file" 2>/dev/null || \
+            dashboard_read_target_home_from_state "$_DASHBOARD_SYSTEM_STATE_FILE" 2>/dev/null || true)"
         if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$_DASHBOARD_RESOLVED_TARGET_USER" ]]; then
             _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_home_for_user "$_DASHBOARD_RESOLVED_TARGET_USER" 2>/dev/null || true)"
         fi
@@ -316,6 +327,7 @@ dashboard_serve() {
                 fi
                 port="$2"
                 shift 2
+                continue
                 ;;
             --host)
                 if [[ -z "${2:-}" || "$2" == -* ]]; then
@@ -324,6 +336,7 @@ dashboard_serve() {
                 fi
                 host="$2"
                 shift 2
+                continue
                 ;;
             --public)
                 host="0.0.0.0"

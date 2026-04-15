@@ -363,6 +363,198 @@ EOF
     refute_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
 }
 
+@test "sync_acfs_zprofile_paths: upgrades legacy ACFS zsh login PATH line" {
+    cat > "$HOME/.zprofile" <<'EOF'
+# ~/.zprofile: executed by zsh for login shells
+
+# User binary paths
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+EOF
+
+    run sync_acfs_zprofile_paths
+    assert_success
+
+    run cat "$HOME/.zprofile"
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+    refute_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+}
+
+@test "generated install_shell: uses minimal loader and Atuin-aware login paths" {
+    local generated="$PROJECT_ROOT/scripts/generated/install_shell.sh"
+
+    run grep -F 'echo '\''source "$HOME/.acfs/zsh/acfs.zshrc"'\'' >> ~/.zshrc' "$generated"
+    assert_success
+
+    run grep -F 'echo '\''[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'\'' >> ~/.zshrc' "$generated"
+    assert_failure
+
+    run grep -F 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"' "$generated"
+    assert_success
+}
+
+@test "generated install_cloud: preserves wrangler bun shim fallback" {
+    local generated="$PROJECT_ROOT/scripts/generated/install_cloud.sh"
+
+    run grep -F 'command -v node >/dev/null 2>&1' "$generated"
+    assert_success
+
+    run grep -F 'exec "$HOME/.bun/bin/bun" x wrangler@latest "$@"' "$generated"
+    assert_success
+
+    run grep -F 'acfs_install_executable_into_primary_bin "$wrapper_tmp" "wrangler"' "$generated"
+    assert_success
+}
+
+@test "generated installers: reject invalid TARGET_HOME and ACFS_BIN_DIR" {
+    local generated="$PROJECT_ROOT/scripts/generated/install_all.sh"
+    local doctor_checks="$PROJECT_ROOT/scripts/generated/doctor_checks.sh"
+
+    run grep -F '[[ "${TARGET_HOME}" == "/" ]]' "$generated"
+    assert_success
+
+    run grep -F "Invalid TARGET_HOME for '\${TARGET_USER}': \${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')" "$generated"
+    assert_success
+
+    run grep -F "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: \${ACFS_BIN_DIR:-<empty>})" "$generated"
+    assert_success
+
+    run grep -F "Invalid TARGET_HOME for '\$target_user': \${target_home:-<empty>} (must be an absolute path and cannot be '/')" "$doctor_checks"
+    assert_success
+
+    run grep -F "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: \${target_bin:-<empty>})" "$doctor_checks"
+    assert_success
+}
+
+@test "scripts/lib/zsh.sh: mirrors Atuin-aware login PATH setup" {
+    local zsh_lib="$PROJECT_ROOT/scripts/lib/zsh.sh"
+
+    run grep -F 'local user_zprofile="$HOME/.zprofile"' "$zsh_lib"
+    assert_success
+
+    run grep -F 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"' "$zsh_lib"
+    assert_success
+
+    run grep -F '# ACFS loader — user overrides go in ~/.zshrc.local (sourced by acfs.zshrc)' "$zsh_lib"
+    assert_success
+}
+
+@test "services-setup: probes custom and ACFS bin dirs for target-user commands" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+
+    run grep -F 'local target_path_prefix="$primary_bin_dir:$TARGET_HOME/.local/bin:$TARGET_HOME/.acfs/bin:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.atuin/bin:$TARGET_HOME/go/bin"' "$services_setup"
+    assert_success
+
+    run grep -F 'run_as_user env ACFS_TARGET_PATH_PREFIX="$target_path_prefix" bash -c' "$services_setup"
+    assert_success
+
+    run grep -F '"$TARGET_HOME/.acfs/bin/$name"' "$services_setup"
+    assert_success
+}
+
+@test "diagnostic helpers: prepend primary ACFS bin dir and ~/.acfs/bin" {
+    local doctor="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local info="$PROJECT_ROOT/scripts/lib/info.sh"
+    local status_lib="$PROJECT_ROOT/scripts/lib/status.sh"
+    local export_config="$PROJECT_ROOT/scripts/lib/export-config.sh"
+    local smoke="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
+    local update="$PROJECT_ROOT/scripts/lib/update.sh"
+
+    run grep -F 'local primary_bin_dir="${ACFS_BIN_DIR:-$primary_home/.local/bin}"' "$doctor"
+    assert_success
+    run grep -F 'target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"' "$doctor"
+    assert_success
+
+    run grep -F 'local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"' "$info"
+    assert_success
+    run grep -F '"$base_home/.acfs/bin"' "$info"
+    assert_success
+
+    run grep -F 'local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"' "$status_lib"
+    assert_success
+    run grep -F '"$base_home/.acfs/bin"' "$status_lib"
+    assert_success
+
+    run grep -F 'local primary_bin_dir="${ACFS_BIN_DIR:-$target_home/.local/bin}"' "$export_config"
+    assert_success
+    run grep -F '"$target_home/.acfs/bin"' "$export_config"
+    assert_success
+
+    run grep -F '_smoke_prepend_user_paths "$TARGET_HOME"' "$smoke"
+    assert_success
+    run grep -F 'local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"' "$smoke"
+    assert_success
+
+    run grep -F '"$HOME/.acfs/bin"' "$update"
+    assert_success
+}
+
+@test "install and update deploy all acfs doctor-dispatched runtime scripts" {
+    local installer="$PROJECT_ROOT/install.sh"
+    local update="$PROJECT_ROOT/scripts/lib/update.sh"
+
+    run grep -F 'install_asset "scripts/lib/status.sh" "$ACFS_HOME/scripts/lib/status.sh"' "$installer"
+    assert_success
+    run grep -F 'install_asset "scripts/lib/changelog.sh" "$ACFS_HOME/scripts/lib/changelog.sh"' "$installer"
+    assert_success
+    run grep -F 'install_asset "scripts/lib/export-config.sh" "$ACFS_HOME/scripts/lib/export-config.sh"' "$installer"
+    assert_success
+    run grep -F 'install_asset "scripts/lib/support.sh" "$ACFS_HOME/scripts/lib/support.sh"' "$installer"
+    assert_success
+
+    run grep -F '"scripts/lib/status.sh:scripts/lib/status.sh"' "$update"
+    assert_success
+    run grep -F '"scripts/lib/changelog.sh:scripts/lib/changelog.sh"' "$update"
+    assert_success
+    run grep -F '"scripts/lib/export-config.sh:scripts/lib/export-config.sh"' "$update"
+    assert_success
+    run grep -F '"scripts/lib/support.sh:scripts/lib/support.sh"' "$update"
+    assert_success
+    run grep -F '"scripts/lib/doctor.sh:bin/acfs"' "$update"
+    assert_success
+    run grep -F '"scripts/acfs-update:bin/acfs-update"' "$update"
+    assert_success
+    run grep -F 'for generated_script in "$ACFS_REPO_ROOT/scripts/generated/"*.sh; do' "$update"
+    assert_success
+    run grep -F 'sync_acfs_global_wrapper' "$update"
+    assert_success
+}
+
+@test "finalize keeps legacy runtime deployment after generated acfs phase" {
+    local installer="$PROJECT_ROOT/install.sh"
+    local block=""
+
+    block="$(sed -n '/if acfs_use_generated_category "acfs"/,/^    # Copy tmux config/p' "$installer")"
+
+    [[ "$block" == *'acfs_run_generated_category_phase "acfs" "10" || return 1'* ]]
+    [[ "$block" == *'continuing legacy finalize for full runtime deployment parity'* ]]
+    [[ "$block" != *$'\n        return 0'* ]]
+}
+
+@test "custom bin dir persists in state and nightly service PATH includes runtime bins" {
+    local state_lib="$PROJECT_ROOT/scripts/lib/state.sh"
+    local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local service_template="$PROJECT_ROOT/scripts/templates/acfs-nightly-update.service"
+    local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"
+    local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
+
+    run grep -F 'bin_dir: $bin_dir,' "$state_lib"
+    assert_success
+    run grep -F '"bin_dir": "${ACFS_BIN_DIR:-$resolved_target_home/.local/bin}",' "$state_lib"
+    assert_success
+
+    run grep -F 'ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$state_candidate" 2>/dev/null || true)"' "$nightly"
+    assert_success
+    run grep -F '"$HOME/.acfs/bin/acfs-update"' "$nightly"
+    assert_success
+    run grep -F '%h/.acfs/bin:%h/.local/bin:%h/.cargo/bin:%h/.bun/bin:%h/.atuin/bin:%h/go/bin' "$service_template"
+    assert_success
+
+    run grep -F 'env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")' "$global_wrapper"
+    assert_success
+    run grep -F 'env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")' "$update_wrapper"
+    assert_success
+}
+
 @test "update_zoxide: retries transient reinstall failures before succeeding" {
     init_stub_dir
     export PATH="$STUB_DIR:$PATH"

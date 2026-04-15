@@ -63,8 +63,8 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         fi
     fi
 
-    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" != /* ]]; then
-        log_error "Unable to resolve TARGET_HOME for '${TARGET_USER}'; export TARGET_HOME explicitly"
+    if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
         exit 1
     fi
 
@@ -73,13 +73,18 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         ACFS_BOOTSTRAP_DIR="$(cd "$ACFS_GENERATED_SCRIPT_DIR/../.." && pwd)"
     fi
 
+    ACFS_BIN_DIR="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    if [[ -z "${ACFS_BIN_DIR:-}" ]] || [[ "${ACFS_BIN_DIR}" == "/" ]] || [[ "${ACFS_BIN_DIR}" != /* ]]; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
+        exit 1
+    fi
     ACFS_LIB_DIR="${ACFS_LIB_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/lib}"
     ACFS_GENERATED_DIR="${ACFS_GENERATED_DIR:-$ACFS_BOOTSTRAP_DIR/scripts/generated}"
     ACFS_ASSETS_DIR="${ACFS_ASSETS_DIR:-$ACFS_BOOTSTRAP_DIR/acfs}"
     ACFS_CHECKSUMS_YAML="${ACFS_CHECKSUMS_YAML:-$ACFS_BOOTSTRAP_DIR/checksums.yaml}"
     ACFS_MANIFEST_YAML="${ACFS_MANIFEST_YAML:-$ACFS_BOOTSTRAP_DIR/acfs.manifest.yaml}"
 
-    export TARGET_USER TARGET_HOME MODE
+    export TARGET_USER TARGET_HOME MODE ACFS_BIN_DIR
     export ACFS_BOOTSTRAP_DIR ACFS_LIB_DIR ACFS_GENERATED_DIR ACFS_ASSETS_DIR ACFS_CHECKSUMS_YAML ACFS_MANIFEST_YAML
 fi
 
@@ -134,6 +139,31 @@ INSTALL_CLOUD_WRANGLER
             log_warn "cloud.wrangler: install command failed: ~/.bun/bin/bun install -g --trust wrangler"
             if type -t record_skipped_tool >/dev/null 2>&1; then
               record_skipped_tool "cloud.wrangler" "install command failed: ~/.bun/bin/bun install -g --trust wrangler"
+            elif type -t state_tool_skip >/dev/null 2>&1; then
+              state_tool_skip "cloud.wrangler"
+            fi
+            return 0
+        fi
+    fi
+    if [[ "${DRY_RUN:-false}" = "true" ]]; then
+        log_info "dry-run: install: if [[ ! -x \"\$HOME/.bun/bin/wrangler\" ]] || command -v node >/dev/null 2>&1; then (target_user)"
+    else
+        if ! run_as_target_shell <<'INSTALL_CLOUD_WRANGLER'
+if [[ ! -x "$HOME/.bun/bin/wrangler" ]] || command -v node >/dev/null 2>&1; then
+  exit 0
+fi
+wrapper_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-wrangler-wrapper.XXXXXX")"
+trap 'rm -f "$wrapper_tmp"' EXIT
+cat > "$wrapper_tmp" << 'WRANGLER_SHIM'
+#!/usr/bin/env bash
+exec "$HOME/.bun/bin/bun" x wrangler@latest "$@"
+WRANGLER_SHIM
+acfs_install_executable_into_primary_bin "$wrapper_tmp" "wrangler"
+INSTALL_CLOUD_WRANGLER
+        then
+            log_warn "cloud.wrangler: install command failed: if [[ ! -x \"\$HOME/.bun/bin/wrangler\" ]] || command -v node >/dev/null 2>&1; then"
+            if type -t record_skipped_tool >/dev/null 2>&1; then
+              record_skipped_tool "cloud.wrangler" "install command failed: if [[ ! -x \"\$HOME/.bun/bin/wrangler\" ]] || command -v node >/dev/null 2>&1; then"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "cloud.wrangler"
             fi
@@ -253,16 +283,16 @@ if [[ -z "$extracted_bin" ]] || [[ ! -f "$extracted_bin" ]]; then
   exit 1
 fi
 
-mkdir -p "$HOME/.local/bin"
-install -m 0755 "$extracted_bin" "$HOME/.local/bin/supabase"
+target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+acfs_install_executable_into_primary_bin "$extracted_bin" "supabase"
 
 if command -v timeout >/dev/null 2>&1; then
-  timeout 5 "$HOME/.local/bin/supabase" --version >/dev/null 2>&1 || {
+  timeout 5 "$target_bin/supabase" --version >/dev/null 2>&1 || {
     echo "Supabase CLI: installed but failed to run" >&2
     exit 1
   }
 else
-  "$HOME/.local/bin/supabase" --version >/dev/null 2>&1 || {
+  "$target_bin/supabase" --version >/dev/null 2>&1 || {
     echo "Supabase CLI: installed but failed to run" >&2
     exit 1
   }

@@ -122,7 +122,7 @@ teardown() {
 
     local captured
     captured="$(cat "$STUB_DIR/sudo.log")"
-    [[ "$captured" == *"PATH=/home/testuser/.local/bin:/home/testuser/.cargo/bin:/home/testuser/.bun/bin:/home/testuser/.atuin/bin:/home/testuser/go/bin:"* ]] \
+    [[ "$captured" == *"PATH=/home/testuser/.local/bin:/home/testuser/.local/bin:/home/testuser/.acfs/bin:/home/testuser/.cargo/bin:/home/testuser/.bun/bin:/home/testuser/.atuin/bin:/home/testuser/go/bin:"* ]] \
         || fail "Expected run_as_target to extend PATH for target-user bins, got: $captured"
 }
 
@@ -143,10 +143,45 @@ teardown() {
 
     run run_as_target env
     assert_failure
-    assert_output --partial "Unable to resolve TARGET_HOME for 'missinguser'"
+    assert_output --partial "Invalid TARGET_HOME for 'missinguser': <empty>"
 
     if [[ -f "$STUB_DIR/sudo.log" ]] && [[ -s "$STUB_DIR/sudo.log" ]]; then
         fail "run_as_target should not invoke sudo when TARGET_HOME cannot be resolved"
+    fi
+}
+
+@test "run_as_target: rejects slash TARGET_HOME override" {
+    export TARGET_USER="testuser"
+    export TARGET_HOME="/"
+    spy_command "sudo"
+
+    run run_as_target env
+    assert_failure
+    assert_output --partial "Invalid TARGET_HOME for 'testuser': /"
+
+    if [[ -f "$STUB_DIR/sudo.log" ]] && [[ -s "$STUB_DIR/sudo.log" ]]; then
+        fail "run_as_target should not invoke sudo when TARGET_HOME is '/'"
+    fi
+}
+
+@test "acfs_ensure_primary_bin_dir: rejects invalid ACFS_BIN_DIR before mkdir" {
+    export TARGET_USER="testuser"
+    export TARGET_HOME="/home/testuser"
+    export ACFS_BIN_DIR="relative/bin"
+    spy_command "sudo"
+
+    run_as_target() {
+        echo "run_as_target invoked"
+        return 0
+    }
+
+    run acfs_ensure_primary_bin_dir
+    assert_failure
+    assert_output --partial "ACFS_BIN_DIR must be an absolute path and cannot be '/'"
+    refute_output --partial "run_as_target invoked"
+
+    if [[ -f "$STUB_DIR/sudo.log" ]] && [[ -s "$STUB_DIR/sudo.log" ]]; then
+        fail "acfs_ensure_primary_bin_dir should not invoke sudo for invalid ACFS_BIN_DIR"
     fi
 }
 
@@ -247,6 +282,6 @@ teardown() {
 
     local captured
     captured="$(cat "$CAPTURE_FILE")"
-    [[ "$captured" == *'env ACFS_TARGET_PATH_PREFIX=$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin bash -c export PATH="$ACFS_TARGET_PATH_PREFIX:$PATH"; command -v br'* ]] \
+    [[ "$captured" == *'env ACFS_TARGET_PATH_PREFIX=$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin bash -c export PATH="$ACFS_TARGET_PATH_PREFIX:$PATH"; command -v br'* ]] \
         || fail "Expected target-user installed check to extend PATH, got: $captured"
 }

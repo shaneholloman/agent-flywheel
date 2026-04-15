@@ -283,7 +283,7 @@ _stack_run_as_user() {
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home=""
     target_home="$(_stack_target_home "$target_user")"
-    local target_path_prefix="${ACFS_BIN_DIR:-$target_home/.local/bin}:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
+    local target_path_prefix="${ACFS_BIN_DIR:-$target_home/.local/bin}:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
     local cmd="$1"
     local wrapped_cmd="export PATH=\"$target_path_prefix:\$PATH\"; set -o pipefail; $cmd"
 

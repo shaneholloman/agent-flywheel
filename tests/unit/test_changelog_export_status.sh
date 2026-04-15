@@ -1373,6 +1373,43 @@ EOF
     cleanup_mock_env
 }
 
+test_acfs_update_wrapper_passes_bin_dir_from_state() {
+    setup_system_state_target_home_only_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.acfs/scripts/lib"
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    local custom_bin="$TEST_HOME/custom-bin"
+    cat > "$TEST_TARGET_HOME/.acfs/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$custom_bin"
+}
+EOF
+
+    cat > "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'ACFS_BIN_DIR=%s TARGET_HOME=%s\n' "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_ROOT_HOME/.acfs" TARGET_HOME="$TEST_ROOT_HOME" \
+        ACFS_STATE_FILE="$TEST_ROOT_HOME/.acfs/state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs-update" --dry-run 2>&1)
+
+    if [[ "$output" == "ACFS_BIN_DIR=$custom_bin TARGET_HOME=$TEST_TARGET_HOME" ]]; then
+        harness_pass "acfs-update wrapper passes persisted bin_dir from state"
+    else
+        harness_fail "acfs-update wrapper passes persisted bin_dir from state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user() {
     setup_mock_env
 
@@ -1501,6 +1538,43 @@ EOF
         harness_pass "global acfs wrapper repairs runtime home on direct exec"
     else
         harness_fail "global acfs wrapper repairs runtime home on direct exec" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_global_wrapper_passes_bin_dir_from_state() {
+    setup_system_state_target_home_only_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.acfs/bin"
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    local custom_bin="$TEST_HOME/custom-bin"
+    cat > "$TEST_TARGET_HOME/.acfs/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$custom_bin"
+}
+EOF
+
+    cat > "$TEST_TARGET_HOME/.acfs/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'ACFS_BIN_DIR=%s TARGET_HOME=%s\n' "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.acfs/bin/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_ROOT_HOME/.acfs" TARGET_HOME="$TEST_ROOT_HOME" \
+        ACFS_STATE_FILE="$TEST_ROOT_HOME/.acfs/state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "ACFS_BIN_DIR=$custom_bin TARGET_HOME=$TEST_TARGET_HOME" ]]; then
+        harness_pass "global acfs wrapper passes persisted bin_dir from state"
+    else
+        harness_fail "global acfs wrapper passes persisted bin_dir from state" "$output"
     fi
 
     cleanup_mock_env
@@ -2061,6 +2135,22 @@ EOF
     cleanup_mock_env
 }
 
+test_state_driven_helpers_reject_invalid_target_home_from_state() {
+    if grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$INFO_SH" \
+        && grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$STATUS_SH" \
+        && grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$EXPORT_CONFIG_SH" \
+        && grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$SUPPORT_SH" \
+        && grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$CHANGELOG_SH" \
+        && grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$CONTINUE_SH" \
+        && grep -Fq 'dashboard_read_target_home_from_state()' "$DASHBOARD_SH" \
+        && grep -Fq 'cheatsheet_read_target_home_from_state()' "$CHEATSHEET_SH" \
+        && grep -Fq '[[ "$TARGET_HOME" == "/" ]]' "$DOCTOR_SH"; then
+        harness_pass "state-driven helpers reject invalid target_home from state"
+    else
+        harness_fail "state-driven helpers reject invalid target_home from state"
+    fi
+}
+
 main() {
     harness_init "ACFS Changelog/Export/Status Tests"
 
@@ -2118,6 +2208,7 @@ main() {
     test_cheatsheet_copy_install_uses_target_home_only_system_state || true
 
     harness_section "Info / Support / Onboard"
+    test_state_driven_helpers_reject_invalid_target_home_from_state || true
     test_info_uses_installed_layout_under_root_home || true
     test_info_uses_system_state_target_home_when_getent_unavailable || true
     test_info_uses_target_user_path_under_root_home || true
@@ -2139,9 +2230,11 @@ main() {
     test_doctor_dispatches_installed_layout_under_root_home || true
     test_acfs_update_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_update_wrapper_repairs_runtime_home_on_direct_exec || true
+    test_acfs_update_wrapper_passes_bin_dir_from_state || true
     test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user || true
     test_acfs_global_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_global_wrapper_repairs_runtime_home_on_direct_exec || true
+    test_acfs_global_wrapper_passes_bin_dir_from_state || true
     test_acfs_global_wrapper_does_not_guess_current_home_when_target_home_is_unresolved || true
     test_acfs_global_wrapper_ignores_stale_home_adjacent_target_user || true
     test_doctor_agent_checks_use_target_context_under_root_home || true

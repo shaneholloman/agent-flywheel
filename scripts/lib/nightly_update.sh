@@ -20,6 +20,45 @@ set -euo pipefail
 HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
 export HOME
 
+read_bin_dir_from_state_file() {
+    local state_file="$1"
+    local bin_dir=""
+
+    [[ -f "$state_file" ]] || return 1
+
+    if command -v jq &>/dev/null; then
+        bin_dir="$(jq -r '.bin_dir // empty' "$state_file" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$bin_dir" ]]; then
+        bin_dir="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
+    fi
+
+    if [[ -n "$bin_dir" ]] && [[ "$bin_dir" == /* ]] && [[ "$bin_dir" != "/" ]]; then
+        printf '%s\n' "${bin_dir%/}"
+        return 0
+    fi
+
+    return 1
+}
+
+for state_candidate in \
+    "${ACFS_STATE_FILE:-}" \
+    "$HOME/.acfs/state.json" \
+    "/var/lib/acfs/state.json"; do
+    [[ -n "$state_candidate" && -f "$state_candidate" ]] || continue
+    ACFS_STATE_FILE="$state_candidate"
+    ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$state_candidate" 2>/dev/null || true)"
+    export ACFS_STATE_FILE ACFS_BIN_DIR
+    break
+done
+
+PATH_PREFIX=""
+if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
+    PATH_PREFIX="${ACFS_BIN_DIR}:"
+fi
+export PATH="${PATH_PREFIX}${HOME}/.acfs/bin:${HOME}/.local/bin:${HOME}/.cargo/bin:${HOME}/.bun/bin:${HOME}/.atuin/bin:${HOME}/go/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
 TIMESTAMP="$(date '+%Y-%m-%d-%H%M%S')"
 LOG_DIR="$HOME/.acfs/logs/updates"
 LOG_FILE="$LOG_DIR/nightly-${TIMESTAMP}.log"
@@ -125,10 +164,18 @@ fi
 
 # ── Run acfs-update ───────────────────────────────────────
 ACFS_UPDATE=""
-for candidate in \
-    "$HOME/.local/bin/acfs-update" \
-    "$HOME/.acfs/scripts/lib/update.sh" \
-    "/data/projects/agentic_coding_flywheel_setup/scripts/acfs-update"; do
+update_candidates=()
+if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
+    update_candidates+=("${ACFS_BIN_DIR}/acfs-update")
+fi
+update_candidates+=(
+    "$HOME/.acfs/bin/acfs-update"
+    "$HOME/.local/bin/acfs-update"
+    "$HOME/.acfs/scripts/lib/update.sh"
+    "/data/projects/agentic_coding_flywheel_setup/scripts/acfs-update"
+)
+
+for candidate in "${update_candidates[@]}"; do
     if [[ -x "$candidate" ]]; then
         ACFS_UPDATE="$candidate"
         break

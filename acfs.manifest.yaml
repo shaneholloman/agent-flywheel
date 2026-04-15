@@ -238,32 +238,37 @@ modules:
         fi
         echo '# ACFS loader' > ~/.zshrc
         echo 'source "$HOME/.acfs/zsh/acfs.zshrc"' >> ~/.zshrc
-        echo '' >> ~/.zshrc
-        echo '# User overrides live here forever' >> ~/.zshrc
-        echo '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"' >> ~/.zshrc
       - |
         # Setup ~/.profile for bash login shells (prevents PATH warnings from installers)
+        legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+        profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
         if [[ ! -f ~/.profile ]]; then
           echo '# ~/.profile: executed by bash for login shells' > ~/.profile
           echo '' >> ~/.profile
           echo '# User binary paths' >> ~/.profile
-          echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"' >> ~/.profile
-        elif ! grep -q '\.local/bin' ~/.profile; then
+          echo "$profile_path_line" >> ~/.profile
+        elif grep -Fq "$legacy_profile_path_line" ~/.profile; then
+          sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" ~/.profile
+        elif ! grep -q '\.local/bin' ~/.profile || ! grep -q '\.atuin/bin' ~/.profile; then
           echo '' >> ~/.profile
           echo '# Added by ACFS - user binary paths' >> ~/.profile
-          echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"' >> ~/.profile
+          echo "$profile_path_line" >> ~/.profile
         fi
       - |
         # Setup ~/.zprofile for zsh login shells (zsh does NOT read ~/.profile)
+        legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+        profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
         if [[ ! -f ~/.zprofile ]]; then
           echo '# ~/.zprofile: executed by zsh for login shells' > ~/.zprofile
           echo '' >> ~/.zprofile
           echo '# User binary paths' >> ~/.zprofile
-          echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"' >> ~/.zprofile
-        elif ! grep -q '\.local/bin' ~/.zprofile; then
+          echo "$profile_path_line" >> ~/.zprofile
+        elif grep -Fq "$legacy_profile_path_line" ~/.zprofile; then
+          sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" ~/.zprofile
+        elif ! grep -q '\.local/bin' ~/.zprofile || ! grep -q '\.atuin/bin' ~/.zprofile; then
           echo '' >> ~/.zprofile
           echo '# Added by ACFS - user binary paths' >> ~/.zprofile
-          echo 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"' >> ~/.zprofile
+          echo "$profile_path_line" >> ~/.zprofile
         fi
       - |
         # Set default shell
@@ -557,13 +562,13 @@ modules:
       - base.system
     installed_check:
       run_as: target_user
-      command: "test -x ~/.local/bin/uv"
+      command: 'test -x "${ACFS_BIN_DIR:-$HOME/.local/bin}/uv" || test -x "$HOME/.local/bin/uv"'
     verified_installer:
       tool: uv
       runner: sh
     install: []
     verify:
-      - ~/.local/bin/uv --version
+      - command -v uv >/dev/null 2>&1 && uv --version
 
   - id: lang.rust
     description: Rust nightly + cargo
@@ -710,17 +715,35 @@ modules:
       - base.system
     installed_check:
       run_as: target_user
-      command: "test -x ~/.local/bin/claude"
+      command: 'test -x "${ACFS_BIN_DIR:-$HOME/.local/bin}/claude" || test -x "$HOME/.local/bin/claude"'
     verified_installer:
       tool: claude
       runner: bash
       args: ["latest"]
-    install: []
+    install:
+      - |
+        claude_candidate=""
+        for candidate in "$HOME/.claude/bin/claude" "$HOME/.claude/local/bin/claude" "$HOME/.bun/bin/claude"; do
+          if [[ -x "$candidate" ]]; then
+            claude_candidate="$candidate"
+            break
+          fi
+        done
+        if [[ -z "$claude_candidate" ]] && [[ -d "$HOME/.claude" ]]; then
+          claude_candidate="$(find "$HOME/.claude" -maxdepth 4 -type f -name claude -perm -111 -print -quit 2>/dev/null || true)"
+        fi
+        if [[ -z "$claude_candidate" ]] || [[ ! -x "$claude_candidate" ]]; then
+          echo "Claude Code: installed but no runnable claude binary found" >&2
+          exit 1
+        fi
+        acfs_link_primary_bin_command "$claude_candidate" "claude"
     verify:
-      - ~/.local/bin/claude --version || ~/.local/bin/claude --help
+      - |
+        target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+        "$target_bin/claude" --version || "$target_bin/claude" --help
     notes:
       - "Updated via verified installer (curl claude.ai/install.sh | bash -- latest); 'claude update --channel' flag does not exist"
-      - "Binary installed to ~/.local/bin/claude"
+      - "Binary normalized into the configured ACFS bin dir"
 
   - id: agents.codex
     description: OpenAI Codex CLI
@@ -734,7 +757,7 @@ modules:
       - lang.bun
     installed_check:
       run_as: target_user
-      command: "test -x ~/.local/bin/codex"
+      command: 'test -x "${ACFS_BIN_DIR:-$HOME/.local/bin}/codex" || test -x "$HOME/.local/bin/codex"'
     install:
       # Install via bun, then create wrapper that uses bun as runtime (faster than node)
       # Use --trust to allow postinstall scripts
@@ -744,14 +767,17 @@ modules:
           ~/.bun/bin/bun install -g --trust @openai/codex
         fi
       - |
-        mkdir -p ~/.local/bin
-        cat > ~/.local/bin/codex << 'WRAPPER'
+        wrapper_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-codex-wrapper.XXXXXX")"
+        trap 'rm -f "$wrapper_tmp"' EXIT
+        cat > "$wrapper_tmp" << 'WRAPPER'
         #!/bin/bash
-        exec ~/.bun/bin/bun ~/.bun/bin/codex "$@"
+        exec "$HOME/.bun/bin/bun" "$HOME/.bun/bin/codex" "$@"
         WRAPPER
-        chmod +x ~/.local/bin/codex
+        acfs_install_executable_into_primary_bin "$wrapper_tmp" "codex"
     verify:
-      - ~/.local/bin/codex --version || ~/.local/bin/codex --help
+      - |
+        target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+        "$target_bin/codex" --version || "$target_bin/codex" --help
 
   - id: agents.gemini
     description: Google Gemini CLI
@@ -766,18 +792,19 @@ modules:
       - lang.nvm
     installed_check:
       run_as: target_user
-      command: "test -x ~/.local/bin/gemini"
+      command: 'test -x "${ACFS_BIN_DIR:-$HOME/.local/bin}/gemini" || test -x "$HOME/.local/bin/gemini"'
     install:
       # Install via bun, then create wrapper that uses bun as runtime (faster than node)
       # Use --trust to allow postinstall scripts
       - ~/.bun/bin/bun install -g --trust @google/gemini-cli@latest
       - |
-        mkdir -p ~/.local/bin
-        cat > ~/.local/bin/gemini << 'WRAPPER'
+        wrapper_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-gemini-wrapper.XXXXXX")"
+        trap 'rm -f "$wrapper_tmp"' EXIT
+        cat > "$wrapper_tmp" << 'WRAPPER'
         #!/bin/bash
-        exec ~/.bun/bin/bun ~/.bun/bin/gemini "$@"
+        exec "$HOME/.bun/bin/bun" "$HOME/.bun/bin/gemini" "$@"
         WRAPPER
-        chmod +x ~/.local/bin/gemini
+        acfs_install_executable_into_primary_bin "$wrapper_tmp" "gemini"
       # Apply patches (EBADF crash fix, rate-limit retry 3→1000, quota retry)
       - |
         security_lib="${ACFS_LIB_DIR:-$HOME/.acfs/scripts/lib}/security.sh"
@@ -822,7 +849,9 @@ modules:
         fi
         verify_checksum "$patch_url" "$patch_sha256" "gemini_patch" | bash
     verify:
-      - ~/.local/bin/gemini --version || ~/.local/bin/gemini --help
+      - |
+        target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+        "$target_bin/gemini" --version || "$target_bin/gemini" --help
 
   - id: agents.opencode
     description: OpenCode (multi-provider agent harness)
@@ -941,6 +970,17 @@ modules:
     install:
       # Use --trust to allow postinstall scripts (downloads native binary)
       - ~/.bun/bin/bun install -g --trust wrangler
+      - |
+        if [[ ! -x "$HOME/.bun/bin/wrangler" ]] || command -v node >/dev/null 2>&1; then
+          exit 0
+        fi
+        wrapper_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-wrangler-wrapper.XXXXXX")"
+        trap 'rm -f "$wrapper_tmp"' EXIT
+        cat > "$wrapper_tmp" << 'WRANGLER_SHIM'
+        #!/usr/bin/env bash
+        exec "$HOME/.bun/bin/bun" x wrangler@latest "$@"
+        WRANGLER_SHIM
+        acfs_install_executable_into_primary_bin "$wrapper_tmp" "wrangler"
     verify:
       - wrangler --version
 
@@ -1042,16 +1082,16 @@ modules:
           exit 1
         fi
 
-        mkdir -p "$HOME/.local/bin"
-        install -m 0755 "$extracted_bin" "$HOME/.local/bin/supabase"
+        target_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+        acfs_install_executable_into_primary_bin "$extracted_bin" "supabase"
 
         if command -v timeout >/dev/null 2>&1; then
-          timeout 5 "$HOME/.local/bin/supabase" --version >/dev/null 2>&1 || {
+          timeout 5 "$target_bin/supabase" --version >/dev/null 2>&1 || {
             echo "Supabase CLI: installed but failed to run" >&2
             exit 1
           }
         else
-          "$HOME/.local/bin/supabase" --version >/dev/null 2>&1 || {
+          "$target_bin/supabase" --version >/dev/null 2>&1 || {
             echo "Supabase CLI: installed but failed to run" >&2
             exit 1
           }
@@ -2943,24 +2983,25 @@ modules:
     generated: false
     tags: [orchestration]
     notes:
-      - "Install onboard script to ~/.local/bin/onboard"
+      - "Install onboard script to the configured ACFS bin dir"
     install:
-      - mkdir -p ~/.local/bin
       - |
+        onboard_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-onboard.XXXXXX")"
+        trap 'rm -f "$onboard_tmp"' EXIT
         # Install onboard script
         if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh" ]]; then
-          cp "${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh" ~/.local/bin/onboard
+          cp "${ACFS_BOOTSTRAP_DIR}/packages/onboard/onboard.sh" "$onboard_tmp"
         elif [[ -f "packages/onboard/onboard.sh" ]]; then
-          cp "packages/onboard/onboard.sh" ~/.local/bin/onboard
+          cp "packages/onboard/onboard.sh" "$onboard_tmp"
         else
           ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
           CURL_ARGS=(-fsSL)
           if curl --help all 2>/dev/null | grep -q -- '--proto'; then
             CURL_ARGS=(--proto '=https' --proto-redir '=https' -fsSL)
           fi
-          curl "${CURL_ARGS[@]}" "${ACFS_RAW}/packages/onboard/onboard.sh" -o ~/.local/bin/onboard
+          curl "${CURL_ARGS[@]}" "${ACFS_RAW}/packages/onboard/onboard.sh" -o "$onboard_tmp"
         fi
-        chmod +x ~/.local/bin/onboard
+        acfs_install_executable_into_primary_bin "$onboard_tmp" "onboard"
     verify:
       - onboard --help || command -v onboard
 
@@ -2974,9 +3015,9 @@ modules:
     generated: false
     tags: [orchestration]
     notes:
-      - "Install acfs-update script to ~/.local/bin/acfs-update"
+      - "Install acfs-update script to the configured ACFS bin dir"
     install:
-      - mkdir -p ~/.local/bin
+      - mkdir -p ~/.acfs/scripts
       - |
         # Install acfs-update wrapper
         if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/lib/nightly_update.sh" ]]; then
@@ -2992,8 +3033,24 @@ modules:
           curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/lib/nightly_update.sh" -o ~/.acfs/scripts/nightly-update.sh
         fi
         chmod +x ~/.acfs/scripts/nightly-update.sh
+      - |
+        update_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-update-wrapper.XXXXXX")"
+        trap 'rm -f "$update_tmp"' EXIT
+        if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update" ]]; then
+          cp "${ACFS_BOOTSTRAP_DIR}/scripts/acfs-update" "$update_tmp"
+        elif [[ -f "scripts/acfs-update" ]]; then
+          cp "scripts/acfs-update" "$update_tmp"
+        else
+          ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
+          CURL_ARGS=(-fsSL)
+          if curl --help all 2>/dev/null | grep -q -- '--proto'; then
+            CURL_ARGS=(--proto '=https' --proto-redir '=https' -fsSL)
+          fi
+          curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/acfs-update" -o "$update_tmp"
+        fi
+        acfs_install_executable_into_primary_bin "$update_tmp" "acfs-update"
     verify:
-      - command -v acfs-update
+      - acfs-update --help || command -v acfs-update
 
   - id: acfs.nightly
     description: Nightly auto-update timer (systemd)
@@ -3077,23 +3134,24 @@ modules:
     generated: false
     tags: [orchestration]
     notes:
-      - "Install acfs script to ~/.local/bin/acfs"
+      - "Install acfs script to the configured ACFS bin dir"
     install:
-      - mkdir -p ~/.local/bin
       - |
+        doctor_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-doctor.XXXXXX")"
+        trap 'rm -f "$doctor_tmp"' EXIT
         # Install acfs CLI (doctor.sh entrypoint)
         if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh" ]]; then
-          cp "${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh" ~/.local/bin/acfs
+          cp "${ACFS_BOOTSTRAP_DIR}/scripts/lib/doctor.sh" "$doctor_tmp"
         elif [[ -f "scripts/lib/doctor.sh" ]]; then
-          cp "scripts/lib/doctor.sh" ~/.local/bin/acfs
+          cp "scripts/lib/doctor.sh" "$doctor_tmp"
         else
           ACFS_RAW="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}"
           CURL_ARGS=(-fsSL)
           if curl --help all 2>/dev/null | grep -q -- '--proto'; then
             CURL_ARGS=(--proto '=https' --proto-redir '=https' -fsSL)
           fi
-          curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/lib/doctor.sh" -o ~/.local/bin/acfs
+          curl "${CURL_ARGS[@]}" "${ACFS_RAW}/scripts/lib/doctor.sh" -o "$doctor_tmp"
         fi
-        chmod +x ~/.local/bin/acfs
+        acfs_install_executable_into_primary_bin "$doctor_tmp" "acfs"
     verify:
       - acfs doctor --help || command -v acfs
