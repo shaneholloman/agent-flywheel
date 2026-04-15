@@ -866,6 +866,7 @@ test_autofix_existing_clean_reinstall_records_manifest_backups() {
         and (.backups | type == "array")
         and (.backups | length > 0)
         and all(.backups[]; (.backup? != null) and (.original? != null))
+        and all(.backups[]; ((.checksum // "") | length) > 0)
     ' >/dev/null 2>&1; then
         harness_pass "autofix_existing clean reinstall records manifest backups"
     else

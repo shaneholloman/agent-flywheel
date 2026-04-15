@@ -574,6 +574,7 @@ create_installation_backup() {
     local dest=""
     local dest_rel=""
     local checksum=""
+    local backup_checksum=""
     local items_json=""
     local backup_item=""
     local -a backed_up_items=()
@@ -631,10 +632,22 @@ create_installation_backup() {
                 fi
             fi
 
-            # Calculate checksum if it's a file
-            checksum=""
-            if [[ -f "$artifact" ]]; then
-                checksum=$(sha256sum "$artifact" 2>/dev/null | cut -d' ' -f1)
+            checksum="$(calculate_backup_checksum "$artifact" 2>/dev/null || true)"
+            if [[ -z "$checksum" ]]; then
+                log_error "[CLEAN] Failed to checksum original artifact: $artifact"
+                return 1
+            fi
+
+            backup_checksum="$(calculate_backup_checksum "$dest" 2>/dev/null || true)"
+            if [[ -z "$backup_checksum" ]]; then
+                log_error "[CLEAN] Failed to checksum backup artifact: $dest"
+                return 1
+            fi
+            if [[ "$backup_checksum" != "$checksum" ]]; then
+                log_error "[CLEAN] Backup verification failed for: $artifact"
+                log_error "[CLEAN]   Original checksum: $checksum"
+                log_error "[CLEAN]   Backup checksum:   $backup_checksum"
+                return 1
             fi
 
             backup_item="$(jq -cn --arg original "$artifact" --arg backup "$dest" --arg checksum "$checksum" '{original: $original, backup: $backup, checksum: $checksum}')"
