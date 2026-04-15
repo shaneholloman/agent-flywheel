@@ -572,22 +572,30 @@ create_installation_backup() {
 # Remove all ACFS artifacts
 remove_acfs_artifacts() {
     local artifact=""
+    local failed=0
 
     while IFS= read -r artifact; do
         [[ -n "$artifact" ]] || continue
         if [[ -e "$artifact" ]]; then
             log_info "[CLEAN] Removing: $artifact"
-            rm -rf "$artifact"
+            if ! rm -rf "$artifact"; then
+                log_error "[CLEAN] Failed to remove artifact: $artifact"
+                failed=1
+            fi
         fi
     done < <(autofix_existing_artifacts 2>/dev/null || true)
+
+    [[ $failed -eq 0 ]]
 }
 
 # Clean ACFS entries from shell configs
 clean_shell_configs() {
     local config=""
     local config_backup=""
+    local restore_command=""
     local temp_file=""
     local orig_mode=""
+    local failed=0
 
     while IFS= read -r config; do
         [[ -n "$config" ]] || continue
@@ -597,25 +605,64 @@ clean_shell_configs() {
                 # Backup config first
                 config_backup=$(create_backup "$config" "clean-shell-config")
 
-                if [[ -n "$config_backup" ]]; then
-                    log_info "[CLEAN] Cleaning ACFS entries from $config"
+                if [[ -z "$config_backup" ]]; then
+                    log_error "[CLEAN] Failed to back up shell config before cleanup: $config"
+                    failed=1
+                    continue
+                fi
 
-                    # Create temp file in same directory to preserve permissions on mv
-                    temp_file=$(mktemp -p "$(dirname "$config")" ".acfs-clean.XXXXXX")
+                restore_command="$(autofix_backup_restore_command "$config_backup" 2>/dev/null || true)"
+                log_info "[CLEAN] Cleaning ACFS entries from $config"
 
-                    # Preserve original permissions by copying mode
-                    orig_mode=$(stat -c '%a' "$config" 2>/dev/null || stat -f '%Lp' "$config" 2>/dev/null)
+                # Create temp file in same directory to preserve permissions on mv
+                temp_file=$(mktemp -p "$(dirname "$config")" ".acfs-clean.XXXXXX") || {
+                    log_error "[CLEAN] Failed to create temp file for $config"
+                    failed=1
+                    continue
+                }
 
-                    grep -vE '# ACFS|\.acfs|acfs_' "$config" > "$temp_file" || true
+                # Preserve original permissions by copying mode
+                orig_mode=$(stat -c '%a' "$config" 2>/dev/null || stat -f '%Lp' "$config" 2>/dev/null)
 
-                    # Restore original permissions before move
-                    [[ -n "$orig_mode" ]] && chmod "$orig_mode" "$temp_file"
+                if ! grep -vE '# ACFS|\.acfs|acfs_' "$config" > "$temp_file"; then
+                    log_error "[CLEAN] Failed to filter ACFS entries from $config"
+                    rm -f "$temp_file" 2>/dev/null || true
+                    failed=1
+                    continue
+                fi
 
-                    mv "$temp_file" "$config"
+                # Restore original permissions before move
+                if [[ -n "$orig_mode" ]] && ! chmod "$orig_mode" "$temp_file"; then
+                    log_error "[CLEAN] Failed to preserve permissions for $config"
+                    rm -f "$temp_file" 2>/dev/null || true
+                    failed=1
+                    continue
+                fi
+
+                if ! mv "$temp_file" "$config"; then
+                    log_error "[CLEAN] Failed to write cleaned shell config: $config"
+                    rm -f "$temp_file" 2>/dev/null || true
+                    failed=1
+                    continue
+                fi
+
+                if ! record_change \
+                    "acfs" \
+                    "Cleaned ACFS entries from $config" \
+                    "${restore_command:-# Restore $config from its backup manually if needed}" \
+                    false \
+                    "info" \
+                    "$(jq -cn --arg path "$config" '[$path]')" \
+                    "$(printf '%s' "$config_backup" | jq -c '[.]' 2>/dev/null || echo '[]')" \
+                    '[]' >/dev/null; then
+                    log_error "[CLEAN] Failed to record shell config cleanup for $config"
+                    failed=1
                 fi
             fi
         fi
     done < <(autofix_existing_shell_configs 2>/dev/null || true)
+
+    [[ $failed -eq 0 ]]
 }
 
 autofix_existing_relocate_state_for_clean_reinstall() {
@@ -689,10 +736,16 @@ clean_reinstall() {
     fi
 
     # Step 3: Remove existing installation
-    remove_acfs_artifacts
+    if ! remove_acfs_artifacts; then
+        log_error "[CLEAN] Failed to remove one or more ACFS artifacts"
+        return 1
+    fi
 
     # Step 4: Clean shell configs
-    clean_shell_configs
+    if ! clean_shell_configs; then
+        log_error "[CLEAN] Failed to clean one or more shell configs"
+        return 1
+    fi
 
     log_info "[CLEAN] Clean removal complete"
     log_info "[CLEAN] Backup saved to: $backup_dir"
