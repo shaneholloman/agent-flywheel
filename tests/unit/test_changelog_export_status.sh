@@ -875,6 +875,107 @@ test_autofix_existing_clean_reinstall_records_manifest_backups() {
     cleanup_mock_env
 }
 
+test_autofix_existing_clean_reinstall_aborts_when_recording_fails() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-clean-record-fail-target"
+    mkdir -p "$target_home/.acfs" "$target_home/.config/acfs" "$target_home/.local/bin"
+    printf 'installed\n' > "$target_home/.acfs/version"
+    printf 'config\n' > "$target_home/.config/acfs/settings.toml"
+    printf '#!/usr/bin/env bash\n' > "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            record_change() { return 1; }
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            if clean_reinstall >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg result "$result" \
+                --arg version_exists "$(test -f "$TARGET_HOME/.acfs/version" && echo yes || echo no)" \
+                --arg config_exists "$(test -f "$TARGET_HOME/.config/acfs/settings.toml" && echo yes || echo no)" \
+                --arg binary_exists "$(test -f "$TARGET_HOME/.local/bin/acfs" && echo yes || echo no)" \
+                "{result: \$result, version_exists: \$version_exists, config_exists: \$config_exists, binary_exists: \$binary_exists}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and .version_exists == "yes"
+        and .config_exists == "yes"
+        and .binary_exists == "yes"
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing clean reinstall aborts before deletion when recording fails"
+    else
+        harness_fail "autofix_existing clean reinstall aborts before deletion when recording fails" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_clean_reinstall_aborts_when_backup_root_creation_fails() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-clean-backup-root-fail-target"
+    local fake_bin="$TEST_HOME/fake-bin"
+    mkdir -p "$target_home/.acfs" "$target_home/.config/acfs" "$target_home/.local/bin" "$fake_bin"
+    printf 'installed\n' > "$target_home/.acfs/version"
+    printf 'config\n' > "$target_home/.config/acfs/settings.toml"
+    printf '#!/usr/bin/env bash\n' > "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+
+    cat > "$fake_bin/mkdir" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+    if [[ "\$arg" == "$target_home/.acfs-backup-"* ]]; then
+        exit 1
+    fi
+done
+exec /bin/mkdir "\$@"
+EOF
+    chmod +x "$fake_bin/mkdir"
+
+    local output=""
+    output=$(PATH="$fake_bin:$PATH" HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            if clean_reinstall >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg result "$result" \
+                --arg version_exists "$(test -f "$TARGET_HOME/.acfs/version" && echo yes || echo no)" \
+                --arg config_exists "$(test -f "$TARGET_HOME/.config/acfs/settings.toml" && echo yes || echo no)" \
+                --arg binary_exists "$(test -f "$TARGET_HOME/.local/bin/acfs" && echo yes || echo no)" \
+                "{result: \$result, version_exists: \$version_exists, config_exists: \$config_exists, binary_exists: \$binary_exists}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and .version_exists == "yes"
+        and .config_exists == "yes"
+        and .binary_exists == "yes"
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing clean reinstall aborts when backup root creation fails"
+    else
+        harness_fail "autofix_existing clean reinstall aborts when backup root creation fails" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_autofix_existing_clean_shell_configs_records_changes() {
     setup_mock_env
 
@@ -913,6 +1014,91 @@ EOF
         harness_pass "autofix_existing clean shell configs records changes"
     else
         harness_fail "autofix_existing clean shell configs records changes" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_clean_shell_configs_restores_file_when_recording_fails() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-shell-record-fail-target"
+    mkdir -p "$target_home"
+    cat > "$target_home/.zshrc" <<'EOF'
+# shell config
+# ACFS PATH
+source ~/.acfs/zsh/acfs.zshrc
+keep_me=1
+EOF
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            record_change() { return 1; }
+            if clean_shell_configs >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg result "$result" \
+                --arg file_contents "$(cat "$TARGET_HOME/.zshrc")" \
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                "{result: \$result, file_contents: \$file_contents, changes: \$changes}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and (.file_contents == "# shell config\n# ACFS PATH\nsource ~/.acfs/zsh/acfs.zshrc\nkeep_me=1")
+        and (.changes | length == 0)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing clean shell configs restores file when recording fails"
+    else
+        harness_fail "autofix_existing clean shell configs restores file when recording fails" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_update_path_entries_restores_file_when_recording_fails() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-path-record-fail-target"
+    mkdir -p "$target_home"
+    cat > "$target_home/.zshrc" <<'EOF'
+# shell config
+export PATH="$HOME/bin:$PATH"
+EOF
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            record_change() { return 1; }
+            if update_path_entries >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            jq -nc \
+                --arg result "$result" \
+                --arg file_contents "$(cat "$TARGET_HOME/.zshrc")" \
+                "{result: \$result, file_contents: \$file_contents}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and (.file_contents == "# shell config\nexport PATH=\"$HOME/bin:$PATH\"")
+        and (.file_contents | contains("# ACFS PATH") | not)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing update_path_entries restores file when recording fails"
+    else
+        harness_fail "autofix_existing update_path_entries restores file when recording fails" "$output"
     fi
 
     cleanup_mock_env
@@ -3342,7 +3528,11 @@ main() {
     test_autofix_existing_prefers_target_home_over_poisoned_acfs_home || true
     test_autofix_existing_backup_preserves_distinct_relative_paths || true
     test_autofix_existing_clean_reinstall_records_manifest_backups || true
+    test_autofix_existing_clean_reinstall_aborts_when_recording_fails || true
+    test_autofix_existing_clean_reinstall_aborts_when_backup_root_creation_fails || true
     test_autofix_existing_clean_shell_configs_records_changes || true
+    test_autofix_existing_clean_shell_configs_restores_file_when_recording_fails || true
+    test_autofix_existing_update_path_entries_restores_file_when_recording_fails || true
     test_autofix_existing_clean_shell_configs_allows_empty_result || true
     test_autofix_existing_remove_artifacts_propagates_rm_failures || true
 

@@ -105,6 +105,25 @@ autofix_existing_shell_configs() {
         "$runtime_home/.bash_profile"
 }
 
+autofix_existing_restore_from_backup() {
+    local backup_json="$1"
+    local target_path="${2:-}"
+    local restore_command=""
+
+    restore_command="$(autofix_backup_restore_command "$backup_json" 2>/dev/null || true)"
+    if [[ -z "$restore_command" ]]; then
+        log_error "[RESTORE] Missing restore command${target_path:+ for $target_path}"
+        return 1
+    fi
+
+    if ! bash -c "$restore_command"; then
+        log_error "[RESTORE] Failed to restore${target_path:+ $target_path} from backup"
+        return 1
+    fi
+
+    return 0
+}
+
 # =============================================================================
 # Detection Functions
 # =============================================================================
@@ -344,11 +363,17 @@ run_migrations() {
     settings_path="$acfs_home/config/settings.toml"
     if [[ -f "$legacy_config" ]] && [[ ! -f "$settings_path" ]]; then
         log_info "[MIGRATE] Moving legacy config to new location"
-        mkdir -p "$acfs_home/config"
-        mv "$legacy_config" "$settings_path"
+        if ! mkdir -p "$acfs_home/config"; then
+            log_error "[MIGRATE] Failed to create config directory: $acfs_home/config"
+            return 1
+        fi
+        if ! mv "$legacy_config" "$settings_path"; then
+            log_error "[MIGRATE] Failed to move legacy config to $settings_path"
+            return 1
+        fi
         files_json="$(jq -cn --arg old "$legacy_config" --arg new "$settings_path" '[$old, $new]')"
 
-        record_change \
+        if ! record_change \
             "acfs" \
             "Migrated legacy config file to new location" \
             "mv '$settings_path' '$legacy_config'" \
@@ -356,7 +381,13 @@ run_migrations() {
             "info" \
             "$files_json" \
             '[]' \
-            '[]'
+            '[]' >/dev/null; then
+            log_error "[MIGRATE] Failed to record legacy config migration; reverting"
+            if ! mv "$settings_path" "$legacy_config"; then
+                log_error "[MIGRATE] Failed to revert legacy config move after journaling failure"
+            fi
+            return 1
+        fi
     fi
 
     # Migration: Convert JSON config to TOML (if present)
@@ -364,10 +395,13 @@ run_migrations() {
     migrated_json_config="$acfs_home/config.json.migrated"
     if [[ -f "$legacy_json_config" ]] && [[ ! -f "$migrated_json_config" ]]; then
         log_info "[MIGRATE] Backing up legacy JSON config"
-        mv "$legacy_json_config" "$migrated_json_config"
+        if ! mv "$legacy_json_config" "$migrated_json_config"; then
+            log_error "[MIGRATE] Failed to preserve legacy JSON config"
+            return 1
+        fi
         files_json="$(jq -cn --arg path "$legacy_json_config" '[$path]')"
 
-        record_change \
+        if ! record_change \
             "acfs" \
             "Backed up legacy JSON config" \
             "mv '$migrated_json_config' '$legacy_json_config'" \
@@ -375,13 +409,22 @@ run_migrations() {
             "info" \
             "$files_json" \
             '[]' \
-            '[]'
+            '[]' >/dev/null; then
+            log_error "[MIGRATE] Failed to record JSON config backup; reverting"
+            if ! mv "$migrated_json_config" "$legacy_json_config"; then
+                log_error "[MIGRATE] Failed to restore legacy JSON config after journaling failure"
+            fi
+            return 1
+        fi
     fi
 
     # Migration: Ensure .local/bin exists and is in PATH
     if [[ ! -d "$runtime_home/.local/bin" ]]; then
         log_info "[MIGRATE] Creating ~/.local/bin directory"
-        mkdir -p "$runtime_home/.local/bin"
+        if ! mkdir -p "$runtime_home/.local/bin"; then
+            log_error "[MIGRATE] Failed to create $runtime_home/.local/bin"
+            return 1
+        fi
     fi
 
     log_info "[MIGRATE] Migrations complete"
@@ -404,17 +447,27 @@ update_path_entries() {
 
                 # Create backup
                 backup=$(create_backup "$config" "upgrade-path-entry")
+                if [[ -z "$backup" ]]; then
+                    log_error "[UPGRADE] Failed to back up $config before PATH update"
+                    return 1
+                fi
                 files_json="$(jq -cn --arg path "$config" '[$path]')"
                 restore_command="$(autofix_backup_restore_command "$backup" 2>/dev/null || true)"
 
                 # Append PATH entry
-                {
+                if ! {
                     echo ''
                     echo '# ACFS PATH'
                     echo 'export PATH="$HOME/.local/bin:$PATH" # ACFS'
-                } >> "$config"
+                } >> "$config"; then
+                    log_error "[UPGRADE] Failed to append PATH entry to $config"
+                    if ! autofix_existing_restore_from_backup "$backup" "$config"; then
+                        log_error "[UPGRADE] Failed to restore $config after PATH update failure"
+                    fi
+                    return 1
+                fi
 
-                record_change \
+                if ! record_change \
                     "acfs" \
                     "Added PATH entry to $config" \
                     "${restore_command:-# Restore $config from its backup manually if needed}" \
@@ -422,7 +475,13 @@ update_path_entries() {
                     "info" \
                     "$files_json" \
                     "$(echo "$backup" | jq -c '[.]' 2>/dev/null || echo '[]')" \
-                    '[]'
+                    '[]' >/dev/null; then
+                    log_error "[UPGRADE] Failed to record PATH update for $config"
+                    if ! autofix_existing_restore_from_backup "$backup" "$config"; then
+                        log_error "[UPGRADE] Failed to restore $config after journaling failure"
+                    fi
+                    return 1
+                fi
             fi
         fi
     done < <(autofix_existing_shell_configs 2>/dev/null || true)
@@ -465,7 +524,7 @@ upgrade_existing_installation() {
     fi
 
     # Step 3: Record upgrade change
-    record_change \
+    if ! record_change \
         "acfs" \
         "Upgraded ACFS from $current_version to $new_version" \
         "# Downgrade not supported - restore from backup if needed" \
@@ -474,14 +533,26 @@ upgrade_existing_installation() {
         '[]' \
         '[]' \
         '[]' \
-        false
+        false >/dev/null; then
+        log_error "[UPGRADE] Failed to record upgrade operation"
+        return 1
+    fi
 
     # Step 4: Update version file
-    mkdir -p "$acfs_home"
-    echo "$new_version" > "$acfs_home/version"
+    if ! mkdir -p "$acfs_home"; then
+        log_error "[UPGRADE] Failed to create ACFS home: $acfs_home"
+        return 1
+    fi
+    if ! printf '%s\n' "$new_version" > "$acfs_home/version"; then
+        log_error "[UPGRADE] Failed to update version file: $acfs_home/version"
+        return 1
+    fi
 
     # Step 5: Update PATH entries if needed
-    update_path_entries
+    if ! update_path_entries; then
+        log_error "[UPGRADE] Failed to repair shell PATH entries"
+        return 1
+    fi
 
     log_info "[UPGRADE] Upgrade preparation complete"
     log_info "[UPGRADE] Installation will continue with updated binaries"
@@ -510,7 +581,10 @@ create_installation_backup() {
     backup_dir="$runtime_home/.acfs-backup-$(date +%Y%m%d_%H%M%S)"
 
     log_info "[CLEAN] Creating backup at $backup_dir"
-    mkdir -p "$backup_dir"
+    if ! mkdir -p "$backup_dir"; then
+        log_error "[CLEAN] Failed to create backup directory: $backup_dir"
+        return 1
+    fi
 
     local backup_manifest="$backup_dir/manifest.json"
 
@@ -533,7 +607,10 @@ create_installation_backup() {
                     ;;
             esac
             dest="$backup_dir/$dest_rel"
-            mkdir -p "$(dirname "$dest")"
+            if ! mkdir -p "$(dirname "$dest")"; then
+                log_error "[CLEAN] Failed to create backup parent directory for: $dest"
+                return 1
+            fi
 
             if [[ -d "$artifact" ]]; then
                 if ! cp -rp "$artifact" "$dest" 2>/dev/null; then
@@ -559,12 +636,18 @@ create_installation_backup() {
     done < <(autofix_existing_artifacts 2>/dev/null || true)
 
     # Write manifest
-    items_json=$(printf '%s\n' "${backed_up_items[@]}" | jq -s '.')
+    if ! items_json=$(printf '%s\n' "${backed_up_items[@]}" | jq -s '.'); then
+        log_error "[CLEAN] Failed to serialize backup manifest entries"
+        return 1
+    fi
 
-    jq -n \
+    if ! jq -n \
         --arg created "$(date -Iseconds)" \
         --argjson items "$items_json" \
-        '{created: $created, backed_up_items: $items}' > "$backup_manifest"
+        '{created: $created, backed_up_items: $items}' > "$backup_manifest"; then
+        log_error "[CLEAN] Failed to write backup manifest: $backup_manifest"
+        return 1
+    fi
 
     echo "$backup_dir"
 }
@@ -659,6 +742,9 @@ clean_shell_configs() {
                     "$(printf '%s' "$config_backup" | jq -c '[.]' 2>/dev/null || echo '[]')" \
                     '[]' >/dev/null; then
                     log_error "[CLEAN] Failed to record shell config cleanup for $config"
+                    if ! autofix_existing_restore_from_backup "$config_backup" "$config"; then
+                        log_error "[CLEAN] Failed to restore $config after journaling failure"
+                    fi
                     failed=1
                 fi
             fi
@@ -722,7 +808,7 @@ clean_reinstall() {
     # Step 2: Record the clean reinstall change
     artifacts_json=$(autofix_existing_artifacts 2>/dev/null | jq -R . | jq -s '.')
 
-    record_change \
+    if ! record_change \
         "acfs" \
         "Clean reinstall - removed existing ACFS installation" \
         "# Restore from backup: $backup_dir" \
@@ -731,7 +817,10 @@ clean_reinstall() {
         "$artifacts_json" \
         "$backups_json" \
         '[]' \
-        false
+        false >/dev/null; then
+        log_error "[CLEAN] Failed to record clean reinstall operation"
+        return 1
+    fi
 
     if ! autofix_existing_relocate_state_for_clean_reinstall; then
         log_error "[CLEAN] Failed to preserve autofix state before removing ACFS artifacts"
