@@ -875,6 +875,88 @@ test_autofix_existing_clean_reinstall_records_manifest_backups() {
     cleanup_mock_env
 }
 
+test_autofix_existing_clean_shell_configs_records_changes() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-shell-target"
+    mkdir -p "$target_home"
+    cat > "$target_home/.zshrc" <<'EOF'
+# shell config
+# ACFS PATH
+source ~/.acfs/zsh/acfs.zshrc
+keep_me=1
+EOF
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            clean_shell_configs >/dev/null 2>&1 || exit 1
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg file_contents "$(cat "$TARGET_HOME/.zshrc")" \
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                "{file_contents: \$file_contents, changes: \$changes}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        (.file_contents | contains("keep_me=1"))
+        and (.file_contents | contains(".acfs") | not)
+        and (.changes | length == 1)
+        and (.changes[0].description | contains("Cleaned ACFS entries from"))
+        and (.changes[0].reversible == true)
+        and (.changes[0].backups | length == 1)
+        and (.changes[0].backups[0].backup != null)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing clean shell configs records changes"
+    else
+        harness_fail "autofix_existing clean shell configs records changes" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_remove_artifacts_propagates_rm_failures() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-rm-target"
+    local fake_bin="$TEST_HOME/fake-bin"
+    mkdir -p "$target_home/.acfs" "$target_home/.config/acfs" "$target_home/.local/bin" "$fake_bin"
+    printf 'version\n' > "$target_home/.acfs/version"
+    printf 'config\n' > "$target_home/.config/acfs/settings.toml"
+    printf '#!/usr/bin/env bash\n' > "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+
+    cat > "$fake_bin/rm" <<EOF
+#!/usr/bin/env bash
+last="\${@: -1}"
+if [[ "\$last" == "$target_home/.config/acfs" ]]; then
+    exit 1
+fi
+exec /bin/rm "\$@"
+EOF
+    chmod +x "$fake_bin/rm"
+
+    local output=""
+    local exit_code=0
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" PATH="$fake_bin:/usr/bin:/bin" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            remove_acfs_artifacts
+        ' _ "$AUTOFIX_EXISTING_SH" 2>&1) || exit_code=$?
+
+    if [[ "$exit_code" -ne 0 ]] && [[ "$output" == *"Failed to remove artifact"* ]]; then
+        harness_pass "autofix_existing remove artifacts propagates rm failures"
+    else
+        harness_fail "autofix_existing remove artifacts propagates rm failures" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_changelog_defaults_to_last_updated() {
     setup_mock_env
 
@@ -3223,6 +3305,8 @@ main() {
     test_autofix_existing_prefers_target_home_over_poisoned_acfs_home || true
     test_autofix_existing_backup_preserves_distinct_relative_paths || true
     test_autofix_existing_clean_reinstall_records_manifest_backups || true
+    test_autofix_existing_clean_shell_configs_records_changes || true
+    test_autofix_existing_remove_artifacts_propagates_rm_failures || true
 
     harness_section "Export Config"
     test_export_config_json_is_valid || true
