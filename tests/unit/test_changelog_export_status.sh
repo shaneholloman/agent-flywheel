@@ -24,6 +24,8 @@ SERVICES_SETUP_SH="$REPO_ROOT/scripts/services-setup.sh"
 NOTIFY_SH="$REPO_ROOT/scripts/lib/notify.sh"
 WEBHOOK_SH="$REPO_ROOT/scripts/lib/webhook.sh"
 NOTIFICATIONS_SH="$REPO_ROOT/scripts/lib/notifications.sh"
+AUTOFIX_SH="$REPO_ROOT/scripts/lib/autofix.sh"
+AUTOFIX_EXISTING_SH="$REPO_ROOT/scripts/lib/autofix_existing.sh"
 
 source "$REPO_ROOT/tests/vm/lib/test_harness.sh"
 
@@ -708,6 +710,131 @@ EOF
         harness_pass "notifications CLI uses target_home when HOME is relative"
     else
         harness_fail "notifications CLI uses target_home when HOME is relative" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_uses_target_home_for_state_dir_when_home_is_relative() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-target"
+    mkdir -p "$target_home"
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="relative-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED
+            source "$1"
+            printf "%s\n" "$ACFS_STATE_DIR"
+        ' _ "$AUTOFIX_SH" 2>&1)
+
+    if [[ "$output" == "$target_home/.acfs/autofix" ]]; then
+        harness_pass "autofix uses target_home for state dir when HOME is relative"
+    else
+        harness_fail "autofix uses target_home for state dir when HOME is relative" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_detects_target_home_install_when_home_is_relative() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-target"
+    mkdir -p "$target_home/.acfs"
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="relative-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            detect_existing_acfs
+        ' _ "$AUTOFIX_EXISTING_SH" 2>&1)
+
+    if [[ "$output" == *"$target_home/.acfs"* ]] && [[ "$output" != *"relative-home/.acfs"* ]]; then
+        harness_pass "autofix_existing detects target_home install when HOME is relative"
+    else
+        harness_fail "autofix_existing detects target_home install when HOME is relative" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_reads_target_home_version_under_root_home() {
+    setup_mock_env
+
+    local root_home="$TEST_HOME/root-home"
+    local target_home="$TEST_HOME/autofix-existing-version-target"
+    mkdir -p "$root_home/.acfs" "$target_home/.acfs"
+    printf '0.0.1\n' > "$root_home/.acfs/version"
+    printf '9.9.9\n' > "$target_home/.acfs/version"
+
+    local output=""
+    output=$(HOME="$root_home" TARGET_HOME="$target_home" PATH="/usr/bin:/bin" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            get_installed_version
+        ' _ "$AUTOFIX_EXISTING_SH" 2>&1)
+
+    if [[ "$output" == "9.9.9" ]]; then
+        harness_pass "autofix_existing reads target_home version under root home"
+    else
+        harness_fail "autofix_existing reads target_home version under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_prefers_target_home_over_poisoned_acfs_home() {
+    setup_mock_env
+
+    local root_home="$TEST_HOME/root-home"
+    local target_home="$TEST_HOME/autofix-existing-poison-target"
+    local poisoned_acfs_home="$TEST_HOME/poisoned/.acfs"
+    mkdir -p "$root_home" "$target_home/.acfs" "$poisoned_acfs_home"
+    printf '8.8.8\n' > "$poisoned_acfs_home/version"
+    printf '9.9.9\n' > "$target_home/.acfs/version"
+
+    local output=""
+    output=$(HOME="$root_home" TARGET_HOME="$target_home" ACFS_HOME="$poisoned_acfs_home" PATH="/usr/bin:/bin" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            get_installed_version
+        ' _ "$AUTOFIX_EXISTING_SH" 2>&1)
+
+    if [[ "$output" == "9.9.9" ]]; then
+        harness_pass "autofix_existing prefers target_home over poisoned ACFS_HOME"
+    else
+        harness_fail "autofix_existing prefers target_home over poisoned ACFS_HOME" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_backup_preserves_distinct_relative_paths() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-backup-target"
+    mkdir -p "$target_home/.acfs" "$target_home/.config/acfs" "$target_home/.local/bin"
+    printf 'config\n' > "$target_home/.config/acfs/settings.toml"
+    printf '#!/usr/bin/env bash\n' > "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+
+    local backup_dir=""
+    backup_dir=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            create_installation_backup
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if [[ -d "$backup_dir/.config/acfs" ]] && [[ -f "$backup_dir/.local/bin/acfs" ]]; then
+        harness_pass "autofix_existing backup preserves distinct relative paths"
+    else
+        harness_fail "autofix_existing backup preserves distinct relative paths" "$backup_dir"
     fi
 
     cleanup_mock_env
@@ -3053,6 +3180,13 @@ main() {
     test_notify_uses_target_home_for_config_and_state_when_home_is_relative || true
     test_webhook_reads_config_from_target_home_when_home_is_relative || true
     test_notifications_cli_uses_target_home_when_home_is_relative || true
+
+    harness_section "Autofix"
+    test_autofix_uses_target_home_for_state_dir_when_home_is_relative || true
+    test_autofix_existing_detects_target_home_install_when_home_is_relative || true
+    test_autofix_existing_reads_target_home_version_under_root_home || true
+    test_autofix_existing_prefers_target_home_over_poisoned_acfs_home || true
+    test_autofix_existing_backup_preserves_distinct_relative_paths || true
 
     harness_section "Export Config"
     test_export_config_json_is_valid || true

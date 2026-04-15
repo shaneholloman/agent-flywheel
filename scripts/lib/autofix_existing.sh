@@ -47,15 +47,19 @@ autofix_existing_acfs_home() {
     local acfs_home=""
     local runtime_home=""
 
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s/.acfs\n' "$runtime_home"
+        return 0
+    fi
+
     acfs_home="$(autofix_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
     if [[ -n "$acfs_home" ]]; then
         printf '%s\n' "$acfs_home"
         return 0
     fi
 
-    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
-    [[ -n "$runtime_home" ]] || return 1
-    printf '%s/.acfs\n' "$runtime_home"
+    return 1
 }
 
 autofix_existing_installation_markers() {
@@ -430,13 +434,20 @@ update_path_entries() {
 upgrade_existing_installation() {
     local current_version="$1"
     local new_version="$2"
+    local acfs_home=""
+    local runtime_home=""
+    local config_backup=""
 
     log_info "[UPGRADE] Starting upgrade from $current_version to $new_version"
 
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    acfs_home="$(autofix_existing_acfs_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+    [[ -n "$acfs_home" ]] || return 1
+
     # Step 1: Backup current config (for safety)
-    if [[ -d "$HOME/.acfs" ]]; then
-        local config_backup
-        config_backup=$(create_backup "$HOME/.acfs/config" "upgrade-config-backup")
+    if [[ -d "$acfs_home" ]]; then
+        config_backup=$(create_backup "$acfs_home/config" "upgrade-config-backup")
         if [[ -n "$config_backup" ]]; then
             log_info "[UPGRADE] Config backed up: $(echo "$config_backup" | jq -r '.backup' 2>/dev/null || echo "$config_backup")"
         fi
@@ -463,8 +474,8 @@ upgrade_existing_installation() {
         '[]'
 
     # Step 4: Update version file
-    mkdir -p "$HOME/.acfs"
-    echo "$new_version" > "$HOME/.acfs/version"
+    mkdir -p "$acfs_home"
+    echo "$new_version" > "$acfs_home/version"
 
     # Step 5: Update PATH entries if needed
     update_path_entries
@@ -482,19 +493,44 @@ upgrade_existing_installation() {
 # Create comprehensive backup of existing installation
 create_installation_backup() {
     local backup_dir
-    backup_dir="$HOME/.acfs-backup-$(date +%Y%m%d_%H%M%S)"
+    local runtime_home=""
+    local artifact=""
+    local dest=""
+    local dest_rel=""
+    local checksum=""
+    local items_json=""
+    local backup_item=""
+    local -a backed_up_items=()
+
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+    backup_dir="$runtime_home/.acfs-backup-$(date +%Y%m%d_%H%M%S)"
 
     log_info "[CLEAN] Creating backup at $backup_dir"
     mkdir -p "$backup_dir"
 
     local backup_manifest="$backup_dir/manifest.json"
-    local backed_up_items=()
 
-    for artifact in "${ACFS_ARTIFACTS[@]}"; do
+    while IFS= read -r artifact; do
+        [[ -n "$artifact" ]] || continue
         if [[ -e "$artifact" ]]; then
             log_info "[CLEAN] Backing up: $artifact"
-            local dest
-            dest="$backup_dir/$(basename "$artifact")"
+            case "$artifact" in
+                "$runtime_home")
+                    dest_rel=".acfs-home"
+                    ;;
+                "$runtime_home"/*)
+                    dest_rel="${artifact#$runtime_home/}"
+                    ;;
+                /*)
+                    dest_rel="${artifact#/}"
+                    ;;
+                *)
+                    dest_rel="$artifact"
+                    ;;
+            esac
+            dest="$backup_dir/$dest_rel"
+            mkdir -p "$(dirname "$dest")"
 
             if [[ -d "$artifact" ]]; then
                 if ! cp -rp "$artifact" "$dest" 2>/dev/null; then
@@ -509,17 +545,17 @@ create_installation_backup() {
             fi
 
             # Calculate checksum if it's a file
-            local checksum=""
+            checksum=""
             if [[ -f "$artifact" ]]; then
                 checksum=$(sha256sum "$artifact" 2>/dev/null | cut -d' ' -f1)
             fi
 
-            backed_up_items+=("{\"original\": \"$artifact\", \"backup\": \"$dest\", \"checksum\": \"$checksum\"}")
+            backup_item="$(jq -cn --arg original "$artifact" --arg backup "$dest" --arg checksum "$checksum" '{original: $original, backup: $backup, checksum: $checksum}')"
+            backed_up_items+=("$backup_item")
         fi
-    done
+    done < <(autofix_existing_artifacts 2>/dev/null || true)
 
     # Write manifest
-    local items_json
     items_json=$(printf '%s\n' "${backed_up_items[@]}" | jq -s '.')
 
     jq -n \
@@ -532,33 +568,39 @@ create_installation_backup() {
 
 # Remove all ACFS artifacts
 remove_acfs_artifacts() {
-    for artifact in "${ACFS_ARTIFACTS[@]}"; do
+    local artifact=""
+
+    while IFS= read -r artifact; do
+        [[ -n "$artifact" ]] || continue
         if [[ -e "$artifact" ]]; then
             log_info "[CLEAN] Removing: $artifact"
             rm -rf "$artifact"
         fi
-    done
+    done < <(autofix_existing_artifacts 2>/dev/null || true)
 }
 
 # Clean ACFS entries from shell configs
 clean_shell_configs() {
-    for config in "${SHELL_CONFIGS[@]}"; do
+    local config=""
+    local config_backup=""
+    local temp_file=""
+    local orig_mode=""
+
+    while IFS= read -r config; do
+        [[ -n "$config" ]] || continue
         if [[ -f "$config" ]]; then
             # Check if config has ACFS-related content
             if grep -qE '# ACFS|\.acfs|acfs_' "$config" 2>/dev/null; then
                 # Backup config first
-                local config_backup
                 config_backup=$(create_backup "$config" "clean-shell-config")
 
                 if [[ -n "$config_backup" ]]; then
                     log_info "[CLEAN] Cleaning ACFS entries from $config"
 
                     # Create temp file in same directory to preserve permissions on mv
-                    local temp_file
                     temp_file=$(mktemp -p "$(dirname "$config")" ".acfs-clean.XXXXXX")
 
                     # Preserve original permissions by copying mode
-                    local orig_mode
                     orig_mode=$(stat -c '%a' "$config" 2>/dev/null || stat -f '%Lp' "$config" 2>/dev/null)
 
                     grep -vE '# ACFS|\.acfs|acfs_' "$config" > "$temp_file" || true
@@ -570,7 +612,7 @@ clean_shell_configs() {
                 fi
             fi
         fi
-    done
+    done < <(autofix_existing_shell_configs 2>/dev/null || true)
 }
 
 # Perform clean reinstall
@@ -579,14 +621,14 @@ clean_reinstall() {
 
     # Step 1: Create comprehensive backup
     local backup_dir
+    local artifacts_json=""
     if ! backup_dir=$(create_installation_backup); then
         log_error "[CLEAN] Backup creation failed; aborting clean reinstall"
         return 1
     fi
 
     # Step 2: Record the clean reinstall change
-    local artifacts_json
-    artifacts_json=$(printf '%s\n' "${ACFS_ARTIFACTS[@]}" | jq -R . | jq -s .)
+    artifacts_json=$(autofix_existing_artifacts 2>/dev/null | jq -R . | jq -s '.')
 
     record_change \
         "acfs" \
@@ -750,21 +792,26 @@ verify_installation() {
     log_info "[VERIFY] Checking installation..."
 
     local errors=0
+    local runtime_home=""
+    local acfs_home=""
+
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    acfs_home="$(autofix_existing_acfs_home 2>/dev/null || true)"
 
     # Check config directory
-    if [[ ! -d "$HOME/.acfs" ]]; then
+    if [[ -z "$acfs_home" ]] || [[ ! -d "$acfs_home" ]]; then
         log_warn "[VERIFY] Config directory missing"
         ((errors++)) || true
     fi
 
     # Check version file
-    if [[ ! -f "$HOME/.acfs/version" ]]; then
+    if [[ -z "$acfs_home" ]] || [[ ! -f "$acfs_home/version" ]]; then
         log_warn "[VERIFY] Version file missing"
         ((errors++)) || true
     fi
 
     # Check .local/bin exists
-    if [[ ! -d "$HOME/.local/bin" ]]; then
+    if [[ -z "$runtime_home" ]] || [[ ! -d "$runtime_home/.local/bin" ]]; then
         log_warn "[VERIFY] ~/.local/bin directory missing"
         ((errors++)) || true
     fi
