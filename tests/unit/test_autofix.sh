@@ -183,6 +183,138 @@ test_backup_creation() {
     return 0
 }
 
+# Test: Backup paths stay unique across multiple backups in one session
+test_backup_creation_uses_unique_paths_per_session() {
+    setup_test_env
+
+    local test_file="/tmp/test_backup_repeat_$$"
+    printf 'first version\n' > "$test_file"
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json_1 backup_json_2 backup_path_1 backup_path_2
+    backup_json_1=$(create_backup "$test_file" "test")
+    backup_path_1=$(echo "$backup_json_1" | jq -r '.backup')
+
+    printf 'second version\n' > "$test_file"
+    backup_json_2=$(create_backup "$test_file" "test")
+    backup_path_2=$(echo "$backup_json_2" | jq -r '.backup')
+
+    if [[ "$backup_path_1" == "$backup_path_2" ]]; then
+        echo "  Backup paths collided: $backup_path_1"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -qx 'first version' "$backup_path_1"; then
+        echo "  First backup content was overwritten"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -qx 'second version' "$backup_path_2"; then
+        echo "  Second backup content mismatch"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$test_file"
+    cleanup_test_env
+    return 0
+}
+
+# Test: Directory backup corruption is detected by integrity verification
+test_state_integrity_detects_corrupt_directory_backup() {
+    setup_test_env
+
+    local test_dir="/tmp/test_backup_dir_$$"
+    mkdir -p "$test_dir"
+    printf 'original\n' > "$test_dir/file.txt"
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json backup_path
+    backup_json=$(create_backup "$test_dir" "test")
+    backup_path=$(echo "$backup_json" | jq -r '.backup')
+
+    printf 'corrupted\n' > "$backup_path/file.txt"
+    printf '{"id":"chg_001","description":"dir backup","backups":[%s]}\n' "$backup_json" > "$ACFS_CHANGES_FILE"
+
+    if verify_state_integrity >/dev/null 2>&1; then
+        echo "  Corrupt directory backup was accepted"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -rf "$test_dir"
+    cleanup_test_env
+    return 0
+}
+
+# Test: Missing backups for undone changes do not fail integrity verification
+test_state_integrity_ignores_missing_backup_for_undone_change() {
+    setup_test_env
+
+    local test_file="/tmp/test_backup_undone_$$"
+    printf 'original\n' > "$test_file"
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json backup_path
+    backup_json=$(create_backup "$test_file" "test")
+    backup_path=$(echo "$backup_json" | jq -r '.backup')
+
+    printf '{"id":"chg_001","description":"undone backup","backups":[%s]}\n' "$backup_json" > "$ACFS_CHANGES_FILE"
+    printf '{"undone":"chg_001","timestamp":"2026-04-15T00:00:00Z","exit_code":0}\n' > "$ACFS_UNDOS_FILE"
+    rm -f "$backup_path"
+
+    if ! verify_state_integrity >/dev/null 2>&1; then
+        echo "  Missing backup for undone change should not fail integrity"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$test_file"
+    cleanup_test_env
+    return 0
+}
+
+# Test: Integrity verification checks every active backup, not just one
+test_state_integrity_checks_all_active_backups() {
+    setup_test_env
+
+    local file_a="/tmp/test_backup_multi_a_$$"
+    local file_b="/tmp/test_backup_multi_b_$$"
+    printf 'alpha\n' > "$file_a"
+    printf 'beta\n' > "$file_b"
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json_a backup_json_b backup_path_b
+    backup_json_a=$(create_backup "$file_a" "test")
+    backup_json_b=$(create_backup "$file_b" "test")
+    backup_path_b=$(echo "$backup_json_b" | jq -r '.backup')
+
+    printf 'corrupted\n' > "$backup_path_b"
+    printf '{"id":"chg_001","description":"multi backup","backups":[%s,%s]}\n' "$backup_json_a" "$backup_json_b" > "$ACFS_CHANGES_FILE"
+
+    if verify_state_integrity >/dev/null 2>&1; then
+        echo "  Corruption in second active backup was not detected"
+        rm -f "$file_a" "$file_b"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$file_a" "$file_b"
+    cleanup_test_env
+    return 0
+}
+
 # Test: Backup of non-existent file
 test_backup_nonexistent_file() {
     setup_test_env
@@ -377,6 +509,42 @@ test_record_change() {
     return 0
 }
 
+# Test: Single backup objects are normalized into backup arrays
+test_record_change_normalizes_single_backup_object() {
+    setup_test_env
+
+    if ! start_autofix_session 2>/dev/null; then
+        echo "  Failed to start session"
+        cleanup_test_env
+        return 1
+    fi
+
+    local test_file="/tmp/test_record_backup_$$"
+    printf 'original\n' > "$test_file"
+
+    local backup_json change_id backup_type backup_len stored_backup_path expected_backup_path
+    backup_json=$(create_backup "$test_file" "test")
+    expected_backup_path=$(echo "$backup_json" | jq -r '.backup')
+
+    change_id=$(record_change "test" "Normalized backup" "rm -f '$test_file'" "false" "info" "[\"$test_file\"]" "$backup_json" "[]" 2>/dev/null)
+    backup_type=$(jq -r --arg id "$change_id" 'select(.id == $id) | (.backups | type)' "$ACFS_CHANGES_FILE")
+    backup_len=$(jq -r --arg id "$change_id" 'select(.id == $id) | (.backups | length)' "$ACFS_CHANGES_FILE")
+    stored_backup_path=$(jq -r --arg id "$change_id" 'select(.id == $id) | .backups[0].backup' "$ACFS_CHANGES_FILE")
+
+    if [[ "$backup_type" != "array" ]] || [[ "$backup_len" != "1" ]] || [[ "$stored_backup_path" != "$expected_backup_path" ]]; then
+        echo "  Backup normalization failed: type=$backup_type len=$backup_len path=$stored_backup_path"
+        rm -f "$test_file"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$test_file"
+    end_autofix_session 2>/dev/null || true
+    cleanup_test_env
+    return 0
+}
+
 # Test: Multiple changes preserve order
 test_multiple_changes_order() {
     setup_test_env
@@ -462,6 +630,121 @@ test_undo_change() {
     fi
 
     end_autofix_session 2>/dev/null || true
+    cleanup_test_env
+    return 0
+}
+
+# Test: Manual/non-reversible changes cannot be falsely marked undone
+test_undo_change_rejects_manual_non_reversible_change() {
+    setup_test_env
+
+    if ! start_autofix_session 2>/dev/null; then
+        echo "  Failed to start session"
+        cleanup_test_env
+        return 1
+    fi
+
+    local change_id output="" list_output="" reversible=""
+    change_id=$(record_change "test" "Manual change" "# Restore from backup manually" "false" "warning" '[]' '[]' '[]' 2>/dev/null)
+    reversible=$(jq -r --arg id "$change_id" 'select(.id == $id) | .reversible' "$ACFS_CHANGES_FILE")
+
+    output=$(undo_change "$change_id" true true 2>&1)
+    if [[ $? -eq 0 ]]; then
+        echo "  Manual change was incorrectly marked undone"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session 2>/dev/null || true
+    list_output=$(acfs_undo_command --list 2>&1)
+
+    if [[ "$reversible" != "false" ]] || [[ -s "$ACFS_UNDOS_FILE" ]] || [[ "$output" != *"Manual undo instructions: Restore from backup manually"* ]] || [[ "$list_output" != *"$change_id"* ]] || [[ "$list_output" != *"manual"* ]]; then
+        echo "  Manual undo handling failed"
+        echo "  reversible=$reversible"
+        echo "  undo output=$output"
+        echo "  list output=$list_output"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+# Test: Undo category filtering handles quoted category values safely
+test_acfs_undo_command_category_handles_quotes() {
+    setup_test_env
+
+    if ! start_autofix_session 2>/dev/null; then
+        echo "  Failed to start session"
+        cleanup_test_env
+        return 1
+    fi
+
+    local change_id
+    change_id=$(record_change 'quote"cat' "Quoted category" "echo quoted" "false" "info" '[]' '[]' '[]' 2>/dev/null)
+    end_autofix_session 2>/dev/null || true
+
+    local output=""
+    output=$(acfs_undo_command --dry-run --category 'quote"cat' 2>&1)
+
+    if [[ "$output" != *"$change_id"* ]] || [[ "$output" == *"jq:"* ]]; then
+        echo "  Quoted category filter failed: $output"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+# Test: --all skips already-undone changes instead of reprocessing them
+test_acfs_undo_command_all_skips_undone_changes() {
+    setup_test_env
+
+    if ! start_autofix_session 2>/dev/null; then
+        echo "  Failed to start session"
+        cleanup_test_env
+        return 1
+    fi
+
+    local already_undone_marker="/tmp/test_undo_all_done_$$"
+    local active_marker="/tmp/test_undo_all_active_$$"
+    touch "$already_undone_marker" "$active_marker"
+
+    local done_id active_id
+    done_id=$(record_change "test" "Already undone" "rm -f '$already_undone_marker'" "false" "info" '[]' '[]' '[]' 2>/dev/null)
+    active_id=$(record_change "test" "Still active" "rm -f '$active_marker'" "false" "info" '[]' '[]' '[]' 2>/dev/null)
+    end_autofix_session 2>/dev/null || true
+
+    printf '{"undone":"%s","timestamp":"2026-04-15T00:00:00Z","exit_code":0}\n' "$done_id" > "$ACFS_UNDOS_FILE"
+
+    local output=""
+    output=$(acfs_undo_command --all 2>&1)
+
+    if [[ -f "$active_marker" ]]; then
+        echo "  Active change was not undone"
+        rm -f "$already_undone_marker" "$active_marker"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -f "$already_undone_marker" ]]; then
+        echo "  Already-undone change was processed again"
+        rm -f "$already_undone_marker" "$active_marker"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ "$output" == *"already been undone"* ]] || [[ "$output" != *"All requested changes have been undone"* ]]; then
+        echo "  --all output indicates undone change was still queued: $output"
+        rm -f "$already_undone_marker" "$active_marker"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$already_undone_marker" "$active_marker"
     cleanup_test_env
     return 0
 }
@@ -578,6 +861,60 @@ test_update_integrity_file() {
     return 0
 }
 
+# Test: Cleanup removes old backup directories as well as files
+test_cleanup_old_backups_removes_directory_entries() {
+    setup_test_env
+
+    local old_backup_dir="$ACFS_BACKUPS_DIR/old-backup-dir"
+    local old_backup_file="$ACFS_BACKUPS_DIR/old-backup-file.backup"
+    mkdir -p "$old_backup_dir"
+    printf 'nested\n' > "$old_backup_dir/file.txt"
+    printf 'flat\n' > "$old_backup_file"
+
+    touch -d '40 days ago' "$old_backup_dir/file.txt" "$old_backup_file"
+    touch -d '40 days ago' "$old_backup_dir"
+
+    cleanup_old_backups 30 >/dev/null 2>&1
+
+    if [[ -e "$old_backup_dir" ]] || [[ -e "$old_backup_file" ]]; then
+        echo "  Old backup entries were not fully removed"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+# Test: Cleanup preserves active referenced backups even when old
+test_cleanup_old_backups_preserves_active_referenced_backups() {
+    setup_test_env
+
+    local test_file="/tmp/test_backup_active_$$"
+    printf 'active\n' > "$test_file"
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json backup_path
+    backup_json=$(create_backup "$test_file" "test")
+    backup_path=$(echo "$backup_json" | jq -r '.backup')
+    printf '{"id":"chg_001","description":"active backup","backups":[%s]}\n' "$backup_json" > "$ACFS_CHANGES_FILE"
+    touch -d '40 days ago' "$backup_path"
+
+    cleanup_old_backups 30 >/dev/null 2>&1
+
+    if [[ ! -e "$backup_path" ]]; then
+        echo "  Active referenced backup was removed"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$test_file"
+    cleanup_test_env
+    return 0
+}
+
 # ============================================================
 # Main Test Runner
 # ============================================================
@@ -593,17 +930,27 @@ main() {
     run_test test_fsync_file
     run_test test_fsync_directory
     run_test test_backup_creation
+    run_test test_backup_creation_uses_unique_paths_per_session
     run_test test_backup_nonexistent_file
     run_test test_record_checksum
     run_test test_state_integrity
+    run_test test_state_integrity_detects_corrupt_directory_backup
+    run_test test_state_integrity_ignores_missing_backup_for_undone_change
+    run_test test_state_integrity_checks_all_active_backups
     run_test test_state_repair
     run_test test_init_autofix_state
     run_test test_session_management
     run_test test_record_change
+    run_test test_record_change_normalizes_single_backup_object
     run_test test_multiple_changes_order
     run_test test_undo_change
+    run_test test_undo_change_rejects_manual_non_reversible_change
+    run_test test_acfs_undo_command_category_handles_quotes
+    run_test test_acfs_undo_command_all_skips_undone_changes
     run_test test_print_undo_summary
     run_test test_update_integrity_file
+    run_test test_cleanup_old_backups_removes_directory_entries
+    run_test test_cleanup_old_backups_preserves_active_referenced_backups
 
     echo ""
     echo "============================================================"

@@ -318,6 +318,115 @@ compute_record_checksum() {
     echo "$record_without_checksum" | sha256sum | cut -d' ' -f1
 }
 
+autofix_path_fingerprint() {
+    local input="${1:-}"
+
+    if command -v sha256sum &>/dev/null; then
+        printf '%s' "$input" | sha256sum | cut -d' ' -f1
+        return 0
+    fi
+
+    if command -v shasum &>/dev/null; then
+        printf '%s' "$input" | shasum -a 256 | cut -d' ' -f1
+        return 0
+    fi
+
+    cksum <<<"$input" | awk '{print $1}'
+}
+
+autofix_trim_leading_whitespace() {
+    local value="${1:-}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    printf '%s\n' "$value"
+}
+
+autofix_is_manual_undo_command() {
+    local undo_command=""
+
+    undo_command="$(autofix_trim_leading_whitespace "${1:-}")"
+    [[ -z "$undo_command" || "$undo_command" == \#* ]]
+}
+
+autofix_manual_undo_instructions() {
+    local undo_command=""
+
+    undo_command="$(autofix_trim_leading_whitespace "${1:-}")"
+    undo_command="${undo_command#\#}"
+    autofix_trim_leading_whitespace "$undo_command"
+}
+
+autofix_normalize_backups_json() {
+    local backups_json="${1:-[]}"
+
+    printf '%s' "$backups_json" | jq -c '
+        (if . == null then []
+         elif type == "array" then .
+         elif type == "object" then [.]
+         else error("backups must be an array or object")
+         end) as $normalized
+        | if all($normalized[]?; type == "object" and (.backup? != null)) then
+              $normalized
+          else
+              error("backup entries must be objects containing .backup")
+          end
+    ' 2>/dev/null
+}
+
+autofix_record_is_reversible() {
+    local record_json="$1"
+    local undo_command=""
+    local reversible="true"
+
+    undo_command="$(printf '%s' "$record_json" | jq -r '.undo_command // ""' 2>/dev/null || true)"
+    if autofix_is_manual_undo_command "$undo_command"; then
+        return 1
+    fi
+
+    reversible="$(printf '%s' "$record_json" | jq -r '.reversible // true' 2>/dev/null || printf 'true\n')"
+    [[ "$reversible" == "true" ]]
+}
+
+autofix_backup_restore_command() {
+    local backup_json="$1"
+    local original_path=""
+    local backup_path=""
+    local parent_dir=""
+    local restore_command=""
+
+    original_path="$(printf '%s' "$backup_json" | jq -r '.original // empty' 2>/dev/null || true)"
+    backup_path="$(printf '%s' "$backup_json" | jq -r '.backup // empty' 2>/dev/null || true)"
+    [[ -n "$original_path" && -n "$backup_path" ]] || return 1
+
+    parent_dir="$(dirname "$original_path")"
+    printf -v restore_command 'rm -rf %q && mkdir -p %q && cp -a %q %q' \
+        "$original_path" "$parent_dir" "$backup_path" "$original_path"
+    printf '%s\n' "$restore_command"
+}
+
+autofix_undone_ids_json() {
+    if [[ -f "$ACFS_UNDOS_FILE" ]] && [[ -s "$ACFS_UNDOS_FILE" ]]; then
+        jq -s '[.[].undone // empty]' "$ACFS_UNDOS_FILE" 2>/dev/null || printf '[]\n'
+        return 0
+    fi
+
+    printf '[]\n'
+}
+
+autofix_active_backup_paths() {
+    local undone_ids_json="[]"
+
+    [[ -f "$ACFS_CHANGES_FILE" ]] || return 0
+    [[ -s "$ACFS_CHANGES_FILE" ]] || return 0
+
+    undone_ids_json="$(autofix_undone_ids_json)"
+    jq -r --argjson undone "$undone_ids_json" '
+        select((.id // "") as $id | (($undone | index($id)) | not))
+        | (.backups // [] | if type == "array" then . elif type == "object" then [.] else [] end)[]
+        | select(type == "object" and (.backup? != null))
+        | .backup // empty
+    ' "$ACFS_CHANGES_FILE" 2>/dev/null | awk 'NF' | sort -u
+}
+
 # Verify integrity of the state files
 verify_state_integrity() {
     log_debug "[INTEGRITY] Verifying state file integrity..."
@@ -367,24 +476,39 @@ verify_state_integrity() {
         done < "$ACFS_UNDOS_FILE"
     fi
 
-    # Verify backup files match their recorded checksums
+    # Verify active backup paths match their recorded checksums
     if [[ -f "$ACFS_CHANGES_FILE" ]]; then
         local backup_infos
-        backup_infos=$(jq -s '[.[].backups[]? | select(. != null)]' "$ACFS_CHANGES_FILE" 2>/dev/null)
+        local undone_ids_json="[]"
+        undone_ids_json="$(autofix_undone_ids_json)"
+        backup_infos=$(jq -s --argjson undone "$undone_ids_json" '
+            [
+              .[]
+              | select((.id // "") as $id | (($undone | index($id)) | not))
+              | (.backups // [] | if type == "array" then . elif type == "object" then [.] else [] end)[]
+              | select(type == "object" and (.backup? != null))
+            ]
+        ' "$ACFS_CHANGES_FILE" 2>/dev/null)
         if [[ -n "$backup_infos" ]] && [[ "$backup_infos" != "[]" ]]; then
             local backup_info backup_path expected_checksum actual_checksum
             while IFS= read -r backup_info; do
                 backup_path=$(echo "$backup_info" | jq -r '.backup')
                 expected_checksum=$(echo "$backup_info" | jq -r '.checksum')
 
-                if [[ -f "$backup_path" ]]; then
-                    actual_checksum=$(sha256sum "$backup_path" | cut -d' ' -f1)
+                if [[ -e "$backup_path" ]]; then
+                    actual_checksum=$(calculate_backup_checksum "$backup_path" 2>/dev/null || true)
+                    if [[ -z "$actual_checksum" ]]; then
+                        log_error "[INTEGRITY] Could not checksum backup path: $backup_path"
+                        ((errors++)) || true
+                        continue
+                    fi
                     if [[ "$actual_checksum" != "$expected_checksum" ]]; then
-                        log_error "[INTEGRITY] Backup file corrupted: $backup_path"
+                        log_error "[INTEGRITY] Backup path corrupted: $backup_path"
                         ((errors++)) || true
                     fi
                 else
-                    log_warn "[INTEGRITY] Backup file missing: $backup_path"
+                    log_error "[INTEGRITY] Backup path missing: $backup_path"
+                    ((errors++)) || true
                 fi
             done < <(echo "$backup_infos" | jq -c '.[]')
         fi
@@ -487,7 +611,7 @@ update_integrity_file() {
     fi
 
     if [[ -d "$ACFS_BACKUPS_DIR" ]]; then
-        backup_count=$(find "$ACFS_BACKUPS_DIR" -type f 2>/dev/null | wc -l)
+        backup_count=$(find "$ACFS_BACKUPS_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
     fi
 
     local integrity_record
@@ -630,16 +754,25 @@ calculate_backup_checksum() {
 create_backup() {
     local original_path="$1"
     local _reason="${2:-autofix}"  # Reserved for future use in backup metadata
+    local filename=""
+    local path_fingerprint=""
+    local backup_prefix=""
+    local backup_index=1
+    local backup_path=""
 
     if [[ ! -e "$original_path" ]]; then
         echo ""  # Return empty if file doesn't exist
         return 0
     fi
 
-    local filename
     filename=$(basename "$original_path")
-    local backup_name="${filename}.${ACFS_SESSION_ID}.backup"
-    local backup_path="${ACFS_BACKUPS_DIR}/${backup_name}"
+    path_fingerprint="$(autofix_path_fingerprint "$original_path" | cut -c1-12)"
+    backup_prefix="${filename}.${path_fingerprint}.${ACFS_SESSION_ID}"
+    backup_path="${ACFS_BACKUPS_DIR}/${backup_prefix}.${backup_index}.backup"
+    while [[ -e "$backup_path" ]]; do
+        backup_index=$((backup_index + 1))
+        backup_path="${ACFS_BACKUPS_DIR}/${backup_prefix}.${backup_index}.backup"
+    done
 
     # Copy with metadata preservation
     if [[ -d "$original_path" ]]; then
@@ -684,8 +817,8 @@ create_backup() {
         log_error "Backup verification failed: checksum mismatch"
         log_error "  Original: $original_checksum"
         log_error "  Backup:   $checksum"
-        if [[ -f "$backup_path" ]]; then
-            rm -f "$backup_path"
+        if [[ -e "$backup_path" ]]; then
+            rm -rf "$backup_path"
         fi
         return 1
     fi
@@ -750,6 +883,19 @@ record_change() {
     local files_json="${6:-[]}"  # JSON array of affected files
     local backups_json="${7:-[]}"  # JSON array from create_backup
     local depends_on="${8:-[]}"  # JSON array of dependency change IDs
+    local reversible="${9:-}"
+
+    backups_json="$(autofix_normalize_backups_json "$backups_json")" || {
+        log_error "Invalid backups JSON supplied for change: $description"
+        return 1
+    }
+    if [[ -z "$reversible" ]]; then
+        if autofix_is_manual_undo_command "$undo_command"; then
+            reversible="false"
+        else
+            reversible="true"
+        fi
+    fi
 
     # Ensure state is initialized
     if [[ "$ACFS_AUTOFIX_INITIALIZED" != "true" ]]; then
@@ -780,6 +926,7 @@ record_change() {
         --argjson backups "$backups_json" \
         --argjson deps "$depends_on" \
         --arg sess "$ACFS_SESSION_ID" \
+        --argjson reversible "$reversible" \
         '{
           id: $id,
           timestamp: $ts,
@@ -792,7 +939,7 @@ record_change() {
           backups: $backups,
           depends_on: $deps,
           session_id: $sess,
-          reversible: true,
+          reversible: $reversible,
           undone: false
         }')
 
@@ -894,6 +1041,16 @@ undo_change() {
 
     log_info "[UNDO] Reverting: $description"
 
+    if ! autofix_record_is_reversible "$record"; then
+        local manual_instructions=""
+        manual_instructions="$(autofix_manual_undo_instructions "$undo_cmd")"
+        log_error "Change $change_id is not automatically reversible"
+        if [[ -n "$manual_instructions" ]]; then
+            log_error "Manual undo instructions: $manual_instructions"
+        fi
+        return 1
+    fi
+
     # Verify backups are intact
     local backup
     while IFS= read -r backup; do
@@ -905,7 +1062,7 @@ undo_change() {
             fi
             log_warn "Forcing undo despite backup verification failure"
         fi
-    done < <(echo "$record" | jq -c '.backups[]?' 2>/dev/null)
+    done < <(echo "$record" | jq -c '(.backups // [] | if type == "array" then . elif type == "object" then [.] else [] end)[] | select(type == "object" and (.backup? != null))' 2>/dev/null)
 
     # Execute undo
     local undo_exit_code=0
@@ -1002,8 +1159,8 @@ print_undo_summary() {
     echo "========================================================================"
     echo ""
 
-    printf "%-10s %-12s %-50s\n" "ID" "Category" "Description"
-    printf "%-10s %-12s %-50s\n" "----------" "------------" "--------------------------------------------------"
+    printf "%-10s %-12s %-10s %-50s\n" "ID" "Category" "Status" "Description"
+    printf "%-10s %-12s %-10s %-50s\n" "----------" "------------" "----------" "--------------------------------------------------"
 
     for change_id in "${ACFS_CHANGE_ORDER[@]}"; do
         local record="${ACFS_CHANGE_RECORDS["$change_id"]}"
@@ -1011,7 +1168,11 @@ print_undo_summary() {
         desc=$(echo "$record" | jq -r '.description' | cut -c1-50)
         local cat
         cat=$(echo "$record" | jq -r '.category')
-        printf "%-10s %-12s %-50s\n" "$change_id" "$cat" "$desc"
+        local status="active"
+        if ! autofix_record_is_reversible "$record"; then
+            status="manual"
+        fi
+        printf "%-10s %-12s %-10s %-50s\n" "$change_id" "$cat" "$status" "$desc"
     done
 
     echo ""
@@ -1087,31 +1248,39 @@ acfs_undo_command() {
             return 0
         fi
         echo "Recorded changes:"
-        # Get list of undone change IDs from the undos file
-        local undone_ids=""
-        if [[ -f "$ACFS_UNDOS_FILE" ]] && [[ -s "$ACFS_UNDOS_FILE" ]]; then
-            undone_ids=$(jq -r '.undone // empty' "$ACFS_UNDOS_FILE" 2>/dev/null | sort -u | tr '\n' '|' | sed 's/|$//')
+        local undone_ids_json="[]"
+        local list_output=""
+        undone_ids_json="$(autofix_undone_ids_json)"
+        list_output="$(jq -r --argjson undone "$undone_ids_json" '
+            [
+              .id,
+              .category,
+              (
+                (.id // "") as $id
+                | ((.undo_command // "") | gsub("^\\s+"; "")) as $undo
+                | if ($undone | index($id)) then "undone"
+                  elif (((.reversible // true) == false) or ($undo == "") or ($undo | startswith("#"))) then "manual"
+                  else "active"
+                  end
+              ),
+              .description
+            ] | @tsv
+        ' "$ACFS_CHANGES_FILE")"
+        if command -v column >/dev/null 2>&1; then
+            printf '%s\n' "$list_output" | column -t -s $'\t'
+        else
+            printf '%s\n' "$list_output"
         fi
-        # Display changes with correct undo status by cross-referencing with undos file
-        jq -r '[.id, .category, .description] | join("\u001f")' "$ACFS_CHANGES_FILE" | while IFS=$'\x1f' read -r change_id category desc; do
-            [[ -z "$change_id" ]] && continue
-            local status
-            # Check if this change_id is in the undone list
-            if [[ -n "$undone_ids" ]] && echo "$change_id" | grep -qE "^($undone_ids)$"; then
-                status="undone"
-            else
-                status="active"
-            fi
-            printf "%s\t%s\t%s\t%s\n" "$change_id" "$category" "$desc" "$status"
-        done | column -t -s $'\t'
         return 0
     fi
 
     # Build list of changes to undo
+    local undone_ids_json="[]"
+    undone_ids_json="$(autofix_undone_ids_json)"
     if [[ "$all" == "true" ]]; then
-        mapfile -t change_ids < <(jq -r '.id' "$ACFS_CHANGES_FILE" | sort -r)
+        mapfile -t change_ids < <(jq -r --argjson undone "$undone_ids_json" 'select((.id // "") as $id | (($undone | index($id)) | not)) | .id' "$ACFS_CHANGES_FILE" | sort -r)
     elif [[ -n "$category" ]]; then
-        mapfile -t change_ids < <(jq -r "select(.category == \"$category\") | .id" "$ACFS_CHANGES_FILE" | sort -r)
+        mapfile -t change_ids < <(jq -r --argjson undone "$undone_ids_json" --arg category "$category" 'select((.id // "") as $id | (($undone | index($id)) | not)) | select(.category == $category) | .id' "$ACFS_CHANGES_FILE" | sort -r)
     fi
 
     if [[ ${#change_ids[@]} -eq 0 ]]; then
@@ -1130,7 +1299,13 @@ acfs_undo_command() {
             local undo
             undo=$(echo "$record" | jq -r '.undo_command')
             echo "  $change_id: $desc"
-            echo "    Command: $undo"
+            if autofix_record_is_reversible "$record"; then
+                echo "    Command: $undo"
+            else
+                local instructions=""
+                instructions="$(autofix_manual_undo_instructions "$undo")"
+                echo "    Manual: ${instructions:-No automatic undo available}"
+            fi
         done
         return 0
     fi
@@ -1166,16 +1341,26 @@ acfs_undo_command() {
 # Remove backups older than N days
 cleanup_old_backups() {
     local days="${1:-30}"
+    local backup_entry=""
+    local -A active_backup_set=()
 
     log_info "Cleaning up backups older than $days days..."
 
-    local deleted=0
-    while IFS= read -r -d '' file; do
-        rm -f "$file"
-        ((deleted++)) || true
-    done < <(find "$ACFS_BACKUPS_DIR" -type f -mtime +"$days" -print0 2>/dev/null)
+    while IFS= read -r backup_entry; do
+        [[ -n "$backup_entry" ]] || continue
+        active_backup_set["$backup_entry"]=1
+    done < <(autofix_active_backup_paths 2>/dev/null || true)
 
-    log_info "Deleted $deleted old backup files"
+    local deleted=0
+    while IFS= read -r -d '' backup_entry; do
+        if [[ -n "${active_backup_set[$backup_entry]:-}" ]]; then
+            continue
+        fi
+        rm -rf "$backup_entry"
+        ((deleted++)) || true
+    done < <(find "$ACFS_BACKUPS_DIR" -mindepth 1 -maxdepth 1 -mtime +"$days" -print0 2>/dev/null)
+
+    log_info "Deleted $deleted old backup entries"
 
     # Update integrity file after cleanup
     update_integrity_file

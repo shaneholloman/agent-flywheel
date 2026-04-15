@@ -318,8 +318,10 @@ fix_path_ordering() {
 
     # Create backup
     local backup_json=""
+    local restore_command=""
     if [[ -f "$target_file" ]]; then
         backup_json=$(create_backup "$target_file" "path-ordering")
+        restore_command="$(autofix_backup_restore_command "$backup_json" 2>/dev/null || true)"
     fi
 
     # Apply fix
@@ -331,8 +333,8 @@ fix_path_ordering() {
 
     # Record change
     record_change "path" "Added PATH ordering to $target_file" \
-        "sed -i '/$marker/,+1d' '$target_file'" \
-        false "info" "[\"$target_file\"]" "${backup_json:-[]}" "[]" >/dev/null
+        "${restore_command:-sed -i '/$marker/,+1d' '$target_file'}" \
+        false "info" "[\"$target_file\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]" >/dev/null
 
     doctor_fix_log INFO "Added PATH ordering to $target_file"
     FIXES_APPLIED+=("fix.path.ordering|Added PATH ordering to $target_file")
@@ -590,8 +592,10 @@ fix_acfs_sourcing() {
 
     # Create backup
     local backup_json=""
+    local restore_command=""
     if [[ -f "$zshrc" ]]; then
         backup_json=$(create_backup "$zshrc" "acfs-sourcing")
+        restore_command="$(autofix_backup_restore_command "$backup_json" 2>/dev/null || true)"
     fi
 
     # Append sourcing line
@@ -603,8 +607,8 @@ fix_acfs_sourcing() {
 
     # Record change
     record_change "config" "Added ACFS sourcing to .zshrc" \
-        "sed -i '/$marker/,+1d' '$zshrc'" \
-        false "info" "[\"$zshrc\"]" "${backup_json:-[]}" "[]" >/dev/null
+        "${restore_command:-sed -i '/$marker/,+1d' '$zshrc'}" \
+        false "info" "[\"$zshrc\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]" >/dev/null
 
     doctor_fix_log INFO "Added ACFS sourcing to .zshrc"
     FIXES_APPLIED+=("fix.acfs.sourcing|Added ACFS sourcing to .zshrc")
@@ -900,8 +904,10 @@ fix_ssh_keepalive() {
 
     # Create backup
     local backup_json=""
+    local restore_command=""
     if [[ -f "$sshd_config" ]]; then
         backup_json=$(create_backup "$sshd_config" "ssh-keepalive")
+        restore_command="$(autofix_backup_restore_command "$backup_json" 2>/dev/null || true)"
     fi
 
     # Apply settings
@@ -914,6 +920,10 @@ fix_ssh_keepalive() {
 
     # Restart sshd to apply
     $sudo_cmd systemctl reload ssh 2>/dev/null || $sudo_cmd systemctl reload sshd 2>/dev/null || true
+
+    record_change "config" "Configured SSH keepalive in $sshd_config" \
+        "${restore_command:-# Restore $sshd_config from its backup manually if needed}" \
+        true "info" "[\"$sshd_config\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]" >/dev/null
 
     doctor_fix_log INFO "Configured SSH keepalive (ClientAliveInterval 60, ClientAliveCountMax 3)"
     FIXES_APPLIED+=("fix.ssh.keepalive|Configured SSH keepalive settings")
