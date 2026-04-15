@@ -622,6 +622,93 @@ EOF
     assert_success
 }
 
+@test "run-as-user helper libs validate target context and preserve repaired env" {
+    local cli_tools="$PROJECT_ROOT/scripts/lib/cli_tools.sh"
+    local agents="$PROJECT_ROOT/scripts/lib/agents.sh"
+    local languages="$PROJECT_ROOT/scripts/lib/languages.sh"
+    local cloud_db="$PROJECT_ROOT/scripts/lib/cloud_db.sh"
+    local stack="$PROJECT_ROOT/scripts/lib/stack.sh"
+
+    run grep -F '_cli_validate_target_user "$target_user" || return 1' "$cli_tools"
+    assert_success
+    run grep -F 'wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"' "$cli_tools"
+    assert_success
+    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"' "$cli_tools"
+    assert_success
+
+    run grep -F '_agent_validate_target_user "$target_user" || return 1' "$agents"
+    assert_success
+    run grep -F 'wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"' "$agents"
+    assert_success
+    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"' "$agents"
+    assert_success
+
+    run grep -F '_lang_validate_target_user "$target_user" || return 1' "$languages"
+    assert_success
+    run grep -F 'wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"' "$languages"
+    assert_success
+    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"' "$languages"
+    assert_success
+
+    run grep -F '_cloud_validate_target_user "$target_user" || return 1' "$cloud_db"
+    assert_success
+    run grep -F 'wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"' "$cloud_db"
+    assert_success
+    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"' "$cloud_db"
+    assert_success
+
+    run grep -F '_stack_validate_target_user "$target_user" || return 1' "$stack"
+    assert_success
+}
+
+@test "run-as-user helper libs reject invalid TARGET_USER before sudo" {
+    export TARGET_USER="../bad user"
+    export TARGET_HOME="/home/tester"
+    export ACFS_BIN_DIR="/home/tester/.local/bin"
+
+    source_lib "cli_tools"
+    spy_command "sudo"
+    run _cli_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_USER '../bad user'"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_cli_run_as_user should not invoke sudo for invalid TARGET_USER"
+
+    source_lib "agents"
+    : > "$STUB_DIR/sudo.log"
+    run _agent_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_USER '../bad user'"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_agent_run_as_user should not invoke sudo for invalid TARGET_USER"
+
+    source_lib "languages"
+    : > "$STUB_DIR/sudo.log"
+    run _lang_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_USER '../bad user'"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_lang_run_as_user should not invoke sudo for invalid TARGET_USER"
+
+    source_lib "cloud_db"
+    : > "$STUB_DIR/sudo.log"
+    run _cloud_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_USER '../bad user'"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_cloud_run_as_user should not invoke sudo for invalid TARGET_USER"
+
+    source_lib "stack"
+    : > "$STUB_DIR/sudo.log"
+    run _stack_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_USER '../bad user'"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_stack_run_as_user should not invoke sudo for invalid TARGET_USER"
+}
+
+@test "cloud_db username validation accepts dotted target usernames" {
+    source_lib "cloud_db"
+
+    run _cloud_validate_username "john.doe"
+    assert_success
+}
+
 @test "install and update deploy all acfs doctor-dispatched runtime scripts" {
     local installer="$PROJECT_ROOT/install.sh"
     local update="$PROJECT_ROOT/scripts/lib/update.sh"

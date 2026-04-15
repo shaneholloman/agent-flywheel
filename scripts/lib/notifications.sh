@@ -14,7 +14,76 @@ set -euo pipefail
 # ============================================================
 # Constants
 # ============================================================
-ACFS_CONFIG_DIR="${HOME}/.config/acfs"
+# Prefer an explicit valid TARGET_HOME when present so copied entrypoints and
+# root-run installs manipulate the target user's notification config rather
+# than a caller HOME override or relative-home trap.
+notifications_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+notifications_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(notifications_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            home_candidate="$(notifications_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+            printf '/home/%s\n' "$current_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+notifications_runtime_home() {
+    local target_home=""
+
+    target_home="$(notifications_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "$target_home"
+        return 0
+    fi
+
+    notifications_resolve_current_home
+}
+
+_ACFS_NOTIFICATIONS_RUNTIME_HOME="$(notifications_runtime_home 2>/dev/null || true)"
+
+if [[ -n "$_ACFS_NOTIFICATIONS_RUNTIME_HOME" ]]; then
+    ACFS_CONFIG_DIR="${_ACFS_NOTIFICATIONS_RUNTIME_HOME}/.config/acfs"
+else
+    ACFS_CONFIG_DIR="${HOME}/.config/acfs"
+fi
 ACFS_CONFIG_FILE="${ACFS_CONFIG_DIR}/config.yaml"
 ACFS_NTFY_SERVER_DEFAULT="https://ntfy.sh"
 

@@ -82,11 +82,64 @@ _lang_target_home() {
     return 1
 }
 
+_lang_validate_target_user() {
+    local username="${1:-${TARGET_USER:-}}"
+    local display="${username:-<empty>}"
+
+    if [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        return 0
+    fi
+
+    log_error "Invalid TARGET_USER '$display' (expected: lowercase user name like 'ubuntu')"
+    return 1
+}
+
 # Run a command as target user
 _lang_run_as_user() {
     local target_user="${TARGET_USER:-ubuntu}"
+    local target_home=""
+    local target_path_prefix=""
     local cmd="$1"
-    local wrapped_cmd="set -o pipefail; $cmd"
+    local target_user_q=""
+    local target_home_q=""
+    local target_path_prefix_q=""
+    local acfs_home_q=""
+    local acfs_bin_dir_q=""
+    local wrapped_cmd=""
+
+    _lang_validate_target_user "$target_user" || return 1
+
+    target_home="$(_lang_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -z "$target_home" ]] || [[ "$target_home" == "/" ]] || [[ "$target_home" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '$target_user': ${target_home:-<empty>} (must be an absolute path and cannot be '/')"
+        return 1
+    fi
+
+    if [[ -n "${ACFS_BIN_DIR:-}" ]] && { [[ "${ACFS_BIN_DIR}" == "/" ]] || [[ "${ACFS_BIN_DIR}" != /* ]]; }; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
+        return 1
+    fi
+
+    target_path_prefix="${ACFS_BIN_DIR:-$target_home/.local/bin}:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
+
+    printf -v target_user_q '%q' "$target_user"
+    printf -v target_home_q '%q' "$target_home"
+    printf -v target_path_prefix_q '%q' "$target_path_prefix"
+    if [[ -n "${ACFS_HOME:-}" ]]; then
+        printf -v acfs_home_q '%q' "$ACFS_HOME"
+    fi
+    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
+        printf -v acfs_bin_dir_q '%q' "$ACFS_BIN_DIR"
+    fi
+
+    wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"
+    if [[ -n "$acfs_home_q" ]]; then
+        wrapped_cmd+=" export ACFS_HOME=$acfs_home_q;"
+    fi
+    if [[ -n "$acfs_bin_dir_q" ]]; then
+        wrapped_cmd+=" export ACFS_BIN_DIR=$acfs_bin_dir_q;"
+    fi
+    wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"
 
     if [[ "$(whoami)" == "$target_user" ]]; then
         bash -c "$wrapped_cmd"

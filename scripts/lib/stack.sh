@@ -135,6 +135,18 @@ _stack_target_home() {
     return 1
 }
 
+_stack_validate_target_user() {
+    local username="${1:-${TARGET_USER:-}}"
+    local display="${username:-<empty>}"
+
+    if [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        return 0
+    fi
+
+    log_error "Invalid TARGET_USER '$display' (expected: lowercase user name like 'ubuntu')"
+    return 1
+}
+
 _stack_trim_ascii_whitespace() {
     local value="${1:-}"
     value="${value#"${value%%[![:space:]]*}"}"
@@ -287,7 +299,16 @@ _stack_agent_mail_readiness() {
 _stack_run_as_user() {
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home=""
-    target_home="$(_stack_target_home "$target_user")"
+    _stack_validate_target_user "$target_user" || return 1
+    target_home="$(_stack_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -z "$target_home" ]] || [[ "$target_home" == "/" ]] || [[ "$target_home" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '$target_user': ${target_home:-<empty>} (must be an absolute path and cannot be '/')"
+        return 1
+    fi
+    if [[ -n "${ACFS_BIN_DIR:-}" ]] && { [[ "${ACFS_BIN_DIR}" == "/" ]] || [[ "${ACFS_BIN_DIR}" != /* ]]; }; then
+        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
+        return 1
+    fi
     local target_path_prefix="${ACFS_BIN_DIR:-$target_home/.local/bin}:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
     local cmd="$1"
     local target_user_q=""

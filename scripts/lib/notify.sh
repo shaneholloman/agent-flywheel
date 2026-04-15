@@ -31,8 +31,77 @@ _ACFS_NOTIFY_SH_LOADED=1
 # Default ntfy server
 ACFS_NTFY_SERVER_DEFAULT="https://ntfy.sh"
 
+# Runtime-home helpers. Prefer an explicit valid TARGET_HOME when available so
+# root-run installs and copied entrypoints read/write per-user config/state in
+# the actual install home rather than the caller's raw HOME.
+_acfs_notify_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+_acfs_notify_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(_acfs_notify_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            home_candidate="$(_acfs_notify_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+            printf '/home/%s\n' "$current_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+_acfs_notify_runtime_home() {
+    local target_home=""
+
+    target_home="$(_acfs_notify_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "$target_home"
+        return 0
+    fi
+
+    _acfs_notify_resolve_current_home
+}
+
+_ACFS_NOTIFY_RUNTIME_HOME="$(_acfs_notify_runtime_home 2>/dev/null || true)"
+
 # Rate-limit state directory (per-user)
-_ACFS_NOTIFY_STATE_DIR="${HOME}/.cache/acfs/notify"
+if [[ -n "$_ACFS_NOTIFY_RUNTIME_HOME" ]]; then
+    _ACFS_NOTIFY_STATE_DIR="${_ACFS_NOTIFY_RUNTIME_HOME}/.cache/acfs/notify"
+else
+    _ACFS_NOTIFY_STATE_DIR="${HOME}/.cache/acfs/notify"
+fi
 
 # Minimum seconds between notifications with the same debounce key.
 # Override with ACFS_NTFY_DEBOUNCE_SECONDS (default: 30).
@@ -47,12 +116,13 @@ _ACFS_NOTIFY_DEBOUNCE_SECONDS="${ACFS_NTFY_DEBOUNCE_SECONDS:-30}"
 # Returns: value on stdout, or empty string
 _acfs_notify_config_read() {
     local key="$1"
-    local config_file="${HOME}/.config/acfs/config.yaml"
+    local config_home="${_ACFS_NOTIFY_RUNTIME_HOME:-}"
+    local config_file=""
 
-    # Also check target user's config if running as root
-    if [[ "$(id -u)" -eq 0 ]] && [[ -n "${TARGET_HOME:-}" ]]; then
-        config_file="${TARGET_HOME}/.config/acfs/config.yaml"
+    if [[ -z "$config_home" ]]; then
+        return 0
     fi
+    config_file="${config_home}/.config/acfs/config.yaml"
 
     if [[ ! -f "$config_file" ]]; then
         return 0

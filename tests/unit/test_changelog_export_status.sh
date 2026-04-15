@@ -21,6 +21,9 @@ STATE_SH="$REPO_ROOT/scripts/lib/state.sh"
 SMOKE_TEST_SH="$REPO_ROOT/scripts/lib/smoke_test.sh"
 ONBOARD_SH="$REPO_ROOT/packages/onboard/onboard.sh"
 SERVICES_SETUP_SH="$REPO_ROOT/scripts/services-setup.sh"
+NOTIFY_SH="$REPO_ROOT/scripts/lib/notify.sh"
+WEBHOOK_SH="$REPO_ROOT/scripts/lib/webhook.sh"
+NOTIFICATIONS_SH="$REPO_ROOT/scripts/lib/notifications.sh"
 
 source "$REPO_ROOT/tests/vm/lib/test_harness.sh"
 
@@ -617,6 +620,94 @@ EOF
         harness_pass "services-setup rejects invalid TARGET_USER before sudo"
     else
         harness_fail "services-setup rejects invalid TARGET_USER before sudo" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_notify_uses_target_home_for_config_and_state_when_home_is_relative() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/notify-target"
+    mkdir -p "$target_home/.config/acfs"
+
+    cat > "$target_home/.config/acfs/config.yaml" <<'EOF'
+ntfy_topic: target-topic
+EOF
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="relative-home" TARGET_HOME="$target_home" \
+        bash -c '
+            log_warn() { :; }
+            log_detail() { :; }
+            unset _ACFS_NOTIFY_SH_LOADED
+            source "$1"
+            printf "topic=%s\n" "$(_acfs_notify_config_read ntfy_topic)"
+            printf "state=%s\n" "${_ACFS_NOTIFY_STATE_DIR:-}"
+        ' _ "$NOTIFY_SH" 2>&1)
+
+    if [[ "$output" == *"topic=target-topic"* ]] \
+        && [[ "$output" == *"state=$target_home/.cache/acfs/notify"* ]]; then
+        harness_pass "notify uses target_home for config and state when HOME is relative"
+    else
+        harness_fail "notify uses target_home for config and state when HOME is relative" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_webhook_reads_config_from_target_home_when_home_is_relative() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/webhook-target"
+    mkdir -p "$target_home/.config/acfs"
+
+    cat > "$target_home/.config/acfs/config.yaml" <<'EOF'
+webhook_url: "https://example.com/hook"
+EOF
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="relative-home" TARGET_HOME="$target_home" \
+        bash -c '
+            log_warn() { :; }
+            log_detail() { :; }
+            unset _ACFS_WEBHOOK_SH_LOADED ACFS_WEBHOOK_URL
+            source "$1"
+            webhook_read_config
+            printf "%s\n" "${ACFS_WEBHOOK_URL:-}"
+        ' _ "$WEBHOOK_SH" 2>&1)
+
+    if [[ "$output" == "https://example.com/hook" ]]; then
+        harness_pass "webhook reads config from target_home when HOME is relative"
+    else
+        harness_fail "webhook reads config from target_home when HOME is relative" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_notifications_cli_uses_target_home_when_home_is_relative() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/notifications-target"
+    mkdir -p "$target_home/.config/acfs"
+
+    cat > "$target_home/.config/acfs/config.yaml" <<'EOF'
+ntfy_enabled: true
+ntfy_topic: cli-topic
+ntfy_server: https://ntfy.example
+EOF
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="relative-home" TARGET_HOME="$target_home" \
+        bash "$NOTIFICATIONS_SH" status 2>&1)
+
+    if [[ "$output" == *"Topic:         cli-topic"* ]] \
+        && [[ "$output" == *"Server:        https://ntfy.example"* ]] \
+        && [[ "$output" == *"Config file:   $target_home/.config/acfs/config.yaml"* ]]; then
+        harness_pass "notifications CLI uses target_home when HOME is relative"
+    else
+        harness_fail "notifications CLI uses target_home when HOME is relative" "$output"
     fi
 
     cleanup_mock_env
@@ -2957,6 +3048,11 @@ main() {
     test_services_setup_prefers_target_home_libs_under_root_home || true
     test_services_setup_runs_target_user_commands_with_target_home || true
     test_services_setup_rejects_invalid_target_user_before_sudo || true
+
+    harness_section "Notification Helpers"
+    test_notify_uses_target_home_for_config_and_state_when_home_is_relative || true
+    test_webhook_reads_config_from_target_home_when_home_is_relative || true
+    test_notifications_cli_uses_target_home_when_home_is_relative || true
 
     harness_section "Export Config"
     test_export_config_json_is_valid || true

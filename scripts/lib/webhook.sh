@@ -24,6 +24,68 @@ _ACFS_WEBHOOK_SH_LOADED=1
 # Global webhook URL - set by parse_webhook_args or read_webhook_config
 ACFS_WEBHOOK_URL="${ACFS_WEBHOOK_URL:-}"
 
+webhook_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+webhook_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(webhook_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            home_candidate="$(webhook_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+            printf '/home/%s\n' "$current_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+webhook_runtime_home() {
+    local target_home=""
+
+    target_home="$(webhook_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "$target_home"
+        return 0
+    fi
+
+    webhook_resolve_current_home
+}
+
+_ACFS_WEBHOOK_RUNTIME_HOME="$(webhook_runtime_home 2>/dev/null || true)"
+
 # ============================================================
 # Webhook URL Validation
 # ============================================================
@@ -67,12 +129,13 @@ webhook_read_config() {
         return 0
     fi
 
-    local config_file="${HOME}/.config/acfs/config.yaml"
+    local config_home="${_ACFS_WEBHOOK_RUNTIME_HOME:-}"
+    local config_file=""
 
-    # Also check target user's config if running as root
-    if [[ "$(id -u)" -eq 0 ]] && [[ -n "${TARGET_HOME:-}" ]]; then
-        config_file="${TARGET_HOME}/.config/acfs/config.yaml"
+    if [[ -z "$config_home" ]]; then
+        return 0
     fi
+    config_file="${config_home}/.config/acfs/config.yaml"
 
     if [[ ! -f "$config_file" ]]; then
         return 0
