@@ -595,6 +595,7 @@ clean_shell_configs() {
     local restore_command=""
     local temp_file=""
     local orig_mode=""
+    local grep_exit=0
     local failed=0
 
     while IFS= read -r config; do
@@ -624,7 +625,9 @@ clean_shell_configs() {
                 # Preserve original permissions by copying mode
                 orig_mode=$(stat -c '%a' "$config" 2>/dev/null || stat -f '%Lp' "$config" 2>/dev/null)
 
-                if ! grep -vE '# ACFS|\.acfs|acfs_' "$config" > "$temp_file"; then
+                grep_exit=0
+                grep -vE '# ACFS|\.acfs|acfs_' "$config" > "$temp_file" || grep_exit=$?
+                if [[ $grep_exit -ne 0 && $grep_exit -ne 1 ]]; then
                     log_error "[CLEAN] Failed to filter ACFS entries from $config"
                     rm -f "$temp_file" 2>/dev/null || true
                     failed=1
