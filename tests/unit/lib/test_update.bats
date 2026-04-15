@@ -574,9 +574,9 @@ EOF
     run grep -F '%h/.acfs/bin:%h/.local/bin:%h/.cargo/bin:%h/.bun/bin:%h/.atuin/bin:%h/go/bin' "$service_template"
     assert_success
 
-    run grep -F 'env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")' "$global_wrapper"
+    run grep -F '[[ -n "$sanitized_bin_dir" ]] && env_args+=("ACFS_BIN_DIR=$sanitized_bin_dir")' "$global_wrapper"
     assert_success
-    run grep -F 'env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")' "$update_wrapper"
+    run grep -F '[[ -n "$sanitized_bin_dir" ]] && env_args+=("ACFS_BIN_DIR=$sanitized_bin_dir")' "$update_wrapper"
     assert_success
 }
 
