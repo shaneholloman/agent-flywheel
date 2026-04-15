@@ -16,8 +16,50 @@
 
 set -euo pipefail
 
+sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+
+    home_candidate="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]]; then
+        home_candidate="$(getent passwd "$current_user" 2>/dev/null | cut -d: -f6 | head -n 1)" || true
+        home_candidate="$(sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 # Resolve home directory (systemd %h may not set HOME reliably)
-HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
+HOME="$(resolve_current_home)" || {
+    echo "ERROR: Unable to resolve a valid HOME for nightly update" >&2
+    exit 1
+}
 export HOME
 
 read_bin_dir_from_state_file() {
@@ -52,6 +94,9 @@ for state_candidate in \
     export ACFS_STATE_FILE ACFS_BIN_DIR
     break
 done
+
+ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+export ACFS_BIN_DIR
 
 PATH_PREFIX=""
 if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
