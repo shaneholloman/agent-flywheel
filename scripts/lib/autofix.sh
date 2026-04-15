@@ -217,6 +217,47 @@ PYEOF
     return 0
 }
 
+autofix_sync_backup_path() {
+    local target_path="$1"
+    local path_type=""
+    local entry=""
+    local dir_entry=""
+    local parent_dir=""
+
+    path_type="$(autofix_detect_path_type "$target_path" 2>/dev/null || true)"
+
+    case "$path_type" in
+        file)
+            fsync_file "$target_path"
+            return $?
+            ;;
+        symlink)
+            parent_dir="$(dirname "$target_path")"
+            fsync_directory "$parent_dir"
+            return $?
+            ;;
+        directory)
+            while IFS= read -r -d '' entry; do
+                if ! fsync_file "$entry"; then
+                    return 1
+                fi
+            done < <(find -P "$target_path" -type f -print0 2>/dev/null)
+
+            while IFS= read -r -d '' dir_entry; do
+                if ! fsync_directory "$dir_entry"; then
+                    return 1
+                fi
+            done < <(find -P "$target_path" -depth -type d -print0 2>/dev/null)
+
+            parent_dir="$(dirname "$target_path")"
+            fsync_directory "$parent_dir"
+            return $?
+            ;;
+    esac
+
+    return 1
+}
+
 # Atomically write content to a file with fsync
 write_atomic() {
     local target_file="$1"
@@ -332,6 +373,38 @@ autofix_path_fingerprint() {
     fi
 
     cksum <<<"$input" | awk '{print $1}'
+}
+
+autofix_detect_path_type() {
+    local target_path="$1"
+
+    if [[ -L "$target_path" ]]; then
+        printf 'symlink\n'
+        return 0
+    fi
+
+    if [[ -d "$target_path" ]]; then
+        printf 'directory\n'
+        return 0
+    fi
+
+    if [[ -f "$target_path" ]]; then
+        printf 'file\n'
+        return 0
+    fi
+
+    if [[ -e "$target_path" ]]; then
+        printf 'other\n'
+        return 0
+    fi
+
+    printf 'missing\n'
+    return 1
+}
+
+autofix_path_exists() {
+    local target_path="$1"
+    [[ -e "$target_path" || -L "$target_path" ]]
 }
 
 autofix_trim_leading_whitespace() {
@@ -490,24 +563,9 @@ verify_state_integrity() {
             ]
         ' "$ACFS_CHANGES_FILE" 2>/dev/null)
         if [[ -n "$backup_infos" ]] && [[ "$backup_infos" != "[]" ]]; then
-            local backup_info backup_path expected_checksum actual_checksum
+            local backup_info
             while IFS= read -r backup_info; do
-                backup_path=$(echo "$backup_info" | jq -r '.backup')
-                expected_checksum=$(echo "$backup_info" | jq -r '.checksum')
-
-                if [[ -e "$backup_path" ]]; then
-                    actual_checksum=$(calculate_backup_checksum "$backup_path" 2>/dev/null || true)
-                    if [[ -z "$actual_checksum" ]]; then
-                        log_error "[INTEGRITY] Could not checksum backup path: $backup_path"
-                        ((errors++)) || true
-                        continue
-                    fi
-                    if [[ "$actual_checksum" != "$expected_checksum" ]]; then
-                        log_error "[INTEGRITY] Backup path corrupted: $backup_path"
-                        ((errors++)) || true
-                    fi
-                else
-                    log_error "[INTEGRITY] Backup path missing: $backup_path"
+                if ! verify_backup_integrity "$backup_info"; then
                     ((errors++)) || true
                 fi
             done < <(echo "$backup_infos" | jq -c '.[]')
@@ -721,6 +779,17 @@ end_autofix_session() {
 # Calculate a deterministic checksum for a file or directory path
 calculate_backup_checksum() {
     local target_path="$1"
+    local path_type=""
+    local symlink_target=""
+
+    path_type="$(autofix_detect_path_type "$target_path" 2>/dev/null || true)"
+
+    if [[ "$path_type" == "symlink" ]]; then
+        symlink_target="$(readlink "$target_path" 2>/dev/null || true)"
+        [[ -n "$symlink_target" ]] || return 1
+        autofix_path_fingerprint "symlink:$symlink_target"
+        return 0
+    fi
 
     if [[ -f "$target_path" ]]; then
         if command -v sha256sum &>/dev/null; then
@@ -755,29 +824,31 @@ create_backup() {
     local original_path="$1"
     local _reason="${2:-autofix}"  # Reserved for future use in backup metadata
     local filename=""
+    local path_type=""
     local path_fingerprint=""
     local backup_prefix=""
     local backup_index=1
     local backup_path=""
 
-    if [[ ! -e "$original_path" ]]; then
+    if ! autofix_path_exists "$original_path"; then
         echo ""  # Return empty if file doesn't exist
         return 0
     fi
 
     filename=$(basename "$original_path")
+    path_type="$(autofix_detect_path_type "$original_path" 2>/dev/null || true)"
     path_fingerprint="$(autofix_path_fingerprint "$original_path" | cut -c1-12)"
     backup_prefix="${filename}.${path_fingerprint}.${ACFS_SESSION_ID}"
     backup_path="${ACFS_BACKUPS_DIR}/${backup_prefix}.${backup_index}.backup"
-    while [[ -e "$backup_path" ]]; do
+    while autofix_path_exists "$backup_path"; do
         backup_index=$((backup_index + 1))
         backup_path="${ACFS_BACKUPS_DIR}/${backup_prefix}.${backup_index}.backup"
     done
 
     # Copy with metadata preservation
-    if [[ -d "$original_path" ]]; then
+    if [[ "$path_type" == "directory" || "$path_type" == "symlink" ]]; then
         cp -a "$original_path" "$backup_path" || {
-            log_error "Failed to create directory backup: $original_path"
+            log_error "Failed to create $path_type backup: $original_path"
             return 1
         }
     else
@@ -788,16 +859,10 @@ create_backup() {
     fi
 
     # Explicit fsync to ensure backup is durable
-    if [[ -f "$backup_path" ]]; then
-        if ! fsync_file "$backup_path"; then
-            log_error "Failed to fsync backup file: $backup_path"
-            rm -f "$backup_path"
-            return 1
-        fi
-    elif [[ -d "$backup_path" ]]; then
-        if ! fsync_directory "$backup_path"; then
-            log_warn "Failed to fsync backup directory metadata: $backup_path"
-        fi
+    if ! autofix_sync_backup_path "$backup_path"; then
+        log_error "Failed to fsync backup path: $backup_path"
+        rm -rf "$backup_path" 2>/dev/null || true
+        return 1
     fi
 
     # Compute checksum for verification
@@ -817,7 +882,7 @@ create_backup() {
         log_error "Backup verification failed: checksum mismatch"
         log_error "  Original: $original_checksum"
         log_error "  Backup:   $checksum"
-        if [[ -e "$backup_path" ]]; then
+        if autofix_path_exists "$backup_path"; then
             rm -rf "$backup_path"
         fi
         return 1
@@ -829,9 +894,10 @@ create_backup() {
     jq -cn \
         --arg orig "$original_path" \
         --arg back "$backup_path" \
+        --arg type "$path_type" \
         --arg sum "$checksum" \
         --arg ts "$(date -Iseconds)" \
-        '{original: $orig, backup: $back, checksum: $sum, created_at: $ts}'
+        '{original: $orig, backup: $back, path_type: $type, checksum: $sum, created_at: $ts}'
 }
 
 # Verify a backup file's integrity
@@ -840,10 +906,12 @@ verify_backup_integrity() {
 
     local backup_path
     backup_path=$(echo "$backup_json" | jq -r '.backup')
+    local expected_path_type
+    expected_path_type=$(echo "$backup_json" | jq -r '.path_type // empty')
     local expected_checksum
     expected_checksum=$(echo "$backup_json" | jq -r '.checksum')
 
-    if [[ ! -e "$backup_path" ]]; then
+    if ! autofix_path_exists "$backup_path"; then
         log_error "Backup file missing: $backup_path"
         return 1
     fi
@@ -851,6 +919,17 @@ verify_backup_integrity() {
     if [[ -z "$expected_checksum" ]] || [[ "$expected_checksum" == "null" ]]; then
         log_warn "Backup checksum missing for: $backup_path"
         return 0
+    fi
+
+    if [[ -n "$expected_path_type" ]]; then
+        local actual_path_type=""
+        actual_path_type="$(autofix_detect_path_type "$backup_path" 2>/dev/null || true)"
+        if [[ "$actual_path_type" != "$expected_path_type" ]]; then
+            log_error "Backup type mismatch: $backup_path"
+            log_error "  Expected: $expected_path_type"
+            log_error "  Actual:   ${actual_path_type:-missing}"
+            return 1
+        fi
     fi
 
     local actual_checksum

@@ -226,6 +226,221 @@ test_backup_creation_uses_unique_paths_per_session() {
     return 0
 }
 
+# Test: Symlink backups preserve link type and fail integrity if rewritten as files
+test_backup_creation_preserves_symlink_type() {
+    setup_test_env
+
+    local test_dir="/tmp/test_backup_symlink_${$}"
+    local test_target="$test_dir/target"
+    local test_link="$test_dir/link"
+    mkdir -p "$test_dir"
+    printf 'original target\n' > "$test_target"
+    ln -s "$test_target" "$test_link"
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json backup_path backup_type
+    backup_json=$(create_backup "$test_link" "test")
+    backup_path=$(echo "$backup_json" | jq -r '.backup')
+    backup_type=$(echo "$backup_json" | jq -r '.path_type')
+
+    if [[ "$backup_type" != "symlink" ]]; then
+        echo "  Backup path type mismatch: expected symlink, got $backup_type"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -L "$backup_path" ]]; then
+        echo "  Backup path is not a symlink: $backup_path"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! verify_backup_integrity "$backup_json"; then
+        echo "  Symlink backup integrity check failed"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$backup_path"
+    printf 'not a symlink anymore\n' > "$backup_path"
+    if verify_backup_integrity "$backup_json" >/dev/null 2>&1; then
+        echo "  Symlink backup integrity accepted a rewritten regular file"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -rf "$test_dir"
+    cleanup_test_env
+    return 0
+}
+
+# Test: Broken symlink backups are preserved and verified as symlinks
+test_backup_creation_preserves_broken_symlink_type() {
+    setup_test_env
+
+    local test_dir="/tmp/test_backup_broken_symlink_${$}"
+    local missing_target="$test_dir/missing-target"
+    local test_link="$test_dir/link"
+    mkdir -p "$test_dir"
+    ln -s "$missing_target" "$test_link"
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json backup_path backup_type
+    backup_json=$(create_backup "$test_link" "test")
+    if [[ -z "$backup_json" ]]; then
+        echo "  No backup JSON returned for broken symlink"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    backup_path=$(echo "$backup_json" | jq -r '.backup')
+    backup_type=$(echo "$backup_json" | jq -r '.path_type')
+
+    if [[ "$backup_type" != "symlink" ]]; then
+        echo "  Broken symlink backup type mismatch: expected symlink, got $backup_type"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -L "$backup_path" ]]; then
+        echo "  Broken symlink backup path is not a symlink: $backup_path"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! verify_backup_integrity "$backup_json"; then
+        echo "  Broken symlink backup integrity check failed"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -rf "$test_dir"
+    cleanup_test_env
+    return 0
+}
+
+# Test: Broken symlink backups fsync the backup parent directory, not a missing target
+test_backup_creation_fsyncs_broken_symlink_parent_directory() {
+    setup_test_env
+
+    local test_dir="/tmp/test_backup_broken_symlink_fsync_${$}"
+    local missing_target="$test_dir/missing-target"
+    local test_link="$test_dir/link"
+    local fsync_log="$ACFS_STATE_DIR/fsync.log"
+    local original_fsync_file original_fsync_directory
+    mkdir -p "$test_dir"
+    ln -s "$missing_target" "$test_link"
+
+    original_fsync_file="$(declare -f fsync_file)"
+    original_fsync_directory="$(declare -f fsync_directory)"
+    fsync_file() {
+        printf 'file:%s\n' "$1" >> "$fsync_log"
+        return 0
+    }
+    fsync_directory() {
+        printf 'dir:%s\n' "$1" >> "$fsync_log"
+        return 0
+    }
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json backup_path backup_parent
+    backup_json=$(create_backup "$test_link" "test")
+    backup_path=$(echo "$backup_json" | jq -r '.backup')
+    backup_parent=$(dirname "$backup_path")
+
+    eval "$original_fsync_file"
+    eval "$original_fsync_directory"
+
+    if ! grep -Fx "dir:$backup_parent" "$fsync_log" >/dev/null 2>&1; then
+        echo "  Broken symlink backup did not fsync parent dir: $backup_parent"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    if grep -Fx "file:$backup_path" "$fsync_log" >/dev/null 2>&1; then
+        echo "  Broken symlink backup incorrectly fsynced the symlink as a file"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -rf "$test_dir"
+    cleanup_test_env
+    return 0
+}
+
+# Test: State integrity accepts active broken symlink backups
+test_state_integrity_accepts_broken_symlink_backup() {
+    setup_test_env
+
+    local test_dir="/tmp/test_state_broken_symlink_${$}"
+    local missing_target="$test_dir/missing-target"
+    local test_link="$test_dir/link"
+    mkdir -p "$test_dir"
+    ln -s "$missing_target" "$test_link"
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json
+    backup_json=$(create_backup "$test_link" "test")
+    printf '{"id":"chg_001","description":"broken symlink backup","backups":[%s]}\n' "$backup_json" > "$ACFS_CHANGES_FILE"
+
+    if ! verify_state_integrity >/dev/null 2>&1; then
+        echo "  Broken symlink backup was rejected by state integrity"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -rf "$test_dir"
+    cleanup_test_env
+    return 0
+}
+
+# Test: State integrity detects path-type drift for symlink backups
+test_state_integrity_detects_type_drifted_symlink_backup() {
+    setup_test_env
+
+    local test_dir="/tmp/test_state_type_drift_symlink_${$}"
+    local missing_target="$test_dir/missing-target"
+    local test_link="$test_dir/link"
+    mkdir -p "$test_dir"
+    ln -s "$missing_target" "$test_link"
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json backup_path
+    backup_json=$(create_backup "$test_link" "test")
+    backup_path=$(echo "$backup_json" | jq -r '.backup')
+
+    rm -f "$backup_path"
+    printf 'symlink:%s' "$missing_target" > "$backup_path"
+    printf '{"id":"chg_001","description":"drifted symlink backup","backups":[%s]}\n' "$backup_json" > "$ACFS_CHANGES_FILE"
+
+    if verify_state_integrity >/dev/null 2>&1; then
+        echo "  Type-drifted symlink backup passed integrity verification"
+        rm -rf "$test_dir"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -rf "$test_dir"
+    cleanup_test_env
+    return 0
+}
+
 # Test: Directory backup corruption is detected by integrity verification
 test_state_integrity_detects_corrupt_directory_backup() {
     setup_test_env
@@ -931,9 +1146,14 @@ main() {
     run_test test_fsync_directory
     run_test test_backup_creation
     run_test test_backup_creation_uses_unique_paths_per_session
+    run_test test_backup_creation_preserves_symlink_type
+    run_test test_backup_creation_preserves_broken_symlink_type
+    run_test test_backup_creation_fsyncs_broken_symlink_parent_directory
     run_test test_backup_nonexistent_file
     run_test test_record_checksum
     run_test test_state_integrity
+    run_test test_state_integrity_accepts_broken_symlink_backup
+    run_test test_state_integrity_detects_type_drifted_symlink_backup
     run_test test_state_integrity_detects_corrupt_directory_backup
     run_test test_state_integrity_ignores_missing_backup_for_undone_change
     run_test test_state_integrity_checks_all_active_backups
