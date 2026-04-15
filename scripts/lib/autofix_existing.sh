@@ -13,33 +13,93 @@ _AUTOFIX_EXISTING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${_AUTOFIX_EXISTING_DIR}/autofix.sh"
 
 # =============================================================================
-# Constants
+# Runtime Path Helpers
 # =============================================================================
 
-# Installation markers to check
-readonly -a ACFS_INSTALLATION_MARKERS=(
-    "$HOME/.acfs_installed"
-    "$HOME/.acfs"
-    "$HOME/.config/acfs"
-    "/usr/local/bin/acfs"
-    "$HOME/.local/bin/acfs"
-)
+autofix_existing_runtime_home() {
+    local runtime_home=""
 
-# Artifacts to backup during clean reinstall
-readonly -a ACFS_ARTIFACTS=(
-    "$HOME/.acfs"
-    "$HOME/.acfs_installed"
-    "$HOME/.config/acfs"
-    "$HOME/.local/bin/acfs"
-)
+    if declare -f autofix_runtime_home >/dev/null 2>&1; then
+        runtime_home="$(autofix_runtime_home 2>/dev/null || true)"
+    fi
+    runtime_home="$(autofix_sanitize_abs_nonroot_path "$runtime_home" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
 
-# Shell config files to clean
-readonly -a SHELL_CONFIGS=(
-    "$HOME/.bashrc"
-    "$HOME/.zshrc"
-    "$HOME/.profile"
-    "$HOME/.bash_profile"
-)
+    runtime_home="$(autofix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
+
+    runtime_home="$(autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
+
+    return 1
+}
+
+autofix_existing_acfs_home() {
+    local acfs_home=""
+    local runtime_home=""
+
+    acfs_home="$(autofix_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$acfs_home" ]]; then
+        printf '%s\n' "$acfs_home"
+        return 0
+    fi
+
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+    printf '%s/.acfs\n' "$runtime_home"
+}
+
+autofix_existing_installation_markers() {
+    local runtime_home=""
+
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    printf '%s\n' \
+        "$runtime_home/.acfs_installed" \
+        "$runtime_home/.acfs" \
+        "$runtime_home/.config/acfs" \
+        "/usr/local/bin/acfs" \
+        "$runtime_home/.local/bin/acfs"
+}
+
+autofix_existing_artifacts() {
+    local runtime_home=""
+    local acfs_home=""
+
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    acfs_home="$(autofix_existing_acfs_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+    [[ -n "$acfs_home" ]] || return 1
+
+    printf '%s\n' \
+        "$acfs_home" \
+        "$runtime_home/.acfs_installed" \
+        "$runtime_home/.config/acfs" \
+        "$runtime_home/.local/bin/acfs"
+}
+
+autofix_existing_shell_configs() {
+    local runtime_home=""
+
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    printf '%s\n' \
+        "$runtime_home/.bashrc" \
+        "$runtime_home/.zshrc" \
+        "$runtime_home/.profile" \
+        "$runtime_home/.bash_profile"
+}
 
 # =============================================================================
 # Detection Functions
@@ -49,12 +109,14 @@ readonly -a SHELL_CONFIGS=(
 # Returns: space-separated list of found markers (empty if none)
 detect_existing_acfs() {
     local -a found_markers=()
+    local marker=""
 
-    for marker in "${ACFS_INSTALLATION_MARKERS[@]}"; do
+    while IFS= read -r marker; do
+        [[ -n "$marker" ]] || continue
         if [[ -e "$marker" ]]; then
             found_markers+=("$marker")
         fi
-    done
+    done < <(autofix_existing_installation_markers 2>/dev/null || true)
 
     if [[ ${#found_markers[@]} -gt 0 ]]; then
         echo "${found_markers[*]}"
@@ -66,34 +128,42 @@ detect_existing_acfs() {
 
 # Get installed ACFS version
 get_installed_version() {
+    local version_output=""
+    local version=""
+    local acfs_home=""
+    local runtime_home=""
+
     # Method 1: Try acfs --version command
     if command -v acfs &>/dev/null; then
-        local version_output
         version_output=$(acfs --version 2>/dev/null | head -1)
         if [[ -n "$version_output" ]]; then
             # Extract version number (e.g., "ACFS v0.4.0" -> "0.4.0")
-            echo "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
-            return
+            version=$(echo "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            if [[ -n "$version" ]]; then
+                printf '%s\n' "$version"
+                return 0
+            fi
         fi
     fi
 
     # Method 2: Check version file
-    if [[ -f "$HOME/.acfs/version" ]]; then
-        cat "$HOME/.acfs/version"
-        return
+    acfs_home="$(autofix_existing_acfs_home 2>/dev/null || true)"
+    if [[ -n "$acfs_home" ]] && [[ -f "$acfs_home/version" ]]; then
+        cat "$acfs_home/version"
+        return 0
     fi
 
     # Method 3: Check installed marker file for version info
-    if [[ -f "$HOME/.acfs_installed" ]]; then
-        local version
-        version=$(grep -oE 'version=[0-9]+\.[0-9]+\.[0-9]+' "$HOME/.acfs_installed" 2>/dev/null | cut -d= -f2)
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]] && [[ -f "$runtime_home/.acfs_installed" ]]; then
+        version=$(grep -oE 'version=[0-9]+\.[0-9]+\.[0-9]+' "$runtime_home/.acfs_installed" 2>/dev/null | cut -d= -f2)
         if [[ -n "$version" ]]; then
-            echo "$version"
-            return
+            printf '%s\n' "$version"
+            return 0
         fi
     fi
 
-    echo "unknown"
+    printf 'unknown\n'
 }
 
 # Check if installation appears corrupted/partial
@@ -250,46 +320,64 @@ version_requires_migration() {
 run_migrations() {
     local from="$1"
     local to="$2"
+    local runtime_home=""
+    local acfs_home=""
+    local legacy_config=""
+    local settings_path=""
+    local legacy_json_config=""
+    local migrated_json_config=""
+    local files_json=""
 
     log_info "[MIGRATE] Running migrations from $from to $to"
 
+    runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
+    acfs_home="$(autofix_existing_acfs_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+    [[ -n "$acfs_home" ]] || return 1
+
     # Migration: v0.x -> v1.x: Move config from ~/.acfs_config to ~/.acfs/config
-    if [[ -f "$HOME/.acfs_config" ]] && [[ ! -f "$HOME/.acfs/config/settings.toml" ]]; then
+    legacy_config="$runtime_home/.acfs_config"
+    settings_path="$acfs_home/config/settings.toml"
+    if [[ -f "$legacy_config" ]] && [[ ! -f "$settings_path" ]]; then
         log_info "[MIGRATE] Moving legacy config to new location"
-        mkdir -p "$HOME/.acfs/config"
-        mv "$HOME/.acfs_config" "$HOME/.acfs/config/settings.toml"
+        mkdir -p "$acfs_home/config"
+        mv "$legacy_config" "$settings_path"
+        files_json="$(jq -cn --arg old "$legacy_config" --arg new "$settings_path" '[$old, $new]')"
 
         record_change \
             "acfs" \
             "Migrated legacy config file to new location" \
-            "mv '$HOME/.acfs/config/settings.toml' '$HOME/.acfs_config'" \
+            "mv '$settings_path' '$legacy_config'" \
             false \
             "info" \
-            '["$HOME/.acfs_config", "$HOME/.acfs/config/settings.toml"]' \
+            "$files_json" \
             '[]' \
             '[]'
     fi
 
     # Migration: Convert JSON config to TOML (if present)
-    if [[ -f "$HOME/.acfs/config.json" ]] && [[ ! -f "$HOME/.acfs/config.json.migrated" ]]; then
+    legacy_json_config="$acfs_home/config.json"
+    migrated_json_config="$acfs_home/config.json.migrated"
+    if [[ -f "$legacy_json_config" ]] && [[ ! -f "$migrated_json_config" ]]; then
         log_info "[MIGRATE] Backing up legacy JSON config"
-        mv "$HOME/.acfs/config.json" "$HOME/.acfs/config.json.migrated"
+        mv "$legacy_json_config" "$migrated_json_config"
+        files_json="$(jq -cn --arg path "$legacy_json_config" '[$path]')"
 
         record_change \
             "acfs" \
             "Backed up legacy JSON config" \
-            "mv '$HOME/.acfs/config.json.migrated' '$HOME/.acfs/config.json'" \
+            "mv '$migrated_json_config' '$legacy_json_config'" \
             false \
             "info" \
-            '["$HOME/.acfs/config.json"]' \
+            "$files_json" \
             '[]' \
             '[]'
     fi
 
     # Migration: Ensure .local/bin exists and is in PATH
-    if [[ ! -d "$HOME/.local/bin" ]]; then
+    if [[ ! -d "$runtime_home/.local/bin" ]]; then
         log_info "[MIGRATE] Creating ~/.local/bin directory"
-        mkdir -p "$HOME/.local/bin"
+        mkdir -p "$runtime_home/.local/bin"
     fi
 
     log_info "[MIGRATE] Migrations complete"
@@ -298,15 +386,20 @@ run_migrations() {
 
 # Update PATH entries in shell configs
 update_path_entries() {
-    for config in "${SHELL_CONFIGS[@]}"; do
+    local config=""
+    local backup=""
+    local files_json=""
+
+    while IFS= read -r config; do
+        [[ -n "$config" ]] || continue
         if [[ -f "$config" ]]; then
             # Check if ACFS path entry exists
             if ! grep -q "# ACFS PATH" "$config"; then
                 log_info "[UPGRADE] Adding PATH entry to $config"
 
                 # Create backup
-                local backup
                 backup=$(create_backup "$config" "upgrade-path-entry")
+                files_json="$(jq -cn --arg path "$config" '[$path]')"
 
                 # Append PATH entry
                 {
@@ -321,12 +414,12 @@ update_path_entries() {
                     "# Remove PATH entry from $config manually if needed" \
                     false \
                     "info" \
-                    "[\"$config\"]" \
+                    "$files_json" \
                     "$(echo "$backup" | jq -c '[.]' 2>/dev/null || echo '[]')" \
                     '[]'
             fi
         fi
-    done
+    done < <(autofix_existing_shell_configs 2>/dev/null || true)
 }
 
 # =============================================================================

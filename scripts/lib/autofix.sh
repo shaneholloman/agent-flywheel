@@ -11,12 +11,124 @@ _ACFS_AUTOFIX_SOURCED=1
 # State Directory Configuration
 # =============================================================================
 
-ACFS_STATE_DIR="${ACFS_STATE_DIR:-$HOME/.acfs/autofix}"
-ACFS_CHANGES_FILE="${ACFS_STATE_DIR}/changes.jsonl"
-ACFS_UNDOS_FILE="${ACFS_STATE_DIR}/undos.jsonl"
-ACFS_BACKUPS_DIR="${ACFS_STATE_DIR}/backups"
-ACFS_LOCK_FILE="${ACFS_STATE_DIR}/.lock"
-ACFS_INTEGRITY_FILE="${ACFS_STATE_DIR}/.integrity"
+autofix_sanitize_abs_nonroot_path() {
+    local path="${1:-}"
+
+    [[ -n "$path" ]] || return 1
+    [[ "$path" == /* ]] || return 1
+    [[ "$path" != "/" ]] || return 1
+
+    printf '%s\n' "${path%/}"
+}
+
+autofix_validate_target_user() {
+    local user="${1:-}"
+    [[ -n "$user" ]] || return 1
+    [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+autofix_home_for_user() {
+    local user="${1:-}"
+    local passwd_home=""
+
+    autofix_validate_target_user "$user" || [[ "$user" == "root" ]] || return 1
+
+    if [[ "$user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    passwd_home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6 | head -n1 || true)"
+    if passwd_home="$(autofix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null)"; then
+        printf '%s\n' "$passwd_home"
+        return 0
+    fi
+
+    if [[ "$(whoami 2>/dev/null || true)" == "$user" ]]; then
+        passwd_home="$(autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$passwd_home" ]]; then
+            printf '%s\n' "$passwd_home"
+            return 0
+        fi
+    fi
+
+    printf '/home/%s\n' "$user"
+}
+
+autofix_resolve_current_home() {
+    local resolved_home=""
+    local current_user=""
+
+    resolved_home="$(autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "$resolved_home"
+        return 0
+    fi
+
+    current_user="$(whoami 2>/dev/null || id -un 2>/dev/null || true)"
+    if [[ -n "$current_user" ]]; then
+        resolved_home="$(autofix_home_for_user "$current_user" 2>/dev/null || true)"
+        if [[ -n "$resolved_home" ]]; then
+            printf '%s\n' "$resolved_home"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+autofix_runtime_home() {
+    local runtime_home=""
+    local target_user="${TARGET_USER:-}"
+
+    runtime_home="$(autofix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
+
+    if autofix_validate_target_user "$target_user"; then
+        runtime_home="$(autofix_home_for_user "$target_user" 2>/dev/null || true)"
+        if [[ -n "$runtime_home" ]]; then
+            printf '%s\n' "$runtime_home"
+            return 0
+        fi
+    fi
+
+    if autofix_validate_target_user "${SUDO_USER:-}"; then
+        runtime_home="$(autofix_home_for_user "$SUDO_USER" 2>/dev/null || true)"
+        if [[ -n "$runtime_home" ]]; then
+            printf '%s\n' "$runtime_home"
+            return 0
+        fi
+    fi
+
+    autofix_resolve_current_home
+}
+
+autofix_refresh_state_paths() {
+    local runtime_home=""
+    local state_dir=""
+
+    state_dir="$(autofix_sanitize_abs_nonroot_path "${ACFS_STATE_DIR:-}" 2>/dev/null || true)"
+    if [[ -z "$state_dir" ]]; then
+        runtime_home="$(autofix_runtime_home 2>/dev/null || true)"
+        if [[ -n "$runtime_home" ]]; then
+            state_dir="$runtime_home/.acfs/autofix"
+        else
+            state_dir="/tmp/acfs-autofix.$(id -u 2>/dev/null || echo unknown)"
+        fi
+    fi
+
+    ACFS_STATE_DIR="$state_dir"
+    ACFS_CHANGES_FILE="${ACFS_STATE_DIR}/changes.jsonl"
+    ACFS_UNDOS_FILE="${ACFS_STATE_DIR}/undos.jsonl"
+    ACFS_BACKUPS_DIR="${ACFS_STATE_DIR}/backups"
+    ACFS_LOCK_FILE="${ACFS_STATE_DIR}/.lock"
+    ACFS_INTEGRITY_FILE="${ACFS_STATE_DIR}/.integrity"
+}
+
+autofix_refresh_state_paths
 
 # In-memory change records
 declare -gA ACFS_CHANGE_RECORDS  # id -> JSON record (global; file may be sourced inside a function)
@@ -400,6 +512,7 @@ update_integrity_file() {
 
 # Initialize state directory
 init_autofix_state() {
+    autofix_refresh_state_paths
     mkdir -p "$ACFS_STATE_DIR" || { log_error "Failed to create state directory: $ACFS_STATE_DIR"; return 1; }
     mkdir -p "$ACFS_BACKUPS_DIR" || { log_error "Failed to create backups directory: $ACFS_BACKUPS_DIR"; return 1; }
     touch "$ACFS_CHANGES_FILE" || { log_error "Failed to create changes file: $ACFS_CHANGES_FILE"; return 1; }
@@ -420,6 +533,7 @@ init_autofix_state() {
 
 # Start a new auto-fix session
 start_autofix_session() {
+    autofix_refresh_state_paths
     if [[ "$ACFS_AUTOFIX_INITIALIZED" != "true" ]]; then
         init_autofix_state
     fi
