@@ -32,10 +32,68 @@ if [[ -n "${_ACFS_INFO_SH_LOADED:-}" ]]; then
 fi
 _ACFS_INFO_SH_LOADED=1
 
+info_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+info_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(info_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(info_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+    fi
+
+    if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s\n' "$current_user"
+        return 0
+    fi
+
+    return 1
+}
+
+_INFO_CURRENT_HOME="$(info_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_INFO_CURRENT_HOME" ]]; then
+    HOME="$_INFO_CURRENT_HOME"
+    export HOME
+fi
+
 # ACFS home directory
-_INFO_DEFAULT_ACFS_HOME="$HOME/.acfs"
-ACFS_HOME="${ACFS_HOME:-$_INFO_DEFAULT_ACFS_HOME}"
-_INFO_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
+_INFO_EXPLICIT_ACFS_HOME="$(info_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+_INFO_DEFAULT_ACFS_HOME=""
+[[ -n "$_INFO_CURRENT_HOME" ]] && _INFO_DEFAULT_ACFS_HOME="${_INFO_CURRENT_HOME}/.acfs"
+ACFS_HOME="${_INFO_EXPLICIT_ACFS_HOME:-$_INFO_DEFAULT_ACFS_HOME}"
+_INFO_SYSTEM_STATE_FILE="$(info_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$_INFO_SYSTEM_STATE_FILE" ]]; then
+    _INFO_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+fi
 _INFO_RESOLVED_ACFS_HOME=""
 
 # Source output formatting library (for TOON support)
@@ -90,14 +148,18 @@ info_get_file_mtime() {
 info_home_for_user() {
     local user="$1"
     local passwd_entry=""
+    local home_candidate=""
 
     [[ -n "$user" ]] || return 1
 
     if command -v getent &>/dev/null; then
         passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
         if [[ -n "$passwd_entry" ]]; then
-            printf '%s\n' "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            return 0
+            home_candidate="$(info_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
         fi
     fi
 
@@ -179,7 +241,7 @@ info_get_data_home() {
         return 0
     fi
 
-    if [[ "$ACFS_HOME" != "$_INFO_DEFAULT_ACFS_HOME" ]]; then
+    if [[ -n "$ACFS_HOME" ]] && [[ "$ACFS_HOME" != "$_INFO_DEFAULT_ACFS_HOME" ]]; then
         _INFO_RESOLVED_ACFS_HOME="$ACFS_HOME"
         echo "$_INFO_RESOLVED_ACFS_HOME"
         return 0
@@ -192,12 +254,6 @@ info_get_data_home() {
     candidate=$(info_script_acfs_home 2>/dev/null || true)
     if info_candidate_has_acfs_data "$candidate"; then
         _INFO_RESOLVED_ACFS_HOME="$candidate"
-        echo "$_INFO_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
-    if info_candidate_has_acfs_data "$ACFS_HOME"; then
-        _INFO_RESOLVED_ACFS_HOME="$ACFS_HOME"
         echo "$_INFO_RESOLVED_ACFS_HOME"
         return 0
     fi
@@ -233,16 +289,27 @@ info_get_data_home() {
         fi
     fi
 
+    if [[ -n "$ACFS_HOME" ]] && info_candidate_has_acfs_data "$ACFS_HOME"; then
+        _INFO_RESOLVED_ACFS_HOME="$ACFS_HOME"
+        echo "$_INFO_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
     _INFO_RESOLVED_ACFS_HOME="$ACFS_HOME"
     echo "$_INFO_RESOLVED_ACFS_HOME"
 }
 
 info_get_install_state_file() {
-    local data_home
+    local data_home=""
+    local candidate=""
     data_home=$(info_get_data_home)
 
-    if [[ -f "$data_home/state.json" ]]; then
-        echo "$data_home/state.json"
+    if [[ -n "$data_home" ]]; then
+        candidate="$data_home/state.json"
+    fi
+
+    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
+        echo "$candidate"
         return 0
     fi
 
@@ -251,7 +318,7 @@ info_get_install_state_file() {
         return 0
     fi
 
-    echo "$data_home/state.json"
+    echo "$candidate"
 }
 
 info_prepend_user_paths() {
@@ -304,8 +371,8 @@ info_prepare_context() {
         fi
     fi
 
-    info_prepend_user_paths "$HOME"
-    if [[ -n "${TARGET_HOME:-}" ]] && [[ "$TARGET_HOME" != "$HOME" ]]; then
+    info_prepend_user_paths "$_INFO_CURRENT_HOME"
+    if [[ -n "${TARGET_HOME:-}" ]] && [[ "$TARGET_HOME" != "$_INFO_CURRENT_HOME" ]]; then
         info_prepend_user_paths "$TARGET_HOME"
     fi
 }
@@ -318,13 +385,14 @@ info_get_hostname() {
 # Get primary IP address (cached or live)
 info_get_ip() {
     # Try cached value first
-    local data_home
+    local data_home=""
+    local cache_file=""
     data_home=$(info_get_data_home)
-    local cache_file="${data_home}/cache/ip_address"
+    [[ -n "$data_home" ]] && cache_file="${data_home}/cache/ip_address"
     local now
     now="$(date +%s 2>/dev/null || echo "")"
 
-    if [[ -f "$cache_file" ]] && [[ "$now" =~ ^[0-9]+$ ]]; then
+    if [[ -n "$cache_file" ]] && [[ -f "$cache_file" ]] && [[ "$now" =~ ^[0-9]+$ ]]; then
         local cache_mtime
         if cache_mtime="$(info_get_file_mtime "$cache_file")" && [[ $cache_mtime -gt $((now - 3600)) ]]; then
             local cached_ip=""
@@ -347,7 +415,7 @@ info_get_ip() {
     fi
 
     # Cache successful lookups, but do not pin transient failures for an hour.
-    if [[ "$ip" != "unknown" ]]; then
+    if [[ "$ip" != "unknown" ]] && [[ -n "$cache_file" ]]; then
         mkdir -p "${data_home}/cache" 2>/dev/null
         echo "$ip" > "$cache_file" 2>/dev/null
     fi
@@ -493,15 +561,27 @@ info_get_install_date() {
 
 # Get onboard progress
 info_get_onboard_lessons_dir() {
-    local data_home
+    local data_home=""
     data_home=$(info_get_data_home)
-    echo "${ACFS_LESSONS_DIR:-${data_home}/onboard/lessons}"
+    if [[ -n "${ACFS_LESSONS_DIR:-}" ]]; then
+        echo "$ACFS_LESSONS_DIR"
+    elif [[ -n "$data_home" ]]; then
+        echo "${data_home}/onboard/lessons"
+    else
+        echo ""
+    fi
 }
 
 info_get_onboard_progress_file() {
-    local data_home
+    local data_home=""
     data_home=$(info_get_data_home)
-    echo "${ACFS_PROGRESS_FILE:-${data_home}/onboard_progress.json}"
+    if [[ -n "${ACFS_PROGRESS_FILE:-}" ]]; then
+        echo "$ACFS_PROGRESS_FILE"
+    elif [[ -n "$data_home" ]]; then
+        echo "${data_home}/onboard_progress.json"
+    else
+        echo ""
+    fi
 }
 
 info_get_lesson_file_by_index() {
@@ -674,7 +754,7 @@ EOF
 
 info_get_installed_tools_summary() {
     local shell_ok lang_ok agents_ok stack_ok
-    local shell_home="${TARGET_HOME:-$HOME}"
+    local shell_home="${TARGET_HOME:-${_INFO_CURRENT_HOME:-}}"
 
     # Shell tools
     shell_ok="○"

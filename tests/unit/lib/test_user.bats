@@ -118,3 +118,14 @@ EOF
         fail "mkdir should not be called"
     fi
 }
+
+@test "user_home_for_user: rejects invalid fallback usernames" {
+    export HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    run user_home_for_user "../bad-user"
+    assert_failure
+}

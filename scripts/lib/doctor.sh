@@ -9,12 +9,72 @@
 
 ACFS_VERSION="${ACFS_VERSION:-0.1.0}"
 
+_acfs_doctor_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+_acfs_doctor_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(_acfs_doctor_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            home_candidate="$(_acfs_doctor_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            printf '/home/%s\n' "$current_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+_acfs_doctor_current_home="$(_acfs_doctor_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_acfs_doctor_current_home" ]]; then
+    HOME="$_acfs_doctor_current_home"
+    export HOME
+fi
+TARGET_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+ACFS_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+ACFS_STATE_FILE="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
+ACFS_SYSTEM_STATE_FILE="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"
+ACFS_BIN_DIR="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR
+
 # Ensure the doctor is self-contained and doesn't depend on shell rc files
 # for PATH setup (e.g., when run from a fresh SSH session or non-zsh shell).
 ensure_path() {
     local dir
     local to_add=()
-    local primary_home="${TARGET_HOME:-$HOME}"
+    local primary_home="${TARGET_HOME:-${_acfs_doctor_current_home:-/root}}"
     local primary_bin_dir="${ACFS_BIN_DIR:-$primary_home/.local/bin}"
 
     # Priority order for ACFS tools
@@ -35,14 +95,14 @@ ensure_path() {
         candidate_dirs=("$ACFS_HOME/bin" "${candidate_dirs[@]}")
     fi
 
-    if [[ "$primary_home" != "$HOME" ]]; then
+    if [[ -n "${_acfs_doctor_current_home:-}" ]] && [[ "$primary_home" != "$_acfs_doctor_current_home" ]]; then
         candidate_dirs+=(
-            "$HOME/.local/bin"
-            "$HOME/.acfs/bin"
-            "$HOME/.bun/bin"
-            "$HOME/.cargo/bin"
-            "$HOME/.atuin/bin"
-            "$HOME/go/bin"
+            "$_acfs_doctor_current_home/.local/bin"
+            "$_acfs_doctor_current_home/.acfs/bin"
+            "$_acfs_doctor_current_home/.bun/bin"
+            "$_acfs_doctor_current_home/.cargo/bin"
+            "$_acfs_doctor_current_home/.atuin/bin"
+            "$_acfs_doctor_current_home/go/bin"
         )
     fi
 
@@ -78,8 +138,8 @@ _acfs_doctor_find_project_path() {
     for candidate in \
         "$SCRIPT_DIR/../$rel_path" \
         "$SCRIPT_DIR/../../$rel_path" \
-        "${ACFS_HOME:-$HOME/.acfs}/$rel_path" \
-        "$HOME/.acfs/$rel_path"; do
+        "${ACFS_HOME:+$ACFS_HOME/$rel_path}" \
+        "${_acfs_doctor_current_home:+$_acfs_doctor_current_home/.acfs/$rel_path}"; do
         if [[ -f "$candidate" ]]; then
             printf '%s\n' "$candidate"
             return 0
@@ -150,7 +210,9 @@ _acfs_doctor_installed_state="$(_acfs_doctor_find_project_path "state.json" 2>/d
 if [[ -n "$_acfs_doctor_installed_state" ]]; then
     _acfs_doctor_state_files+=("$_acfs_doctor_installed_state")
 fi
-_acfs_doctor_state_files+=("$HOME/.acfs/state.json")
+if [[ -n "${_acfs_doctor_current_home:-}" ]]; then
+    _acfs_doctor_state_files+=("$_acfs_doctor_current_home/.acfs/state.json")
+fi
 
 TARGET_USER="${TARGET_USER:-}"
 if [[ -z "${TARGET_USER:-}" ]]; then
@@ -210,11 +272,11 @@ unset _acfs_doctor_installed_state
 if [[ -z "${TARGET_HOME:-}" ]]; then
     _acfs_passwd_entry="$(getent passwd "$TARGET_USER" 2>/dev/null || true)"
     if [[ -n "$_acfs_passwd_entry" ]]; then
-        TARGET_HOME="$(printf '%s\n' "$_acfs_passwd_entry" | cut -d: -f6)"
+        TARGET_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "$(printf '%s\n' "$_acfs_passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
     elif [[ "$TARGET_USER" == "root" ]]; then
         TARGET_HOME="/root"
-    elif [[ "$TARGET_USER" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]]; then
-        TARGET_HOME="$HOME"
+    elif [[ "$TARGET_USER" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
+        TARGET_HOME="$_acfs_doctor_current_home"
     else
         TARGET_HOME="/home/$TARGET_USER"
     fi
@@ -224,8 +286,8 @@ fi
 if [[ "$TARGET_HOME" != /* ]]; then
     if [[ "$TARGET_USER" == "root" ]]; then
         TARGET_HOME="/root"
-    elif [[ -n "${HOME:-}" ]] && [[ "$TARGET_USER" == "$(id -un 2>/dev/null || true)" ]]; then
-        TARGET_HOME="$HOME"
+    elif [[ -n "${_acfs_doctor_current_home:-}" ]] && [[ "$TARGET_USER" == "$(id -un 2>/dev/null || true)" ]]; then
+        TARGET_HOME="$_acfs_doctor_current_home"
     else
         TARGET_HOME="/home/$TARGET_USER"
     fi
@@ -857,12 +919,17 @@ configured_truthy_value() {
 }
 
 doctor_runtime_home() {
-    local resolved_home="${TARGET_HOME:-$HOME}"
+    local resolved_home=""
+
+    resolved_home="$(_acfs_doctor_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -z "$resolved_home" ]]; then
+        resolved_home="${_acfs_doctor_current_home:-}"
+    fi
 
     if [[ -n "$resolved_home" ]] && [[ "$resolved_home" == /* ]] && [[ "$resolved_home" != "/" ]]; then
         printf '%s\n' "${resolved_home%/}"
     else
-        printf '%s\n' "$HOME"
+        printf '/root\n'
     fi
 }
 
@@ -1248,7 +1315,8 @@ check_agents() {
 # Native installations should take precedence over package manager versions
 check_agent_path_conflicts() {
     local doctor_ci="${ACFS_DOCTOR_CI:-false}"
-    local expected_native_path="${TARGET_HOME:-$HOME}/.local/bin/claude"
+    local expected_native_path=""
+    expected_native_path="$(doctor_runtime_home)/.local/bin/claude"
 
     local claude_path
     claude_path=$(command -v claude 2>/dev/null) || true
@@ -1293,7 +1361,8 @@ check_dcg_hook_status() {
     fi
 
     local settings_file=""
-    local settings_home="${TARGET_HOME:-$HOME}"
+    local settings_home=""
+    settings_home="$(doctor_runtime_home)"
     if [[ -f "$settings_home/.claude/settings.json" ]]; then
         settings_file="$settings_home/.claude/settings.json"
     elif [[ -f "$settings_home/.config/claude/settings.json" ]]; then
@@ -1684,7 +1753,8 @@ check_stack() {
     if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
         # Try to access the user session; if no D-Bus, fall back to checking
         # the unit file exists on disk instead.
-        local _target_home="${TARGET_HOME:-$HOME}"
+        local _target_home=""
+        _target_home="$(doctor_runtime_home)"
         local _nightly_unit_file="${_target_home}/.config/systemd/user/acfs-nightly-update.timer"
         if systemctl --user is-enabled acfs-nightly-update.timer &>/dev/null 2>&1; then
             _nightly_status="enabled"
@@ -1892,12 +1962,12 @@ _doctor_run_manifest_check() {
         local passwd_entry=""
         passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            target_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            target_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
         elif [[ "$target_user" == "root" ]]; then
             target_home="/root"
-        elif [[ "$target_user" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]]; then
-            target_home="$HOME"
-        else
+        elif [[ "$target_user" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
+            target_home="$_acfs_doctor_current_home"
+        elif [[ "$target_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
             target_home="/home/$target_user"
         fi
     fi

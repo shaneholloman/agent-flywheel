@@ -96,8 +96,8 @@ teardown() {
 }
 
 @test "state: get file prefers passwd-resolved target home when ACFS_HOME unset" {
-    local resolved_home
-    resolved_home=$(create_temp_dir)
+    local stub_home
+    stub_home=$(create_temp_dir)
 
     unset ACFS_HOME
     unset ACFS_STATE_FILE
@@ -107,7 +107,7 @@ teardown() {
 
     getent() {
         if [[ "$1" == "passwd" && "$2" == "dummy" ]]; then
-            printf "dummy:x:1000:1000::%s:/bin/bash\n" "$resolved_home"
+            printf "dummy:x:1000:1000::%s:/bin/bash\n" "$stub_home"
             return 0
         fi
         command getent "$@"
@@ -115,12 +115,12 @@ teardown() {
 
     run state_get_file
     assert_success
-    assert_output "$resolved_home/.acfs/state.json"
+    assert_output "$stub_home/.acfs/state.json"
 }
 
 @test "state: init uses passwd-resolved target home when ACFS_HOME unset" {
-    local resolved_home
-    resolved_home=$(create_temp_dir)
+    local stub_home
+    stub_home=$(create_temp_dir)
 
     unset ACFS_HOME
     unset ACFS_STATE_FILE
@@ -130,7 +130,7 @@ teardown() {
 
     getent() {
         if [[ "$1" == "passwd" && "$2" == "dummy" ]]; then
-            printf "dummy:x:1000:1000::%s:/bin/bash\n" "$resolved_home"
+            printf "dummy:x:1000:1000::%s:/bin/bash\n" "$stub_home"
             return 0
         fi
         command getent "$@"
@@ -139,13 +139,13 @@ teardown() {
     run state_init
     assert_success
 
-    run test -f "$resolved_home/.acfs/state.json"
+    run test -f "$stub_home/.acfs/state.json"
     assert_success
 }
 
 @test "state: init persists resolved target home when TARGET_HOME unset" {
-    local resolved_home
-    resolved_home=$(create_temp_dir)
+    local stub_home
+    stub_home=$(create_temp_dir)
 
     unset ACFS_HOME
     unset ACFS_STATE_FILE
@@ -155,7 +155,7 @@ teardown() {
 
     getent() {
         if [[ "$1" == "passwd" && "$2" == "dummy" ]]; then
-            printf "dummy:x:1000:1000::%s:/bin/bash\n" "$resolved_home"
+            printf "dummy:x:1000:1000::%s:/bin/bash\n" "$stub_home"
             return 0
         fi
         command getent "$@"
@@ -166,12 +166,12 @@ teardown() {
 
     run state_get ".target_home"
     assert_success
-    assert_output "$resolved_home"
+    assert_output "$stub_home"
 }
 
 @test "state: backup and remove accepts passwd-resolved user state path" {
-    local resolved_home
-    resolved_home=$(create_temp_dir)
+    local stub_home
+    stub_home=$(create_temp_dir)
 
     unset ACFS_HOME
     unset ACFS_STATE_FILE
@@ -181,21 +181,36 @@ teardown() {
 
     getent() {
         if [[ "$1" == "passwd" && "$2" == "dummy" ]]; then
-            printf "dummy:x:1000:1000::%s:/bin/bash\n" "$resolved_home"
+            printf "dummy:x:1000:1000::%s:/bin/bash\n" "$stub_home"
             return 0
         fi
         command getent "$@"
     }
 
-    mkdir -p "$resolved_home/.acfs"
-    printf '{"schema_version":3}\n' > "$resolved_home/.acfs/state.json"
+    mkdir -p "$stub_home/.acfs"
+    printf '{"schema_version":3}\n' > "$stub_home/.acfs/state.json"
 
     run state_backup_and_remove
     assert_success
 
-    run test ! -f "$resolved_home/.acfs/state.json"
+    run test ! -f "$stub_home/.acfs/state.json"
     assert_success
 
-    run bash -lc "shopt -s nullglob; files=(\"$resolved_home/.acfs/state.json.backup.\"*); [[ \${#files[@]} -eq 1 ]]"
+    run bash -lc "shopt -s nullglob; files=(\"$stub_home/.acfs/state.json.backup.\"*); [[ \${#files[@]} -eq 1 ]]"
     assert_success
+}
+
+@test "state: resolve target home rejects invalid fallback usernames" {
+    unset ACFS_HOME
+    unset ACFS_STATE_FILE
+    export TARGET_HOME=""
+    export TARGET_USER="../bad-user"
+    export HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    run state_resolve_target_home
+    assert_failure
 }

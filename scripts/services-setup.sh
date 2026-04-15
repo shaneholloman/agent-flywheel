@@ -9,8 +9,65 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACFS_HOME="${ACFS_HOME:-}"
-TARGET_HOME="${TARGET_HOME:-}"
+
+services_setup_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+services_setup_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(services_setup_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            home_candidate="$(services_setup_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            printf '/home/%s\n' "$current_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+_SERVICES_SETUP_CURRENT_HOME="$(services_setup_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_SERVICES_SETUP_CURRENT_HOME" ]]; then
+    HOME="$_SERVICES_SETUP_CURRENT_HOME"
+    export HOME
+fi
+
+ACFS_HOME="$(services_setup_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+TARGET_HOME="$(services_setup_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+ACFS_BIN_DIR="$(services_setup_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+export ACFS_HOME TARGET_HOME ACFS_BIN_DIR
 
 resolve_script_lib_dir() {
     local -a candidates=()
@@ -26,8 +83,8 @@ resolve_script_lib_dir() {
         candidates+=("${TARGET_HOME%/}/.acfs/scripts/lib")
     fi
 
-    if [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-        candidates+=("${HOME%/}/.acfs/scripts/lib")
+    if [[ -n "${_SERVICES_SETUP_CURRENT_HOME:-}" ]]; then
+        candidates+=("${_SERVICES_SETUP_CURRENT_HOME}/.acfs/scripts/lib")
     fi
 
     for candidate in "${candidates[@]}"; do
@@ -49,7 +106,7 @@ if [[ -n "$ACFS_LIB_DIR" ]]; then
     source "$ACFS_LIB_DIR/gum_ui.sh"
 else
     echo "Error: Cannot find ACFS script libraries"
-    echo "Expected at: $SCRIPT_DIR/lib/ or ${ACFS_HOME:-<acfs-home>}/scripts/lib/ or ${TARGET_HOME:-<target-home>}/.acfs/scripts/lib/ or ${HOME:-<home>}/.acfs/scripts/lib/"
+    echo "Expected at: $SCRIPT_DIR/lib/ or ${ACFS_HOME:-<acfs-home>}/scripts/lib/ or ${TARGET_HOME:-<target-home>}/.acfs/scripts/lib/ or ${_SERVICES_SETUP_CURRENT_HOME:-<home>}/.acfs/scripts/lib/"
     exit 1
 fi
 
@@ -71,7 +128,24 @@ resolve_home_dir() {
         home="$(awk -F: -v u="$user" '$1==u{print $6}' /etc/passwd)"
     fi
 
-    printf '%s' "$home"
+    if [[ -n "$home" ]]; then
+        home="$(services_setup_sanitize_abs_nonroot_path "$home" 2>/dev/null || true)"
+    fi
+    if [[ -n "$home" ]]; then
+        printf '%s' "$home"
+        return 0
+    fi
+
+    if [[ "$user" == "root" ]]; then
+        printf '/root'
+        return 0
+    fi
+    if [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s' "$user"
+        return 0
+    fi
+
+    return 1
 }
 
 BUN_BIN="${BUN_BIN:-}"
@@ -99,35 +173,59 @@ declare -A SERVICE_STATUS
 
 # Run a command as target user
 run_as_user() {
+    local -a env_cmd=()
+
+    env_cmd=("env" "TARGET_USER=$TARGET_USER")
+    [[ -n "${TARGET_HOME:-}" ]] && env_cmd+=("TARGET_HOME=$TARGET_HOME" "HOME=$TARGET_HOME")
+    [[ -n "${ACFS_HOME:-}" ]] && env_cmd+=("ACFS_HOME=$ACFS_HOME")
+    [[ -n "${ACFS_BIN_DIR:-}" ]] && env_cmd+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")
+
     if [[ "$(whoami)" == "$TARGET_USER" ]]; then
-        "$@"
+        "${env_cmd[@]}" "$@"
         return $?
     fi
 
     if command -v sudo &>/dev/null; then
-        sudo -u "$TARGET_USER" -H "$@"
+        sudo -u "$TARGET_USER" -H "${env_cmd[@]}" "$@"
         return $?
     fi
     
     if command -v runuser &>/dev/null; then
-        runuser -u "$TARGET_USER" -- "$@"
+        runuser -u "$TARGET_USER" -- "${env_cmd[@]}" "$@"
         return $?
     fi
-    
-    su "$TARGET_USER" -c "$(printf '%q ' "$@")"
+
+    local -a quoted_cmd=()
+    local arg=""
+    for arg in "${env_cmd[@]}" "$@"; do
+        quoted_cmd+=("$(printf '%q' "$arg")")
+    done
+    su "$TARGET_USER" -c "${quoted_cmd[*]}"
 }
 
 # Run a shell string as target user (use for pipelines/redirections).
 run_as_user_shell() {
     local cmd="$1"
+    local -a env_cmd=()
+
+    env_cmd=("env" "TARGET_USER=$TARGET_USER")
+    [[ -n "${TARGET_HOME:-}" ]] && env_cmd+=("TARGET_HOME=$TARGET_HOME" "HOME=$TARGET_HOME")
+    [[ -n "${ACFS_HOME:-}" ]] && env_cmd+=("ACFS_HOME=$ACFS_HOME")
+    [[ -n "${ACFS_BIN_DIR:-}" ]] && env_cmd+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")
+
     if [[ "$(whoami)" == "$TARGET_USER" ]]; then
-        bash -c "$cmd"
+        "${env_cmd[@]}" bash -c "$cmd"
     elif command -v sudo &>/dev/null; then
-        sudo -u "$TARGET_USER" -H bash -c "$cmd"
+        sudo -u "$TARGET_USER" -H "${env_cmd[@]}" bash -c "$cmd"
     elif command -v runuser &>/dev/null; then
-        runuser -u "$TARGET_USER" -- bash -c "$cmd"
+        runuser -u "$TARGET_USER" -- "${env_cmd[@]}" bash -c "$cmd"
     else
-        su "$TARGET_USER" -c "bash -c $(printf '%q' "$cmd")"
+        local -a quoted_cmd=()
+        local arg=""
+        for arg in "${env_cmd[@]}" "bash" "-c" "$cmd"; do
+            quoted_cmd+=("$(printf '%q' "$arg")")
+        done
+        su "$TARGET_USER" -c "${quoted_cmd[*]}"
     fi
 }
 

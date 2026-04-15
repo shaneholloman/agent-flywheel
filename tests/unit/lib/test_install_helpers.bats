@@ -135,6 +135,38 @@ teardown() {
     assert_output ""
 }
 
+@test "_acfs_resolve_target_home: ignores slash passwd homes and falls back to current HOME" {
+    local current_user
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null)"
+    export HOME="$BATS_TEST_TMPDIR/current-home"
+    mkdir -p "$HOME"
+
+    cat > "$STUB_DIR/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "passwd" ]] && [[ "\$2" == "$current_user" ]]; then
+    printf '%s\n' '$current_user:x:1000:1000::/:/bin/bash'
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$STUB_DIR/getent"
+
+    run _acfs_resolve_target_home "$current_user"
+    assert_success
+    assert_output "$HOME"
+}
+
+@test "_acfs_resolve_target_home: rejects slash HOME for current user" {
+    local current_user
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null)"
+    stub_command "getent" "" 2
+    export HOME="/"
+
+    run _acfs_resolve_target_home "$current_user"
+    assert_failure
+    assert_output ""
+}
+
 @test "run_as_target: fails closed when target home cannot be resolved" {
     export TARGET_USER="missinguser"
     unset TARGET_HOME ACFS_BIN_DIR ACFS_HOME

@@ -68,19 +68,33 @@ is_fresh_vps() {
     # Check for default ubuntu user without customization
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home="${TARGET_HOME:-}"
+    if [[ -n "$target_home" ]]; then
+        if [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+            target_home="${target_home%/}"
+        else
+            target_home=""
+        fi
+    fi
     if [[ -z "$target_home" ]]; then
         local passwd_entry=""
         passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
             target_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then
+                target_home=""
+            else
+                target_home="${target_home%/}"
+            fi
         elif [[ "$target_user" == "root" ]]; then
             target_home="/root"
-        elif [[ "$target_user" == "$(whoami 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]]; then
-            target_home="$HOME"
-        else
+        elif [[ "$target_user" == "$(whoami 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+            target_home="${HOME%/}"
+        elif [[ "$target_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
             target_home="/home/$target_user"
         fi
     fi
+
+    [[ -n "$target_home" ]] || return 1
 
     if [[ -f "$target_home/.bashrc" ]] && ! grep -q "ACFS" "$target_home/.bashrc" 2>/dev/null; then
         ((indicators += 1))

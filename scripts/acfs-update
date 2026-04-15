@@ -45,6 +45,28 @@ resolve_home_for_user() {
   return 1
 }
 
+resolve_current_home() {
+  local current_user=""
+  local home_candidate=""
+
+  home_candidate="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+  if [[ -n "$home_candidate" ]]; then
+    printf '%s\n' "$home_candidate"
+    return 0
+  fi
+
+  current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+  if [[ -n "$current_user" ]]; then
+    home_candidate="$(resolve_home_for_user "$current_user" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+      printf '%s\n' "$home_candidate"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 read_target_user_from_state_file() {
   local state_file="$1"
   local target_user=""
@@ -391,6 +413,9 @@ detect_target_user() {
   local candidate_user=""
   local wrapper_home=""
   local candidate_home=""
+  local current_home=""
+
+  current_home="$(resolve_current_home 2>/dev/null || true)"
 
   wrapper_home="$(find_wrapper_installed_home 2>/dev/null || true)"
   if [[ -n "$wrapper_home" ]]; then
@@ -417,10 +442,12 @@ detect_target_user() {
     fi
   fi
 
-  candidate_user="$(read_target_user_from_state_hint "$HOME/.acfs/state.json" 2>/dev/null || true)"
-  if [[ -n "$candidate_user" ]]; then
-    printf '%s\n' "$candidate_user"
-    return 0
+  if [[ -n "$current_home" ]]; then
+    candidate_user="$(read_target_user_from_state_hint "$current_home/.acfs/state.json" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]]; then
+      printf '%s\n' "$candidate_user"
+      return 0
+    fi
   fi
 
   while IFS=: read -r _ _ _ _ _ candidate_home _; do
@@ -453,16 +480,20 @@ exec_as_target_user() {
   local user="$1"
   shift
   local -a env_args=()
+  local sanitized_state_file=""
+  local sanitized_system_state_file=""
   local sanitized_target_home=""
   local sanitized_acfs_home=""
   local sanitized_bin_dir=""
 
+  sanitized_state_file="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
+  sanitized_system_state_file="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"
   sanitized_target_home="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
   sanitized_acfs_home="$(sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
   sanitized_bin_dir="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
 
-  [[ -n "${ACFS_STATE_FILE:-}" ]] && env_args+=("ACFS_STATE_FILE=$ACFS_STATE_FILE")
-  [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$ACFS_SYSTEM_STATE_FILE")
+  [[ -n "$sanitized_state_file" ]] && env_args+=("ACFS_STATE_FILE=$sanitized_state_file")
+  [[ -n "$sanitized_system_state_file" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$sanitized_system_state_file")
   [[ -n "$sanitized_target_home" ]] && env_args+=("TARGET_HOME=$sanitized_target_home")
   [[ -n "$sanitized_acfs_home" ]] && env_args+=("ACFS_HOME=$sanitized_acfs_home")
   [[ -n "$sanitized_bin_dir" ]] && env_args+=("ACFS_BIN_DIR=$sanitized_bin_dir")
@@ -506,11 +537,21 @@ main() {
   local runtime_user=""
   local candidate_script=""
   local direct_acfs_home=""
+  local current_home=""
+  local -a state_candidates=()
 
+  current_home="$(resolve_current_home 2>/dev/null || true)"
+  if [[ -n "$current_home" ]]; then
+    HOME="$current_home"
+    export HOME
+  fi
+
+  ACFS_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
+  ACFS_SYSTEM_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"
   ACFS_HOME="$(sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
   TARGET_HOME="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
   ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
-  export ACFS_HOME TARGET_HOME ACFS_BIN_DIR
+  export ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_HOME TARGET_HOME ACFS_BIN_DIR
 
   repo_update_script="$(find_repo_local_update_script || true)"
   wrapper_home="$(find_wrapper_installed_home || true)"
@@ -536,8 +577,8 @@ main() {
     [[ -n "$candidate_script" ]] && update_script="$candidate_script"
   fi
 
-  if [[ -z "$update_script" ]]; then
-    candidate_script="$(find_update_script_for_state_file "$HOME/.acfs/state.json" 2>/dev/null || true)"
+  if [[ -z "$update_script" ]] && [[ -n "$current_home" ]]; then
+    candidate_script="$(find_update_script_for_state_file "$current_home/.acfs/state.json" 2>/dev/null || true)"
     [[ -n "$candidate_script" ]] && update_script="$candidate_script"
   fi
 
@@ -567,10 +608,12 @@ main() {
 
   if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
     local state_candidate=""
-    for state_candidate in \
-      "${ACFS_STATE_FILE:-}" \
-      "${ACFS_SYSTEM_STATE_FILE:-}" \
-      "$HOME/.acfs/state.json"; do
+    state_candidates=(
+      "${ACFS_STATE_FILE:-}"
+      "${ACFS_SYSTEM_STATE_FILE:-}"
+    )
+    [[ -n "$current_home" ]] && state_candidates+=("$current_home/.acfs/state.json")
+    for state_candidate in "${state_candidates[@]}"; do
       [[ -n "$state_candidate" && -f "$state_candidate" ]] || continue
       ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$state_candidate" 2>/dev/null || true)"
       [[ -n "$ACFS_BIN_DIR" ]] && break

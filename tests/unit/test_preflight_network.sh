@@ -312,7 +312,7 @@ EOF
 
     local output=""
     local exit_code=0
-    output=$(sudo -n env PATH="$mock_dir:/usr/bin:/bin" HOME="$root_home" TARGET_USER=customuser \
+    output=$(sudo -n env PATH="$mock_dir:/usr/bin:/bin" HOME="$root_home" TARGET_HOME="/" TARGET_USER=customuser \
         bash "$REPO_ROOT/scripts/preflight.sh" --json 2>&1) || exit_code=$?
 
     local df_args=""
@@ -392,6 +392,59 @@ test_preflight_exit_code_on_warnings() {
     fi
 }
 
+test_preflight_nonroot_ignores_slash_home_override_for_disk_check() {
+    harness_section "Test: Non-root preflight repairs slash HOME/TARGET_HOME"
+
+    local temp_root=""
+    temp_root="$(mktemp -d)"
+
+    local mock_dir="$temp_root/mockbin"
+    local resolved_home="$temp_root/current-home"
+    local capture_file="$temp_root/df_args.txt"
+    local current_user=""
+    current_user="$(id -un)"
+    mkdir -p "$mock_dir" "$resolved_home"
+
+    cat > "$mock_dir/df" <<EOF
+#!/usr/bin/env bash
+echo "\$*" > "$capture_file"
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nmock 100 0 41943040 0%% /srv\n'
+EOF
+    chmod +x "$mock_dir/df"
+
+    cat > "$mock_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "passwd" ]] && [[ "\$2" == "$current_user" ]]; then
+    echo "$current_user:x:1000:1000::$resolved_home:/bin/bash"
+    exit 0
+fi
+exec /usr/bin/getent "\$@"
+EOF
+    chmod +x "$mock_dir/getent"
+
+    local output=""
+    local exit_code=0
+    output=$(PATH="$mock_dir:/usr/bin:/bin" HOME="/" TARGET_HOME="/" \
+        bash "$REPO_ROOT/scripts/preflight.sh" --json 2>&1) || exit_code=$?
+
+    local df_args=""
+    if [[ -f "$capture_file" ]]; then
+        df_args="$(cat "$capture_file")"
+    fi
+
+    if [[ "$df_args" == *"$resolved_home"* ]]; then
+        harness_pass "Disk check ignores slash HOME/TARGET_HOME for non-root runs"
+    else
+        harness_fail "Disk check ignores slash HOME/TARGET_HOME for non-root runs" "df args: $df_args output: $output"
+    fi
+
+    if [[ "$exit_code" =~ ^[01]$ ]]; then
+        harness_pass "Non-root slash-home preflight completed with a valid exit code"
+    else
+        harness_fail "Non-root slash-home preflight completed with a valid exit code" "exit: $exit_code"
+    fi
+}
+
 test_deb822_format_support() {
     harness_section "Test: DEB822 format support in APT mirror check"
 
@@ -446,6 +499,7 @@ main() {
     test_preflight_text_output_format
     test_preflight_quiet_mode
     test_preflight_root_resolves_target_home_for_disk_and_conflicts
+    test_preflight_nonroot_ignores_slash_home_override_for_disk_check
     test_dns_check_hosts
     test_installer_urls_checked
     test_preflight_exit_code_on_warnings

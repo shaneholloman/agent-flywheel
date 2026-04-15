@@ -54,6 +54,38 @@ EOF
     assert_output "unknown"
 }
 
+@test "update_target_home: ignores slash TARGET_HOME and uses passwd resolution" {
+    local resolved_home
+    resolved_home="$(create_temp_dir)"
+
+    export TARGET_HOME="/"
+    export HOME="/"
+
+    getent() {
+        if [[ "$1" == "passwd" && "$2" == "tester" ]]; then
+            printf 'tester:x:1000:1000::%s:/bin/bash\n' "$resolved_home"
+            return 0
+        fi
+        command getent "$@"
+    }
+
+    run update_target_home "tester"
+    assert_success
+    assert_output "$resolved_home"
+}
+
+@test "update_target_home: rejects invalid fallback usernames" {
+    export TARGET_HOME="/"
+    export HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    run update_target_home "../bad-user"
+    assert_failure
+}
+
 @test "capture_version: tracks changes" {
     mkdir -p "$HOME/.bun/bin"
     
@@ -415,10 +447,22 @@ EOF
     run grep -F "Invalid TARGET_HOME for '\${TARGET_USER}': \${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')" "$generated"
     assert_success
 
+    run grep -F '[[ "${HOME}" != "/" ]]' "$generated"
+    assert_success
+
+    run grep -F 'TARGET_HOME="${HOME%/}"' "$generated"
+    assert_success
+
     run grep -F "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: \${ACFS_BIN_DIR:-<empty>})" "$generated"
     assert_success
 
     run grep -F "Invalid TARGET_HOME for '\$target_user': \${target_home:-<empty>} (must be an absolute path and cannot be '/')" "$doctor_checks"
+    assert_success
+
+    run grep -F '[[ "${HOME}" != "/" ]]' "$doctor_checks"
+    assert_success
+
+    run grep -F 'target_home="${HOME%/}"' "$doctor_checks"
     assert_success
 
     run grep -F "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: \${target_bin:-<empty>})" "$doctor_checks"
@@ -497,17 +541,43 @@ EOF
     assert_success
     run grep -F 'HOME="$(resolve_current_home)" || {' "$nightly"
     assert_success
+    run grep -F 'ACFS_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"' "$nightly"
+    assert_success
     run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$nightly"
     assert_success
 
     run grep -F 'sanitize_abs_nonroot_path()' "$global_wrapper"
     assert_success
+    run grep -F 'resolve_current_home()' "$global_wrapper"
+    assert_success
+    run grep -F 'ACFS_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"' "$global_wrapper"
+    assert_success
+    run grep -F 'ACFS_SYSTEM_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"' "$global_wrapper"
+    assert_success
     run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$global_wrapper"
+    assert_success
+    run grep -F 'current_home="$(resolve_current_home 2>/dev/null || true)"' "$global_wrapper"
+    assert_success
+    run grep -F '[[ -n "$sanitized_state_file" ]] && env_args+=("ACFS_STATE_FILE=$sanitized_state_file")' "$global_wrapper"
+    assert_success
+    run grep -F '[[ -n "$sanitized_system_state_file" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$sanitized_system_state_file")' "$global_wrapper"
     assert_success
 
     run grep -F 'sanitize_abs_nonroot_path()' "$update_wrapper"
     assert_success
+    run grep -F 'resolve_current_home()' "$update_wrapper"
+    assert_success
+    run grep -F 'ACFS_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"' "$update_wrapper"
+    assert_success
+    run grep -F 'ACFS_SYSTEM_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"' "$update_wrapper"
+    assert_success
     run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update_wrapper"
+    assert_success
+    run grep -F 'current_home="$(resolve_current_home 2>/dev/null || true)"' "$update_wrapper"
+    assert_success
+    run grep -F '[[ -n "$sanitized_state_file" ]] && env_args+=("ACFS_STATE_FILE=$sanitized_state_file")' "$update_wrapper"
+    assert_success
+    run grep -F '[[ -n "$sanitized_system_state_file" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$sanitized_system_state_file")' "$update_wrapper"
     assert_success
 }
 

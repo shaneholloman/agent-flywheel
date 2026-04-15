@@ -21,10 +21,67 @@ _STATUS_JSON=false
 _STATUS_SHORT=false
 _STATUS_CHECK_UPDATES=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_STATUS_EXPLICIT_ACFS_HOME="${ACFS_HOME:-}"
-_STATUS_DEFAULT_ACFS_HOME="$HOME/.acfs"
+_status_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+_status_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(_status_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(_status_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+    fi
+
+    if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s\n' "$current_user"
+        return 0
+    fi
+
+    return 1
+}
+
+_STATUS_CURRENT_HOME="$(_status_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_STATUS_CURRENT_HOME" ]]; then
+    HOME="$_STATUS_CURRENT_HOME"
+    export HOME
+fi
+
+_STATUS_EXPLICIT_ACFS_HOME="$(_status_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+_STATUS_DEFAULT_ACFS_HOME=""
+[[ -n "$_STATUS_CURRENT_HOME" ]] && _STATUS_DEFAULT_ACFS_HOME="${_STATUS_CURRENT_HOME}/.acfs"
 _ACFS_HOME="${_STATUS_EXPLICIT_ACFS_HOME:-$_STATUS_DEFAULT_ACFS_HOME}"
-_STATUS_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
+_STATUS_SYSTEM_STATE_FILE="$(_status_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$_STATUS_SYSTEM_STATE_FILE" ]]; then
+    _STATUS_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+fi
 _STATUS_RESOLVED_ACFS_HOME=""
 
 # --- Parse args ---
@@ -89,9 +146,9 @@ _status_prepend_user_paths() {
 }
 
 _status_ensure_path() {
-    _status_prepend_user_paths "$HOME"
+    _status_prepend_user_paths "$_STATUS_CURRENT_HOME"
 
-    if [[ -n "${TARGET_HOME:-}" ]] && [[ "$TARGET_HOME" != "$HOME" ]]; then
+    if [[ -n "${TARGET_HOME:-}" ]] && [[ "$TARGET_HOME" != "$_STATUS_CURRENT_HOME" ]]; then
         _status_prepend_user_paths "$TARGET_HOME"
     fi
 }
@@ -99,14 +156,18 @@ _status_ensure_path() {
 _status_home_for_user() {
     local user="$1"
     local passwd_entry=""
+    local home_candidate=""
 
     [[ -n "$user" ]] || return 1
 
     if command -v getent &>/dev/null; then
         passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
         if [[ -n "$passwd_entry" ]]; then
-            printf '%s\n' "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            return 0
+            home_candidate="$(_status_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
         fi
     fi
 
@@ -199,12 +260,6 @@ _status_resolve_acfs_home() {
         return 0
     fi
 
-    if [[ -f "$_ACFS_HOME/state.json" || -f "$_ACFS_HOME/VERSION" || -d "$_ACFS_HOME/onboard" ]]; then
-        _STATUS_RESOLVED_ACFS_HOME="$_ACFS_HOME"
-        printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(_status_home_for_user "$SUDO_USER" 2>/dev/null || true)
         candidate="${target_home}/.acfs"
@@ -236,14 +291,24 @@ _status_resolve_acfs_home() {
         fi
     fi
 
+    if [[ -n "$_ACFS_HOME" ]] && [[ -f "$_ACFS_HOME/state.json" || -f "$_ACFS_HOME/VERSION" || -d "$_ACFS_HOME/onboard" ]]; then
+        _STATUS_RESOLVED_ACFS_HOME="$_ACFS_HOME"
+        printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
     _STATUS_RESOLVED_ACFS_HOME="$_ACFS_HOME"
     printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
 }
 
 _status_resolve_state_file() {
-    local candidate="$_ACFS_HOME/state.json"
+    local candidate=""
 
-    if [[ -f "$candidate" ]]; then
+    if [[ -n "$_ACFS_HOME" ]]; then
+        candidate="$_ACFS_HOME/state.json"
+    fi
+
+    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
         printf '%s\n' "$candidate"
         return 0
     fi
@@ -382,7 +447,7 @@ fi
 # 5. Optional: network-based update check
 _update_available=""
 if [[ "$_STATUS_CHECK_UPDATES" == "true" ]]; then
-    if [[ -f "$_ACFS_HOME/VERSION" ]]; then
+    if [[ -n "$_ACFS_HOME" ]] && [[ -f "$_ACFS_HOME/VERSION" ]]; then
         _local_version=$(cat "$_ACFS_HOME/VERSION" 2>/dev/null) || _local_version=""
         _remote_version=$(timeout 5 curl -fsSL \
             "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/VERSION" \

@@ -2999,15 +2999,15 @@ acfs_home_for_user() {
     passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
         passwd_entry="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-        if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]]; then
-            printf '%s\n' "$passwd_entry"
+        if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]] && [[ "$passwd_entry" != "/" ]]; then
+            printf '%s\n' "${passwd_entry%/}"
             return 0
         fi
     fi
 
     current_user="$(whoami 2>/dev/null || true)"
-    if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-        printf '%s\n' "$HOME"
+    if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        printf '%s\n' "${HOME%/}"
         return 0
     fi
 

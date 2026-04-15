@@ -102,8 +102,8 @@ _stack_target_home() {
     local passwd_entry=""
     local current_user=""
 
-    if [[ -n "${TARGET_HOME:-}" ]]; then
-        printf '%s\n' "$TARGET_HOME"
+    if [[ -n "${TARGET_HOME:-}" ]] && [[ "${TARGET_HOME}" == /* ]] && [[ "${TARGET_HOME}" != "/" ]]; then
+        printf '%s\n' "${TARGET_HOME%/}"
         return 0
     fi
 
@@ -115,19 +115,24 @@ _stack_target_home() {
     passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
         passwd_entry="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-        if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]]; then
-            printf '%s\n' "$passwd_entry"
+        if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]] && [[ "$passwd_entry" != "/" ]]; then
+            printf '%s\n' "${passwd_entry%/}"
             return 0
         fi
     fi
 
     current_user="$(whoami 2>/dev/null || true)"
-    if [[ "$current_user" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-        printf '%s\n' "$HOME"
+    if [[ "$current_user" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        printf '%s\n' "${HOME%/}"
         return 0
     fi
 
-    printf '/home/%s\n' "$target_user"
+    if [[ "$target_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s\n' "$target_user"
+        return 0
+    fi
+
+    return 1
 }
 
 _stack_trim_ascii_whitespace() {
@@ -285,7 +290,22 @@ _stack_run_as_user() {
     target_home="$(_stack_target_home "$target_user")"
     local target_path_prefix="${ACFS_BIN_DIR:-$target_home/.local/bin}:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
     local cmd="$1"
-    local wrapped_cmd="export PATH=\"$target_path_prefix:\$PATH\"; set -o pipefail; $cmd"
+    local target_user_q=""
+    local target_home_q=""
+    local acfs_bin_dir_q=""
+    local wrapped_cmd=""
+
+    printf -v target_user_q '%q' "$target_user"
+    printf -v target_home_q '%q' "$target_home"
+    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
+        printf -v acfs_bin_dir_q '%q' "$ACFS_BIN_DIR"
+    fi
+
+    wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"
+    if [[ -n "$acfs_bin_dir_q" ]]; then
+        wrapped_cmd+=" export ACFS_BIN_DIR=$acfs_bin_dir_q;"
+    fi
+    wrapped_cmd+=" export PATH=\"$target_path_prefix:\$PATH\"; set -o pipefail; $cmd"
 
     if [[ "$(whoami)" == "$target_user" ]]; then
         bash -c "$wrapped_cmd"

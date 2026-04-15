@@ -7,8 +7,61 @@
 # ============================================================
 set -euo pipefail
 
+support_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+support_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(support_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+    fi
+
+    if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s\n' "$current_user"
+        return 0
+    fi
+
+    return 1
+}
+
+_SUPPORT_CURRENT_HOME="$(support_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_SUPPORT_CURRENT_HOME" ]]; then
+    HOME="$_SUPPORT_CURRENT_HOME"
+    export HOME
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACFS_HOME="${ACFS_HOME:-}"
+ACFS_HOME="$(support_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 
 # Source logging utilities
 if [[ -f "$SCRIPT_DIR/logging.sh" ]]; then
@@ -34,7 +87,10 @@ OUTPUT_BASE=""
 OUTPUT_BASE_EXPLICIT=false
 REDACTION_COUNT=0
 DOCTOR_TIMEOUT="${SUPPORT_BUNDLE_DOCTOR_TIMEOUT:-120}"
-SUPPORT_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
+SUPPORT_SYSTEM_STATE_FILE="$(support_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$SUPPORT_SYSTEM_STATE_FILE" ]]; then
+    SUPPORT_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+fi
 SUPPORT_TARGET_USER=""
 SUPPORT_TARGET_HOME=""
 
@@ -93,14 +149,18 @@ done
 support_home_for_user() {
     local user="$1"
     local passwd_entry=""
+    local home_candidate=""
 
     [[ -n "$user" ]] || return 1
 
     if command -v getent &>/dev/null; then
         passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
         if [[ -n "$passwd_entry" ]]; then
-            printf '%s\n' "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            return 0
+            home_candidate="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
         fi
     fi
 
@@ -177,9 +237,13 @@ support_resolve_target_home() {
 }
 
 support_get_install_state_file() {
-    local candidate="${ACFS_HOME}/state.json"
+    local candidate=""
 
-    if [[ -f "$candidate" ]]; then
+    if [[ -n "$ACFS_HOME" ]]; then
+        candidate="${ACFS_HOME}/state.json"
+    fi
+
+    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
         printf '%s\n' "$candidate"
         return 0
     fi
@@ -236,7 +300,7 @@ support_resolve_acfs_home() {
         fi
     fi
 
-    printf '%s\n' "$HOME/.acfs"
+    printf '%s\n' "${_SUPPORT_CURRENT_HOME:+${_SUPPORT_CURRENT_HOME}/.acfs}"
 }
 
 support_initialize_context() {
@@ -261,10 +325,14 @@ support_initialize_context() {
         SUPPORT_TARGET_HOME="${ACFS_HOME%/.acfs}"
     fi
 
-    [[ -n "$SUPPORT_TARGET_HOME" ]] || SUPPORT_TARGET_HOME="$HOME"
+    [[ -n "$SUPPORT_TARGET_HOME" ]] || SUPPORT_TARGET_HOME="${_SUPPORT_CURRENT_HOME:-}"
 
     if [[ "$OUTPUT_BASE_EXPLICIT" != "true" ]]; then
-        OUTPUT_BASE="${ACFS_HOME}/support"
+        if [[ -n "$ACFS_HOME" ]]; then
+            OUTPUT_BASE="${ACFS_HOME}/support"
+        else
+            OUTPUT_BASE="${SUPPORT_TARGET_HOME:+${SUPPORT_TARGET_HOME}/.acfs/support}"
+        fi
     fi
 }
 
@@ -415,7 +483,7 @@ capture_versions() {
 capture_env_summary() {
     local bundle_dir="$1"
     local env_file="$bundle_dir/environment.json"
-    local support_home="${SUPPORT_TARGET_HOME:-$HOME}"
+    local support_home="${SUPPORT_TARGET_HOME:-${_SUPPORT_CURRENT_HOME:-}}"
     local support_user="${SUPPORT_TARGET_USER:-$(whoami 2>/dev/null || echo unknown)}"
 
     if ! command -v jq &>/dev/null; then
@@ -634,7 +702,9 @@ main() {
 
     # --- Collect ACFS state files ---
     log_detail "Collecting ACFS state files..."
-    collect_file "$ACFS_HOME/state.json" "$bundle_dir" "state.json" || true
+    if [[ -n "$ACFS_HOME" ]]; then
+        collect_file "$ACFS_HOME/state.json" "$bundle_dir" "state.json" || true
+    fi
     collect_file "$ACFS_HOME/VERSION" "$bundle_dir" "VERSION" || true
     collect_file "$ACFS_HOME/checksums.yaml" "$bundle_dir" "checksums.yaml" || true
 

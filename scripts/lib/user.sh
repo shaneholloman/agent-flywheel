@@ -48,18 +48,23 @@ user_home_for_user() {
     passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
         passwd_entry="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-        if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]]; then
-            printf '%s\n' "$passwd_entry"
+        if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]] && [[ "$passwd_entry" != "/" ]]; then
+            printf '%s\n' "${passwd_entry%/}"
             return 0
         fi
     fi
 
-    if [[ "$(whoami 2>/dev/null || true)" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-        printf '%s\n' "$HOME"
+    if [[ "$(whoami 2>/dev/null || true)" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        printf '%s\n' "${HOME%/}"
         return 0
     fi
 
-    printf '/home/%s\n' "$user"
+    if [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s\n' "$user"
+        return 0
+    fi
+
+    return 1
 }
 
 # Target user for ACFS installations
@@ -329,6 +334,11 @@ set_default_shell() {
 
     if [[ -z "$target_home" ]] && [[ -n "$passwd_entry" ]]; then
         target_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+        if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then
+            target_home=""
+        else
+            target_home="${target_home%/}"
+        fi
     fi
 
     if [[ -n "$passwd_entry" ]] && [[ -z "$local_entry" ]]; then

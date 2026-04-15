@@ -45,9 +45,66 @@ SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-_ONBOARD_EXPLICIT_ACFS_HOME="${ACFS_HOME:-}"
-_ONBOARD_DEFAULT_ACFS_HOME="$HOME/.acfs"
-_ONBOARD_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
+onboard_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+onboard_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(onboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            home_candidate="$(onboard_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            printf '/home/%s\n' "$current_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+_ONBOARD_CURRENT_HOME="$(onboard_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_ONBOARD_CURRENT_HOME" ]]; then
+    HOME="$_ONBOARD_CURRENT_HOME"
+    export HOME
+fi
+
+_ONBOARD_EXPLICIT_ACFS_HOME="$(onboard_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+_ONBOARD_DEFAULT_ACFS_HOME="${_ONBOARD_CURRENT_HOME:-/root}/.acfs"
+_ONBOARD_SYSTEM_STATE_FILE="$(onboard_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$_ONBOARD_SYSTEM_STATE_FILE" ]]; then
+    _ONBOARD_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+fi
 
 onboard_home_for_user() {
     local user="$1"
@@ -58,8 +115,11 @@ onboard_home_for_user() {
     if command -v getent >/dev/null 2>&1; then
         passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            printf '%s\n' "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            return 0
+            passwd_entry="$(onboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$passwd_entry" ]]; then
+                printf '%s\n' "$passwd_entry"
+                return 0
+            fi
         fi
     fi
 
@@ -125,11 +185,6 @@ onboard_resolve_acfs_home() {
         return 0
     fi
 
-    if onboard_candidate_has_acfs_data "$_ONBOARD_DEFAULT_ACFS_HOME"; then
-        printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
-        return 0
-    fi
-
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home="$(onboard_home_for_user "$SUDO_USER" 2>/dev/null || true)"
         candidate="${target_home}/.acfs"
@@ -139,7 +194,7 @@ onboard_resolve_acfs_home() {
         fi
     fi
 
-    target_home="$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)"
+    target_home="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
     candidate="${target_home}/.acfs"
     if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
         printf '%s\n' "$candidate"
@@ -158,6 +213,11 @@ onboard_resolve_acfs_home() {
         fi
     fi
 
+    if onboard_candidate_has_acfs_data "$_ONBOARD_DEFAULT_ACFS_HOME"; then
+        printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
+        return 0
+    fi
+
     printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
 }
 
@@ -172,9 +232,9 @@ onboard_resolve_runtime_home() {
         return 0
     fi
 
-    target_home="$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || \
-        onboard_read_state_string "$ACFS_HOME/state.json" "target_home" 2>/dev/null || true)"
-    if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+    target_home="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || \
+        onboard_read_state_string "$ACFS_HOME/state.json" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
         printf '%s\n' "${target_home%/}"
         return 0
     fi
@@ -191,13 +251,14 @@ onboard_resolve_runtime_home() {
 
     if [[ "$ACFS_HOME" == */.acfs ]]; then
         target_home="${ACFS_HOME%/.acfs}"
-        if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+        target_home="$(onboard_sanitize_abs_nonroot_path "$target_home" 2>/dev/null || true)"
+        if [[ -n "$target_home" ]]; then
             printf '%s\n' "${target_home%/}"
             return 0
         fi
     fi
 
-    printf '%s\n' "$HOME"
+    printf '%s\n' "${_ONBOARD_CURRENT_HOME:-/root}"
 }
 
 ONBOARD_RUNTIME_HOME="$(onboard_resolve_runtime_home)"
@@ -1093,7 +1154,7 @@ EOF
 # Returns: 0 = authenticated, 1 = not authenticated, 2 = not installed
 check_auth_status() {
     local service=$1
-    local runtime_home="${ONBOARD_RUNTIME_HOME:-$HOME}"
+    local runtime_home="${ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}"
     local shell_config_files=(
         "$runtime_home/.zshrc.local"
         "$runtime_home/.zshrc"

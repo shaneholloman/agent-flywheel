@@ -16,14 +16,72 @@
 
 set -euo pipefail
 
+continue_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+continue_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(continue_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(continue_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+    fi
+
+    if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s\n' "$current_user"
+        return 0
+    fi
+
+    return 1
+}
+
+_CONTINUE_CURRENT_HOME="$(continue_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_CONTINUE_CURRENT_HOME" ]]; then
+    HOME="$_CONTINUE_CURRENT_HOME"
+    export HOME
+fi
+
 # Constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACFS_LOG_DIR="/var/log/acfs"
 ACFS_INSTALL_LOG="${ACFS_LOG_DIR}/install.log"
 ACFS_UPGRADE_LOG="${ACFS_LOG_DIR}/upgrade_resume.log"
-ACFS_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
-_CONTINUE_EXPLICIT_ACFS_HOME="${ACFS_HOME:-}"
-_CONTINUE_DEFAULT_ACFS_HOME="$HOME/.acfs"
+ACFS_SYSTEM_STATE_FILE="$(continue_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$ACFS_SYSTEM_STATE_FILE" ]]; then
+    ACFS_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+fi
+ACFS_STATE_FILE="$(continue_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
+_CONTINUE_EXPLICIT_ACFS_HOME="$(continue_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+_CONTINUE_DEFAULT_ACFS_HOME=""
+[[ -n "$_CONTINUE_CURRENT_HOME" ]] && _CONTINUE_DEFAULT_ACFS_HOME="${_CONTINUE_CURRENT_HOME}/.acfs"
 SERVICE_NAME="acfs-upgrade-resume"
 
 # Colors
@@ -69,14 +127,18 @@ is_continuation_running() {
 home_for_user() {
     local user="$1"
     local passwd_entry=""
+    local home_candidate=""
 
     [[ -n "$user" ]] || return 1
 
     if command -v getent &>/dev/null; then
         passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
         if [[ -n "$passwd_entry" ]]; then
-            printf '%s\n' "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            return 0
+            home_candidate="$(continue_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
         fi
     fi
 
@@ -134,6 +196,7 @@ script_acfs_home() {
 }
 
 current_user_state_file() {
+    [[ -n "$_CONTINUE_DEFAULT_ACFS_HOME" ]] || return 1
     printf '%s/state.json\n' "$_CONTINUE_DEFAULT_ACFS_HOME"
 }
 
@@ -191,12 +254,6 @@ get_install_state_file() {
         return 0
     fi
 
-    candidate=$(current_user_state_file)
-    if [[ -f "$candidate" ]]; then
-        echo "$candidate"
-        return 0
-    fi
-
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs/state.json"
@@ -223,6 +280,12 @@ get_install_state_file() {
             echo "$candidate"
             return 0
         fi
+    fi
+
+    candidate="$(current_user_state_file 2>/dev/null || true)"
+    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
+        echo "$candidate"
+        return 0
     fi
 
     candidate=$(find_scanned_install_state_file || true)
@@ -267,8 +330,8 @@ select_state_file_for_key() {
         fi
     fi
 
-    candidate=$(current_user_state_file)
-    if [[ -f "$candidate" ]]; then
+    candidate="$(current_user_state_file 2>/dev/null || true)"
+    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
         echo "$candidate"
         return 0
     fi

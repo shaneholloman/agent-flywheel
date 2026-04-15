@@ -17,6 +17,8 @@ CHEATSHEET_SH="$REPO_ROOT/scripts/lib/cheatsheet.sh"
 DASHBOARD_SH="$REPO_ROOT/scripts/lib/dashboard.sh"
 DOCTOR_SH="$REPO_ROOT/scripts/lib/doctor.sh"
 CONTINUE_SH="$REPO_ROOT/scripts/lib/continue.sh"
+STATE_SH="$REPO_ROOT/scripts/lib/state.sh"
+SMOKE_TEST_SH="$REPO_ROOT/scripts/lib/smoke_test.sh"
 ONBOARD_SH="$REPO_ROOT/packages/onboard/onboard.sh"
 SERVICES_SETUP_SH="$REPO_ROOT/scripts/services-setup.sh"
 
@@ -35,6 +37,8 @@ TEST_INSTALLED_HELPERS=""
 TEST_INSTALLED_MANIFEST_INDEX=""
 TEST_SYSTEM_STATE_FILE=""
 TEST_DEV_REPO=""
+RELATIVE_HOME=""
+STALE_HOME=""
 
 setup_mock_env() {
     TEST_HOME="$(mktemp -d)"
@@ -380,6 +384,12 @@ setup_system_state_target_home_only_env() {
 EOF
 }
 
+setup_relative_home_trap() {
+    RELATIVE_HOME="relative-home"
+    STALE_HOME="$TEST_HOME/$RELATIVE_HOME"
+    mkdir -p "$STALE_HOME/.acfs"
+}
+
 cleanup_mock_env() {
     if [[ -n "$TEST_HOME" ]] && [[ -d "$TEST_HOME" ]]; then
         rm -rf "$TEST_HOME"
@@ -491,6 +501,91 @@ EOF
         harness_pass "services-setup prefers target-home libs under root home"
     else
         harness_fail "services-setup prefers target-home libs under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_services_setup_runs_target_user_commands_with_target_home() {
+    setup_mock_env
+
+    local root_home="$TEST_HOME/root-home"
+    local target_home="$TEST_HOME/target-home"
+    local output=""
+
+    mkdir -p \
+        "$root_home/.acfs/scripts/lib" \
+        "$target_home/.acfs/scripts/lib" \
+        "$target_home/.acfs/scripts" \
+        "$target_home/.local/bin" \
+        "$target_home/.claude"
+
+    cp "$SERVICES_SETUP_SH" "$target_home/.acfs/scripts/services-setup.sh"
+
+    cat > "$target_home/.acfs/scripts/lib/logging.sh" <<'EOF'
+#!/usr/bin/env bash
+log_error() { echo "TARGET_LOG_ERROR:$*"; }
+log_info() { :; }
+log_warn() { :; }
+log_success() { :; }
+EOF
+
+    cat > "$target_home/.acfs/scripts/lib/gum_ui.sh" <<'EOF'
+#!/usr/bin/env bash
+HAS_GUM=false
+ACFS_ACCENT=x
+ACFS_PINK=x
+ACFS_MUTED=x
+ACFS_TEAL=x
+ACFS_PRIMARY=x
+ACFS_SUCCESS=x
+ACFS_ERROR=x
+print_compact_banner() { :; }
+gum_box() { :; }
+gum_detail() { :; }
+gum_error() { echo "TARGET_GUM_ERROR:$*"; }
+gum_warn() { :; }
+gum_success() { :; }
+gum_confirm() { return 1; }
+gum_completion() { :; }
+EOF
+
+    cat > "$target_home/.local/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    cat > "$target_home/.local/bin/dcg" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+    install)
+        mkdir -p "$HOME/.claude"
+        printf '{"hook":"dcg"}\n' > "$HOME/.claude/settings.json"
+        printf '%s\n' "$HOME" >> "${TARGET_HOME}/dcg-home.log"
+        exit 0
+        ;;
+    doctor)
+        printf '%s\n' "$HOME" >> "${TARGET_HOME}/dcg-home.log"
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+EOF
+    chmod +x "$target_home/.local/bin/claude" "$target_home/.local/bin/dcg"
+
+    output=$(HOME="$root_home" TARGET_HOME="$target_home" TARGET_USER="$(whoami)" \
+        PATH="$target_home/.local/bin:/usr/bin:/bin" \
+        bash "$target_home/.acfs/scripts/services-setup.sh" --install-claude-guard --yes 2>&1 || true)
+
+    if [[ -f "$target_home/.claude/settings.json" ]] \
+        && [[ ! -f "$root_home/.claude/settings.json" ]] \
+        && [[ -f "$target_home/dcg-home.log" ]] \
+        && grep -Fxq "$target_home" "$target_home/dcg-home.log" \
+        && ! grep -Fxq "$root_home" "$target_home/dcg-home.log"; then
+        harness_pass "services-setup runs target-user commands with target HOME"
+    else
+        harness_fail "services-setup runs target-user commands with target HOME" "$output"
     fi
 
     cleanup_mock_env
@@ -878,6 +973,34 @@ test_status_uses_system_state_target_home_when_getent_unavailable() {
     cleanup_mock_env
 }
 
+test_status_ignores_relative_home_state_trap() {
+    setup_system_state_target_home_only_env
+    setup_relative_home_trap
+
+    cat > "$STALE_HOME/.acfs/state.json" <<'JSON'
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "/trap/home",
+  "started_at": "2030-01-01T00:00:00Z",
+  "last_updated": "2030-01-02T00:00:00Z"
+}
+JSON
+    printf '9.9.9\n' > "$STALE_HOME/.acfs/VERSION"
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$RELATIVE_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash "$STATUS_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '.last_update == "2026-03-10T12:34:56Z" and (.errors | length == 0)' >/dev/null 2>&1; then
+        harness_pass "status ignores relative HOME state trap"
+    else
+        harness_fail "status ignores relative HOME state trap" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_changelog_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
 
@@ -922,6 +1045,32 @@ test_changelog_uses_system_state_target_home_when_getent_unavailable() {
         harness_pass "changelog uses target_home from system state when getent is unavailable"
     else
         harness_fail "changelog uses target_home from system state when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_changelog_ignores_relative_home_trap() {
+    setup_system_state_target_home_only_env
+    setup_relative_home_trap
+
+    cat > "$STALE_HOME/.acfs/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [9.9.9] - 2030-01-01
+
+### Added
+- Trap entry
+EOF
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$RELATIVE_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash "$CHANGELOG_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '.changes | (length == 1 and .[0].version == "2.0.0")' >/dev/null 2>&1; then
+        harness_pass "changelog ignores relative HOME trap"
+    else
+        harness_fail "changelog ignores relative HOME trap" "$output"
     fi
 
     cleanup_mock_env
@@ -988,6 +1137,35 @@ test_export_config_uses_system_state_target_home_when_getent_unavailable() {
     cleanup_mock_env
 }
 
+test_export_config_ignores_relative_home_state_trap() {
+    setup_system_state_target_home_only_env
+    setup_relative_home_trap
+
+    cat > "$STALE_HOME/.acfs/state.json" <<'JSON'
+{
+  "mode": "trap",
+  "target_user": "tester",
+  "target_home": "/trap/home",
+  "started_at": "2030-01-01T00:00:00Z",
+  "last_updated": "2030-01-02T00:00:00Z"
+}
+JSON
+    printf '9.9.9\n' > "$STALE_HOME/.acfs/VERSION"
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$RELATIVE_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        ACFS_INSTALL_HELPERS_SH="$TEST_INSTALLED_HELPERS" ACFS_MANIFEST_INDEX_SH="$TEST_INSTALLED_MANIFEST_INDEX" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash "$EXPORT_CONFIG_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '.metadata.acfs_version == "2.0.0" and .settings.mode == "safe"' >/dev/null 2>&1; then
+        harness_pass "export-config ignores relative HOME state trap"
+    else
+        harness_fail "export-config ignores relative HOME state trap" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_continue_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
 
@@ -1019,6 +1197,37 @@ test_continue_uses_system_state_target_home_when_getent_unavailable() {
         harness_pass "continue uses target_home from system state when getent is unavailable"
     else
         harness_fail "continue uses target_home from system state when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_continue_ignores_relative_home_state_trap() {
+    setup_system_state_target_home_only_env
+    setup_relative_home_trap
+
+    cat > "$STALE_HOME/.acfs/state.json" <<'JSON'
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "/trap/home",
+  "started_at": "2030-01-01T00:00:00Z",
+  "last_updated": "2030-01-02T00:00:00Z"
+}
+JSON
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$RELATIVE_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" TEST_CONTINUE_SCRIPT="$CONTINUE_SH" \
+        bash -lc '
+            source "$TEST_CONTINUE_SCRIPT"
+            get_install_state_file
+        ' 2>&1)
+
+    if [[ "$output" == "$TEST_TARGET_HOME/.acfs/state.json" ]]; then
+        harness_pass "continue ignores relative HOME state trap"
+    else
+        harness_fail "continue ignores relative HOME state trap" "$output"
     fi
 
     cleanup_mock_env
@@ -1213,6 +1422,39 @@ test_info_uses_system_state_target_home_when_getent_unavailable() {
     cleanup_mock_env
 }
 
+test_info_ignores_relative_home_state_trap() {
+    setup_system_state_target_home_only_env
+    setup_relative_home_trap
+
+    mkdir -p "$STALE_HOME/.acfs/onboard/lessons"
+    cat > "$STALE_HOME/.acfs/state.json" <<'JSON'
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "/trap/home",
+  "started_at": "2030-01-01T00:00:00Z",
+  "last_updated": "2030-01-02T00:00:00Z"
+}
+JSON
+    cat > "$STALE_HOME/.acfs/onboard/lessons/01-trap.md" <<'EOF'
+# Trap Lesson
+EOF
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$RELATIVE_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_TARGET_HOME/.local/bin:$TEST_FAKE_BIN:/usr/bin:/bin" bash "$INFO_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e \
+        '.installation.date == "2026-03-09" and .onboard.next_lesson == "Lesson 1 - Installed Lesson"' \
+        >/dev/null 2>&1; then
+        harness_pass "info ignores relative HOME state trap"
+    else
+        harness_fail "info ignores relative HOME state trap" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_info_uses_target_user_path_under_root_home() {
     setup_installed_layout_env
 
@@ -1290,6 +1532,224 @@ test_support_bundle_uses_system_state_target_home_when_getent_unavailable() {
     cleanup_mock_env
 }
 
+test_dashboard_copy_install_ignores_relative_home_trap() {
+    setup_system_state_target_home_only_env
+    setup_relative_home_trap
+
+    mkdir -p "$TEST_ROOT_HOME/.local/bin" "$TEST_INSTALLED_ACFS/scripts/lib" "$STALE_HOME/.acfs/scripts/lib"
+    cp "$DASHBOARD_SH" "$TEST_ROOT_HOME/.local/bin/dashboard"
+    chmod +x "$TEST_ROOT_HOME/.local/bin/dashboard"
+
+    cat > "$TEST_INSTALLED_ACFS/scripts/lib/info.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<html>copied-dashboard-info</html>\n'
+EOF
+    cat > "$STALE_HOME/.acfs/scripts/lib/info.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '<html>trap-dashboard-info</html>\n'
+EOF
+    chmod +x "$TEST_INSTALLED_ACFS/scripts/lib/info.sh" "$STALE_HOME/.acfs/scripts/lib/info.sh"
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$RELATIVE_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_ROOT_HOME/.local/bin:$TEST_FAKE_BIN:/usr/bin:/bin" dashboard generate --force 2>&1)
+
+    if [[ "$output" == *"$TEST_INSTALLED_ACFS/dashboard/index.html"* ]] \
+        && [[ -f "$TEST_INSTALLED_ACFS/dashboard/index.html" ]] \
+        && [[ ! -e "$STALE_HOME/.acfs/dashboard/index.html" ]]; then
+        harness_pass "copied dashboard ignores relative HOME trap"
+    else
+        harness_fail "copied dashboard ignores relative HOME trap" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_cheatsheet_copy_install_ignores_relative_home_trap() {
+    setup_system_state_target_home_only_env
+    setup_relative_home_trap
+
+    mkdir -p "$TEST_ROOT_HOME/.local/bin" "$TEST_INSTALLED_ACFS/zsh" "$STALE_HOME/.acfs/zsh"
+    cp "$CHEATSHEET_SH" "$TEST_ROOT_HOME/.local/bin/cheatsheet"
+    chmod +x "$TEST_ROOT_HOME/.local/bin/cheatsheet"
+
+    cat > "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" <<'EOF'
+alias cod='codex'
+EOF
+    cat > "$STALE_HOME/.acfs/zsh/acfs.zshrc" <<'EOF'
+alias trapcmd='echo trap'
+EOF
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/codex" "codex 1.2.3"
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$RELATIVE_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_ROOT_HOME/.local/bin:$TEST_FAKE_BIN:/usr/bin:/bin" cheatsheet --json 2>&1)
+
+    if printf '%s\n' "$output" | jq -e --arg zshrc "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" \
+        '.source == $zshrc and ([.entries[].name] | index("cod")) != null and ([.entries[].name] | index("trapcmd")) == null' \
+        >/dev/null 2>&1; then
+        harness_pass "copied cheatsheet ignores relative HOME trap"
+    else
+        harness_fail "copied cheatsheet ignores relative HOME trap" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_state_library_ignores_relative_home_target_resolution() {
+    setup_mock_env
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p "$TEST_FAKE_BIN"
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    local output=""
+    output=$(HOME="relative-home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash -c 'source "$1"; unset TARGET_HOME; TARGET_USER="$(id -un 2>/dev/null || whoami 2>/dev/null)"; printf "home=%s\n" "$(state_resolve_target_home)"; printf "state=%s\n" "$(state_get_file)"' _ \
+        "$STATE_SH")
+
+    local resolved_home=""
+    local state_file=""
+    resolved_home="$(printf '%s\n' "$output" | sed -n 's/^home=//p' | head -n 1)"
+    state_file="$(printf '%s\n' "$output" | sed -n 's/^state=//p' | head -n 1)"
+
+    if [[ "$resolved_home" == /* ]] && [[ "$resolved_home" != "/" ]] \
+        && [[ "$resolved_home" != "relative-home" ]] \
+        && [[ "$state_file" == "$resolved_home/.acfs/state.json" ]]; then
+        harness_pass "state library ignores relative HOME during target resolution"
+    else
+        harness_fail "state library ignores relative HOME during target resolution" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_smoke_test_ignores_relative_home_target_resolution() {
+    setup_mock_env
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p "$TEST_FAKE_BIN"
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    local output=""
+    output=$(HOME="relative-home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash -c 'source "$1"; printf "target_home=%s\n" "$TARGET_HOME"' _ \
+        "$SMOKE_TEST_SH")
+
+    local resolved_home=""
+    resolved_home="$(printf '%s\n' "$output" | sed -n 's/^target_home=//p' | head -n 1)"
+
+    if [[ "$resolved_home" == /* ]] && [[ "$resolved_home" != "/" ]] && [[ "$resolved_home" != "relative-home" ]]; then
+        harness_pass "smoke test ignores relative HOME during target resolution"
+    else
+        harness_fail "smoke test ignores relative HOME during target resolution" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_runtime_helpers_resolve_current_home_from_passwd_when_home_invalid() {
+    setup_mock_env
+
+    local current_user=""
+    local passwd_home=""
+    local failures=""
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    passwd_home="$TEST_HOME/passwd-home"
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p "$TEST_FAKE_BIN" "$passwd_home"
+
+    cat > "$TEST_FAKE_BIN/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "passwd" ]] && [[ "\$2" == "$current_user" ]]; then
+    echo "$current_user:x:1000:1000::$passwd_home:/bin/bash"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    while IFS='|' read -r label script func; do
+        [[ -n "$label" ]] || continue
+        local output=""
+        local status=0
+        output=$(HOME="relative-home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+            bash -c 'script="$1"; func="$2"; shift 2; set --; source "$script"; "$func"' _ \
+            "$script" "$func" 2>&1) || status=$?
+
+        if [[ $status -ne 0 ]] || [[ "$output" != "$passwd_home" ]]; then
+            failures+="${label}: status=${status} output=${output}"$'\n'
+        fi
+    done <<EOF
+continue|$CONTINUE_SH|continue_resolve_current_home
+dashboard|$DASHBOARD_SH|dashboard_resolve_current_home
+info|$INFO_SH|info_resolve_current_home
+changelog|$CHANGELOG_SH|changelog_resolve_current_home
+EOF
+
+    if [[ -z "$failures" ]]; then
+        harness_pass "runtime helpers recover current home from passwd when HOME is invalid"
+    else
+        harness_fail "runtime helpers recover current home from passwd when HOME is invalid" "$failures"
+    fi
+
+    cleanup_mock_env
+}
+
+test_runtime_helpers_reject_invalid_passwd_home_for_target_user() {
+    setup_mock_env
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p "$TEST_FAKE_BIN"
+
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "passwd" ]] && [[ "$2" == "tester" ]]; then
+    echo 'tester:x:1000:1000::relative-home:/bin/bash'
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    local failures=""
+
+    while IFS='|' read -r label script func; do
+        [[ -n "$label" ]] || continue
+        local output=""
+        local status=0
+        output=$(HOME="$TEST_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+            bash -c 'script="$1"; func="$2"; shift 2; set --; source "$script"; "$func" tester' _ \
+            "$script" "$func" 2>&1) || status=$?
+
+        if [[ $status -ne 0 ]] || [[ "$output" != "/home/tester" ]]; then
+            failures+="${label}: status=${status} output=${output}"$'\n'
+        fi
+    done <<EOF
+continue|$CONTINUE_SH|home_for_user
+dashboard|$DASHBOARD_SH|dashboard_home_for_user
+info|$INFO_SH|info_home_for_user
+changelog|$CHANGELOG_SH|changelog_home_for_user
+EOF
+
+    if [[ -z "$failures" ]]; then
+        harness_pass "runtime helpers reject malformed passwd homes for target users"
+    else
+        harness_fail "runtime helpers reject malformed passwd homes for target users" "$failures"
+    fi
+
+    cleanup_mock_env
+}
+
 test_doctor_dispatches_installed_layout_under_root_home() {
     setup_installed_layout_env
 
@@ -1301,6 +1761,35 @@ test_doctor_dispatches_installed_layout_under_root_home() {
         harness_pass "installed acfs dispatcher finds VERSION and helper tree under root home"
     else
         harness_fail "installed acfs dispatcher finds VERSION and helper tree under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_doctor_ignores_relative_home_state_trap() {
+    setup_installed_layout_env
+    setup_relative_home_trap
+
+    mkdir -p "$STALE_HOME/.local/bin"
+    cat > "$STALE_HOME/.acfs/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$STALE_HOME"
+}
+EOF
+    write_fake_command "$STALE_HOME/.local/bin/claude" "claude stale"
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$RELATIVE_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --json)
+
+    if printf '%s\n' "$output" | jq -e --arg live_path "$TEST_TARGET_HOME/.local/bin/claude" --arg stale_path "$STALE_HOME/.local/bin/claude" '
+        ([.checks[] | select(.id == "agent.path.claude") | .details] | first) == ("native (" + $live_path + ")") and
+        ([.checks[] | select(.id == "agent.path.claude") | .details] | first) != ("native (" + $stale_path + ")")
+    ' >/dev/null 2>&1; then
+        harness_pass "doctor ignores relative HOME state trap"
+    else
+        harness_fail "doctor ignores relative HOME state trap" "$output"
     fi
 
     cleanup_mock_env
@@ -1433,6 +1922,77 @@ EOF
         harness_pass "acfs-update wrapper discards invalid env bin_dir on direct exec"
     else
         harness_fail "acfs-update wrapper discards invalid env bin_dir on direct exec" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_update_wrapper_discards_invalid_env_state_file_on_direct_exec() {
+    setup_system_state_target_home_only_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.acfs/scripts/lib"
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    cat > "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s ARG1=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_ROOT_HOME/.acfs" TARGET_HOME="$TEST_ROOT_HOME" \
+        ACFS_STATE_FILE="relative-state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs-update" --dry-run 2>&1)
+
+    if [[ "$output" == "HOME=$TEST_TARGET_HOME TARGET_HOME=$TEST_TARGET_HOME ACFS_HOME=$TEST_INSTALLED_ACFS ARG1=--dry-run" ]]; then
+        harness_pass "acfs-update wrapper discards invalid env state file on direct exec"
+    else
+        harness_fail "acfs-update wrapper discards invalid env state file on direct exec" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_update_wrapper_ignores_relative_home_state_trap() {
+    setup_system_state_target_home_only_env
+
+    local relative_home="relative-home"
+    local stale_home="$TEST_HOME/$relative_home"
+
+    mkdir -p \
+        "$TEST_HOME/probe" \
+        "$TEST_TARGET_HOME/.acfs/scripts/lib" \
+        "$stale_home/.acfs/scripts/lib"
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    cat > "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=live\n' "${TARGET_HOME:-}"
+EOF
+    cat > "$stale_home/.acfs/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$stale_home"
+}
+EOF
+    cat > "$stale_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=stale\n' "${TARGET_HOME:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh" "$stale_home/.acfs/scripts/lib/update.sh"
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$relative_home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs-update" --dry-run 2>&1)
+
+    if [[ "$output" == "TARGET_HOME=$TEST_TARGET_HOME SOURCE=live" ]]; then
+        harness_pass "acfs-update wrapper ignores relative HOME state trap"
+    else
+        harness_fail "acfs-update wrapper ignores relative HOME state trap" "$output"
     fi
 
     cleanup_mock_env
@@ -1631,6 +2191,78 @@ EOF
         harness_pass "global acfs wrapper discards invalid env bin_dir on direct exec"
     else
         harness_fail "global acfs wrapper discards invalid env bin_dir on direct exec" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_global_wrapper_discards_invalid_env_state_file_on_direct_exec() {
+    setup_system_state_target_home_only_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.local/bin"
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    cat > "$TEST_TARGET_HOME/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s ARG1=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.local/bin/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_ROOT_HOME/.acfs" TARGET_HOME="$TEST_ROOT_HOME" \
+        ACFS_STATE_FILE="relative-state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "HOME=$TEST_TARGET_HOME TARGET_HOME=$TEST_TARGET_HOME ACFS_HOME=$TEST_INSTALLED_ACFS ARG1=version" ]]; then
+        harness_pass "global acfs wrapper discards invalid env state file on direct exec"
+    else
+        harness_fail "global acfs wrapper discards invalid env state file on direct exec" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_global_wrapper_ignores_relative_home_state_trap() {
+    setup_system_state_target_home_only_env
+
+    local relative_home="relative-home"
+    local stale_home="$TEST_HOME/$relative_home"
+
+    mkdir -p \
+        "$TEST_HOME/probe" \
+        "$TEST_TARGET_HOME/.local/bin" \
+        "$stale_home/.acfs" \
+        "$stale_home/.local/bin"
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    cat > "$TEST_TARGET_HOME/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=live ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    cat > "$stale_home/.acfs/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$stale_home"
+}
+EOF
+    cat > "$stale_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=stale ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.local/bin/acfs" "$stale_home/.local/bin/acfs"
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$relative_home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "TARGET_HOME=$TEST_TARGET_HOME SOURCE=live ARG1=version" ]]; then
+        harness_pass "global acfs wrapper ignores relative HOME state trap"
+    else
+        harness_fail "global acfs wrapper ignores relative HOME state trap" "$output"
     fi
 
     cleanup_mock_env
@@ -2191,6 +2823,36 @@ EOF
     cleanup_mock_env
 }
 
+test_onboard_copy_install_ignores_relative_home_trap() {
+    setup_system_state_target_home_only_env
+    setup_relative_home_trap
+
+    mkdir -p "$TEST_ROOT_HOME/.local/bin" "$STALE_HOME/.acfs/onboard/lessons"
+    cp "$ONBOARD_SH" "$TEST_ROOT_HOME/.local/bin/onboard"
+    chmod +x "$TEST_ROOT_HOME/.local/bin/onboard"
+
+    cat > "$STALE_HOME/.acfs/onboard/lessons/01_intro.md" <<'EOF'
+# Wrong Intro
+
+stale lesson
+EOF
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$RELATIVE_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_ROOT_HOME/.local/bin:$TEST_FAKE_BIN:/usr/bin:/bin" \
+        onboard status 2>&1)
+
+    if [[ -f "$TEST_INSTALLED_ACFS/onboard_progress.json" ]] \
+        && [[ ! -e "$STALE_HOME/.acfs/onboard_progress.json" ]] \
+        && [[ "$output" != *"No lessons available"* ]]; then
+        harness_pass "copied onboard ignores relative HOME trap"
+    else
+        harness_fail "copied onboard ignores relative HOME trap" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_state_driven_helpers_reject_invalid_target_home_from_state() {
     if grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$INFO_SH" \
         && grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$STATUS_SH" \
@@ -2221,12 +2883,14 @@ main() {
 
     harness_section "Services Setup"
     test_services_setup_prefers_target_home_libs_under_root_home || true
+    test_services_setup_runs_target_user_commands_with_target_home || true
 
     harness_section "Export Config"
     test_export_config_json_is_valid || true
     test_export_config_uses_installed_layout_under_root_home || true
     test_export_config_uses_system_state_when_user_state_missing || true
     test_export_config_uses_system_state_target_home_when_getent_unavailable || true
+    test_export_config_ignores_relative_home_state_trap || true
 
     harness_section "Status"
     test_status_rejects_unknown_flags || true
@@ -2236,15 +2900,18 @@ main() {
     test_status_uses_installed_layout_under_root_home || true
     test_status_uses_system_state_when_user_state_missing || true
     test_status_uses_system_state_target_home_when_getent_unavailable || true
+    test_status_ignores_relative_home_state_trap || true
 
     harness_section "Changelog Root Context"
     test_changelog_uses_installed_layout_under_root_home || true
     test_changelog_uses_system_state_when_user_state_missing || true
     test_changelog_uses_system_state_target_home_when_getent_unavailable || true
+    test_changelog_ignores_relative_home_trap || true
 
     harness_section "Continue"
     test_continue_uses_installed_layout_under_root_home || true
     test_continue_uses_system_state_target_home_when_getent_unavailable || true
+    test_continue_ignores_relative_home_state_trap || true
     test_continue_ignores_generic_install_process_matches || true
     test_continue_failed_state_beats_runtime_probe || true
     test_continue_reports_installed_layout_log_locations || true
@@ -2258,15 +2925,22 @@ main() {
     test_dashboard_uses_installed_layout_under_root_home || true
     test_dashboard_serve_uses_target_user_in_ssh_hint || true
     test_dashboard_copy_install_uses_target_home_only_system_state || true
+    test_dashboard_copy_install_ignores_relative_home_trap || true
 
     harness_section "Cheatsheet"
+    test_state_library_ignores_relative_home_target_resolution || true
+    test_smoke_test_ignores_relative_home_target_resolution || true
     test_cheatsheet_uses_installed_layout_and_target_path_under_root_home || true
     test_cheatsheet_copy_install_uses_target_home_only_system_state || true
+    test_cheatsheet_copy_install_ignores_relative_home_trap || true
 
     harness_section "Info / Support / Onboard"
     test_state_driven_helpers_reject_invalid_target_home_from_state || true
+    test_runtime_helpers_resolve_current_home_from_passwd_when_home_invalid || true
+    test_runtime_helpers_reject_invalid_passwd_home_for_target_user || true
     test_info_uses_installed_layout_under_root_home || true
     test_info_uses_system_state_target_home_when_getent_unavailable || true
+    test_info_ignores_relative_home_state_trap || true
     test_info_uses_target_user_path_under_root_home || true
     test_info_zero_lessons_hides_onboard_prompt_and_explains_state || true
     test_info_reads_skipped_tools_without_jq || true
@@ -2280,19 +2954,25 @@ main() {
     test_onboard_auth_checks_use_installed_target_home_under_root_home || true
     test_onboard_copy_install_uses_system_state_under_root_home || true
     test_onboard_copy_install_uses_target_home_only_system_state_under_root_home || true
+    test_onboard_copy_install_ignores_relative_home_trap || true
 
     harness_section "Entrypoint Dispatch"
     test_doctor_entrypoint_dispatches_helper_commands || true
     test_doctor_dispatches_installed_layout_under_root_home || true
+    test_doctor_ignores_relative_home_state_trap || true
     test_acfs_update_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_update_wrapper_repairs_runtime_home_on_direct_exec || true
     test_acfs_update_wrapper_passes_bin_dir_from_state || true
     test_acfs_update_wrapper_discards_invalid_env_bin_dir_on_direct_exec || true
+    test_acfs_update_wrapper_discards_invalid_env_state_file_on_direct_exec || true
+    test_acfs_update_wrapper_ignores_relative_home_state_trap || true
     test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user || true
     test_acfs_global_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_global_wrapper_repairs_runtime_home_on_direct_exec || true
     test_acfs_global_wrapper_passes_bin_dir_from_state || true
     test_acfs_global_wrapper_discards_invalid_env_bin_dir_on_direct_exec || true
+    test_acfs_global_wrapper_discards_invalid_env_state_file_on_direct_exec || true
+    test_acfs_global_wrapper_ignores_relative_home_state_trap || true
     test_acfs_global_wrapper_does_not_guess_current_home_when_target_home_is_unresolved || true
     test_acfs_global_wrapper_ignores_stale_home_adjacent_target_user || true
     test_doctor_agent_checks_use_target_context_under_root_home || true

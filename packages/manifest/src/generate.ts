@@ -96,9 +96,12 @@ if [[ "\${BASH_SOURCE[0]}" = "\${0}" ]]; then
             else
                 _acfs_passwd_entry="\$(getent passwd "\${TARGET_USER}" 2>/dev/null || true)"
                 if [[ -n "\$_acfs_passwd_entry" ]]; then
-                    TARGET_HOME="\$(printf '%s\\n' "\$_acfs_passwd_entry" | cut -d: -f6)"
-                elif [[ "\$(id -un 2>/dev/null || true)" == "\${TARGET_USER}" ]] && [[ -n "\${HOME:-}" ]] && [[ "\${HOME}" == /* ]]; then
-                    TARGET_HOME="\${HOME}"
+                    _acfs_passwd_entry="\$(printf '%s\\n' "\$_acfs_passwd_entry" | cut -d: -f6)"
+                    if [[ -n "\$_acfs_passwd_entry" ]] && [[ "\$_acfs_passwd_entry" == /* ]] && [[ "\$_acfs_passwd_entry" != "/" ]]; then
+                        TARGET_HOME="\${_acfs_passwd_entry%/}"
+                    fi
+                elif [[ "\$(id -un 2>/dev/null || true)" == "\${TARGET_USER}" ]] && [[ -n "\${HOME:-}" ]] && [[ "\${HOME}" == /* ]] && [[ "\${HOME}" != "/" ]]; then
+                    TARGET_HOME="\${HOME%/}"
                 fi
                 unset _acfs_passwd_entry
             fi
@@ -1283,9 +1286,12 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('            local _acfs_passwd_entry=""');
   lines.push('            _acfs_passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"');
   lines.push('            if [[ -n "$_acfs_passwd_entry" ]]; then');
-  lines.push('                target_home="$(printf \'%s\\n\' "$_acfs_passwd_entry" | cut -d: -f6)"');
-  lines.push('            elif [[ "$(id -un 2>/dev/null || true)" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then');
-  lines.push('                target_home="${HOME}"');
+  lines.push('                _acfs_passwd_entry="$(printf \'%s\\n\' "$_acfs_passwd_entry" | cut -d: -f6)"');
+  lines.push('                if [[ -n "$_acfs_passwd_entry" ]] && [[ "$_acfs_passwd_entry" == /* ]] && [[ "$_acfs_passwd_entry" != "/" ]]; then');
+  lines.push('                    target_home="${_acfs_passwd_entry%/}"');
+  lines.push('                fi');
+  lines.push('            elif [[ "$(id -un 2>/dev/null || true)" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then');
+  lines.push('                target_home="${HOME%/}"');
   lines.push('            fi');
   lines.push('            unset _acfs_passwd_entry');
   lines.push('        fi');

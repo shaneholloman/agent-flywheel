@@ -51,6 +51,22 @@ MACHINE_OUTPUT=false
 # Results for JSON output
 declare -a RESULTS=()
 
+preflight_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+preflight_is_valid_username() {
+    local username="${1:-}"
+    [[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]]
+}
+
 resolve_home_dir() {
     local user="$1"
     local home=""
@@ -59,14 +75,47 @@ resolve_home_dir() {
         return 1
     fi
 
+    if [[ "$user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
     if command -v getent &>/dev/null; then
         home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
     elif [[ -r /etc/passwd ]]; then
         home="$(awk -F: -v u="$user" '$1==u{print $6}' /etc/passwd)"
     fi
 
-    if [[ -n "$home" ]] && [[ "$home" == /* ]]; then
-        printf '%s\n' "${home%/}"
+    home="$(preflight_sanitize_abs_nonroot_path "$home" 2>/dev/null || true)"
+    if [[ -n "$home" ]]; then
+        printf '%s\n' "$home"
+        return 0
+    fi
+
+    return 1
+}
+
+resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+
+    home_candidate="$(preflight_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || return 1
+
+    home_candidate="$(resolve_home_dir "$current_user" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    if preflight_is_valid_username "$current_user"; then
+        printf '/home/%s\n' "$current_user"
         return 0
     fi
 
@@ -75,25 +124,32 @@ resolve_home_dir() {
 
 resolve_install_target_home() {
     local target_home=""
+    local target_user="${TARGET_USER:-ubuntu}"
 
-    if [[ -n "${TARGET_HOME:-}" ]] && [[ "${TARGET_HOME}" == /* ]]; then
-        printf '%s\n' "${TARGET_HOME%/}"
+    target_home="$(preflight_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "$target_home"
         return 0
     fi
 
     if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-        target_home="$(resolve_home_dir "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+        target_home="$(resolve_home_dir "$target_user" 2>/dev/null || true)"
         if [[ -n "$target_home" ]]; then
             printf '%s\n' "$target_home"
             return 0
         fi
 
-        printf '/home/%s\n' "${TARGET_USER:-ubuntu}"
-        return 0
+        if preflight_is_valid_username "$target_user"; then
+            printf '/home/%s\n' "$target_user"
+            return 0
+        fi
+
+        return 1
     fi
 
-    if [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-        printf '%s\n' "${HOME%/}"
+    target_home="$(resolve_current_home 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "$target_home"
         return 0
     fi
 
@@ -294,7 +350,10 @@ check_memory() {
 check_disk() {
     local target_dir
     target_dir="$(resolve_install_target_home 2>/dev/null || true)"
-    [[ -n "$target_dir" ]] || target_dir="${HOME:-/}"
+    if [[ -z "$target_dir" ]]; then
+        warn "Cannot determine disk space" "Unable to resolve installation target home"
+        return
+    fi
 
     # Walk up to the nearest existing ancestor directory, since the target
     # may not have been created yet (e.g. /home/newuser on a fresh VPS).

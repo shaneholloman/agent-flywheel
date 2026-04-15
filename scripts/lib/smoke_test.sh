@@ -12,6 +12,60 @@ if [[ -z "${ACFS_BLUE:-}" ]]; then
     source "$SCRIPT_DIR/logging.sh"
 fi
 
+_smoke_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+_smoke_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(_smoke_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            home_candidate="$(_smoke_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+
+        if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            printf '/home/%s\n' "$current_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+_SMOKE_CURRENT_HOME="$(_smoke_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_SMOKE_CURRENT_HOME" ]]; then
+    HOME="$_SMOKE_CURRENT_HOME"
+    export HOME
+fi
+
 # ============================================================
 # Configuration
 # ============================================================
@@ -24,15 +78,16 @@ WARNING_COUNT=0
 
 # Target user (from install.sh or default)
 TARGET_USER="${TARGET_USER:-ubuntu}"
+TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
 if [[ -z "${TARGET_HOME:-}" ]]; then
     _smoke_target_passwd_entry="$(getent passwd "$TARGET_USER" 2>/dev/null || true)"
     if [[ -n "$_smoke_target_passwd_entry" ]]; then
-        TARGET_HOME="$(printf '%s\n' "$_smoke_target_passwd_entry" | cut -d: -f6)"
+        TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "$(printf '%s\n' "$_smoke_target_passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
     elif [[ "${TARGET_USER}" == "root" ]]; then
         TARGET_HOME="/root"
-    elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]]; then
-        TARGET_HOME="$HOME"
-    else
+    elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
+        TARGET_HOME="$_SMOKE_CURRENT_HOME"
+    elif [[ "${TARGET_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
         TARGET_HOME="/home/$TARGET_USER"
     fi
     unset _smoke_target_passwd_entry
@@ -40,10 +95,12 @@ fi
 if [[ "${TARGET_HOME:-}" != /* ]]; then
     if [[ "${TARGET_USER}" == "root" ]]; then
         TARGET_HOME="/root"
-    elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]]; then
-        TARGET_HOME="$HOME"
-    else
+    elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
+        TARGET_HOME="$_SMOKE_CURRENT_HOME"
+    elif [[ "${TARGET_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
         TARGET_HOME="/home/$TARGET_USER"
+    else
+        TARGET_HOME=""
     fi
 fi
 
@@ -71,8 +128,8 @@ _smoke_prepend_user_paths() {
 }
 
 _smoke_prepend_user_paths "$TARGET_HOME"
-if [[ -n "${HOME:-}" ]] && [[ "$HOME" != "$TARGET_HOME" ]]; then
-    _smoke_prepend_user_paths "$HOME"
+if [[ -n "${_SMOKE_CURRENT_HOME:-}" ]] && [[ "$_SMOKE_CURRENT_HOME" != "$TARGET_HOME" ]]; then
+    _smoke_prepend_user_paths "$_SMOKE_CURRENT_HOME"
 fi
 
 _smoke_get_local_passwd_entry() {

@@ -33,27 +33,85 @@ _ACFS_CHANGELOG_SH_LOADED=1
 
 set -euo pipefail
 
+changelog_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+changelog_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(changelog_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(changelog_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+    fi
+
+    if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s\n' "$current_user"
+        return 0
+    fi
+
+    return 1
+}
+
+_CHANGELOG_CURRENT_HOME="$(changelog_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_CHANGELOG_CURRENT_HOME" ]]; then
+    HOME="$_CHANGELOG_CURRENT_HOME"
+    export HOME
+fi
+
 # ============================================================
 # Configuration
 # ============================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_CHANGELOG_EXPLICIT_ACFS_HOME="${ACFS_HOME:-}"
-_CHANGELOG_DEFAULT_ACFS_HOME="$HOME/.acfs"
+_CHANGELOG_EXPLICIT_ACFS_HOME="$(changelog_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+_CHANGELOG_DEFAULT_ACFS_HOME=""
+[[ -n "$_CHANGELOG_CURRENT_HOME" ]] && _CHANGELOG_DEFAULT_ACFS_HOME="${_CHANGELOG_CURRENT_HOME}/.acfs"
 ACFS_HOME="${_CHANGELOG_EXPLICIT_ACFS_HOME:-$_CHANGELOG_DEFAULT_ACFS_HOME}"
-_CHANGELOG_EXPLICIT_ACFS_REPO="${ACFS_REPO:-}"
+_CHANGELOG_EXPLICIT_ACFS_REPO="$(changelog_sanitize_abs_nonroot_path "${ACFS_REPO:-}" 2>/dev/null || true)"
 ACFS_REPO="${_CHANGELOG_EXPLICIT_ACFS_REPO:-$ACFS_HOME}"
-_CHANGELOG_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
+_CHANGELOG_SYSTEM_STATE_FILE="$(changelog_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$_CHANGELOG_SYSTEM_STATE_FILE" ]]; then
+    _CHANGELOG_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+fi
 _CHANGELOG_RESOLVED_ACFS_HOME=""
-CHANGELOG_FILE="${ACFS_REPO}/CHANGELOG.md"
+CHANGELOG_FILE="${ACFS_REPO:+${ACFS_REPO}/CHANGELOG.md}"
 
 # Find CHANGELOG.md - check multiple locations
 find_changelog() {
     local locations=(
-        "${CHANGELOG_FILE}"
-        "${ACFS_HOME}/CHANGELOG.md"
         "/data/projects/agentic_coding_flywheel_setup/CHANGELOG.md"
-        "$HOME/.acfs/CHANGELOG.md"
     )
+
+    [[ -n "$CHANGELOG_FILE" ]] && locations=("${CHANGELOG_FILE}" "${locations[@]}")
+    [[ -n "$ACFS_HOME" ]] && locations=("${ACFS_HOME}/CHANGELOG.md" "${locations[@]}")
+    [[ -n "$_CHANGELOG_CURRENT_HOME" ]] && locations+=("${_CHANGELOG_CURRENT_HOME}/.acfs/CHANGELOG.md")
 
     for loc in "${locations[@]}"; do
         if [[ -f "$loc" ]]; then
@@ -108,14 +166,18 @@ json_escape() {
 changelog_home_for_user() {
     local user="$1"
     local passwd_entry=""
+    local home_candidate=""
 
     [[ -n "$user" ]] || return 1
 
     if command -v getent &>/dev/null; then
         passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
         if [[ -n "$passwd_entry" ]]; then
-            printf '%s\n' "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            return 0
+            home_candidate="$(changelog_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
         fi
     fi
 
@@ -195,12 +257,6 @@ resolve_changelog_acfs_home() {
         return 0
     fi
 
-    if [[ -f "$ACFS_HOME/state.json" || -f "$ACFS_HOME/VERSION" || -f "$ACFS_HOME/CHANGELOG.md" ]]; then
-        _CHANGELOG_RESOLVED_ACFS_HOME="$ACFS_HOME"
-        printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(changelog_home_for_user "$SUDO_USER" 2>/dev/null || true)
         candidate="${target_home}/.acfs"
@@ -232,14 +288,24 @@ resolve_changelog_acfs_home() {
         fi
     fi
 
+    if [[ -n "$ACFS_HOME" ]] && [[ -f "$ACFS_HOME/state.json" || -f "$ACFS_HOME/VERSION" || -f "$ACFS_HOME/CHANGELOG.md" ]]; then
+        _CHANGELOG_RESOLVED_ACFS_HOME="$ACFS_HOME"
+        printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
     _CHANGELOG_RESOLVED_ACFS_HOME="$ACFS_HOME"
     printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
 }
 
 resolve_changelog_state_file() {
-    local candidate="${ACFS_HOME}/state.json"
+    local candidate=""
 
-    if [[ -f "$candidate" ]]; then
+    if [[ -n "$ACFS_HOME" ]]; then
+        candidate="${ACFS_HOME}/state.json"
+    fi
+
+    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
         printf '%s\n' "$candidate"
         return 0
     fi
@@ -259,7 +325,7 @@ refresh_changelog_paths() {
     else
         ACFS_REPO="$ACFS_HOME"
     fi
-    CHANGELOG_FILE="${ACFS_REPO}/CHANGELOG.md"
+    CHANGELOG_FILE="${ACFS_REPO:+${ACFS_REPO}/CHANGELOG.md}"
 }
 
 read_state_timestamp() {

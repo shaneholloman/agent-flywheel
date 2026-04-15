@@ -159,6 +159,25 @@ test_doctor_fix_prefers_target_home_for_autofix_state() {
     return 0
 }
 
+test_doctor_fix_runtime_home_ignores_relative_home() {
+    setup_test_env
+
+    unset TARGET_HOME
+    export HOME="relative-home"
+
+    local resolved_home=""
+    resolved_home="$(doctor_fix_runtime_home)"
+
+    if [[ "$resolved_home" == /* ]] && [[ "$resolved_home" != "/" ]] && [[ "$resolved_home" != "relative-home" ]]; then
+        cleanup_test_env
+        return 0
+    fi
+
+    echo "  Expected absolute non-root runtime home, got $resolved_home"
+    cleanup_test_env
+    return 1
+}
+
 # ============================================================
 # Test: file_contains_line helper
 # ============================================================
@@ -1340,6 +1359,7 @@ main() {
     # Helper tests
     run_test test_file_contains_line
     run_test test_doctor_fix_prefers_target_home_for_autofix_state
+    run_test test_doctor_fix_runtime_home_ignores_relative_home
 
     # fix_path_ordering tests
     run_test test_fix_path_ordering_applies

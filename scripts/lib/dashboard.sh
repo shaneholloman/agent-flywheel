@@ -12,10 +12,67 @@
 
 set -euo pipefail
 
-_DASHBOARD_EXPLICIT_ACFS_HOME="${ACFS_HOME:-}"
-_DASHBOARD_DEFAULT_ACFS_HOME="$HOME/.acfs"
+dashboard_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+dashboard_resolve_current_home() {
+    local current_user=""
+    local home_candidate=""
+    local passwd_entry=""
+
+    home_candidate="$(dashboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
+        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            home_candidate="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
+        fi
+    fi
+
+    if [[ "$current_user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+        printf '/home/%s\n' "$current_user"
+        return 0
+    fi
+
+    return 1
+}
+
+_DASHBOARD_CURRENT_HOME="$(dashboard_resolve_current_home 2>/dev/null || true)"
+if [[ -n "$_DASHBOARD_CURRENT_HOME" ]]; then
+    HOME="$_DASHBOARD_CURRENT_HOME"
+    export HOME
+fi
+
+_DASHBOARD_EXPLICIT_ACFS_HOME="$(dashboard_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+_DASHBOARD_DEFAULT_ACFS_HOME=""
+[[ -n "$_DASHBOARD_CURRENT_HOME" ]] && _DASHBOARD_DEFAULT_ACFS_HOME="${_DASHBOARD_CURRENT_HOME}/.acfs"
 ACFS_HOME="${_DASHBOARD_EXPLICIT_ACFS_HOME:-$_DASHBOARD_DEFAULT_ACFS_HOME}"
-_DASHBOARD_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
+_DASHBOARD_SYSTEM_STATE_FILE="$(dashboard_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$_DASHBOARD_SYSTEM_STATE_FILE" ]]; then
+    _DASHBOARD_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+fi
 _DASHBOARD_RESOLVED_ACFS_HOME=""
 _DASHBOARD_RESOLVED_TARGET_USER=""
 _DASHBOARD_RESOLVED_TARGET_HOME=""
@@ -32,14 +89,18 @@ dashboard_usage() {
 dashboard_home_for_user() {
     local user="$1"
     local passwd_entry=""
+    local home_candidate=""
 
     [[ -n "$user" ]] || return 1
 
     if command -v getent &>/dev/null; then
         passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
         if [[ -n "$passwd_entry" ]]; then
-            printf '%s\n' "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            return 0
+            home_candidate="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
         fi
     fi
 
@@ -120,12 +181,6 @@ dashboard_resolve_acfs_home() {
         return 0
     fi
 
-    if dashboard_candidate_has_acfs_data "$ACFS_HOME"; then
-        _DASHBOARD_RESOLVED_ACFS_HOME="$ACFS_HOME"
-        printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(dashboard_home_for_user "$SUDO_USER" 2>/dev/null || true)
         candidate="${target_home}/.acfs"
@@ -157,14 +212,24 @@ dashboard_resolve_acfs_home() {
         fi
     fi
 
+    if [[ -n "$ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$ACFS_HOME"; then
+        _DASHBOARD_RESOLVED_ACFS_HOME="$ACFS_HOME"
+        printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
     _DASHBOARD_RESOLVED_ACFS_HOME="$ACFS_HOME"
     printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
 }
 
 dashboard_resolve_state_file() {
-    local candidate="${ACFS_HOME}/state.json"
+    local candidate=""
 
-    if [[ -f "$candidate" ]]; then
+    if [[ -n "$ACFS_HOME" ]]; then
+        candidate="${ACFS_HOME}/state.json"
+    fi
+
+    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
         printf '%s\n' "$candidate"
         return 0
     fi
@@ -211,7 +276,7 @@ find_info_script() {
         return 0
     fi
 
-    if [[ -f "$ACFS_HOME/scripts/lib/info.sh" ]]; then
+    if [[ -n "$ACFS_HOME" ]] && [[ -f "$ACFS_HOME/scripts/lib/info.sh" ]]; then
         echo "$ACFS_HOME/scripts/lib/info.sh"
         return 0
     fi
@@ -249,6 +314,12 @@ dashboard_generate() {
         esac
         shift
     done
+
+    if [[ -z "$ACFS_HOME" ]]; then
+        echo "Error: ACFS home not found" >&2
+        echo "Provide ACFS_SYSTEM_STATE_FILE with target_home, or re-run the installer." >&2
+        return 1
+    fi
 
     local dashboard_dir="${ACFS_HOME}/dashboard"
     local html_file="${dashboard_dir}/index.html"
@@ -372,6 +443,12 @@ dashboard_serve() {
 
     if ! validate_port "$port"; then
         echo "Error: port must be an integer between 1 and 65535" >&2
+        return 1
+    fi
+
+    if [[ -z "$ACFS_HOME" ]]; then
+        echo "Error: ACFS home not found" >&2
+        echo "Provide ACFS_SYSTEM_STATE_FILE with target_home, or re-run the installer." >&2
         return 1
     fi
 

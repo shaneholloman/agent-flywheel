@@ -61,6 +61,8 @@ HOME="$(resolve_current_home)" || {
     exit 1
 }
 export HOME
+ACFS_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
+export ACFS_STATE_FILE
 
 read_bin_dir_from_state_file() {
     local state_file="$1"
