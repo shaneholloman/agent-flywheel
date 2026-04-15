@@ -459,7 +459,7 @@ detect_target_user() {
         return 0
     fi
 
-    echo "ubuntu"
+    return 1
 }
 
 main() {
@@ -486,7 +486,7 @@ main() {
     ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
     export ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_HOME TARGET_HOME ACFS_BIN_DIR
 
-    target_user="$(detect_target_user)"
+    target_user="$(detect_target_user || true)"
     current_user="$(whoami)"
 
     # Find the acfs binary
@@ -515,15 +515,21 @@ main() {
     fi
 
     if [[ -z "$acfs_bin" ]]; then
-        echo "Error: ACFS not found for user '$target_user'" >&2
-
         local target_home=""
-        target_home="$(resolve_home_for_user "$target_user" || true)"
+        if [[ -n "$target_user" ]]; then
+            echo "Error: ACFS not found for user '$target_user'" >&2
+            target_home="$(resolve_home_for_user "$target_user" || true)"
+        else
+            echo "Error: ACFS not found." >&2
+        fi
 
         if [[ -n "$target_home" ]]; then
             echo "Expected at: $target_home/.local/bin/acfs (or $target_home/.acfs/bin/acfs)" >&2
-        else
+        elif [[ -n "$target_user" ]]; then
             echo "Unable to determine an exact home directory for user '$target_user'." >&2
+            echo "Provide ACFS_STATE_FILE/ACFS_SYSTEM_STATE_FILE with target_home, or re-run from the installed ACFS tree." >&2
+        else
+            echo "Unable to determine the ACFS owner automatically." >&2
             echo "Provide ACFS_STATE_FILE/ACFS_SYSTEM_STATE_FILE with target_home, or re-run from the installed ACFS tree." >&2
         fi
 
@@ -565,7 +571,9 @@ main() {
         fi
     fi
 
-    validate_target_user_or_die "$target_user"
+    if [[ -n "$target_user" ]]; then
+        validate_target_user_or_die "$target_user"
+    fi
 
     if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
         local state_candidate=""
@@ -635,8 +643,8 @@ main() {
         exec sudo -u "$user" -H "${cmd_with_env[@]}"
     }
 
-    # If we're already the target user, run directly
-    if [[ "$current_user" == "$target_user" ]]; then
+    # If owner detection failed or we're already the target user, run directly
+    if [[ -z "$target_user" || "$current_user" == "$target_user" ]]; then
         if [[ -n "${TARGET_HOME:-}" ]]; then
             direct_acfs_home="$(sanitize_abs_nonroot_path "${ACFS_HOME:-$TARGET_HOME/.acfs}" 2>/dev/null || true)"
             exec env \

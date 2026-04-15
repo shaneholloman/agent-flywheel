@@ -2162,6 +2162,46 @@ EOF
     cleanup_mock_env
 }
 
+test_acfs_global_wrapper_runs_direct_when_owner_unknown_but_target_home_known() {
+    setup_system_state_target_home_only_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.local/bin"
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    cat > "$TEST_TARGET_HOME/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s ARG1=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${1:-}"
+EOF
+    cat > "$TEST_FAKE_BIN/stat" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "-c" ]] && [[ "$2" == "%U" ]]; then
+    printf 'UNKNOWN\n'
+    exit 0
+fi
+exec /usr/bin/stat "$@"
+EOF
+    cat > "$TEST_FAKE_BIN/sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'sudo-called=%s\n' "$*"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.local/bin/acfs" "$TEST_FAKE_BIN/stat" "$TEST_FAKE_BIN/sudo"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_ROOT_HOME/.acfs" TARGET_HOME="$TEST_ROOT_HOME" \
+        ACFS_STATE_FILE="$TEST_ROOT_HOME/.acfs/state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "HOME=$TEST_TARGET_HOME TARGET_HOME=$TEST_TARGET_HOME ACFS_HOME=$TEST_INSTALLED_ACFS ARG1=version" ]]; then
+        harness_pass "global acfs wrapper runs direct when owner is unknown but target_home is known"
+    else
+        harness_fail "global acfs wrapper runs direct when owner is unknown but target_home is known" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_acfs_global_wrapper_passes_bin_dir_from_state() {
     setup_system_state_target_home_only_env
 
@@ -3001,6 +3041,7 @@ main() {
     test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user || true
     test_acfs_global_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_global_wrapper_repairs_runtime_home_on_direct_exec || true
+    test_acfs_global_wrapper_runs_direct_when_owner_unknown_but_target_home_known || true
     test_acfs_global_wrapper_passes_bin_dir_from_state || true
     test_acfs_global_wrapper_discards_invalid_env_bin_dir_on_direct_exec || true
     test_acfs_global_wrapper_discards_invalid_env_state_file_on_direct_exec || true
