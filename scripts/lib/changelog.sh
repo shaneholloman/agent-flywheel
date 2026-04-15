@@ -156,7 +156,13 @@ changelog_read_state_string() {
 
 changelog_read_target_home_from_state() {
     local state_file="$1"
-    changelog_read_state_string "$state_file" "target_home"
+    local target_home=""
+
+    target_home="$(changelog_read_state_string "$state_file" "target_home" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+    [[ "$target_home" == /* ]] || return 1
+    [[ "$target_home" != "/" ]] || return 1
+    printf '%s\n' "${target_home%/}"
 }
 
 changelog_script_acfs_home() {

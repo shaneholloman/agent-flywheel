@@ -117,7 +117,13 @@ read_state_string_from_state() {
 
 read_target_home_from_state() {
     local state_file="${1:-$ACFS_SYSTEM_STATE_FILE}"
-    read_state_string_from_state "$state_file" "target_home"
+    local target_home=""
+
+    target_home="$(read_state_string_from_state "$state_file" "target_home" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+    [[ "$target_home" == /* ]] || return 1
+    [[ "$target_home" != "/" ]] || return 1
+    printf '%s\n' "${target_home%/}"
 }
 
 script_acfs_home() {
