@@ -2367,8 +2367,9 @@ JSON
         ACFS_SYSTEM_STATE_FILE="$custom_state" \
         bash "$TEST_HOME/probe/acfs" version 2>&1 || true)
 
-    if [[ "$output" == *"Unable to determine an exact home directory for user 'ubuntu'."* ]] \
-        && [[ "$output" != *"Expected at: $TEST_ROOT_HOME/.local/bin/acfs"* ]]; then
+    if [[ "$output" == *"Unable to determine the ACFS owner automatically."* ]] \
+        && [[ "$output" != *"Expected at: $TEST_ROOT_HOME/.local/bin/acfs"* ]] \
+        && [[ "$output" != *"user 'ubuntu'"* ]]; then
         harness_pass "global acfs wrapper does not guess current HOME when target_home is unresolved"
     else
         harness_fail "global acfs wrapper does not guess current HOME when target_home is unresolved" "$output"
