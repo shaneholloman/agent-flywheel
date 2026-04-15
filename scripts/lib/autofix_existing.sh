@@ -174,6 +174,20 @@ autofix_existing_mv_undo_with_optional_dir_cleanup_command() {
     printf '%s\n' "$undo_command"
 }
 
+autofix_existing_rmdir_undo_with_optional_parent_cleanup_command() {
+    local dir_path="$1"
+    local parent_dir="$2"
+    local parent_dir_existed="${3:-false}"
+    local undo_command=""
+
+    printf -v undo_command 'rmdir %q 2>/dev/null || true' "$dir_path"
+    if [[ "$parent_dir_existed" != "true" ]]; then
+        printf -v undo_command '%s; rmdir %q 2>/dev/null || true' "$undo_command" "$parent_dir"
+    fi
+
+    printf '%s\n' "$undo_command"
+}
+
 autofix_existing_remove_dir_if_empty() {
     local dir_path="$1"
     local parent_dir=""
@@ -198,6 +212,20 @@ autofix_existing_cleanup_created_config_dirs() {
     fi
 }
 
+autofix_existing_cleanup_created_local_bin_dirs() {
+    local local_bin_dir="$1"
+    local local_bin_dir_existed="${2:-false}"
+    local local_dir="$3"
+    local local_dir_existed="${4:-false}"
+
+    if [[ "$local_bin_dir_existed" != "true" ]]; then
+        autofix_existing_remove_dir_if_empty "$local_bin_dir"
+    fi
+    if [[ "$local_dir_existed" != "true" ]]; then
+        autofix_existing_remove_dir_if_empty "$local_dir"
+    fi
+}
+
 autofix_existing_restore_from_backup() {
     local backup_json="$1"
     local target_path="${2:-}"
@@ -215,6 +243,30 @@ autofix_existing_restore_from_backup() {
     fi
 
     return 0
+}
+
+autofix_existing_rollback_changes_since() {
+    local start_index="${1:-0}"
+    local i=0
+    local rollback_failed=0
+    local change_id=""
+
+    if (( start_index < 0 )); then
+        start_index=0
+    fi
+    if (( start_index >= ${#ACFS_CHANGE_ORDER[@]} )); then
+        return 0
+    fi
+
+    for ((i=${#ACFS_CHANGE_ORDER[@]}-1; i>=start_index; i--)); do
+        change_id="${ACFS_CHANGE_ORDER[$i]}"
+        if ! undo_change "$change_id" true true >/dev/null 2>&1; then
+            log_warn "[ROLLBACK] Failed to undo $change_id"
+            ((rollback_failed++)) || true
+        fi
+    done
+
+    [[ $rollback_failed -eq 0 ]]
 }
 
 # =============================================================================
@@ -445,6 +497,10 @@ run_migrations() {
     local files_json=""
     local acfs_home_existed=false
     local config_dir_existed=false
+    local local_dir=""
+    local local_bin_dir=""
+    local local_dir_existed=false
+    local local_bin_dir_existed=false
 
     log_info "[MIGRATE] Running migrations from $from to $to"
 
@@ -544,10 +600,41 @@ run_migrations() {
     fi
 
     # Migration: Ensure .local/bin exists and is in PATH
-    if [[ ! -d "$runtime_home/.local/bin" ]]; then
+    local_dir="$runtime_home/.local"
+    local_bin_dir="$runtime_home/.local/bin"
+    [[ -d "$local_dir" ]] && local_dir_existed=true
+    [[ -d "$local_bin_dir" ]] && local_bin_dir_existed=true
+    if [[ "$local_bin_dir_existed" != "true" ]]; then
+        local local_bin_undo=""
         log_info "[MIGRATE] Creating ~/.local/bin directory"
-        if ! mkdir -p "$runtime_home/.local/bin"; then
-            log_error "[MIGRATE] Failed to create $runtime_home/.local/bin"
+        if ! mkdir -p "$local_bin_dir"; then
+            log_error "[MIGRATE] Failed to create $local_bin_dir"
+            autofix_existing_cleanup_created_local_bin_dirs "$local_bin_dir" "$local_bin_dir_existed" "$local_dir" "$local_dir_existed"
+            return 1
+        fi
+        files_json="$(jq -cn --arg local_dir "$local_dir" --arg local_bin "$local_bin_dir" '[$local_dir, $local_bin] | unique')"
+        local_bin_undo="$(
+            autofix_existing_rmdir_undo_with_optional_parent_cleanup_command \
+                "$local_bin_dir" \
+                "$local_dir" \
+                "$local_dir_existed" 2>/dev/null || true
+        )"
+        if [[ -z "$local_bin_undo" ]]; then
+            log_error "[MIGRATE] Failed to build undo command for ~/.local/bin creation"
+            autofix_existing_cleanup_created_local_bin_dirs "$local_bin_dir" "$local_bin_dir_existed" "$local_dir" "$local_dir_existed"
+            return 1
+        fi
+        if ! record_change \
+            "acfs" \
+            "Created ~/.local/bin directory for ACFS PATH support" \
+            "$local_bin_undo" \
+            false \
+            "info" \
+            "$files_json" \
+            '[]' \
+            '[]' >/dev/null; then
+            log_error "[MIGRATE] Failed to record ~/.local/bin creation; reverting"
+            autofix_existing_cleanup_created_local_bin_dirs "$local_bin_dir" "$local_bin_dir_existed" "$local_dir" "$local_dir_existed"
             return 1
         fi
     fi
@@ -661,6 +748,7 @@ upgrade_existing_installation() {
     local version_backup=""
     local version_file_existed=false
     local upgrade_files_json='[]'
+    local rollback_start_index=0
 
     log_info "[UPGRADE] Starting upgrade from $current_version to $new_version"
 
@@ -669,6 +757,7 @@ upgrade_existing_installation() {
     [[ -n "$runtime_home" ]] || return 1
     [[ -n "$acfs_home" ]] || return 1
     [[ -d "$acfs_home" ]] && acfs_home_existed=true
+    rollback_start_index=${#ACFS_CHANGE_ORDER[@]}
 
     # Step 1: Backup current config (for safety)
     if [[ -d "$acfs_home" ]]; then
@@ -683,6 +772,9 @@ upgrade_existing_installation() {
         log_info "[UPGRADE] Migration required from $current_version to $new_version"
         if ! run_migrations "$current_version" "$new_version"; then
             log_error "[UPGRADE] Migration failed"
+            if ! autofix_existing_rollback_changes_since "$rollback_start_index"; then
+                log_error "[UPGRADE] Failed to roll back migration changes after migration failure"
+            fi
             return 1
         fi
     fi
@@ -705,6 +797,9 @@ upgrade_existing_installation() {
     fi
     if ! printf '%s\n' "$new_version" > "$version_file"; then
         log_error "[UPGRADE] Failed to update version file: $version_file"
+        if ! autofix_existing_rollback_changes_since "$rollback_start_index"; then
+            log_error "[UPGRADE] Failed to roll back upgrade changes after write failure"
+        fi
         if ! autofix_existing_restore_upgrade_version_file "$version_file" "$version_backup" "$version_file_existed" "$acfs_home_existed"; then
             log_error "[UPGRADE] Failed to restore version file after write failure"
         fi
@@ -714,6 +809,9 @@ upgrade_existing_installation() {
     # Step 4: Update PATH entries if needed
     if ! update_path_entries; then
         log_error "[UPGRADE] Failed to repair shell PATH entries"
+        if ! autofix_existing_rollback_changes_since "$rollback_start_index"; then
+            log_error "[UPGRADE] Failed to roll back upgrade changes after PATH repair failure"
+        fi
         if ! autofix_existing_restore_upgrade_version_file "$version_file" "$version_backup" "$version_file_existed" "$acfs_home_existed"; then
             log_error "[UPGRADE] Failed to restore version file after PATH repair failure"
         fi
@@ -732,6 +830,9 @@ upgrade_existing_installation() {
         '[]' \
         false >/dev/null; then
         log_error "[UPGRADE] Failed to record upgrade operation"
+        if ! autofix_existing_rollback_changes_since "$rollback_start_index"; then
+            log_error "[UPGRADE] Failed to roll back upgrade changes after upgrade journaling failure"
+        fi
         if ! autofix_existing_restore_upgrade_version_file "$version_file" "$version_backup" "$version_file_existed" "$acfs_home_existed"; then
             log_error "[UPGRADE] Failed to restore version file after upgrade journaling failure"
         fi
