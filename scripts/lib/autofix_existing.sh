@@ -567,6 +567,8 @@ upgrade_existing_installation() {
 # Create comprehensive backup of existing installation
 create_installation_backup() {
     local backup_dir
+    local backup_dir_base=""
+    local backup_index=0
     local runtime_home=""
     local artifact=""
     local dest=""
@@ -578,7 +580,12 @@ create_installation_backup() {
 
     runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
     [[ -n "$runtime_home" ]] || return 1
-    backup_dir="$runtime_home/.acfs-backup-$(date +%Y%m%d_%H%M%S)"
+    backup_dir_base="$runtime_home/.acfs-backup-$(date +%Y%m%d_%H%M%S)"
+    backup_dir="$backup_dir_base"
+    while [[ -e "$backup_dir" ]]; do
+        backup_index=$((backup_index + 1))
+        backup_dir="${backup_dir_base}.${backup_index}"
+    done
 
     log_info "[CLEAN] Creating backup at $backup_dir"
     if ! mkdir -p "$backup_dir"; then

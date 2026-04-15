@@ -976,6 +976,62 @@ EOF
     cleanup_mock_env
 }
 
+test_autofix_existing_backup_uses_unique_dir_when_timestamp_collides() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-backup-collision-target"
+    local fake_bin="$TEST_HOME/fake-bin"
+    local fixed_stamp="20260415_000000"
+    local stale_backup_dir="$target_home/.acfs-backup-$fixed_stamp"
+    mkdir -p "$target_home/.acfs" "$target_home/.config/acfs" "$target_home/.local/bin" "$fake_bin" "$stale_backup_dir"
+    printf 'installed\n' > "$target_home/.acfs/version"
+    printf 'config\n' > "$target_home/.config/acfs/settings.toml"
+    printf '#!/usr/bin/env bash\n' > "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+    printf 'stale\n' > "$stale_backup_dir/stale-marker"
+
+    cat > "$fake_bin/date" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "+%Y%m%d_%H%M%S" ]]; then
+    printf '20260415_000000\n'
+    exit 0
+fi
+if [[ "${1:-}" == "-Iseconds" ]]; then
+    printf '2026-04-15T00:00:00+00:00\n'
+    exit 0
+fi
+exec /bin/date "$@"
+EOF
+    chmod +x "$fake_bin/date"
+
+    local output=""
+    output=$(PATH="$fake_bin:$PATH" HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            backup_dir=$(create_installation_backup) || exit 1
+            jq -nc \
+                --arg backup_dir "$backup_dir" \
+                --arg stale_exists "$(test -f "$2/stale-marker" && echo yes || echo no)" \
+                --arg stale_reused "$(if [[ "$backup_dir" == "$2" ]]; then echo yes; else echo no; fi)" \
+                --arg manifest_exists "$(test -f "$backup_dir/manifest.json" && echo yes || echo no)" \
+                "{backup_dir: \$backup_dir, stale_exists: \$stale_exists, stale_reused: \$stale_reused, manifest_exists: \$manifest_exists}"
+        ' _ "$AUTOFIX_EXISTING_SH" "$stale_backup_dir" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .stale_exists == "yes"
+        and .stale_reused == "no"
+        and .manifest_exists == "yes"
+        and (.backup_dir | startswith("'"$target_home"'/.acfs-backup-20260415_000000"))
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing backup uses unique dir when timestamp collides"
+    else
+        harness_fail "autofix_existing backup uses unique dir when timestamp collides" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_autofix_existing_clean_shell_configs_records_changes() {
     setup_mock_env
 
@@ -3530,6 +3586,7 @@ main() {
     test_autofix_existing_clean_reinstall_records_manifest_backups || true
     test_autofix_existing_clean_reinstall_aborts_when_recording_fails || true
     test_autofix_existing_clean_reinstall_aborts_when_backup_root_creation_fails || true
+    test_autofix_existing_backup_uses_unique_dir_when_timestamp_collides || true
     test_autofix_existing_clean_shell_configs_records_changes || true
     test_autofix_existing_clean_shell_configs_restores_file_when_recording_fails || true
     test_autofix_existing_update_path_entries_restores_file_when_recording_fails || true
