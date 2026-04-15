@@ -1076,6 +1076,73 @@ EOF
     cleanup_mock_env
 }
 
+test_autofix_existing_clean_shell_configs_preserves_owner_before_move() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-shell-owner-target"
+    local fake_bin="$TEST_HOME/fake-bin"
+    local chown_log="$TEST_HOME/chown.log"
+    mkdir -p "$target_home" "$fake_bin"
+    cat > "$target_home/.zshrc" <<'EOF'
+# shell config
+# ACFS PATH
+source ~/.acfs/zsh/acfs.zshrc
+keep_me=1
+EOF
+
+    cat > "$fake_bin/stat" <<EOF
+#!/usr/bin/env bash
+fmt="\$2"
+path="\$3"
+if [[ "\$fmt" == "%u:%g" ]]; then
+    if [[ "\$path" == "$target_home/.zshrc" ]]; then
+        printf '2001:3002\\n'
+        exit 0
+    fi
+    if [[ "\$path" == "$target_home"/.acfs-clean.* ]]; then
+        printf '1000:1000\\n'
+        exit 0
+    fi
+fi
+exec /usr/bin/stat "\$@"
+EOF
+    chmod +x "$fake_bin/stat"
+
+    cat > "$fake_bin/chown" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" > "$chown_log"
+exit 0
+EOF
+    chmod +x "$fake_bin/chown"
+
+    local output=""
+    output=$(PATH="$fake_bin:$PATH" HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            clean_shell_configs >/dev/null 2>&1 || exit 1
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg chown_args "$(cat "$2")" \
+                --arg file_contents "$(cat "$TARGET_HOME/.zshrc")" \
+                "{chown_args: \$chown_args, file_contents: \$file_contents}"
+        ' _ "$AUTOFIX_EXISTING_SH" "$chown_log" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        (.chown_args | startswith("2001:3002 "))
+        and (.chown_args | contains(".acfs-clean."))
+        and (.file_contents | contains("keep_me=1"))
+        and (.file_contents | contains(".acfs") | not)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing clean shell configs preserves owner before move"
+    else
+        harness_fail "autofix_existing clean shell configs preserves owner before move" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_autofix_existing_clean_shell_configs_restores_file_when_recording_fails() {
     setup_mock_env
 
@@ -3589,6 +3656,7 @@ main() {
     test_autofix_existing_clean_reinstall_aborts_when_backup_root_creation_fails || true
     test_autofix_existing_backup_uses_unique_dir_when_timestamp_collides || true
     test_autofix_existing_clean_shell_configs_records_changes || true
+    test_autofix_existing_clean_shell_configs_preserves_owner_before_move || true
     test_autofix_existing_clean_shell_configs_restores_file_when_recording_fails || true
     test_autofix_existing_update_path_entries_restores_file_when_recording_fails || true
     test_autofix_existing_clean_shell_configs_allows_empty_result || true
