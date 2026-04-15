@@ -10,6 +10,17 @@ ACFS_STATE_FILE="${ACFS_STATE_FILE:-}"
 ACFS_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+sanitize_abs_nonroot_path() {
+  local path_value="${1:-}"
+
+  [[ -n "$path_value" ]] || return 1
+  path_value="${path_value%/}"
+  [[ -n "$path_value" ]] || return 1
+  [[ "$path_value" == /* ]] || return 1
+  [[ "$path_value" != "/" ]] || return 1
+  printf '%s\n' "$path_value"
+}
+
 is_valid_username() {
   local username="$1"
   [[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]]
@@ -25,8 +36,9 @@ resolve_home_for_user() {
   fi
 
   user_home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)" || true
-  if [[ -n "$user_home" ]] && [[ "$user_home" == /* ]]; then
-    printf '%s\n' "${user_home%/}"
+  user_home="$(sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
+  if [[ -n "$user_home" ]]; then
+    printf '%s\n' "$user_home"
     return 0
   fi
 
@@ -167,9 +179,9 @@ read_user_for_home() {
   local state_file=""
   local state_home=""
 
+  user_home="$(sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
   [[ -n "$user_home" ]] || return 1
   state_file="$user_home/.acfs/state.json"
-  user_home="${user_home%/}"
 
   candidate_user="$(
     getent passwd 2>/dev/null \
@@ -253,6 +265,7 @@ read_target_user_from_state_hint() {
 find_update_script_for_home() {
   local user_home="$1"
 
+  user_home="$(sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
   [[ -n "$user_home" ]] || return 1
 
   if [[ -f "$user_home/.acfs/scripts/lib/update.sh" ]]; then
@@ -286,14 +299,16 @@ home_from_update_script() {
 
 prepare_runtime_context_from_home() {
   local user_home="$1"
+  local sanitized_bin_dir=""
 
+  user_home="$(sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
   [[ -n "$user_home" ]] || return 1
-  [[ "$user_home" == /* ]] || return 1
-  [[ "$user_home" != "/" ]] || return 1
 
   TARGET_HOME="$user_home"
   ACFS_HOME="$user_home/.acfs"
   ACFS_STATE_FILE="$ACFS_HOME/state.json"
+  sanitized_bin_dir="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+  ACFS_BIN_DIR="${sanitized_bin_dir:-}"
   if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
     ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"
   fi
@@ -438,12 +453,19 @@ exec_as_target_user() {
   local user="$1"
   shift
   local -a env_args=()
+  local sanitized_target_home=""
+  local sanitized_acfs_home=""
+  local sanitized_bin_dir=""
+
+  sanitized_target_home="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+  sanitized_acfs_home="$(sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+  sanitized_bin_dir="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
 
   [[ -n "${ACFS_STATE_FILE:-}" ]] && env_args+=("ACFS_STATE_FILE=$ACFS_STATE_FILE")
   [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$ACFS_SYSTEM_STATE_FILE")
-  [[ -n "${TARGET_HOME:-}" ]] && env_args+=("TARGET_HOME=$TARGET_HOME")
-  [[ -n "${ACFS_HOME:-}" ]] && env_args+=("ACFS_HOME=$ACFS_HOME")
-  [[ -n "${ACFS_BIN_DIR:-}" ]] && env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")
+  [[ -n "$sanitized_target_home" ]] && env_args+=("TARGET_HOME=$sanitized_target_home")
+  [[ -n "$sanitized_acfs_home" ]] && env_args+=("ACFS_HOME=$sanitized_acfs_home")
+  [[ -n "$sanitized_bin_dir" ]] && env_args+=("ACFS_BIN_DIR=$sanitized_bin_dir")
   [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
   [[ -n "${ACFS_RAW:-}" ]] && env_args+=("ACFS_RAW=$ACFS_RAW")
 
@@ -483,6 +505,12 @@ main() {
   local runtime_home=""
   local runtime_user=""
   local candidate_script=""
+  local direct_acfs_home=""
+
+  ACFS_HOME="$(sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+  TARGET_HOME="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+  ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+  export ACFS_HOME TARGET_HOME ACFS_BIN_DIR
 
   repo_update_script="$(find_repo_local_update_script || true)"
   wrapper_home="$(find_wrapper_installed_home || true)"
@@ -553,10 +581,11 @@ main() {
   current_user="$(whoami)"
   if [[ -z "$target_user" || "$current_user" == "$target_user" ]]; then
     if [[ -n "${TARGET_HOME:-}" ]]; then
+      direct_acfs_home="$(sanitize_abs_nonroot_path "${ACFS_HOME:-$TARGET_HOME/.acfs}" 2>/dev/null || true)"
       exec env \
         HOME="$TARGET_HOME" \
         TARGET_HOME="$TARGET_HOME" \
-        ACFS_HOME="${ACFS_HOME:-$TARGET_HOME/.acfs}" \
+        ACFS_HOME="${direct_acfs_home:-$TARGET_HOME/.acfs}" \
         ACFS_BIN_DIR="${ACFS_BIN_DIR:-}" \
         bash "$update_script" "$@"
     fi
