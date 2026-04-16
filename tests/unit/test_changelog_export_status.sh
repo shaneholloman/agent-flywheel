@@ -1180,6 +1180,74 @@ EOF
     cleanup_mock_env
 }
 
+test_autofix_existing_drop_changes_since_restores_original_journals_on_late_replace_failure() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-drop-journal-target"
+    mkdir -p "$target_home/.acfs/autofix"
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" ACFS_STATE_DIR="$target_home/.acfs/autofix" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            record_change "acfs" "Keep change" ":" false "info" "[]" "[]" "[]" > "$ACFS_STATE_DIR/keep.id" || exit 1
+            record_change "acfs" "Drop change" ":" false "info" "[]" "[]" "[]" > "$ACFS_STATE_DIR/drop.id" || exit 1
+            keep_id="$(cat "$ACFS_STATE_DIR/keep.id")"
+            drop_id="$(cat "$ACFS_STATE_DIR/drop.id")"
+            undo_change "$drop_id" true true >/dev/null 2>&1 || exit 1
+
+            before_changes="$(jq -sc . "$ACFS_CHANGES_FILE")"
+            before_undos="$(jq -sc . "$ACFS_UNDOS_FILE")"
+            before_order="$(printf "%s\n" "${ACFS_CHANGE_ORDER[@]}" | awk "NF" | jq -R . | jq -sc .)"
+
+            real_mv="$(command -v mv)"
+            mv() {
+                local dest="${@: -1}"
+                if [[ "$dest" == "$ACFS_UNDOS_FILE" ]]; then
+                    return 1
+                fi
+                "$real_mv" "$@"
+            }
+
+            if autofix_existing_drop_changes_since 1 >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+
+            after_changes="$(jq -sc . "$ACFS_CHANGES_FILE")"
+            after_undos="$(jq -sc . "$ACFS_UNDOS_FILE")"
+            after_order="$(printf "%s\n" "${ACFS_CHANGE_ORDER[@]}" | awk "NF" | jq -R . | jq -sc .)"
+            end_autofix_session >/dev/null 2>&1 || true
+
+            jq -nc \
+                --arg result "$result" \
+                --argjson before_changes "$before_changes" \
+                --argjson after_changes "$after_changes" \
+                --argjson before_undos "$before_undos" \
+                --argjson after_undos "$after_undos" \
+                --argjson before_order "$before_order" \
+                --argjson after_order "$after_order" \
+                "{result: \$result, before_changes: \$before_changes, after_changes: \$after_changes, before_undos: \$before_undos, after_undos: \$after_undos, before_order: \$before_order, after_order: \$after_order}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and (.before_changes == .after_changes)
+        and (.before_undos == .after_undos)
+        and (.before_order == .after_order)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing drop_changes_since restores original journals on late replace failure"
+    else
+        harness_fail "autofix_existing drop_changes_since restores original journals on late replace failure" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_autofix_existing_backup_uses_unique_dir_when_timestamp_collides() {
     setup_mock_env
 
@@ -4775,6 +4843,7 @@ main() {
     test_autofix_existing_clean_reinstall_aborts_when_state_relocation_fails || true
     test_autofix_existing_clean_reinstall_restores_backup_after_artifact_removal_failure || true
     test_autofix_existing_clean_reinstall_recovery_preserves_preexisting_journal || true
+    test_autofix_existing_drop_changes_since_restores_original_journals_on_late_replace_failure || true
     test_autofix_existing_backup_uses_unique_dir_when_timestamp_collides || true
     test_autofix_existing_backup_avoids_broken_symlink_collision || true
     test_autofix_existing_backup_fsyncs_manifest_and_parent_dir || true

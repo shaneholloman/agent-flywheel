@@ -269,6 +269,43 @@ autofix_existing_rollback_changes_since() {
     [[ $rollback_failed -eq 0 ]]
 }
 
+autofix_existing_restore_journal_file_from_backup() {
+    local journal_path="$1"
+    local backup_path="${2:-}"
+    local journal_existed="${3:-false}"
+    local journal_dir=""
+
+    [[ -n "$journal_path" ]] || return 1
+    journal_dir="$(dirname "$journal_path")"
+
+    if [[ "$journal_existed" == "true" ]]; then
+        if [[ -z "$backup_path" || ! -f "$backup_path" ]]; then
+            log_error "[ROLLBACK] Missing backup while restoring journal: $journal_path"
+            return 1
+        fi
+        if ! cp -p "$backup_path" "$journal_path"; then
+            log_error "[ROLLBACK] Failed to restore journal from backup: $journal_path"
+            return 1
+        fi
+        if ! fsync_file "$journal_path"; then
+            log_warn "[ROLLBACK] Failed to sync restored journal: $journal_path"
+        fi
+    else
+        if autofix_path_exists "$journal_path"; then
+            if ! rm -f "$journal_path"; then
+                log_error "[ROLLBACK] Failed to remove restored-new journal: $journal_path"
+                return 1
+            fi
+        fi
+    fi
+
+    if ! fsync_directory "$journal_dir"; then
+        log_warn "[ROLLBACK] Failed to sync journal directory after restore: $journal_dir"
+    fi
+
+    return 0
+}
+
 autofix_existing_drop_changes_since() {
     local start_index="${1:-0}"
     local i=0
@@ -277,7 +314,11 @@ autofix_existing_drop_changes_since() {
     local undos_dir=""
     local changes_tmp=""
     local undos_tmp=""
+    local changes_backup=""
+    local undos_backup=""
     local drop_ids_json="[]"
+    local changes_existed=false
+    local undos_existed=false
     local -a dropped_ids=()
 
     if (( start_index < 0 )); then
@@ -298,7 +339,7 @@ autofix_existing_drop_changes_since() {
         log_error "[ROLLBACK] Failed to create temp file while pruning undo journal"
         return 1
     }
-    trap 'rm -f "${changes_tmp:-}" "${undos_tmp:-}" 2>/dev/null || true; trap - RETURN' RETURN
+    trap 'rm -f "${changes_tmp:-}" "${undos_tmp:-}" "${changes_backup:-}" "${undos_backup:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     for ((i=start_index; i<${#ACFS_CHANGE_ORDER[@]}; i++)); do
         dropped_ids+=("${ACFS_CHANGE_ORDER[$i]}")
@@ -335,6 +376,36 @@ autofix_existing_drop_changes_since() {
         fi
     fi
 
+    if [[ -f "$ACFS_CHANGES_FILE" ]]; then
+        changes_existed=true
+        changes_backup="$(mktemp -p "$changes_dir" ".orig.XXXXXX" 2>/dev/null)" || {
+            log_error "[ROLLBACK] Failed to create backup file for change journal pruning"
+            return 1
+        }
+        if ! cp -p "$ACFS_CHANGES_FILE" "$changes_backup"; then
+            log_error "[ROLLBACK] Failed to back up change journal before pruning"
+            return 1
+        fi
+        if ! fsync_file "$changes_backup"; then
+            log_warn "[ROLLBACK] Failed to sync change journal backup before pruning"
+        fi
+    fi
+
+    if [[ -f "$ACFS_UNDOS_FILE" ]]; then
+        undos_existed=true
+        undos_backup="$(mktemp -p "$undos_dir" ".orig.XXXXXX" 2>/dev/null)" || {
+            log_error "[ROLLBACK] Failed to create backup file for undo journal pruning"
+            return 1
+        }
+        if ! cp -p "$ACFS_UNDOS_FILE" "$undos_backup"; then
+            log_error "[ROLLBACK] Failed to back up undo journal before pruning"
+            return 1
+        fi
+        if ! fsync_file "$undos_backup"; then
+            log_warn "[ROLLBACK] Failed to sync undo journal backup before pruning"
+        fi
+    fi
+
     if ! fsync_file "$changes_tmp"; then
         log_error "[ROLLBACK] Failed to sync pruned change journal"
         return 1
@@ -349,10 +420,16 @@ autofix_existing_drop_changes_since() {
 
     if ! fsync_file "$undos_tmp"; then
         log_error "[ROLLBACK] Failed to sync pruned undo journal"
+        if ! autofix_existing_restore_journal_file_from_backup "$ACFS_CHANGES_FILE" "$changes_backup" "$changes_existed"; then
+            log_error "[ROLLBACK] Failed to restore change journal after undo journal sync failure"
+        fi
         return 1
     fi
     if ! mv "$undos_tmp" "$ACFS_UNDOS_FILE"; then
         log_error "[ROLLBACK] Failed to replace undo journal with pruned state"
+        if ! autofix_existing_restore_journal_file_from_backup "$ACFS_CHANGES_FILE" "$changes_backup" "$changes_existed"; then
+            log_error "[ROLLBACK] Failed to restore change journal after undo journal replacement failure"
+        fi
         return 1
     fi
     if ! fsync_directory "$undos_dir"; then
