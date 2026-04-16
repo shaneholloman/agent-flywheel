@@ -285,8 +285,7 @@ onboard_runtime_binary_path() {
         "/bin/$name" \
         "/snap/bin/$name"; do
         if [[ -x "$candidate" ]]; then
-            printf '%s
-' "$candidate"
+            printf '%s\n' "$candidate"
             return 0
         fi
     done
@@ -1200,14 +1199,16 @@ check_auth_status() {
 
     case "$service" in
         tailscale)
-            if ! command -v tailscale &>/dev/null; then
+            local tailscale_bin=""
+            tailscale_bin="$(onboard_runtime_binary_path "tailscale" 2>/dev/null || true)"
+            if [[ -z "$tailscale_bin" || ! -x "$tailscale_bin" ]]; then
                 return 2
             fi
             local status="unknown"
             if command -v jq &>/dev/null; then
-                status=$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "unknown"' 2>/dev/null || echo "unknown")
+                status=$("$tailscale_bin" status --json 2>/dev/null | jq -r '.BackendState // "unknown"' 2>/dev/null || echo "unknown")
             else
-                if tailscale status --json 2>/dev/null | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"[[:space:]]*Running"'; then
+                if "$tailscale_bin" status --json 2>/dev/null | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"[[:space:]]*Running"'; then
                     status="Running"
                 fi
             fi
@@ -1274,15 +1275,17 @@ check_auth_status() {
                 local vertex_project=""
                 local vertex_location=""
                 local service_account_path=""
+                local gcloud_bin=""
                 vertex_project="$(get_configured_value "GOOGLE_CLOUD_PROJECT" "${gemini_config_files[@]}" || get_configured_value "GOOGLE_CLOUD_PROJECT_ID" "${gemini_config_files[@]}" || true)"
                 vertex_location="$(get_configured_value "GOOGLE_CLOUD_LOCATION" "${gemini_config_files[@]}" || true)"
                 service_account_path="$(get_configured_value "GOOGLE_APPLICATION_CREDENTIALS" "${gemini_config_files[@]}" || true)"
+                gcloud_bin="$(onboard_runtime_binary_path "gcloud" 2>/dev/null || true)"
 
                 if has_nonblank_value "$vertex_project" && has_nonblank_value "$vertex_location"; then
                     if has_nonblank_value "$service_account_path" && [[ -f "$service_account_path" ]]; then
                         return 0
                     fi
-                    if command -v gcloud &>/dev/null && timeout 5 gcloud auth application-default print-access-token >/dev/null 2>&1; then
+                    if [[ -n "$gcloud_bin" ]] && timeout 5 "$gcloud_bin" auth application-default print-access-token >/dev/null 2>&1; then
                         return 0
                     fi
                 fi
@@ -1319,10 +1322,12 @@ check_auth_status() {
             return 1
             ;;
         github)
-            if ! command -v gh &>/dev/null; then
+            local gh_bin=""
+            gh_bin="$(onboard_runtime_binary_path "gh" 2>/dev/null || true)"
+            if [[ -z "$gh_bin" || ! -x "$gh_bin" ]]; then
                 return 2
             fi
-            gh auth status -h github.com &>/dev/null && return 0 || return 1
+            "$gh_bin" auth status -h github.com &>/dev/null && return 0 || return 1
             ;;
         vercel)
             local vercel_bin=""

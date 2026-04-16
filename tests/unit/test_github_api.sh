@@ -162,6 +162,74 @@ test_reset_wait_time_invalid() {
     return 1
 }
 
+test_has_gh_auth_prefers_target_home_binary() {
+    local temp_dir target_home fake_path runtime_home marker status=1
+    local old_home="${HOME:-}"
+    local old_path="${PATH:-}"
+    local old_target_home="${TARGET_HOME-__unset__}"
+    local old_acfs_bin_dir="${ACFS_BIN_DIR-__unset__}"
+
+    temp_dir=$(mktemp -d)
+    target_home="$temp_dir/target"
+    fake_path="$temp_dir/fake-path"
+    runtime_home="$temp_dir/runtime"
+    marker="$temp_dir/marker"
+
+    mkdir -p "$target_home/.local/bin" "$fake_path" "$runtime_home"
+
+    cat > "$target_home/.local/bin/gh" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "auth" && "\${2:-}" == "status" ]]; then
+    printf 'target\n' > "$marker"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$target_home/.local/bin/gh"
+
+    cat > "$fake_path/gh" <<EOF
+#!/usr/bin/env bash
+printf 'path\n' > "$marker"
+exit 1
+EOF
+    chmod +x "$fake_path/gh"
+
+    HOME="$runtime_home"
+    PATH="$fake_path:/usr/bin:/bin"
+    TARGET_HOME="$target_home"
+    ACFS_BIN_DIR="$target_home/.local/bin"
+
+    if _has_gh_auth; then
+        status=0
+    fi
+
+    PATH="$old_path"
+    HOME="$old_home"
+    if [[ "$old_target_home" == "__unset__" ]]; then
+        unset TARGET_HOME
+    else
+        TARGET_HOME="$old_target_home"
+    fi
+    if [[ "$old_acfs_bin_dir" == "__unset__" ]]; then
+        unset ACFS_BIN_DIR
+    else
+        ACFS_BIN_DIR="$old_acfs_bin_dir"
+    fi
+
+    if [[ "$status" -ne 0 ]]; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    if [[ "$(cat "$marker" 2>/dev/null)" != "target" ]]; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    rm -rf "$temp_dir"
+    return 0
+}
+
 # ============================================================
 # Integration Tests (require network)
 # ============================================================
@@ -251,6 +319,10 @@ main() {
     run_test "Valid future timestamp" test_reset_wait_time_valid
     run_test "Past timestamp" test_reset_wait_time_past
     run_test "Invalid timestamp" test_reset_wait_time_invalid
+
+    echo ""
+    echo "--- Auth Detection ---"
+    run_test "Target-home gh beats current PATH gh" test_has_gh_auth_prefers_target_home_binary
 
     # Skip network tests if SKIP_NETWORK_TESTS is set
     if [[ "${SKIP_NETWORK_TESTS:-}" != "true" ]]; then

@@ -1492,12 +1492,14 @@ check_cloud() {
     check_optional_command "cloud.vercel" "Vercel CLI" "vercel" "bun install -g --trust vercel@latest"
 
     # Tailscale VPN (bt5)
-    if command -v tailscale &>/dev/null; then
+    local tailscale_bin=""
+    tailscale_bin="$(doctor_binary_path tailscale 2>/dev/null || true)"
+    if [[ -n "$tailscale_bin" ]]; then
         local ts_status
         if command -v jq &>/dev/null; then
-            ts_status=$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "unknown"' 2>/dev/null || echo "unknown")
+            ts_status=$("$tailscale_bin" status --json 2>/dev/null | jq -r '.BackendState // "unknown"' 2>/dev/null || echo "unknown")
         else
-            ts_status=$(tailscale status --json 2>/dev/null | sed -n 's/.*"BackendState"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+            ts_status=$("$tailscale_bin" status --json 2>/dev/null | sed -n 's/.*"BackendState"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
             ts_status="${ts_status:-unknown}"
         fi
         case "$ts_status" in

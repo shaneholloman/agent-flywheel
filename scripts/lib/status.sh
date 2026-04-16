@@ -153,6 +153,42 @@ _status_ensure_path() {
     fi
 }
 
+_status_binary_path() {
+    local name="${1:-}"
+    local base_home="${TARGET_HOME:-${_STATUS_CURRENT_HOME:-}}"
+    local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+    [[ -n "$base_home" ]] || return 1
+
+    for candidate in \
+        "$primary_bin_dir/$name" \
+        "$base_home/.local/bin/$name" \
+        "$base_home/.acfs/bin/$name" \
+        "$base_home/.bun/bin/$name" \
+        "$base_home/.cargo/bin/$name" \
+        "$base_home/.atuin/bin/$name" \
+        "$base_home/go/bin/$name" \
+        "$base_home/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/snap/bin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+_status_binary_exists() {
+    local resolved=""
+    resolved="$(_status_binary_path "$1" 2>/dev/null || true)"
+    [[ -n "$resolved" ]]
+}
+
 _status_home_for_user() {
     local user="$1"
     local passwd_entry=""
@@ -409,7 +445,7 @@ fi
 
 # 3. Count tools in PATH
 for cmd in "${_CORE_TOOLS[@]}"; do
-    if command -v "$cmd" &>/dev/null; then
+    if _status_binary_exists "$cmd"; then
         ((_tool_count++)) || true
     else
         _warnings+=("missing: $cmd")
@@ -417,7 +453,7 @@ for cmd in "${_CORE_TOOLS[@]}"; do
 done
 
 for cmd in "${_OPTIONAL_TOOLS[@]}"; do
-    if command -v "$cmd" &>/dev/null; then
+    if _status_binary_exists "$cmd"; then
         ((_tool_count++)) || true
     fi
 done

@@ -343,6 +343,67 @@ EOF
     rm -rf "$temp_root"
 }
 
+test_preflight_root_existing_tool_detection_uses_target_home() {
+    harness_section "Test: Root preflight existing-tools detection uses target home"
+
+    if ! command -v sudo &>/dev/null || ! sudo -n true 2>/dev/null; then
+        harness_skip "Root preflight existing-tools detection" "passwordless sudo unavailable"
+        return 0
+    fi
+
+    local temp_root=""
+    temp_root="$(mktemp -d)"
+
+    local mock_dir="$temp_root/mockbin"
+    local root_home="$temp_root/root-home"
+    local target_home="$temp_root/custom-home"
+    mkdir -p "$mock_dir" "$root_home" "$target_home/.local/bin"
+
+    cat > "$target_home/.local/bin/codex" <<'EOF'
+#!/usr/bin/env bash
+printf 'codex 1.2.3\n'
+EOF
+    chmod +x "$target_home/.local/bin/codex"
+
+    cat > "$mock_dir/claude" <<'EOF'
+#!/usr/bin/env bash
+printf 'claude 9.9.9\n'
+EOF
+    chmod +x "$mock_dir/claude"
+
+    cat > "$mock_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "passwd" ]] && [[ "\$2" == "customuser" ]]; then
+    echo "customuser:x:1000:1000::$target_home:/bin/bash"
+    exit 0
+fi
+exec /usr/bin/getent "\$@"
+EOF
+    chmod +x "$mock_dir/getent"
+
+    local output=""
+    local exit_code=0
+    output=$(sudo -n env PATH="$mock_dir:/usr/bin:/bin" HOME="$root_home" TARGET_HOME="/" TARGET_USER=customuser \
+        bash "$REPO_ROOT/scripts/preflight.sh" --json 2>&1) || exit_code=$?
+
+    local existing_tools_message=""
+    existing_tools_message=$(echo "$output" | jq -r '.checks[] | select(.message | startswith("Existing tools:")) | .message' 2>/dev/null | head -1)
+
+    if [[ "$existing_tools_message" == *"codex"* ]] && [[ "$existing_tools_message" != *"claude"* ]]; then
+        harness_pass "Existing-tools detection prefers resolved target home over caller PATH"
+    else
+        harness_fail "Existing-tools detection prefers resolved target home over caller PATH" "message: $existing_tools_message output: $output"
+    fi
+
+    if [[ "$exit_code" =~ ^[01]$ ]]; then
+        harness_pass "Root preflight existing-tools detection completed with a valid exit code"
+    else
+        harness_fail "Root preflight existing-tools detection completed with a valid exit code" "exit: $exit_code"
+    fi
+
+    rm -rf "$temp_root"
+}
+
 test_dns_check_hosts() {
     harness_section "Test: DNS check tests expected hosts"
 
@@ -499,6 +560,7 @@ main() {
     test_preflight_text_output_format
     test_preflight_quiet_mode
     test_preflight_root_resolves_target_home_for_disk_and_conflicts
+    test_preflight_root_existing_tool_detection_uses_target_home
     test_preflight_nonroot_ignores_slash_home_override_for_disk_check
     test_dns_check_hosts
     test_installer_urls_checked

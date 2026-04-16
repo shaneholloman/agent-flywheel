@@ -156,6 +156,55 @@ resolve_install_target_home() {
     return 1
 }
 
+preflight_binary_path() {
+    local name="${1:-}"
+    local base_home=""
+    local primary_bin_dir=""
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    base_home="$(resolve_install_target_home 2>/dev/null || true)"
+    if [[ -z "$base_home" ]]; then
+        base_home="$(resolve_current_home 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$base_home" ]]; then
+        primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+        for candidate in \
+            "$primary_bin_dir/$name" \
+            "$base_home/.local/bin/$name" \
+            "$base_home/.acfs/bin/$name" \
+            "$base_home/.bun/bin/$name" \
+            "$base_home/.cargo/bin/$name" \
+            "$base_home/.atuin/bin/$name" \
+            "$base_home/go/bin/$name" \
+            "$base_home/bin/$name"; do
+            [[ -x "$candidate" ]] || continue
+            printf '%s\n' "$candidate"
+            return 0
+        done
+    fi
+
+    for candidate in \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/snap/bin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+preflight_binary_exists() {
+    local resolved=""
+    resolved="$(preflight_binary_path "$1" 2>/dev/null || true)"
+    [[ -n "$resolved" ]]
+}
+
 # ============================================================
 # Argument Parsing
 # ============================================================
@@ -732,10 +781,10 @@ check_conflicts() {
 
     # Check for existing tools that ACFS will install
     local existing_tools=()
-    command -v bun &>/dev/null && existing_tools+=("bun")
-    command -v uv &>/dev/null && existing_tools+=("uv")
-    command -v claude &>/dev/null && existing_tools+=("claude")
-    command -v codex &>/dev/null && existing_tools+=("codex")
+    preflight_binary_exists bun && existing_tools+=("bun")
+    preflight_binary_exists uv && existing_tools+=("uv")
+    preflight_binary_exists claude && existing_tools+=("claude")
+    preflight_binary_exists codex && existing_tools+=("codex")
 
     if [[ ${#existing_tools[@]} -gt 0 ]]; then
         pass "Existing tools: ${existing_tools[*]}" "Will be updated/skipped"

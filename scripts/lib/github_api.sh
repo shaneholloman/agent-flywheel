@@ -96,10 +96,64 @@ _get_reset_wait_time() {
     echo "$GITHUB_BACKOFF_MAX"
 }
 
+_github_api_runtime_home() {
+    if [[ -n "${TARGET_HOME:-}" ]] && [[ "$TARGET_HOME" == /* ]] && [[ "$TARGET_HOME" != "/" ]]; then
+        printf '%s\n' "${TARGET_HOME%/}"
+        return 0
+    fi
+
+    if [[ -n "${HOME:-}" ]] && [[ "$HOME" == /* ]] && [[ "$HOME" != "/" ]]; then
+        printf '%s\n' "${HOME%/}"
+        return 0
+    fi
+
+    return 1
+}
+
+_github_api_binary_path() {
+    local name="${1:-}"
+    local runtime_home=""
+    local primary_bin_dir=""
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    runtime_home="$(_github_api_runtime_home 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+        for candidate in \
+            "$primary_bin_dir/$name" \
+            "$runtime_home/.local/bin/$name" \
+            "$runtime_home/.acfs/bin/$name" \
+            "$runtime_home/.bun/bin/$name" \
+            "$runtime_home/.cargo/bin/$name" \
+            "$runtime_home/.atuin/bin/$name" \
+            "$runtime_home/go/bin/$name"; do
+            [[ -x "$candidate" ]] || continue
+            printf '%s\n' "$candidate"
+            return 0
+        done
+    fi
+
+    for candidate in \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/snap/bin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
 # Check if user has GitHub CLI authenticated
 # Returns: 0 if authenticated, 1 otherwise
 _has_gh_auth() {
-    command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1
+    local gh_bin=""
+    gh_bin="$(_github_api_binary_path gh 2>/dev/null || true)"
+    [[ -n "$gh_bin" ]] && "$gh_bin" auth status &>/dev/null 2>&1
 }
 
 # ============================================================

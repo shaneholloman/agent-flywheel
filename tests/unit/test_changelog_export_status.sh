@@ -3612,6 +3612,33 @@ test_status_uses_installed_layout_under_root_home() {
     cleanup_mock_env
 }
 
+test_status_ignores_current_shell_only_binaries() {
+    setup_installed_layout_env
+
+    rm -f \
+        "$TEST_TARGET_HOME/.local/bin/claude" \
+        "$TEST_TARGET_HOME/.local/bin/codex" \
+        "$TEST_TARGET_HOME/.local/bin/gemini" \
+        "$TEST_TARGET_HOME/.local/bin/ntm"
+
+    write_fake_command "$TEST_FAKE_BIN/claude" "claude 9.9.9"
+    write_fake_command "$TEST_FAKE_BIN/codex" "codex 9.9.9"
+    write_fake_command "$TEST_FAKE_BIN/gemini" "gemini 9.9.9"
+    write_fake_command "$TEST_FAKE_BIN/ntm" "ntm 9.9.9"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/status.sh" --json)
+
+    if printf '%s\n' "$output" | jq -e '.status == "warn" and (.errors | length == 0) and (.warnings | index("missing: claude")) != null' >/dev/null 2>&1; then
+        harness_pass "status ignores current-shell-only binaries"
+    else
+        harness_fail "status ignores current-shell-only binaries" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_status_uses_system_state_when_user_state_missing() {
     setup_system_state_only_env
 
@@ -5211,6 +5238,10 @@ JSON
 GEMINI_API_KEY=gemini-token
 EOF
 
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/claude" "claude 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/codex" "codex 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
+
     cat > "$TEST_FAKE_BIN/curl" <<'EOF'
 #!/usr/bin/env bash
 printf '200'
@@ -5278,13 +5309,23 @@ echo "asb ok"
 EOF
     chmod +x "$TEST_TARGET_HOME/.local/bin/asb"
 
+    cat > "$TEST_TARGET_HOME/.local/bin/tailscale" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "status" && "${2:-}" == "--json" ]]; then
+    printf '%s\n' '{"BackendState":"Running"}'
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_TARGET_HOME/.local/bin/tailscale"
+
     local output=""
-    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --deep --json || true)
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --deep --json || true)
 
     if printf '%s\n' "$output" | jq -e '
         .deep_mode == true and
-        ([.checks[] | select(.id == "deep.stack.asb") | .status] | first) == "pass"
+        ([.checks[] | select(.id == "deep.stack.asb") | .status] | first) == "pass" and
+        ([.checks[] | select(.id == "network.tailscale") | .status] | first) == "pass"
     ' >/dev/null 2>&1; then
         harness_pass "doctor deep optional probes use installed target HOME under root home"
     else
@@ -5502,7 +5543,8 @@ JSON
 test_onboard_auth_checks_find_target_binaries_outside_current_path() {
     setup_installed_layout_env
 
-    mkdir -p         "$TEST_TARGET_HOME/.codex"         "$TEST_TARGET_HOME/.gemini"         "$TEST_TARGET_HOME/.config/vercel"         "$TEST_TARGET_HOME/.supabase"
+    mkdir -p "$TEST_TARGET_HOME/.codex" "$TEST_TARGET_HOME/.gemini" \
+        "$TEST_TARGET_HOME/.config/gh" "$TEST_TARGET_HOME/.config/vercel" "$TEST_TARGET_HOME/.supabase"
 
     cat > "$TEST_TARGET_HOME/.codex/auth.json" <<'JSON'
 {
@@ -5518,29 +5560,81 @@ JSON
 }
 JSON
 
+    cat > "$TEST_TARGET_HOME/.config/gh/hosts.yml" <<'EOF2'
+github.com:
+    oauth_token: gho_testtoken
+    user: octocat
+EOF2
+
     cat > "$TEST_TARGET_HOME/.config/vercel/auth.json" <<'JSON'
 {
   "token": "vercel-token"
 }
 JSON
 
-    printf 'supabase-token
-' > "$TEST_TARGET_HOME/.supabase/access-token"
+    printf 'supabase-token\n' > "$TEST_TARGET_HOME/.supabase/access-token"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/codex" "codex 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/gh" "gh 2.60.0"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/vercel" "tester@example.com"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/wrangler" "tester@example.com"
     write_fake_command "$TEST_TARGET_HOME/.local/bin/supabase" "supabase 2.99.0"
+    cat > "$TEST_TARGET_HOME/.local/bin/tailscale" <<'EOF2'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "status" && "${2:-}" == "--json" ]]; then
+    printf '%s\n' '{"BackendState":"Running"}'
+    exit 0
+fi
+exit 1
+EOF2
+    chmod +x "$TEST_TARGET_HOME/.local/bin/tailscale"
 
     local output=""
-    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         bash -lc 'source "'"$ONBOARD_SH"'" help >/dev/null; for svc in codex gemini vercel supabase cloudflare; do check_auth_status "$svc" && rc=0 || rc=$?; printf "%s\n" "$svc=$rc"; done')
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash -lc 'source "'"$ONBOARD_SH"'" help >/dev/null; for svc in codex gemini github vercel supabase cloudflare tailscale; do check_auth_status "$svc" && rc=0 || rc=$?; printf "%s\n" "$svc=$rc"; done')
 
-    if [[ "$output" == *$'codex=0
-'* ]]         && [[ "$output" == *$'gemini=0
-'* ]]         && [[ "$output" == *$'vercel=0
-'* ]]         && [[ "$output" == *$'supabase=0
-'* ]]         && [[ "$output" == *$'cloudflare=0'* ]]; then
+    if [[ "$output" == *$'codex=0\n'* ]] \
+        && [[ "$output" == *$'gemini=0\n'* ]] \
+        && [[ "$output" == *$'github=0\n'* ]] \
+        && [[ "$output" == *$'vercel=0\n'* ]] \
+        && [[ "$output" == *$'supabase=0\n'* ]] \
+        && [[ "$output" == *$'cloudflare=0\n'* ]] \
+        && [[ "$output" == *$'tailscale=0'* ]]; then
         harness_pass "onboard auth checks find target binaries outside current PATH"
     else
         harness_fail "onboard auth checks find target binaries outside current PATH" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_onboard_gemini_vertex_auth_finds_target_gcloud_outside_current_path() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_TARGET_HOME/.gemini"
+    cat > "$TEST_TARGET_HOME/.gemini/.env" <<'EOF2'
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=test-project
+GOOGLE_CLOUD_LOCATION=us-central1
+EOF2
+
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
+    cat > "$TEST_TARGET_HOME/.local/bin/gcloud" <<'EOF2'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "application-default" && "${3:-}" == "print-access-token" ]]; then
+    printf '%s\n' 'ya29.test-token'
+    exit 0
+fi
+exit 1
+EOF2
+    chmod +x "$TEST_TARGET_HOME/.local/bin/gcloud"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash -lc 'source "'"$ONBOARD_SH"'" help >/dev/null; check_auth_status gemini && status=0 || status=$?; printf "%s\n" "$status"')
+
+    if [[ "$output" == "0" ]]; then
+        harness_pass "onboard gemini vertex auth finds target gcloud outside current PATH"
+    else
+        harness_fail "onboard gemini vertex auth finds target gcloud outside current PATH" "$output"
     fi
 
     cleanup_mock_env
@@ -5559,22 +5653,21 @@ test_onboard_copy_install_uses_system_state_under_root_home() {
     chmod +x "$root_home/.local/bin/onboard"
     cp "$CHEATSHEET_SH" "$installed_acfs/scripts/lib/cheatsheet.sh"
 
-    cat > "$installed_acfs/onboard/lessons/01_intro.md" <<'EOF'
+    cat > "$installed_acfs/onboard/lessons/01_intro.md" <<'EOF2'
 # Intro
 
 hello
-EOF
+EOF2
 
-    cat > "$system_state" <<EOF
+    cat > "$system_state" <<EOF2
 {
   "target_user": "tester",
   "target_home": "$target_home"
 }
-EOF
+EOF2
 
     local output=""
-    output=$(HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" PATH="$root_home/.local/bin:/usr/bin:/bin" \
-        onboard status 2>&1)
+    output=$(HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" PATH="$root_home/.local/bin:/usr/bin:/bin" onboard status 2>&1)
 
     if [[ -f "$installed_acfs/onboard_progress.json" ]] \
         && [[ ! -e "$root_home/.acfs/onboard_progress.json" ]] \
@@ -5762,6 +5855,7 @@ main() {
     test_status_reports_last_updated_timestamp || true
     test_status_errors_on_malformed_state_json || true
     test_status_uses_installed_layout_under_root_home || true
+    test_status_ignores_current_shell_only_binaries || true
     test_status_uses_system_state_when_user_state_missing || true
     test_status_uses_system_state_target_home_when_getent_unavailable || true
     test_status_ignores_relative_home_state_trap || true
@@ -5818,6 +5912,7 @@ main() {
     test_onboard_cheatsheet_uses_installed_layout_under_root_home || true
     test_onboard_auth_checks_use_installed_target_home_under_root_home || true
     test_onboard_auth_checks_find_target_binaries_outside_current_path || true
+    test_onboard_gemini_vertex_auth_finds_target_gcloud_outside_current_path || true
     test_onboard_copy_install_uses_system_state_under_root_home || true
     test_onboard_copy_install_uses_target_home_only_system_state_under_root_home || true
     test_onboard_copy_install_ignores_relative_home_trap || true
