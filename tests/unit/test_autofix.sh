@@ -724,6 +724,61 @@ test_record_change() {
     return 0
 }
 
+test_record_change_fails_when_append_atomic_fails() {
+    setup_test_env
+
+    if ! start_autofix_session 2>/dev/null; then
+        echo "  Failed to start session"
+        cleanup_test_env
+        return 1
+    fi
+
+    local original_append_atomic output_file status=0
+    original_append_atomic="$(declare -f append_atomic)"
+    output_file="$ACFS_STATE_DIR/record_change.out"
+    append_atomic() { return 1; }
+
+    if record_change "test" "Broken persist" "echo undo" "false" "info" '[]' '[]' '[]' >"$output_file" 2>/dev/null; then
+        status=0
+    else
+        status=$?
+    fi
+
+    eval "$original_append_atomic"
+
+    if [[ $status -eq 0 ]]; then
+        echo "  record_change succeeded even though append_atomic failed"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$output_file" ]]; then
+        echo "  record_change produced a change id despite persist failure"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        echo "  changes.jsonl was modified despite persist failure"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ${#ACFS_CHANGE_ORDER[@]} -ne 0 ]] || [[ ${#ACFS_CHANGE_RECORDS[@]} -ne 0 ]]; then
+        echo "  In-memory change state mutated despite persist failure"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session 2>/dev/null || true
+    cleanup_test_env
+    return 0
+}
+
 # Test: Single backup objects are normalized into backup arrays
 test_record_change_normalizes_single_backup_object() {
     setup_test_env
@@ -849,6 +904,180 @@ test_undo_change() {
     return 0
 }
 
+test_undo_change_fails_when_append_atomic_fails() {
+    setup_test_env
+
+    if ! start_autofix_session 2>/dev/null; then
+        echo "  Failed to start session"
+        cleanup_test_env
+        return 1
+    fi
+
+    local marker_file="$ACFS_STATE_DIR/pending_precheck_marker"
+    local output_file="$ACFS_STATE_DIR/change_id.out"
+    touch "$marker_file"
+    if ! record_change "test" "Undo persist failure" "rm -f '$marker_file'" "false" "info" '[]' '[]' '[]' >"$output_file" 2>/dev/null; then
+        echo "  Failed to seed change for undo test"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    local change_id original_append_atomic status=0 undone_flag=""
+    change_id="$(cat "$output_file")"
+    original_append_atomic="$(declare -f append_atomic)"
+    eval "${original_append_atomic/append_atomic/original_append_atomic}"
+    append_atomic() {
+        if [[ "$1" == "$ACFS_UNDOS_FILE" ]]; then
+            return 1
+        fi
+        original_append_atomic "$@"
+    }
+
+    if undo_change "$change_id" true true >/dev/null 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+
+    eval "$original_append_atomic"
+
+    if [[ $status -eq 0 ]]; then
+        echo "  undo_change succeeded even though undo journal append failed"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -f "$marker_file" ]]; then
+        echo "  Undo command executed even though pending undo journal append failed"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$ACFS_UNDOS_FILE" ]]; then
+        echo "  undos.jsonl was modified despite persist failure"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    undone_flag="$(printf '%s' "${ACFS_CHANGE_RECORDS["$change_id"]}" | jq -r '.undone')"
+    if [[ "$undone_flag" != "false" ]]; then
+        echo "  In-memory undo state mutated despite persist failure"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session 2>/dev/null || true
+    cleanup_test_env
+    return 0
+}
+
+test_undo_change_leaves_pending_state_when_completion_persist_fails() {
+    setup_test_env
+
+    if ! start_autofix_session 2>/dev/null; then
+        echo "  Failed to start session"
+        cleanup_test_env
+        return 1
+    fi
+
+    local marker_file="$ACFS_STATE_DIR/completion_pending_marker"
+    local exec_log="$ACFS_STATE_DIR/completion_pending_exec.log"
+    local output_file="$ACFS_STATE_DIR/change_id.out"
+    touch "$marker_file"
+
+    if ! record_change "test" "Undo completion persist failure" "printf x >> '$exec_log'; rm -f '$marker_file'" "false" "info" '[]' '[]' '[]' >"$output_file" 2>/dev/null; then
+        echo "  Failed to seed change for completion-persist test"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    local change_id original_append_atomic status=0 undo_append_calls=0 undo_status="" exec_contents="" undo_line_count=0
+    change_id="$(cat "$output_file")"
+    original_append_atomic="$(declare -f append_atomic)"
+    eval "${original_append_atomic/append_atomic/original_append_atomic}"
+    append_atomic() {
+        if [[ "$1" == "$ACFS_UNDOS_FILE" ]]; then
+            undo_append_calls=$((undo_append_calls + 1))
+            if [[ $undo_append_calls -eq 2 ]]; then
+                return 1
+            fi
+        fi
+        original_append_atomic "$@"
+    }
+
+    if undo_change "$change_id" true true >/dev/null 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+
+    eval "$original_append_atomic"
+
+    if [[ $status -eq 0 ]]; then
+        echo "  undo_change succeeded even though completion persist failed"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -f "$marker_file" ]]; then
+        echo "  Undo command did not execute before completion persist failure"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    exec_contents="$(cat "$exec_log" 2>/dev/null || true)"
+    if [[ "$exec_contents" != "x" ]]; then
+        echo "  Undo command execution log mismatch after completion persist failure: '$exec_contents'"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    undo_line_count=$(wc -l < "$ACFS_UNDOS_FILE")
+    undo_status="$(autofix_change_undo_status "$change_id" 2>/dev/null || true)"
+    if [[ "$undo_line_count" -ne 1 ]] || [[ "$undo_status" != "pending" ]] || [[ "$(jq -r '.status' "$ACFS_UNDOS_FILE")" != "pending" ]]; then
+        echo "  Pending undo state was not preserved after completion persist failure"
+        echo "  lines=$undo_line_count status=$undo_status file=$(cat "$ACFS_UNDOS_FILE" 2>/dev/null || true)"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if is_change_undone "$change_id"; then
+        echo "  Pending undo state was incorrectly treated as undone"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if undo_change "$change_id" true true >/dev/null 2>&1; then
+        echo "  Retry succeeded despite unresolved pending undo state"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    exec_contents="$(cat "$exec_log" 2>/dev/null || true)"
+    if [[ "$exec_contents" != "x" ]]; then
+        echo "  Pending undo retry re-executed the undo command"
+        end_autofix_session 2>/dev/null || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session 2>/dev/null || true
+    cleanup_test_env
+    return 0
+}
+
 # Test: Manual/non-reversible changes cannot be falsely marked undone
 test_undo_change_rejects_manual_non_reversible_change() {
     setup_test_env
@@ -960,6 +1189,34 @@ test_acfs_undo_command_all_skips_undone_changes() {
     fi
 
     rm -f "$already_undone_marker" "$active_marker"
+    cleanup_test_env
+    return 0
+}
+
+test_acfs_undo_command_list_marks_pending_changes() {
+    setup_test_env
+
+    if ! start_autofix_session 2>/dev/null; then
+        echo "  Failed to start session"
+        cleanup_test_env
+        return 1
+    fi
+
+    local change_id
+    change_id=$(record_change "test" "Pending undo change" "echo pending" "false" "info" '[]' '[]' '[]' 2>/dev/null)
+    end_autofix_session 2>/dev/null || true
+
+    printf '{"undone":"%s","timestamp":"2026-04-15T00:00:00Z","status":"pending"}\n' "$change_id" > "$ACFS_UNDOS_FILE"
+
+    local output=""
+    output=$(acfs_undo_command --list 2>&1)
+
+    if [[ "$output" != *"$change_id"* ]] || [[ "$output" != *"pending"* ]]; then
+        echo "  --list did not mark pending change correctly: $output"
+        cleanup_test_env
+        return 1
+    fi
+
     cleanup_test_env
     return 0
 }
@@ -1161,12 +1418,16 @@ main() {
     run_test test_init_autofix_state
     run_test test_session_management
     run_test test_record_change
+    run_test test_record_change_fails_when_append_atomic_fails
     run_test test_record_change_normalizes_single_backup_object
     run_test test_multiple_changes_order
     run_test test_undo_change
+    run_test test_undo_change_fails_when_append_atomic_fails
+    run_test test_undo_change_leaves_pending_state_when_completion_persist_fails
     run_test test_undo_change_rejects_manual_non_reversible_change
     run_test test_acfs_undo_command_category_handles_quotes
     run_test test_acfs_undo_command_all_skips_undone_changes
+    run_test test_acfs_undo_command_list_marks_pending_changes
     run_test test_print_undo_summary
     run_test test_update_integrity_file
     run_test test_cleanup_old_backups_removes_directory_entries

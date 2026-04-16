@@ -1042,6 +1042,144 @@ EOF
     cleanup_mock_env
 }
 
+test_autofix_existing_clean_reinstall_restores_backup_after_artifact_removal_failure() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-clean-restore-artifact-target"
+    local fake_bin="$TEST_HOME/fake-bin"
+    mkdir -p "$target_home/.acfs" "$target_home/.config/acfs" "$target_home/.local/bin" "$fake_bin"
+    printf 'installed\n' > "$target_home/.acfs/version"
+    printf 'config\n' > "$target_home/.config/acfs/settings.toml"
+    printf '#!/usr/bin/env bash\n' > "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+
+    cat > "$fake_bin/rm" <<EOF
+#!/usr/bin/env bash
+last="\${@: -1}"
+if [[ "\$last" == "$target_home/.config/acfs" ]]; then
+    exit 1
+fi
+exec /bin/rm "\$@"
+EOF
+    chmod +x "$fake_bin/rm"
+
+    local output=""
+    output=$(PATH="$fake_bin:/usr/bin:/bin" HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        ACFS_STATE_DIR="$target_home/.acfs/autofix" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            if clean_reinstall >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg result "$result" \
+                --arg version_exists "$(test -f "$TARGET_HOME/.acfs/version" && echo yes || echo no)" \
+                --arg config_exists "$(test -f "$TARGET_HOME/.config/acfs/settings.toml" && echo yes || echo no)" \
+                --arg binary_exists "$(test -f "$TARGET_HOME/.local/bin/acfs" && echo yes || echo no)" \
+                --arg state_dir_exists "$(test -d "$TARGET_HOME/.acfs/autofix" && echo yes || echo no)" \
+                --arg relocated_state_count "$(find "$TARGET_HOME" -maxdepth 1 -type d -name ".acfs-autofix-clean.*" | wc -l | tr -d " ")" \
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                --slurpfile undos "$ACFS_UNDOS_FILE" \
+                "{result: \$result, version_exists: \$version_exists, config_exists: \$config_exists, binary_exists: \$binary_exists, state_dir_exists: \$state_dir_exists, relocated_state_count: \$relocated_state_count, changes: \$changes, undos: \$undos}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and .version_exists == "yes"
+        and .config_exists == "yes"
+        and .binary_exists == "yes"
+        and .state_dir_exists == "yes"
+        and .relocated_state_count == "0"
+        and (.changes | length == 0)
+        and (.undos | length == 0)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing clean reinstall restores backup after artifact removal failure"
+    else
+        harness_fail "autofix_existing clean reinstall restores backup after artifact removal failure" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_clean_reinstall_recovery_preserves_preexisting_journal() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-clean-preserve-journal-target"
+    local fake_bin="$TEST_HOME/fake-bin"
+    mkdir -p "$target_home/.acfs" "$target_home/.config/acfs" "$target_home/.local/bin" "$fake_bin"
+    printf 'installed\n' > "$target_home/.acfs/version"
+    printf 'config\n' > "$target_home/.config/acfs/settings.toml"
+    printf '#!/usr/bin/env bash\n' > "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+
+    cat > "$fake_bin/rm" <<EOF
+#!/usr/bin/env bash
+last="\${@: -1}"
+if [[ "\$last" == "$target_home/.config/acfs" ]]; then
+    exit 1
+fi
+exec /bin/rm "\$@"
+EOF
+    chmod +x "$fake_bin/rm"
+
+    local output=""
+    output=$(PATH="$fake_bin:/usr/bin:/bin" HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        ACFS_STATE_DIR="$target_home/.acfs/autofix" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            preexisting_change_id="$(record_change \
+                "acfs" \
+                "Preexisting change" \
+                ":" \
+                false \
+                "info" \
+                "[]" \
+                "[]" \
+                "[]")" || exit 1
+            undo_change "$preexisting_change_id" true true >/dev/null 2>&1 || exit 1
+            end_autofix_session >/dev/null 2>&1 || true
+
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            if clean_reinstall >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            end_autofix_session >/dev/null 2>&1 || true
+
+            jq -nc \
+                --arg result "$result" \
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                --slurpfile undos "$ACFS_UNDOS_FILE" \
+                "{result: \$result, changes: \$changes, undos: \$undos}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        (.changes[0].id) as $id
+        | .result == "failure"
+        and (.changes | length == 1)
+        and (.changes[0].description == "Preexisting change")
+        and (.undos | length == 2)
+        and (([.undos[].status] | sort) == ["applied", "pending"])
+        and (([.undos[].undone] | unique) == [$id])
+        and ((reduce .undos[] as $undo ({}; .[$undo.undone] = ($undo.status // "applied")) | .[$id]) == "applied")
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing clean reinstall recovery preserves preexisting journal"
+    else
+        harness_fail "autofix_existing clean reinstall recovery preserves preexisting journal" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_autofix_existing_backup_uses_unique_dir_when_timestamp_collides() {
     setup_mock_env
 
@@ -1777,6 +1915,76 @@ test_autofix_existing_legacy_config_migration_record_failure_cleans_created_dirs
     cleanup_mock_env
 }
 
+test_autofix_existing_run_migrations_rolls_back_earlier_steps_on_late_failure() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-migration-rollback-target"
+    local state_dir="$TEST_HOME/autofix-state"
+    mkdir -p "$target_home/.acfs"
+    printf 'legacy-config\n' > "$target_home/.acfs_config"
+    printf '{"legacy":true}\n' > "$target_home/.acfs/config.json"
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" ACFS_STATE_DIR="$state_dir" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            eval "$(declare -f record_change | sed "1s/^record_change/original_record_change/")"
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            record_attempt=0
+            record_change() {
+                record_attempt=$((record_attempt + 1))
+                if [[ $record_attempt -eq 3 ]]; then
+                    return 1
+                fi
+                original_record_change "$@"
+            }
+            if run_migrations "0.9.0" "1.0.0" >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg result "$result" \
+                --arg legacy_exists "$(test -f "$TARGET_HOME/.acfs_config" && echo yes || echo no)" \
+                --arg settings_exists "$(test -f "$TARGET_HOME/.acfs/config/settings.toml" && echo yes || echo no)" \
+                --arg acfs_home_exists "$(test -d "$TARGET_HOME/.acfs" && echo yes || echo no)" \
+                --arg config_dir_exists "$(test -d "$TARGET_HOME/.acfs/config" && echo yes || echo no)" \
+                --arg json_exists "$(test -f "$TARGET_HOME/.acfs/config.json" && echo yes || echo no)" \
+                --arg migrated_exists "$(test -f "$TARGET_HOME/.acfs/config.json.migrated" && echo yes || echo no)" \
+                --arg local_dir_exists "$(test -d "$TARGET_HOME/.local" && echo yes || echo no)" \
+                --arg local_bin_exists "$(test -d "$TARGET_HOME/.local/bin" && echo yes || echo no)" \
+                --arg legacy_contents "$(cat "$TARGET_HOME/.acfs_config" 2>/dev/null || true)" \
+                --arg json_contents "$(cat "$TARGET_HOME/.acfs/config.json" 2>/dev/null || true)" \
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                --slurpfile undos "$ACFS_UNDOS_FILE" \
+                "{result: \$result, legacy_exists: \$legacy_exists, settings_exists: \$settings_exists, acfs_home_exists: \$acfs_home_exists, config_dir_exists: \$config_dir_exists, json_exists: \$json_exists, migrated_exists: \$migrated_exists, local_dir_exists: \$local_dir_exists, local_bin_exists: \$local_bin_exists, legacy_contents: \$legacy_contents, json_contents: \$json_contents, changes: \$changes, undos: \$undos}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and .legacy_exists == "yes"
+        and .settings_exists == "no"
+        and .acfs_home_exists == "yes"
+        and .config_dir_exists == "no"
+        and .json_exists == "yes"
+        and .migrated_exists == "no"
+        and .local_dir_exists == "no"
+        and .local_bin_exists == "no"
+        and .legacy_contents == "legacy-config"
+        and .json_contents == "{\"legacy\":true}"
+        and (.changes | length == 0)
+        and (.undos | length == 0)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing run migrations rolls back earlier steps on late failure"
+    else
+        harness_fail "autofix_existing run migrations rolls back earlier steps on late failure" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_autofix_existing_upgrade_restores_version_when_path_repair_fails() {
     setup_mock_env
 
@@ -1865,6 +2073,64 @@ test_autofix_existing_upgrade_write_failure_cleans_new_acfs_home() {
     cleanup_mock_env
 }
 
+test_autofix_existing_upgrade_version_backup_failure_rolls_back_migrations() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-upgrade-version-backup-fail-target"
+    local state_dir="$TEST_HOME/autofix-state"
+    mkdir -p "$target_home/.acfs"
+    printf '0.9.0\n' > "$target_home/.acfs/version"
+    printf 'legacy-config\n' > "$target_home/.acfs_config"
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" ACFS_STATE_DIR="$state_dir" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            eval "$(declare -f create_backup | sed '\''1s/^create_backup/original_create_backup/'\'')"
+            create_backup() {
+                if [[ "${1:-}" == "$TARGET_HOME/.acfs/version" ]]; then
+                    return 1
+                fi
+                original_create_backup "$@"
+            }
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            if upgrade_existing_installation "0.9.0" "1.1.0" >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg result "$result" \
+                --arg legacy_exists "$(test -f "$TARGET_HOME/.acfs_config" && echo yes || echo no)" \
+                --arg settings_exists "$(test -f "$TARGET_HOME/.acfs/config/settings.toml" && echo yes || echo no)" \
+                --arg local_dir_exists "$(test -d "$TARGET_HOME/.local" && echo yes || echo no)" \
+                --arg local_bin_exists "$(test -d "$TARGET_HOME/.local/bin" && echo yes || echo no)" \
+                --arg version_contents "$(cat "$TARGET_HOME/.acfs/version" 2>/dev/null || true)" \
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                --slurpfile undos "$ACFS_UNDOS_FILE" \
+                "{result: \$result, legacy_exists: \$legacy_exists, settings_exists: \$settings_exists, local_dir_exists: \$local_dir_exists, local_bin_exists: \$local_bin_exists, version_contents: \$version_contents, changes: \$changes, undos: \$undos}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and .legacy_exists == "yes"
+        and .settings_exists == "no"
+        and .local_dir_exists == "no"
+        and .local_bin_exists == "no"
+        and .version_contents == "0.9.0"
+        and (.changes | length == 0)
+        and (.undos | length == 0)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing upgrade version backup failure rolls back migrations"
+    else
+        harness_fail "autofix_existing upgrade version backup failure rolls back migrations" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_autofix_existing_upgrade_record_failure_rolls_back_migrations_and_path_updates() {
     setup_mock_env
 
@@ -1901,7 +2167,9 @@ test_autofix_existing_upgrade_record_failure_rolls_back_migrations_and_path_upda
                 --arg local_dir_exists "$(test -d "$TARGET_HOME/.local" && echo yes || echo no)" \
                 --arg local_bin_exists "$(test -d "$TARGET_HOME/.local/bin" && echo yes || echo no)" \
                 --arg bashrc_contents "$(cat "$TARGET_HOME/.bashrc" 2>/dev/null || true)" \
-                "{result: \$result, legacy_exists: \$legacy_exists, settings_exists: \$settings_exists, acfs_home_exists: \$acfs_home_exists, local_dir_exists: \$local_dir_exists, local_bin_exists: \$local_bin_exists, bashrc_contents: \$bashrc_contents}"
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                --slurpfile undos "$ACFS_UNDOS_FILE" \
+                "{result: \$result, legacy_exists: \$legacy_exists, settings_exists: \$settings_exists, acfs_home_exists: \$acfs_home_exists, local_dir_exists: \$local_dir_exists, local_bin_exists: \$local_bin_exists, bashrc_contents: \$bashrc_contents, changes: \$changes, undos: \$undos}"
         ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
 
     if printf '%s\n' "$output" | jq -e '
@@ -1912,6 +2180,8 @@ test_autofix_existing_upgrade_record_failure_rolls_back_migrations_and_path_upda
         and .local_dir_exists == "no"
         and .local_bin_exists == "no"
         and (.bashrc_contents | contains("# ACFS PATH") | not)
+        and (.changes | length == 0)
+        and (.undos | length == 0)
     ' >/dev/null 2>&1; then
         harness_pass "autofix_existing upgrade record failure rolls back migrations and path updates"
     else
@@ -2035,6 +2305,79 @@ EOF
         harness_pass "autofix_existing clean shell configs allows empty result"
     else
         harness_fail "autofix_existing clean shell configs allows empty result" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_clean_reinstall_restores_backup_after_shell_cleanup_failure() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-clean-restore-shell-target"
+    mkdir -p "$target_home/.acfs" "$target_home/.config/acfs" "$target_home/.local/bin"
+    printf 'installed\n' > "$target_home/.acfs/version"
+    printf 'config\n' > "$target_home/.config/acfs/settings.toml"
+    printf '#!/usr/bin/env bash\n' > "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+    cat > "$target_home/.bashrc" <<'EOF'
+# ACFS PATH
+source ~/.acfs/zsh/acfs.zshrc
+keep_bash=1
+EOF
+    cat > "$target_home/.zshrc" <<'EOF'
+# ACFS PATH
+source ~/.acfs/zsh/acfs.zshrc
+keep_zsh=1
+EOF
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" ACFS_STATE_DIR="$target_home/.acfs/autofix" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            eval "$(declare -f record_change | sed '\''1s/record_change/original_record_change/'\'')"
+            record_change() {
+                if [[ "${2:-}" == "Cleaned ACFS entries from $TARGET_HOME/.zshrc" ]]; then
+                    return 1
+                fi
+                original_record_change "$@"
+            }
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            if clean_reinstall >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg result "$result" \
+                --arg version_exists "$(test -f "$TARGET_HOME/.acfs/version" && echo yes || echo no)" \
+                --arg config_exists "$(test -f "$TARGET_HOME/.config/acfs/settings.toml" && echo yes || echo no)" \
+                --arg binary_exists "$(test -f "$TARGET_HOME/.local/bin/acfs" && echo yes || echo no)" \
+                --arg state_dir_exists "$(test -d "$TARGET_HOME/.acfs/autofix" && echo yes || echo no)" \
+                --arg relocated_state_count "$(find "$TARGET_HOME" -maxdepth 1 -type d -name ".acfs-autofix-clean.*" | wc -l | tr -d " ")" \
+                --arg bashrc_contents "$(cat "$TARGET_HOME/.bashrc" 2>/dev/null || true)" \
+                --arg zshrc_contents "$(cat "$TARGET_HOME/.zshrc" 2>/dev/null || true)" \
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                --slurpfile undos "$ACFS_UNDOS_FILE" \
+                "{result: \$result, version_exists: \$version_exists, config_exists: \$config_exists, binary_exists: \$binary_exists, state_dir_exists: \$state_dir_exists, relocated_state_count: \$relocated_state_count, bashrc_contents: \$bashrc_contents, zshrc_contents: \$zshrc_contents, changes: \$changes, undos: \$undos}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and .version_exists == "yes"
+        and .config_exists == "yes"
+        and .binary_exists == "yes"
+        and .state_dir_exists == "yes"
+        and .relocated_state_count == "0"
+        and (.bashrc_contents | contains("# ACFS PATH"))
+        and (.zshrc_contents | contains("# ACFS PATH"))
+        and (.changes | length == 0)
+        and (.undos | length == 0)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing clean reinstall restores backup after shell cleanup failure"
+    else
+        harness_fail "autofix_existing clean reinstall restores backup after shell cleanup failure" "$output"
     fi
 
     cleanup_mock_env
@@ -4430,6 +4773,8 @@ main() {
     test_autofix_existing_clean_reinstall_aborts_when_recording_fails || true
     test_autofix_existing_clean_reinstall_aborts_when_backup_root_creation_fails || true
     test_autofix_existing_clean_reinstall_aborts_when_state_relocation_fails || true
+    test_autofix_existing_clean_reinstall_restores_backup_after_artifact_removal_failure || true
+    test_autofix_existing_clean_reinstall_recovery_preserves_preexisting_journal || true
     test_autofix_existing_backup_uses_unique_dir_when_timestamp_collides || true
     test_autofix_existing_backup_avoids_broken_symlink_collision || true
     test_autofix_existing_backup_fsyncs_manifest_and_parent_dir || true
@@ -4446,12 +4791,15 @@ main() {
     test_autofix_existing_legacy_config_migration_undo_cleans_created_dirs || true
     test_autofix_existing_legacy_json_migration_undo_handles_quoted_paths || true
     test_autofix_existing_legacy_config_migration_record_failure_cleans_created_dirs || true
+    test_autofix_existing_run_migrations_rolls_back_earlier_steps_on_late_failure || true
     test_autofix_existing_upgrade_restores_version_when_path_repair_fails || true
     test_autofix_existing_upgrade_write_failure_cleans_new_acfs_home || true
+    test_autofix_existing_upgrade_version_backup_failure_rolls_back_migrations || true
     test_autofix_existing_upgrade_record_failure_rolls_back_migrations_and_path_updates || true
     test_autofix_existing_upgrade_record_failure_cleans_new_acfs_home || true
     test_autofix_existing_upgrade_restores_version_when_recording_fails || true
     test_autofix_existing_clean_shell_configs_allows_empty_result || true
+    test_autofix_existing_clean_reinstall_restores_backup_after_shell_cleanup_failure || true
     test_autofix_existing_remove_artifacts_propagates_rm_failures || true
 
     harness_section "Export Config"

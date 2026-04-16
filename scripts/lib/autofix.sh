@@ -354,9 +354,11 @@ compute_record_checksum() {
 
     # Remove the record_checksum field before computing
     local record_without_checksum
-    record_without_checksum=$(echo "$record" | jq -c 'del(.record_checksum)')
+    if ! record_without_checksum=$(printf '%s' "$record" | jq -c 'del(.record_checksum)'); then
+        return 1
+    fi
 
-    echo "$record_without_checksum" | sha256sum | cut -d' ' -f1
+    printf '%s\n' "$record_without_checksum" | sha256sum | cut -d' ' -f1
 }
 
 autofix_path_fingerprint() {
@@ -476,13 +478,39 @@ autofix_backup_restore_command() {
     printf '%s\n' "$restore_command"
 }
 
-autofix_undone_ids_json() {
+autofix_undo_status_map_json() {
     if [[ -f "$ACFS_UNDOS_FILE" ]] && [[ -s "$ACFS_UNDOS_FILE" ]]; then
-        jq -s '[.[].undone // empty]' "$ACFS_UNDOS_FILE" 2>/dev/null || printf '[]\n'
+        jq -s -c '
+            reduce .[] as $entry ({};
+                if ((($entry.undone? // "") | tostring | length) > 0) then
+                    .[$entry.undone] = ($entry.status // "applied")
+                else
+                    .
+                end
+            )
+        ' "$ACFS_UNDOS_FILE" 2>/dev/null || printf '{}\n'
         return 0
     fi
 
-    printf '[]\n'
+    printf '{}\n'
+}
+
+autofix_change_undo_status() {
+    local change_id="$1"
+    local undo_statuses_json="{}"
+    local undo_status=""
+
+    [[ -n "$change_id" ]] || return 1
+    undo_statuses_json="$(autofix_undo_status_map_json)"
+    undo_status="$(printf '%s' "$undo_statuses_json" | jq -r --arg id "$change_id" '.[$id] // empty' 2>/dev/null || true)"
+    printf '%s\n' "$undo_status"
+}
+
+autofix_undone_ids_json() {
+    local undo_statuses_json="{}"
+
+    undo_statuses_json="$(autofix_undo_status_map_json)"
+    printf '%s' "$undo_statuses_json" | jq -c '[to_entries[] | select(.value == "applied") | .key]' 2>/dev/null || printf '[]\n'
 }
 
 autofix_active_backup_paths() {
@@ -993,7 +1021,7 @@ record_change() {
 
     # Build JSON record (without checksum first) - compact for JSONL
     local record
-    record=$(jq -cn \
+    if ! record=$(jq -cn \
         --arg id "$change_id" \
         --arg ts "$timestamp" \
         --arg cat "$category" \
@@ -1020,19 +1048,31 @@ record_change() {
           session_id: $sess,
           reversible: $reversible,
           undone: false
-        }')
+        }'); then
+        log_error "Failed to build change record: $description"
+        return 1
+    fi
 
     # Compute and add record checksum (compact for JSONL)
     local record_checksum
-    record_checksum=$(compute_record_checksum "$record")
-    record=$(echo "$record" | jq -c --arg sum "$record_checksum" '. + {record_checksum: $sum}')
+    if ! record_checksum=$(compute_record_checksum "$record"); then
+        log_error "Failed to checksum change record: $description"
+        return 1
+    fi
+    if ! record=$(printf '%s' "$record" | jq -c --arg sum "$record_checksum" '. + {record_checksum: $sum}'); then
+        log_error "Failed to finalize change record: $description"
+        return 1
+    fi
+
+    # Persist atomically with fsync before mutating in-memory session state
+    if ! append_atomic "$ACFS_CHANGES_FILE" "$record"; then
+        log_error "Failed to persist change record: $description"
+        return 1
+    fi
 
     # Store in memory
     ACFS_CHANGE_RECORDS["$change_id"]="$record"
     ACFS_CHANGE_ORDER+=("$change_id")
-
-    # Persist atomically with fsync
-    append_atomic "$ACFS_CHANGES_FILE" "$record"
 
     log_info "[AUTO-FIX] [$change_id] $description"
 
@@ -1046,8 +1086,10 @@ record_change() {
 # Check whether a change has already been undone
 is_change_undone() {
     local change_id="$1"
-    [[ -f "$ACFS_UNDOS_FILE" ]] || return 1
-    jq -e --arg id "$change_id" 'select(.undone == $id)' "$ACFS_UNDOS_FILE" >/dev/null 2>&1
+    local undo_status=""
+
+    undo_status="$(autofix_change_undo_status "$change_id" 2>/dev/null || true)"
+    [[ "$undo_status" == "applied" ]]
 }
 
 # Undo a specific change
@@ -1089,10 +1131,21 @@ undo_change() {
         fi
     fi
 
-    # Check if already undone
-    if is_change_undone "$change_id"; then
+    local undo_status=""
+    undo_status="$(autofix_change_undo_status "$change_id" 2>/dev/null || true)"
+
+    # Check if already undone or stuck in an incomplete prior attempt
+    if [[ "$undo_status" == "applied" ]]; then
         log_warn "Change $change_id has already been undone"
         return 0
+    fi
+    if [[ "$undo_status" == "pending" ]]; then
+        log_error "Change $change_id has a pending undo record without completion"
+        log_error "Inspect the prior undo attempt before retrying this change"
+        return 1
+    fi
+    if [[ "$undo_status" == "failed" ]]; then
+        log_warn "Retrying previously failed undo attempt for $change_id"
     fi
 
     # Check dependencies (things that depend on this must be undone first)
@@ -1143,6 +1196,23 @@ undo_change() {
         fi
     done < <(echo "$record" | jq -c '(.backups // [] | if type == "array" then . elif type == "object" then [.] else [] end)[] | select(type == "object" and (.backup? != null))' 2>/dev/null)
 
+    # Record durable intent before executing the undo command so later persistence
+    # failures leave an explicit pending state instead of a silent split-brain.
+    local pending_record=""
+    if ! pending_record=$(jq -cn \
+        --arg id "$change_id" \
+        --arg ts "$(date -Iseconds)" \
+        --arg status "pending" \
+        '{undone: $id, timestamp: $ts, status: $status}'); then
+        log_error "Failed to build pending undo record for $change_id"
+        return 1
+    fi
+
+    if ! append_atomic "$ACFS_UNDOS_FILE" "$pending_record"; then
+        log_error "Failed to persist pending undo record for $change_id"
+        return 1
+    fi
+
     # Execute undo
     local undo_exit_code=0
     if [[ "$requires_root" == "true" ]]; then
@@ -1154,20 +1224,49 @@ undo_change() {
     fi
 
     if [[ $undo_exit_code -ne 0 ]]; then
+        local failed_record=""
+        if ! failed_record=$(jq -cn \
+            --arg id "$change_id" \
+            --arg ts "$(date -Iseconds)" \
+            --argjson code "$undo_exit_code" \
+            --arg status "failed" \
+            '{undone: $id, timestamp: $ts, exit_code: $code, status: $status}'); then
+            log_error "Undo command failed with exit code $undo_exit_code"
+            log_error "Failed to build failed undo record for $change_id"
+            return 1
+        fi
+        if ! append_atomic "$ACFS_UNDOS_FILE" "$failed_record"; then
+            log_error "Undo command failed with exit code $undo_exit_code"
+            log_error "Failed to persist failed undo record for $change_id; undo state remains pending"
+            return 1
+        fi
         log_error "Undo command failed with exit code $undo_exit_code"
         return 1
     fi
 
-    # Mark as undone (append to file atomically)
+    # Mark as undone (append completion after the pending intent entry)
     local undo_record
-    undo_record=$(jq -cn \
+    if ! undo_record=$(jq -cn \
         --arg id "$change_id" \
         --arg ts "$(date -Iseconds)" \
         --argjson code "$undo_exit_code" \
-        '{undone: $id, timestamp: $ts, exit_code: $code}')
+        --arg status "applied" \
+        '{undone: $id, timestamp: $ts, exit_code: $code, status: $status}'); then
+        log_error "Failed to build undo record for $change_id"
+        return 1
+    fi
+    local updated_record=""
+    if ! updated_record=$(printf '%s' "$record" | jq -c '.undone = true'); then
+        log_error "Failed to update in-memory undo state for $change_id"
+        return 1
+    fi
 
-    append_atomic "$ACFS_UNDOS_FILE" "$undo_record"
-    ACFS_CHANGE_RECORDS["$change_id"]="$(echo "$record" | jq -c '.undone = true')"
+    if ! append_atomic "$ACFS_UNDOS_FILE" "$undo_record"; then
+        log_error "Undo completed but failed to persist completion for $change_id"
+        log_error "Undo state remains pending; inspect before retrying this change"
+        return 1
+    fi
+    ACFS_CHANGE_RECORDS["$change_id"]="$updated_record"
 
     log_info "[UNDO] Successfully reverted: $change_id"
     return 0
@@ -1224,10 +1323,13 @@ rollback_all_on_failure() {
 # Print summary of all changes made
 print_undo_summary() {
     local change_count=${#ACFS_CHANGE_ORDER[@]}
+    local undo_statuses_json="{}"
 
     if [[ $change_count -eq 0 ]]; then
         return 0
     fi
+
+    undo_statuses_json="$(autofix_undo_status_map_json)"
 
     echo ""
     echo "========================================================================"
@@ -1248,7 +1350,13 @@ print_undo_summary() {
         local cat
         cat=$(echo "$record" | jq -r '.category')
         local status="active"
-        if ! autofix_record_is_reversible "$record"; then
+        local undo_status=""
+        undo_status="$(printf '%s' "$undo_statuses_json" | jq -r --arg id "$change_id" '.[$id] // empty' 2>/dev/null || true)"
+        if [[ "$undo_status" == "applied" ]]; then
+            status="undone"
+        elif [[ "$undo_status" == "pending" ]]; then
+            status="pending"
+        elif ! autofix_record_is_reversible "$record"; then
             status="manual"
         fi
         printf "%-10s %-12s %-10s %-50s\n" "$change_id" "$cat" "$status" "$desc"
@@ -1328,16 +1436,20 @@ acfs_undo_command() {
         fi
         echo "Recorded changes:"
         local undone_ids_json="[]"
+        local undo_statuses_json="{}"
         local list_output=""
         undone_ids_json="$(autofix_undone_ids_json)"
-        list_output="$(jq -r --argjson undone "$undone_ids_json" '
+        undo_statuses_json="$(autofix_undo_status_map_json)"
+        list_output="$(jq -r --argjson undone "$undone_ids_json" --argjson undo_statuses "$undo_statuses_json" '
             [
               .id,
               .category,
               (
                 (.id // "") as $id
+                | ($undo_statuses[$id] // "") as $undo_state
                 | ((.undo_command // "") | gsub("^\\s+"; "")) as $undo
                 | if ($undone | index($id)) then "undone"
+                  elif ($undo_state == "pending") then "pending"
                   elif (((.reversible // true) == false) or ($undo == "") or ($undo | startswith("#"))) then "manual"
                   else "active"
                   end
@@ -1355,11 +1467,13 @@ acfs_undo_command() {
 
     # Build list of changes to undo
     local undone_ids_json="[]"
+    local undo_statuses_json="{}"
     undone_ids_json="$(autofix_undone_ids_json)"
+    undo_statuses_json="$(autofix_undo_status_map_json)"
     if [[ "$all" == "true" ]]; then
-        mapfile -t change_ids < <(jq -r --argjson undone "$undone_ids_json" 'select((.id // "") as $id | (($undone | index($id)) | not)) | .id' "$ACFS_CHANGES_FILE" | sort -r)
+        mapfile -t change_ids < <(jq -r --argjson undone "$undone_ids_json" --argjson undo_statuses "$undo_statuses_json" 'select((.id // "") as $id | (($undone | index($id)) | not) and (($undo_statuses[$id] // "") != "pending")) | .id' "$ACFS_CHANGES_FILE" | sort -r)
     elif [[ -n "$category" ]]; then
-        mapfile -t change_ids < <(jq -r --argjson undone "$undone_ids_json" --arg category "$category" 'select((.id // "") as $id | (($undone | index($id)) | not)) | select(.category == $category) | .id' "$ACFS_CHANGES_FILE" | sort -r)
+        mapfile -t change_ids < <(jq -r --argjson undone "$undone_ids_json" --argjson undo_statuses "$undo_statuses_json" --arg category "$category" 'select((.id // "") as $id | (($undone | index($id)) | not) and (($undo_statuses[$id] // "") != "pending")) | select(.category == $category) | .id' "$ACFS_CHANGES_FILE" | sort -r)
     fi
 
     if [[ ${#change_ids[@]} -eq 0 ]]; then

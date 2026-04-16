@@ -269,6 +269,117 @@ autofix_existing_rollback_changes_since() {
     [[ $rollback_failed -eq 0 ]]
 }
 
+autofix_existing_drop_changes_since() {
+    local start_index="${1:-0}"
+    local i=0
+    local change_id=""
+    local changes_dir=""
+    local undos_dir=""
+    local changes_tmp=""
+    local undos_tmp=""
+    local drop_ids_json="[]"
+    local -a dropped_ids=()
+
+    if (( start_index < 0 )); then
+        start_index=0
+    fi
+    if (( start_index >= ${#ACFS_CHANGE_ORDER[@]} )); then
+        return 0
+    fi
+
+    changes_dir="$(dirname "$ACFS_CHANGES_FILE")"
+    undos_dir="$(dirname "$ACFS_UNDOS_FILE")"
+    changes_tmp="$(mktemp -p "$changes_dir" ".tmp.XXXXXX" 2>/dev/null)" || {
+        log_error "[ROLLBACK] Failed to create temp file while pruning change journal"
+        return 1
+    }
+    undos_tmp="$(mktemp -p "$undos_dir" ".tmp.XXXXXX" 2>/dev/null)" || {
+        rm -f "$changes_tmp" 2>/dev/null || true
+        log_error "[ROLLBACK] Failed to create temp file while pruning undo journal"
+        return 1
+    }
+    trap 'rm -f "${changes_tmp:-}" "${undos_tmp:-}" 2>/dev/null || true; trap - RETURN' RETURN
+
+    for ((i=start_index; i<${#ACFS_CHANGE_ORDER[@]}; i++)); do
+        dropped_ids+=("${ACFS_CHANGE_ORDER[$i]}")
+    done
+
+    if ! drop_ids_json="$(printf '%s\n' "${dropped_ids[@]}" | jq -R . | jq -s '.')"; then
+        log_error "[ROLLBACK] Failed to serialize dropped change IDs for journal pruning"
+        return 1
+    fi
+
+    : > "$changes_tmp" || {
+        log_error "[ROLLBACK] Failed to initialize pruned change journal"
+        return 1
+    }
+    if [[ -f "$ACFS_CHANGES_FILE" ]] && [[ ${#dropped_ids[@]} -gt 0 ]]; then
+        if ! jq -c --argjson dropped_ids "$drop_ids_json" \
+            'select((.id // "") as $id | ($dropped_ids | index($id) | not))' \
+            "$ACFS_CHANGES_FILE" > "$changes_tmp"; then
+            log_error "[ROLLBACK] Failed to rewrite change journal while pruning aborted changes"
+            return 1
+        fi
+    fi
+
+    : > "$undos_tmp" || {
+        log_error "[ROLLBACK] Failed to initialize pruned undo journal"
+        return 1
+    }
+    if [[ -f "$ACFS_UNDOS_FILE" ]] && [[ ${#dropped_ids[@]} -gt 0 ]]; then
+        if ! jq -c --argjson dropped_ids "$drop_ids_json" \
+            'select((.undone // "") as $id | ($dropped_ids | index($id) | not))' \
+            "$ACFS_UNDOS_FILE" > "$undos_tmp"; then
+            log_error "[ROLLBACK] Failed to rewrite undo journal while pruning aborted changes"
+            return 1
+        fi
+    fi
+
+    if ! fsync_file "$changes_tmp"; then
+        log_error "[ROLLBACK] Failed to sync pruned change journal"
+        return 1
+    fi
+    if ! mv "$changes_tmp" "$ACFS_CHANGES_FILE"; then
+        log_error "[ROLLBACK] Failed to replace change journal with pruned state"
+        return 1
+    fi
+    if ! fsync_directory "$changes_dir"; then
+        log_warn "[ROLLBACK] Failed to sync change journal directory after pruning"
+    fi
+
+    if ! fsync_file "$undos_tmp"; then
+        log_error "[ROLLBACK] Failed to sync pruned undo journal"
+        return 1
+    fi
+    if ! mv "$undos_tmp" "$ACFS_UNDOS_FILE"; then
+        log_error "[ROLLBACK] Failed to replace undo journal with pruned state"
+        return 1
+    fi
+    if ! fsync_directory "$undos_dir"; then
+        log_warn "[ROLLBACK] Failed to sync undo journal directory after pruning"
+    fi
+
+    for change_id in "${dropped_ids[@]}"; do
+        unset "ACFS_CHANGE_RECORDS[$change_id]"
+    done
+    ACFS_CHANGE_ORDER=("${ACFS_CHANGE_ORDER[@]:0:start_index}")
+
+    return 0
+}
+
+autofix_existing_rollback_and_drop_changes_since() {
+    local start_index="${1:-0}"
+
+    if ! autofix_existing_rollback_changes_since "$start_index"; then
+        return 1
+    fi
+    if ! autofix_existing_drop_changes_since "$start_index"; then
+        return 1
+    fi
+
+    return 0
+}
+
 # =============================================================================
 # Detection Functions
 # =============================================================================
@@ -501,6 +612,7 @@ run_migrations() {
     local local_bin_dir=""
     local local_dir_existed=false
     local local_bin_dir_existed=false
+    local rollback_start_index=0
 
     log_info "[MIGRATE] Running migrations from $from to $to"
 
@@ -510,6 +622,7 @@ run_migrations() {
     [[ -n "$acfs_home" ]] || return 1
     [[ -d "$acfs_home" ]] && acfs_home_existed=true
     [[ -d "$acfs_home/config" ]] && config_dir_existed=true
+    rollback_start_index=${#ACFS_CHANGE_ORDER[@]}
 
     # Migration: v0.x -> v1.x: Move config from ~/.acfs_config to ~/.acfs/config
     legacy_config="$runtime_home/.acfs_config"
@@ -570,6 +683,9 @@ run_migrations() {
         log_info "[MIGRATE] Backing up legacy JSON config"
         if ! mv "$legacy_json_config" "$migrated_json_config"; then
             log_error "[MIGRATE] Failed to preserve legacy JSON config"
+            if ! autofix_existing_rollback_and_drop_changes_since "$rollback_start_index"; then
+                log_error "[MIGRATE] Failed to roll back earlier migration changes after JSON backup failure"
+            fi
             return 1
         fi
         files_json="$(jq -cn --arg old "$legacy_json_config" --arg new "$migrated_json_config" '[$old, $new]')"
@@ -578,6 +694,9 @@ run_migrations() {
             log_error "[MIGRATE] Failed to build undo command for legacy JSON config backup"
             if ! mv "$migrated_json_config" "$legacy_json_config"; then
                 log_error "[MIGRATE] Failed to restore legacy JSON config after undo-command build failure"
+            fi
+            if ! autofix_existing_rollback_and_drop_changes_since "$rollback_start_index"; then
+                log_error "[MIGRATE] Failed to roll back earlier migration changes after JSON backup undo-command failure"
             fi
             return 1
         fi
@@ -595,6 +714,9 @@ run_migrations() {
             if ! mv "$migrated_json_config" "$legacy_json_config"; then
                 log_error "[MIGRATE] Failed to restore legacy JSON config after journaling failure"
             fi
+            if ! autofix_existing_rollback_and_drop_changes_since "$rollback_start_index"; then
+                log_error "[MIGRATE] Failed to roll back earlier migration changes after JSON backup journaling failure"
+            fi
             return 1
         fi
     fi
@@ -610,6 +732,9 @@ run_migrations() {
         if ! mkdir -p "$local_bin_dir"; then
             log_error "[MIGRATE] Failed to create $local_bin_dir"
             autofix_existing_cleanup_created_local_bin_dirs "$local_bin_dir" "$local_bin_dir_existed" "$local_dir" "$local_dir_existed"
+            if ! autofix_existing_rollback_and_drop_changes_since "$rollback_start_index"; then
+                log_error "[MIGRATE] Failed to roll back earlier migration changes after ~/.local/bin creation failure"
+            fi
             return 1
         fi
         files_json="$(jq -cn --arg local_dir "$local_dir" --arg local_bin "$local_bin_dir" '[$local_dir, $local_bin] | unique')"
@@ -622,6 +747,9 @@ run_migrations() {
         if [[ -z "$local_bin_undo" ]]; then
             log_error "[MIGRATE] Failed to build undo command for ~/.local/bin creation"
             autofix_existing_cleanup_created_local_bin_dirs "$local_bin_dir" "$local_bin_dir_existed" "$local_dir" "$local_dir_existed"
+            if ! autofix_existing_rollback_and_drop_changes_since "$rollback_start_index"; then
+                log_error "[MIGRATE] Failed to roll back earlier migration changes after ~/.local/bin undo-command failure"
+            fi
             return 1
         fi
         if ! record_change \
@@ -635,6 +763,9 @@ run_migrations() {
             '[]' >/dev/null; then
             log_error "[MIGRATE] Failed to record ~/.local/bin creation; reverting"
             autofix_existing_cleanup_created_local_bin_dirs "$local_bin_dir" "$local_bin_dir_existed" "$local_dir" "$local_dir_existed"
+            if ! autofix_existing_rollback_and_drop_changes_since "$rollback_start_index"; then
+                log_error "[MIGRATE] Failed to roll back earlier migration changes after ~/.local/bin journaling failure"
+            fi
             return 1
         fi
     fi
@@ -786,6 +917,9 @@ upgrade_existing_installation() {
         version_backup="$(create_backup "$version_file" "upgrade-version-file")"
         if [[ -z "$version_backup" ]]; then
             log_error "[UPGRADE] Failed to back up version file before upgrade: $version_file"
+            if ! autofix_existing_rollback_and_drop_changes_since "$rollback_start_index"; then
+                log_error "[UPGRADE] Failed to roll back upgrade changes after version backup failure"
+            fi
             return 1
         fi
     fi
@@ -793,27 +927,52 @@ upgrade_existing_installation() {
     # Step 3: Update version file
     if ! mkdir -p "$acfs_home"; then
         log_error "[UPGRADE] Failed to create ACFS home: $acfs_home"
+        if ! autofix_existing_rollback_and_drop_changes_since "$rollback_start_index"; then
+            log_error "[UPGRADE] Failed to roll back upgrade changes after ACFS home creation failure"
+        fi
         return 1
     fi
     if ! printf '%s\n' "$new_version" > "$version_file"; then
+        local rollback_ok=false
+        local restore_ok=false
         log_error "[UPGRADE] Failed to update version file: $version_file"
         if ! autofix_existing_rollback_changes_since "$rollback_start_index"; then
             log_error "[UPGRADE] Failed to roll back upgrade changes after write failure"
+        else
+            rollback_ok=true
         fi
         if ! autofix_existing_restore_upgrade_version_file "$version_file" "$version_backup" "$version_file_existed" "$acfs_home_existed"; then
             log_error "[UPGRADE] Failed to restore version file after write failure"
+        else
+            restore_ok=true
+        fi
+        if [[ "$rollback_ok" == "true" && "$restore_ok" == "true" ]]; then
+            if ! autofix_existing_drop_changes_since "$rollback_start_index"; then
+                log_error "[UPGRADE] Failed to prune rolled-back upgrade journal entries after write failure"
+            fi
         fi
         return 1
     fi
 
     # Step 4: Update PATH entries if needed
     if ! update_path_entries; then
+        local rollback_ok=false
+        local restore_ok=false
         log_error "[UPGRADE] Failed to repair shell PATH entries"
         if ! autofix_existing_rollback_changes_since "$rollback_start_index"; then
             log_error "[UPGRADE] Failed to roll back upgrade changes after PATH repair failure"
+        else
+            rollback_ok=true
         fi
         if ! autofix_existing_restore_upgrade_version_file "$version_file" "$version_backup" "$version_file_existed" "$acfs_home_existed"; then
             log_error "[UPGRADE] Failed to restore version file after PATH repair failure"
+        else
+            restore_ok=true
+        fi
+        if [[ "$rollback_ok" == "true" && "$restore_ok" == "true" ]]; then
+            if ! autofix_existing_drop_changes_since "$rollback_start_index"; then
+                log_error "[UPGRADE] Failed to prune rolled-back upgrade journal entries after PATH repair failure"
+            fi
         fi
         return 1
     fi
@@ -829,12 +988,23 @@ upgrade_existing_installation() {
         '[]' \
         '[]' \
         false >/dev/null; then
+        local rollback_ok=false
+        local restore_ok=false
         log_error "[UPGRADE] Failed to record upgrade operation"
         if ! autofix_existing_rollback_changes_since "$rollback_start_index"; then
             log_error "[UPGRADE] Failed to roll back upgrade changes after upgrade journaling failure"
+        else
+            rollback_ok=true
         fi
         if ! autofix_existing_restore_upgrade_version_file "$version_file" "$version_backup" "$version_file_existed" "$acfs_home_existed"; then
             log_error "[UPGRADE] Failed to restore version file after upgrade journaling failure"
+        else
+            restore_ok=true
+        fi
+        if [[ "$rollback_ok" == "true" && "$restore_ok" == "true" ]]; then
+            if ! autofix_existing_drop_changes_since "$rollback_start_index"; then
+                log_error "[UPGRADE] Failed to prune rolled-back upgrade journal entries after upgrade journaling failure"
+            fi
         fi
         return 1
     fi
@@ -1144,6 +1314,7 @@ autofix_existing_restore_relocated_state_after_clean_abort() {
     local relocated_state_dir="${ACFS_CLEAN_RELOCATED_STATE_NEW:-}"
     local original_parent=""
     local relocated_parent=""
+    local replace_existing="${1:-false}"
 
     [[ -n "$original_state_dir" && -n "$relocated_state_dir" ]] || return 0
     [[ -d "$relocated_state_dir" ]] || return 0
@@ -1156,8 +1327,15 @@ autofix_existing_restore_relocated_state_after_clean_abort() {
         return 1
     fi
     if autofix_path_exists "$original_state_dir"; then
-        log_error "[CLEAN] Refusing to restore relocated autofix state over existing path: $original_state_dir"
-        return 1
+        if [[ "$replace_existing" == "true" ]]; then
+            if ! rm -rf "$original_state_dir"; then
+                log_error "[CLEAN] Failed to replace existing autofix state path: $original_state_dir"
+                return 1
+            fi
+        else
+            log_error "[CLEAN] Refusing to restore relocated autofix state over existing path: $original_state_dir"
+            return 1
+        fi
     fi
     if ! mv "$relocated_state_dir" "$original_state_dir"; then
         log_error "[CLEAN] Failed to restore relocated autofix state to $original_state_dir"
@@ -1178,6 +1356,27 @@ autofix_existing_restore_relocated_state_after_clean_abort() {
     return 0
 }
 
+autofix_existing_restore_installation_backup() {
+    local backup_dir="$1"
+    local backup_manifest=""
+    local backup_item=""
+    local restore_failed=0
+
+    [[ -n "$backup_dir" ]] || return 1
+    backup_manifest="$backup_dir/manifest.json"
+    [[ -f "$backup_manifest" ]] || return 1
+
+    while IFS= read -r backup_item; do
+        [[ -n "$backup_item" ]] || continue
+        if ! autofix_existing_restore_from_backup "$backup_item"; then
+            log_error "[CLEAN] Failed to restore backed-up artifact during clean reinstall recovery"
+            restore_failed=1
+        fi
+    done < <(jq -c '.backed_up_items // [] | .[]' "$backup_manifest" 2>/dev/null)
+
+    [[ $restore_failed -eq 0 ]]
+}
+
 # Perform clean reinstall
 clean_reinstall() {
     log_warn "[CLEAN] Starting clean reinstall - this will remove existing installation"
@@ -1186,6 +1385,7 @@ clean_reinstall() {
     local backup_dir
     local artifacts_json=""
     local backups_json="[]"
+    local clean_record_index=-1
     if ! backup_dir=$(create_installation_backup); then
         log_error "[CLEAN] Backup creation failed; aborting clean reinstall"
         return 1
@@ -1218,16 +1418,40 @@ clean_reinstall() {
         fi
         return 1
     fi
+    clean_record_index=$((${#ACFS_CHANGE_ORDER[@]} - 1))
 
     # Step 3: Remove existing installation
     if ! remove_acfs_artifacts; then
         log_error "[CLEAN] Failed to remove one or more ACFS artifacts"
+        if ! autofix_existing_restore_installation_backup "$backup_dir"; then
+            log_error "[CLEAN] Failed to restore installation backup after artifact removal failure"
+        fi
+        if ! autofix_existing_drop_changes_since "$clean_record_index"; then
+            log_error "[CLEAN] Failed to prune aborted clean reinstall journal entries after artifact removal failure"
+        fi
+        if ! autofix_existing_restore_relocated_state_after_clean_abort true; then
+            log_error "[CLEAN] Failed to restore relocated autofix state after artifact removal failure"
+        fi
         return 1
     fi
 
     # Step 4: Clean shell configs
     if ! clean_shell_configs; then
         log_error "[CLEAN] Failed to clean one or more shell configs"
+        if (( clean_record_index >= 0 )); then
+            if ! autofix_existing_rollback_changes_since "$((clean_record_index + 1))"; then
+                log_error "[CLEAN] Failed to roll back shell config cleanups after clean reinstall failure"
+            fi
+        fi
+        if ! autofix_existing_restore_installation_backup "$backup_dir"; then
+            log_error "[CLEAN] Failed to restore installation backup after shell config cleanup failure"
+        fi
+        if ! autofix_existing_drop_changes_since "$clean_record_index"; then
+            log_error "[CLEAN] Failed to prune aborted clean reinstall journal entries after shell config cleanup failure"
+        fi
+        if ! autofix_existing_restore_relocated_state_after_clean_abort true; then
+            log_error "[CLEAN] Failed to restore relocated autofix state after shell config cleanup failure"
+        fi
         return 1
     fi
 
