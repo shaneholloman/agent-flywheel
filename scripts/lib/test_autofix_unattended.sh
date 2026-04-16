@@ -151,6 +151,7 @@ test_fix_manages_session_and_records_changes() {
     setup_autofix_state_dir "$state_dir"
 
     if ! (
+        sudo() { "$@"; }
         autofix_unattended_upgrades_check() {
             jq -n \
                 --arg status "active" \
@@ -166,7 +167,9 @@ test_fix_manages_session_and_records_changes() {
             return 0
         }
         pgrep() { return 1; }
-        fuser() { return 1; }
+        # Treat any real host lock file as actively held so the fixture never
+        # mutates /var/lib/dpkg/* or other system apt locks.
+        fuser() { return 0; }
         dpkg() { return 0; }
         apt-get() { return 0; }
 
@@ -204,6 +207,7 @@ test_restore_manages_session_and_persists_marker() {
 EOF
 
     if ! (
+        sudo() { "$@"; }
         systemctl() {
             case "${1:-}" in
                 start) return 0 ;;
@@ -254,6 +258,7 @@ EOF
 EOF
 
     if (
+        sudo() { "$@"; }
         systemctl() {
             case "${1:-}" in
                 start)
@@ -302,6 +307,7 @@ test_stop_service_rolls_back_when_record_change_fails() {
     setup_autofix_state_dir "$state_dir"
 
     if (
+        sudo() { "$@"; }
         # shellcheck disable=SC2123
         PATH="/definitely-missing-for-this-test"
 
@@ -360,6 +366,7 @@ test_kill_stuck_processes_does_not_record_failed_kill() {
     setup_autofix_state_dir "$state_dir"
 
     if (
+        sudo() { "$@"; }
         pgrep() {
             if [[ "${1:-}" == "-x" ]]; then
                 echo "123"

@@ -202,13 +202,16 @@ test_cli_modes() {
 
 # Test: Installation markers constant is properly defined
 test_marker_constants() {
-    if [[ ${#ACFS_INSTALLATION_MARKERS[@]} -lt 3 ]]; then
+    local -a markers=()
+    mapfile -t markers < <(autofix_existing_installation_markers 2>/dev/null || true)
+
+    if [[ ${#markers[@]} -lt 3 ]]; then
         test_fail "marker_constants" "Should have at least 3 installation markers"
         return
     fi
 
     # All marker paths should include HOME or start with /
-    for marker in "${ACFS_INSTALLATION_MARKERS[@]}"; do
+    for marker in "${markers[@]}"; do
         if [[ "$marker" != /* ]] && [[ "$marker" != *'$HOME'* ]] && [[ "$marker" != "$HOME"* ]]; then
             test_fail "marker_constants" "Invalid marker path: $marker"
             return
@@ -220,7 +223,10 @@ test_marker_constants() {
 
 # Test: Shell configs constant is properly defined
 test_shell_configs_constant() {
-    if [[ ${#SHELL_CONFIGS[@]} -lt 2 ]]; then
+    local -a shell_configs=()
+    mapfile -t shell_configs < <(autofix_existing_shell_configs 2>/dev/null || true)
+
+    if [[ ${#shell_configs[@]} -lt 2 ]]; then
         test_fail "shell_configs_constant" "Should have at least 2 shell configs"
         return
     fi
@@ -229,7 +235,7 @@ test_shell_configs_constant() {
     local has_bashrc=false
     local has_zshrc=false
 
-    for config in "${SHELL_CONFIGS[@]}"; do
+    for config in "${shell_configs[@]}"; do
         case "$config" in
             *bashrc*) has_bashrc=true ;;
             *zshrc*) has_zshrc=true ;;
