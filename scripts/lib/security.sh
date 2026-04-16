@@ -789,7 +789,7 @@ get_checksum() {
 }
 
 # Associative array to store loaded checksums
-declare -gA LOADED_CHECKSUMS
+declare -gA LOADED_CHECKSUMS=()
 declare -g ACFS_CHECKSUMS_REMOTE_REFRESHED=false
 
 acfs_checksums_file_looks_valid() {

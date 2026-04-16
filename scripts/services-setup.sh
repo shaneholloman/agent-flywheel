@@ -185,7 +185,7 @@ init_target_context() {
 }
 
 # Service status tracking
-declare -A SERVICE_STATUS
+declare -A SERVICE_STATUS=()
 
 # ============================================================
 # Helper Functions
@@ -782,7 +782,7 @@ setup_claude() {
         return 1
     fi
 
-    if [[ "${SERVICE_STATUS[claude]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[claude]:-unknown}" == "configured" ]]; then
         if ! gum_confirm "Claude Code appears to be configured. Reconfigure?"; then
             return 0
         fi
@@ -803,7 +803,7 @@ Press Enter to launch Claude Code login..."
 
     # Re-check status
     check_claude_status
-    if [[ "${SERVICE_STATUS[claude]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[claude]:-unknown}" == "configured" ]]; then
         gum_success "Claude Code configured successfully!"
     else
         gum_warn "Claude Code may not be fully configured. Try running 'claude' again."
@@ -819,7 +819,7 @@ setup_codex() {
         return 1
     fi
 
-    if [[ "${SERVICE_STATUS[codex]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[codex]:-unknown}" == "configured" ]]; then
         if ! gum_confirm "Codex CLI appears to be configured. Reconfigure?"; then
             return 0
         fi
@@ -833,7 +833,7 @@ that flow now. If not, use the SSH tunnel fallback from the website wizard."
     run_as_user "$codex_bin" login --device-auth || true
 
     check_codex_status
-    if [[ "${SERVICE_STATUS[codex]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[codex]:-unknown}" == "configured" ]]; then
         gum_success "Codex CLI configured successfully!"
     fi
 }
@@ -1019,7 +1019,7 @@ setup_gemini() {
         return 1
     fi
 
-    if [[ "${SERVICE_STATUS[gemini]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[gemini]:-unknown}" == "configured" ]]; then
         if ! gum_confirm "Gemini CLI appears to be configured. Reconfigure?"; then
             return 0
         fi
@@ -1038,7 +1038,7 @@ Press Enter to launch Gemini login..."
     run_as_user "$gemini_bin" || true
 
     check_gemini_status
-    if [[ "${SERVICE_STATUS[gemini]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[gemini]:-unknown}" == "configured" ]]; then
         gum_success "Gemini CLI configured successfully!"
     fi
 }
@@ -1051,7 +1051,7 @@ setup_vercel() {
         return 1
     fi
 
-    if [[ "${SERVICE_STATUS[vercel]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[vercel]:-unknown}" == "configured" ]]; then
         if ! gum_confirm "Vercel appears to be configured. Reconfigure?"; then
             return 0
         fi
@@ -1077,7 +1077,7 @@ Press Enter to continue with Vercel login..."
     fi
 
     check_vercel_status
-    if [[ "${SERVICE_STATUS[vercel]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[vercel]:-unknown}" == "configured" ]]; then
         gum_success "Vercel configured successfully!"
     fi
 }
@@ -1091,7 +1091,7 @@ setup_supabase() {
         return 1
     fi
 
-    if [[ "${SERVICE_STATUS[supabase]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[supabase]:-unknown}" == "configured" ]]; then
         if ! gum_confirm "Supabase appears to be configured. Reconfigure?"; then
             return 0
         fi
@@ -1117,7 +1117,7 @@ Press Enter to continue with Supabase login..."
     fi
 
     check_supabase_status
-    if [[ "${SERVICE_STATUS[supabase]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[supabase]:-unknown}" == "configured" ]]; then
         gum_success "Supabase configured successfully!"
     fi
 }
@@ -1130,7 +1130,7 @@ setup_wrangler() {
         return 1
     fi
 
-    if [[ "${SERVICE_STATUS[wrangler]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[wrangler]:-unknown}" == "configured" ]]; then
         if ! gum_confirm "Cloudflare/Wrangler appears to be configured. Reconfigure?"; then
             return 0
         fi
@@ -1161,7 +1161,7 @@ You can still try browser-based login if you have a browser-capable session or S
     fi
 
     check_wrangler_status
-    if [[ "${SERVICE_STATUS[wrangler]}" == "configured" ]]; then
+    if [[ "${SERVICE_STATUS[wrangler]:-unknown}" == "configured" ]]; then
         gum_success "Cloudflare/Wrangler configured successfully!"
     fi
 }

@@ -627,6 +627,73 @@ EOF
     cleanup_mock_env
 }
 
+test_services_setup_globals_are_initialized_under_set_u() {
+    setup_mock_env
+
+    local output=""
+    output=$(bash -c '
+        set -u
+        source "$1"
+        printf "services=%s\n" "${#SERVICE_STATUS[@]}"
+    ' _ "$SERVICES_SETUP_SH" 2>&1 || true)
+
+    if [[ "$output" == "services=0" ]]; then
+        harness_pass "services-setup initializes SERVICE_STATUS safely under set -u"
+    else
+        harness_fail "services-setup initializes SERVICE_STATUS safely under set -u" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_services_setup_setup_flows_tolerate_unset_status_keys() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/setup-status-target"
+    local output=""
+    mkdir -p "$target_home/.bun/bin"
+    ln -sf /bin/true "$target_home/.bun/bin/vercel"
+    ln -sf /bin/true "$target_home/.bun/bin/wrangler"
+
+    output=$(bash -c '
+        set -u
+        source "$1"
+        TARGET_USER="$(whoami)"
+        TARGET_HOME="$2"
+        BUN_BIN=/bin/true
+        HAS_GUM=false
+        gum_confirm() { return 1; }
+        gum_box() { :; }
+        gum_detail() { :; }
+        gum_error() { :; }
+        gum_warn() { :; }
+        gum_success() { :; }
+        find_user_bin() { printf "/bin/true\n"; }
+        run_as_user() { return 0; }
+        check_claude_status() { SERVICE_STATUS[claude]=configured; }
+        check_codex_status() { SERVICE_STATUS[codex]=configured; }
+        check_gemini_status() { SERVICE_STATUS[gemini]=configured; }
+        check_vercel_status() { SERVICE_STATUS[vercel]=configured; }
+        check_supabase_status() { SERVICE_STATUS[supabase]=configured; }
+        check_wrangler_status() { SERVICE_STATUS[wrangler]=configured; }
+        setup_claude </dev/null
+        setup_codex </dev/null
+        setup_gemini </dev/null
+        setup_vercel </dev/null
+        setup_supabase </dev/null
+        setup_wrangler </dev/null
+        printf "setup-ok\n"
+    ' _ "$SERVICES_SETUP_SH" "$target_home" 2>&1 || true)
+
+    if [[ "$output" == *"setup-ok"* ]]; then
+        harness_pass "services-setup setup flows tolerate unset SERVICE_STATUS keys under set -u"
+    else
+        harness_fail "services-setup setup flows tolerate unset SERVICE_STATUS keys under set -u" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_notify_uses_target_home_for_config_and_state_when_home_is_relative() {
     setup_mock_env
 
@@ -5177,6 +5244,8 @@ main() {
     test_services_setup_prefers_target_home_libs_under_root_home || true
     test_services_setup_runs_target_user_commands_with_target_home || true
     test_services_setup_rejects_invalid_target_user_before_sudo || true
+    test_services_setup_globals_are_initialized_under_set_u || true
+    test_services_setup_setup_flows_tolerate_unset_status_keys || true
 
     harness_section "Notification Helpers"
     test_notify_uses_target_home_for_config_and_state_when_home_is_relative || true

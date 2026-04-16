@@ -642,7 +642,24 @@ else
 fi
 
 # ============================================================
-section "Test 8: uca alias definition"
+section "Test 8: security globals initialize under set -u"
+# ============================================================
+security_globals_output=$(
+    bash -c '
+        set -u
+        source "'"$REPO_ROOT"'/scripts/lib/security.sh"
+        printf "checksums=%s\n" "${#LOADED_CHECKSUMS[@]}"
+    ' 2>&1
+) || true
+
+if echo "$security_globals_output" | grep -q '^checksums=0$'; then
+    pass "security.sh initializes LOADED_CHECKSUMS safely under set -u"
+else
+    fail "security.sh still leaves LOADED_CHECKSUMS uninitialized under set -u. Output: $security_globals_output"
+fi
+
+# ============================================================
+section "Test 9: uca alias definition"
 # ============================================================
 if [[ -f "$ZSHRC" ]]; then
     uca_line=$(grep "alias uca=" "$ZSHRC" || true)
@@ -677,7 +694,7 @@ else
 fi
 
 # ============================================================
-section "Test 9: Completeness sweep — no bare 'claude update' in repo"
+section "Test 10: Completeness sweep — no bare 'claude update' in repo"
 # ============================================================
 # Grep across the whole repo for "claude update", excluding:
 # - comments (lines starting with #)
@@ -711,7 +728,7 @@ else
 fi
 
 # ============================================================
-section "Test 10: Channel version alignment (live, optional)"
+section "Test 11: Channel version alignment (live, optional)"
 # ============================================================
 if command -v npm &>/dev/null && command -v claude &>/dev/null; then
     dist_tags=$(npm view @anthropic-ai/claude-code dist-tags 2>/dev/null || true)
