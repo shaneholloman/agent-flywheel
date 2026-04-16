@@ -18,6 +18,27 @@ source "$SCRIPT_DIR/autofix_version_managers.sh"
 TESTS_PASSED=0
 TESTS_FAILED=0
 
+setup_autofix_state_dir() {
+    local state_dir="$1"
+    export ACFS_STATE_DIR="$state_dir"
+    export ACFS_CHANGES_FILE="$ACFS_STATE_DIR/changes.jsonl"
+    export ACFS_UNDOS_FILE="$ACFS_STATE_DIR/undos.jsonl"
+    export ACFS_BACKUPS_DIR="$ACFS_STATE_DIR/backups"
+    export ACFS_LOCK_FILE="$ACFS_STATE_DIR/.lock"
+    export ACFS_INTEGRITY_FILE="$ACFS_STATE_DIR/.integrity"
+
+    ACFS_CHANGE_RECORDS=()
+    ACFS_CHANGE_ORDER=()
+    ACFS_SESSION_ID=""
+    ACFS_AUTOFIX_INITIALIZED=false
+    ACFS_AUTOFIX_LOCK_FD=""
+
+    rm -rf "$ACFS_STATE_DIR"
+    mkdir -p "$ACFS_BACKUPS_DIR"
+    : > "$ACFS_CHANGES_FILE"
+    : > "$ACFS_UNDOS_FILE"
+}
+
 test_pass() {
     local name="$1"
     echo -e "\033[32m[PASS]\033[0m $name"
@@ -176,6 +197,69 @@ EOF
     test_pass "nvm_fix_dry_run"
 }
 
+test_nvm_fix_manages_session_and_records_changes() {
+    local test_id="nvm_fix_live"
+    local test_dir="/tmp/test_autofix_${test_id}_$$"
+    local state_dir="$test_dir/state"
+    mkdir -p "$test_dir/.nvm"
+
+    cat > "$test_dir/.bashrc" << 'EOF'
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+EOF
+
+    local old_home="$HOME"
+    local old_nvm_dir="${NVM_DIR:-}"
+    HOME="$test_dir"
+    unset NVM_DIR
+    setup_autofix_state_dir "$state_dir"
+
+    if ! autofix_nvm_fix "fix" >/dev/null 2>&1; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        cleanup_test_dir "$test_dir"
+        test_fail "nvm_fix_manages_session_and_records_changes" "standalone nvm fix failed"
+        return
+    fi
+
+    if [[ -d "$test_dir/.nvm" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        cleanup_test_dir "$test_dir"
+        test_fail "nvm_fix_manages_session_and_records_changes" "nvm directory was not removed"
+        return
+    fi
+
+    if grep -q "NVM_DIR\\|nvm\\.sh" "$test_dir/.bashrc"; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        cleanup_test_dir "$test_dir"
+        test_fail "nvm_fix_manages_session_and_records_changes" "nvm shell config entries were not removed"
+        return
+    fi
+
+    if [[ -f "$ACFS_STATE_DIR/.session" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        cleanup_test_dir "$test_dir"
+        test_fail "nvm_fix_manages_session_and_records_changes" "session marker was left behind after standalone nvm fix"
+        return
+    fi
+
+    if [[ "$(jq -r 'select(.category == "nvm") | .category' "$ACFS_CHANGES_FILE" | wc -l | tr -d ' ')" -lt 2 ]]; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        cleanup_test_dir "$test_dir"
+        test_fail "nvm_fix_manages_session_and_records_changes" "expected nvm changes were not recorded"
+        return
+    fi
+
+    HOME="$old_home"
+    [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+    cleanup_test_dir "$test_dir"
+    test_pass "nvm_fix_manages_session_and_records_changes"
+}
+
 # ============================================================
 # Pyenv Tests
 # ============================================================
@@ -309,6 +393,69 @@ EOF
     test_pass "pyenv_fix_dry_run"
 }
 
+test_pyenv_fix_manages_session_and_records_changes() {
+    local test_id="pyenv_fix_live"
+    local test_dir="/tmp/test_autofix_${test_id}_$$"
+    local state_dir="$test_dir/state"
+    mkdir -p "$test_dir/.pyenv"
+
+    cat > "$test_dir/.bashrc" << 'EOF'
+export PYENV_ROOT="$HOME/.pyenv"
+eval "$(pyenv init -)"
+EOF
+
+    local old_home="$HOME"
+    local old_pyenv_root="${PYENV_ROOT:-}"
+    HOME="$test_dir"
+    unset PYENV_ROOT
+    setup_autofix_state_dir "$state_dir"
+
+    if ! autofix_pyenv_fix "fix" >/dev/null 2>&1; then
+        HOME="$old_home"
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "pyenv_fix_manages_session_and_records_changes" "standalone pyenv fix failed"
+        return
+    fi
+
+    if [[ -d "$test_dir/.pyenv" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "pyenv_fix_manages_session_and_records_changes" "pyenv directory was not removed"
+        return
+    fi
+
+    if grep -q "PYENV_ROOT\\|pyenv init" "$test_dir/.bashrc"; then
+        HOME="$old_home"
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "pyenv_fix_manages_session_and_records_changes" "pyenv shell config entries were not removed"
+        return
+    fi
+
+    if [[ -f "$ACFS_STATE_DIR/.session" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "pyenv_fix_manages_session_and_records_changes" "session marker was left behind after standalone pyenv fix"
+        return
+    fi
+
+    if [[ "$(jq -r 'select(.category == "pyenv") | .category' "$ACFS_CHANGES_FILE" | wc -l | tr -d ' ')" -lt 2 ]]; then
+        HOME="$old_home"
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "pyenv_fix_manages_session_and_records_changes" "expected pyenv changes were not recorded"
+        return
+    fi
+
+    HOME="$old_home"
+    [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+    cleanup_test_dir "$test_dir"
+    test_pass "pyenv_fix_manages_session_and_records_changes"
+}
+
 # ============================================================
 # Combined Tests
 # ============================================================
@@ -349,6 +496,62 @@ test_combined_check_structure() {
     test_pass "combined_check_structure"
 }
 
+test_combined_fix_reuses_single_session() {
+    local test_id="combined_fix_live"
+    local test_dir="/tmp/test_autofix_${test_id}_$$"
+    local state_dir="$test_dir/state"
+    mkdir -p "$test_dir/.nvm" "$test_dir/.pyenv"
+
+    cat > "$test_dir/.bashrc" << 'EOF'
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+export PYENV_ROOT="$HOME/.pyenv"
+eval "$(pyenv init -)"
+EOF
+
+    local old_home="$HOME"
+    local old_nvm_dir="${NVM_DIR:-}"
+    local old_pyenv_root="${PYENV_ROOT:-}"
+    HOME="$test_dir"
+    unset NVM_DIR PYENV_ROOT
+    setup_autofix_state_dir "$state_dir"
+
+    if ! autofix_version_managers_fix "fix" >/dev/null 2>&1; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "combined_fix_reuses_single_session" "combined fix failed"
+        return
+    fi
+
+    local session_count
+    session_count=$(jq -r '.session_id' "$ACFS_CHANGES_FILE" | sort -u | sed '/^null$/d;/^$/d' | wc -l | tr -d ' ')
+    if [[ "$session_count" != "1" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "combined_fix_reuses_single_session" "expected one shared session id, got $session_count"
+        return
+    fi
+
+    if [[ -f "$ACFS_STATE_DIR/.session" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "combined_fix_reuses_single_session" "session marker was left behind after combined fix"
+        return
+    fi
+
+    HOME="$old_home"
+    [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+    [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+    cleanup_test_dir "$test_dir"
+    test_pass "combined_fix_reuses_single_session"
+}
+
 # ============================================================
 # Main Test Runner
 # ============================================================
@@ -363,15 +566,18 @@ main() {
     test_nvm_check_env_set
     test_nvm_check_shell_configs
     test_nvm_fix_dry_run
+    test_nvm_fix_manages_session_and_records_changes
 
     # Pyenv tests
     test_pyenv_check_no_installation
     test_pyenv_check_env_set
     test_pyenv_check_shell_configs
     test_pyenv_fix_dry_run
+    test_pyenv_fix_manages_session_and_records_changes
 
     # Combined tests
     test_combined_check_structure
+    test_combined_fix_reuses_single_session
 
     echo "============================================="
     echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed"

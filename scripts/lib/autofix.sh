@@ -262,6 +262,27 @@ autofix_sync_backup_path() {
     return 1
 }
 
+autofix_cleanup_failed_backup_path() {
+    local backup_path="$1"
+    local backup_parent=""
+
+    [[ -n "$backup_path" ]] || return 1
+    backup_parent="$(dirname "$backup_path")"
+
+    if autofix_path_exists "$backup_path"; then
+        if ! rm -rf "$backup_path"; then
+            log_error "Failed to remove incomplete backup path: $backup_path"
+            return 1
+        fi
+    fi
+
+    if ! fsync_directory "$backup_parent"; then
+        log_warn "Failed to sync backup parent after cleanup: $backup_parent"
+    fi
+
+    return 0
+}
+
 # Atomically write content to a file with fsync
 write_atomic() {
     local target_file="$1"
@@ -640,7 +661,10 @@ repair_state_files() {
                         continue
                     fi
                 fi
-                printf '%s\n' "$line" >> "$temp_file"
+                if ! printf '%s\n' "$line" >> "$temp_file"; then
+                    log_error "[REPAIR] Failed to rewrite repaired changes journal"
+                    return 1
+                fi
             else
                 log_warn "[REPAIR] Discarding invalid line: ${line:0:50}..."
                 ((++repaired))
@@ -648,8 +672,14 @@ repair_state_files() {
         done < "$ACFS_CHANGES_FILE"
 
         if [[ $repaired -gt 0 ]]; then
-            mv "$temp_file" "$ACFS_CHANGES_FILE"
-            fsync_file "$ACFS_CHANGES_FILE"
+            if ! mv "$temp_file" "$ACFS_CHANGES_FILE"; then
+                log_error "[REPAIR] Failed to replace changes journal with repaired copy"
+                return 1
+            fi
+            if ! fsync_file "$ACFS_CHANGES_FILE"; then
+                log_error "[REPAIR] Failed to sync repaired changes journal"
+                return 1
+            fi
             log_info "[REPAIR] Removed $repaired invalid lines from changes.jsonl"
         else
             rm -f "$temp_file" 2>/dev/null || true
@@ -667,7 +697,10 @@ repair_state_files() {
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             if echo "$line" | jq -e . >/dev/null 2>&1; then
-                printf '%s\n' "$line" >> "$temp_file"
+                if ! printf '%s\n' "$line" >> "$temp_file"; then
+                    log_error "[REPAIR] Failed to rewrite repaired undo journal"
+                    return 1
+                fi
             else
                 log_warn "[REPAIR] Discarding invalid undo line: ${line:0:50}..."
                 ((++repaired_undos))
@@ -675,8 +708,14 @@ repair_state_files() {
         done < "$ACFS_UNDOS_FILE"
 
         if [[ $repaired_undos -gt 0 ]]; then
-            mv "$temp_file" "$ACFS_UNDOS_FILE"
-            fsync_file "$ACFS_UNDOS_FILE"
+            if ! mv "$temp_file" "$ACFS_UNDOS_FILE"; then
+                log_error "[REPAIR] Failed to replace undo journal with repaired copy"
+                return 1
+            fi
+            if ! fsync_file "$ACFS_UNDOS_FILE"; then
+                log_error "[REPAIR] Failed to sync repaired undo journal"
+                return 1
+            fi
             log_info "[REPAIR] Removed $repaired_undos invalid lines from undos.jsonl"
         else
             rm -f "$temp_file"
@@ -726,6 +765,7 @@ update_integrity_file() {
 
 # Initialize state directory
 init_autofix_state() {
+    ACFS_AUTOFIX_INITIALIZED=false
     autofix_refresh_state_paths
     mkdir -p "$ACFS_STATE_DIR" || { log_error "Failed to create state directory: $ACFS_STATE_DIR"; return 1; }
     mkdir -p "$ACFS_BACKUPS_DIR" || { log_error "Failed to create backups directory: $ACFS_BACKUPS_DIR"; return 1; }
@@ -735,7 +775,14 @@ init_autofix_state() {
     # Verify integrity on startup
     if ! verify_state_integrity; then
         log_warn "[AUTO-FIX] State integrity check failed, repairing..."
-        repair_state_files
+        if ! repair_state_files; then
+            log_error "[AUTO-FIX] Failed to repair corrupted state files"
+            return 1
+        fi
+        if ! verify_state_integrity; then
+            log_error "[AUTO-FIX] State files remain corrupt after repair"
+            return 1
+        fi
     fi
 
     ACFS_AUTOFIX_INITIALIZED=true
@@ -745,11 +792,57 @@ init_autofix_state() {
 # Session Management
 # =============================================================================
 
+autofix_release_session_lock() {
+    local lock_fd="${ACFS_AUTOFIX_LOCK_FD:-}"
+
+    if [[ -n "$lock_fd" ]]; then
+        flock -u "$lock_fd" 2>/dev/null || true
+        eval "exec ${lock_fd}>&-" 2>/dev/null || true
+        ACFS_AUTOFIX_LOCK_FD=""
+    fi
+}
+
+autofix_session_active() {
+    [[ -n "${ACFS_AUTOFIX_LOCK_FD:-}" && -n "${ACFS_SESSION_ID:-}" ]]
+}
+
+autofix_ensure_session() {
+    local result_var="${1:-}"
+
+    [[ -n "$result_var" ]] || return 1
+
+    if autofix_session_active; then
+        printf -v "$result_var" 'false'
+        return 0
+    fi
+
+    if ! start_autofix_session; then
+        return 1
+    fi
+
+    printf -v "$result_var" 'true'
+    return 0
+}
+
+autofix_finalize_managed_session() {
+    local session_owned="${1:-false}"
+
+    if [[ "$session_owned" == "true" ]]; then
+        end_autofix_session
+        return $?
+    fi
+
+    return 0
+}
+
 # Start a new auto-fix session
 start_autofix_session() {
     autofix_refresh_state_paths
     if [[ "$ACFS_AUTOFIX_INITIALIZED" != "true" ]]; then
-        init_autofix_state
+        if ! init_autofix_state; then
+            log_error "Failed to initialize autofix state"
+            return 1
+        fi
     fi
 
     ACFS_SESSION_ID="sess_$(date +%Y%m%d_%H%M%S)_$$"
@@ -770,15 +863,31 @@ start_autofix_session() {
     if [[ -n "$ACFS_AUTOFIX_LOCK_FD" ]]; then
         if ! flock -n "$ACFS_AUTOFIX_LOCK_FD"; then
             log_error "Another ACFS process is running auto-fix operations"
+            autofix_release_session_lock
+            ACFS_SESSION_ID=""
             return 1
         fi
     else
         log_error "Could not acquire autofix lock; aborting to avoid concurrent state corruption"
+        ACFS_SESSION_ID=""
+        return 1
+    fi
+
+    if autofix_path_exists "$ACFS_STATE_DIR/.session"; then
+        log_error "Detected unresolved autofix session marker: $ACFS_STATE_DIR/.session"
+        log_error "Resolve the previous autofix session state before starting a new one"
+        autofix_release_session_lock
+        ACFS_SESSION_ID=""
         return 1
     fi
 
     # Write session start marker
-    write_atomic "$ACFS_STATE_DIR/.session" "{\"id\": \"$ACFS_SESSION_ID\", \"start\": \"$(date -Iseconds)\", \"pid\": $$}"
+    if ! write_atomic "$ACFS_STATE_DIR/.session" "{\"id\": \"$ACFS_SESSION_ID\", \"start\": \"$(date -Iseconds)\", \"pid\": $$}"; then
+        log_error "Failed to persist autofix session marker"
+        autofix_release_session_lock
+        ACFS_SESSION_ID=""
+        return 1
+    fi
 
     # Reset in-memory state
     ACFS_CHANGE_RECORDS=()
@@ -789,19 +898,32 @@ start_autofix_session() {
 
 # End auto-fix session
 end_autofix_session() {
+    local finalize_failed=0
+
     log_info "[AUTO-FIX] Ending session: $ACFS_SESSION_ID (${#ACFS_CHANGE_ORDER[@]} changes)"
 
     # Update integrity file
-    update_integrity_file
-
-    # Remove session marker
-    rm -f "$ACFS_STATE_DIR/.session"
-
-    # Release lock (use whichever FD was acquired in start_autofix_session)
-    if [[ -n "${ACFS_AUTOFIX_LOCK_FD:-}" ]]; then
-        flock -u "$ACFS_AUTOFIX_LOCK_FD" 2>/dev/null || true
-        ACFS_AUTOFIX_LOCK_FD=""
+    if ! update_integrity_file; then
+        log_error "Failed to update autofix integrity checkpoint"
+        finalize_failed=1
     fi
+
+    # Remove session marker only after durable finalization succeeds.
+    if (( finalize_failed == 0 )); then
+        if ! rm -f "$ACFS_STATE_DIR/.session"; then
+            log_error "Failed to remove autofix session marker"
+            finalize_failed=1
+        fi
+    fi
+
+    autofix_release_session_lock
+
+    if (( finalize_failed != 0 )); then
+        return 1
+    fi
+
+    ACFS_SESSION_ID=""
+    return 0
 }
 
 # =============================================================================
@@ -881,11 +1003,17 @@ create_backup() {
     if [[ "$path_type" == "directory" || "$path_type" == "symlink" ]]; then
         cp -a "$original_path" "$backup_path" || {
             log_error "Failed to create $path_type backup: $original_path"
+            if ! autofix_cleanup_failed_backup_path "$backup_path"; then
+                log_error "Failed to clean up incomplete backup path after copy failure: $backup_path"
+            fi
             return 1
         }
     else
         cp -p "$original_path" "$backup_path" || {
             log_error "Failed to create file backup: $original_path"
+            if ! autofix_cleanup_failed_backup_path "$backup_path"; then
+                log_error "Failed to clean up incomplete backup path after copy failure: $backup_path"
+            fi
             return 1
         }
     fi
@@ -893,7 +1021,9 @@ create_backup() {
     # Explicit fsync to ensure backup is durable
     if ! autofix_sync_backup_path "$backup_path"; then
         log_error "Failed to fsync backup path: $backup_path"
-        rm -rf "$backup_path" 2>/dev/null || true
+        if ! autofix_cleanup_failed_backup_path "$backup_path"; then
+            log_error "Failed to clean up incomplete backup path after sync failure: $backup_path"
+        fi
         return 1
     fi
 
@@ -901,6 +1031,9 @@ create_backup() {
     local checksum
     checksum=$(calculate_backup_checksum "$backup_path") || {
         log_error "Failed to compute checksum for backup: $backup_path"
+        if ! autofix_cleanup_failed_backup_path "$backup_path"; then
+            log_error "Failed to clean up incomplete backup path after backup checksum failure: $backup_path"
+        fi
         return 1
     }
 
@@ -908,14 +1041,17 @@ create_backup() {
     local original_checksum
     original_checksum=$(calculate_backup_checksum "$original_path") || {
         log_error "Failed to compute checksum for original path: $original_path"
+        if ! autofix_cleanup_failed_backup_path "$backup_path"; then
+            log_error "Failed to clean up incomplete backup path after original checksum failure: $backup_path"
+        fi
         return 1
     }
     if [[ "$checksum" != "$original_checksum" ]]; then
         log_error "Backup verification failed: checksum mismatch"
         log_error "  Original: $original_checksum"
         log_error "  Backup:   $checksum"
-        if autofix_path_exists "$backup_path"; then
-            rm -rf "$backup_path"
+        if ! autofix_cleanup_failed_backup_path "$backup_path"; then
+            log_error "Failed to clean up incomplete backup path after checksum mismatch: $backup_path"
         fi
         return 1
     fi
@@ -1011,6 +1147,10 @@ record_change() {
     # Ensure state is initialized
     if [[ "$ACFS_AUTOFIX_INITIALIZED" != "true" ]]; then
         init_autofix_state || return 1
+    fi
+    if ! autofix_session_active; then
+        log_error "record_change requested without an active autofix session lock"
+        return 1
     fi
 
     # Generate unique ID
@@ -1520,7 +1660,10 @@ acfs_undo_command() {
         fi
     done
 
-    end_autofix_session
+    if ! end_autofix_session; then
+        log_error "Failed to finalize undo session"
+        return 1
+    fi
 
     if [[ $failed -gt 0 ]]; then
         log_warn "$failed undo operations failed"

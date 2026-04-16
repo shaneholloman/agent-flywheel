@@ -15,6 +15,34 @@ source "$SCRIPT_DIR/autofix_unattended.sh"
 TESTS_PASSED=0
 TESTS_FAILED=0
 
+setup_autofix_state_dir() {
+    local state_dir="$1"
+    export ACFS_STATE_DIR="$state_dir"
+    export ACFS_CHANGES_FILE="$ACFS_STATE_DIR/changes.jsonl"
+    export ACFS_UNDOS_FILE="$ACFS_STATE_DIR/undos.jsonl"
+    export ACFS_BACKUPS_DIR="$ACFS_STATE_DIR/backups"
+    export ACFS_LOCK_FILE="$ACFS_STATE_DIR/.lock"
+    export ACFS_INTEGRITY_FILE="$ACFS_STATE_DIR/.integrity"
+
+    ACFS_CHANGE_RECORDS=()
+    ACFS_CHANGE_ORDER=()
+    ACFS_SESSION_ID=""
+    ACFS_AUTOFIX_INITIALIZED=false
+    ACFS_AUTOFIX_LOCK_FD=""
+
+    rm -rf "$ACFS_STATE_DIR"
+    mkdir -p "$ACFS_BACKUPS_DIR"
+    : > "$ACFS_CHANGES_FILE"
+    : > "$ACFS_UNDOS_FILE"
+}
+
+cleanup_test_dir() {
+    local test_dir="$1"
+    if [[ -d "$test_dir" ]]; then
+        rm -rf "$test_dir"
+    fi
+}
+
 test_pass() {
     local name="$1"
     echo -e "\033[32m[PASS]\033[0m $name"
@@ -116,6 +144,214 @@ test_dry_run_no_changes() {
     fi
 }
 
+test_fix_manages_session_and_records_changes() {
+    local test_dir="/tmp/test_autofix_unattended_fix_$$"
+    local state_dir="$test_dir/state"
+    mkdir -p "$test_dir"
+    setup_autofix_state_dir "$state_dir"
+
+    if ! (
+        autofix_unattended_upgrades_check() {
+            jq -n \
+                --arg status "active" \
+                --arg details "test fixture" \
+                '{status: $status, details: $details, held_locks: [], apt_pids: ""}'
+        }
+        systemctl() {
+            case "${1:-}" in
+                is-active) return 0 ;;
+                is-enabled) return 1 ;;
+                stop|start) return 0 ;;
+            esac
+            return 0
+        }
+        pgrep() { return 1; }
+        fuser() { return 1; }
+        dpkg() { return 0; }
+        apt-get() { return 0; }
+
+        autofix_unattended_upgrades_fix "fix"
+    ) >/dev/null 2>&1; then
+        cleanup_test_dir "$test_dir"
+        test_fail "fix_manages_session_and_records_changes" "fix mode failed in isolated fixture"
+        return
+    fi
+
+    if [[ -f "$ACFS_STATE_DIR/.session" ]]; then
+        cleanup_test_dir "$test_dir"
+        test_fail "fix_manages_session_and_records_changes" "session marker was left behind after standalone fix"
+        return
+    fi
+
+    if ! jq -e 'select(.category == "unattended")' "$ACFS_CHANGES_FILE" >/dev/null 2>&1; then
+        cleanup_test_dir "$test_dir"
+        test_fail "fix_manages_session_and_records_changes" "standalone fix did not record unattended changes"
+        return
+    fi
+
+    cleanup_test_dir "$test_dir"
+    test_pass "fix_manages_session_and_records_changes"
+}
+
+test_restore_manages_session_and_persists_marker() {
+    local test_dir="/tmp/test_autofix_unattended_restore_$$"
+    local state_dir="$test_dir/state"
+    mkdir -p "$test_dir"
+    setup_autofix_state_dir "$state_dir"
+
+    cat > "$ACFS_CHANGES_FILE" <<'EOF'
+{"id":"chg_0001","category":"unattended","description":"Stopped unattended-upgrades service","session_id":"sess_fixture"}
+EOF
+
+    if ! (
+        systemctl() {
+            case "${1:-}" in
+                start) return 0 ;;
+            esac
+            return 0
+        }
+
+        autofix_unattended_upgrades_restore
+    ) >/dev/null 2>&1; then
+        cleanup_test_dir "$test_dir"
+        test_fail "restore_manages_session_and_persists_marker" "restore mode failed in isolated fixture"
+        return
+    fi
+
+    if [[ -f "$ACFS_STATE_DIR/.session" ]]; then
+        cleanup_test_dir "$test_dir"
+        test_fail "restore_manages_session_and_persists_marker" "session marker was left behind after restore"
+        return
+    fi
+
+    if ! jq -e 'select(.auto_restored == "unattended-upgrades")' "$ACFS_UNDOS_FILE" >/dev/null 2>&1; then
+        cleanup_test_dir "$test_dir"
+        test_fail "restore_manages_session_and_persists_marker" "restore did not persist unattended auto-restore marker"
+        return
+    fi
+
+    cleanup_test_dir "$test_dir"
+    test_pass "restore_manages_session_and_persists_marker"
+}
+
+test_restore_fails_closed_on_unresolved_session_marker() {
+    local test_dir="/tmp/test_autofix_unattended_restore_incomplete_$$"
+    local state_dir="$test_dir/state"
+    local sentinel="$test_dir/systemctl-started"
+    mkdir -p "$test_dir"
+    setup_autofix_state_dir "$state_dir"
+
+    cat > "$ACFS_CHANGES_FILE" <<'EOF'
+{"id":"chg_0001","category":"unattended","description":"Stopped unattended-upgrades service","session_id":"sess_fixture"}
+EOF
+
+    cat > "$ACFS_UNDOS_FILE" <<'EOF'
+{"auto_restored":"unattended-upgrades","timestamp":"2026-04-16T00:00:00Z"}
+EOF
+
+    cat > "$ACFS_STATE_DIR/.session" <<'EOF'
+{"id":"sess_stale","start":"2026-04-16T00:00:00Z","pid":123}
+EOF
+
+    if (
+        systemctl() {
+            case "${1:-}" in
+                start)
+                    : > "$sentinel"
+                    return 0
+                    ;;
+            esac
+            return 0
+        }
+
+        autofix_unattended_upgrades_restore
+    ) >/dev/null 2>&1; then
+        cleanup_test_dir "$test_dir"
+        test_fail "restore_fails_closed_on_unresolved_session_marker" "restore unexpectedly succeeded with a stale session marker"
+        return
+    fi
+
+    if [[ -f "$sentinel" ]]; then
+        cleanup_test_dir "$test_dir"
+        test_fail "restore_fails_closed_on_unresolved_session_marker" "restore attempted to start unattended-upgrades despite inconsistent autofix state"
+        return
+    fi
+
+    if [[ ! -f "$ACFS_STATE_DIR/.session" ]]; then
+        cleanup_test_dir "$test_dir"
+        test_fail "restore_fails_closed_on_unresolved_session_marker" "stale session marker was unexpectedly removed"
+        return
+    fi
+
+    if ! jq -e 'select(.auto_restored == "unattended-upgrades")' "$ACFS_UNDOS_FILE" >/dev/null 2>&1; then
+        cleanup_test_dir "$test_dir"
+        test_fail "restore_fails_closed_on_unresolved_session_marker" "existing auto-restore marker was unexpectedly removed"
+        return
+    fi
+
+    cleanup_test_dir "$test_dir"
+    test_pass "restore_fails_closed_on_unresolved_session_marker"
+}
+
+test_stop_service_rolls_back_when_record_change_fails() {
+    local test_dir="/tmp/test_autofix_unattended_stop_rollback_$$"
+    local state_dir="$test_dir/state"
+    local stopped_sentinel="$test_dir/stopped"
+    local started_sentinel="$test_dir/started"
+    mkdir -p "$test_dir"
+    setup_autofix_state_dir "$state_dir"
+
+    if (
+        PATH="/definitely-missing-for-this-test"
+
+        systemctl() {
+            case "${1:-}" in
+                is-active|is-enabled) return 0 ;;
+                stop)
+                    : > "$stopped_sentinel"
+                    return 0
+                    ;;
+                start)
+                    : > "$started_sentinel"
+                    return 0
+                    ;;
+            esac
+            return 0
+        }
+
+        record_change() {
+            return 1
+        }
+
+        _autofix_stop_unattended_service
+    ) >/dev/null 2>&1; then
+        cleanup_test_dir "$test_dir"
+        test_fail "stop_service_rolls_back_when_record_change_fails" "service stop unexpectedly succeeded when record_change failed"
+        return
+    fi
+
+    if [[ ! -f "$stopped_sentinel" ]]; then
+        cleanup_test_dir "$test_dir"
+        test_fail "stop_service_rolls_back_when_record_change_fails" "service stop was not attempted"
+        return
+    fi
+
+    if [[ ! -f "$started_sentinel" ]]; then
+        cleanup_test_dir "$test_dir"
+        test_fail "stop_service_rolls_back_when_record_change_fails" "service was not restarted after journaling failure"
+        return
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        cleanup_test_dir "$test_dir"
+        test_fail "stop_service_rolls_back_when_record_change_fails" "service stop wrote change records despite journaling failure"
+        return
+    fi
+
+    cleanup_test_dir "$test_dir"
+    test_pass "stop_service_rolls_back_when_record_change_fails"
+}
+
 # Test: CLI modes work
 test_cli_modes() {
     local failed=0
@@ -173,6 +409,10 @@ main() {
     test_check_valid_status
     test_needs_fix_returns_correctly
     test_dry_run_no_changes
+    test_fix_manages_session_and_records_changes
+    test_restore_manages_session_and_persists_marker
+    test_restore_fails_closed_on_unresolved_session_marker
+    test_stop_service_rolls_back_when_record_change_fails
     test_cli_modes
     test_lock_file_constants
 

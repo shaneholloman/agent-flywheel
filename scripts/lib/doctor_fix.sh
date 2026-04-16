@@ -217,6 +217,45 @@ dir_in_path() {
     esac
 }
 
+doctor_fix_run_rollback_command() {
+    local rollback_command="$1"
+    local requires_root="${2:-false}"
+    local sudo_cmd=""
+
+    [[ -n "$rollback_command" ]] || return 1
+
+    if [[ "$requires_root" == "true" ]]; then
+        [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
+    fi
+
+    if [[ -n "$sudo_cmd" ]]; then
+        $sudo_cmd bash -c "$rollback_command"
+    else
+        bash -c "$rollback_command"
+    fi
+}
+
+doctor_fix_record_change_or_rollback() {
+    local rollback_command="$1"
+    local rollback_requires_root="${2:-false}"
+    shift 2
+
+    local description="${2:-change}"
+
+    if record_change "$@" >/dev/null; then
+        return 0
+    fi
+
+    doctor_fix_log ERROR "Failed to record change: $description"
+    if [[ -n "$rollback_command" ]]; then
+        if ! doctor_fix_run_rollback_command "$rollback_command" "$rollback_requires_root"; then
+            doctor_fix_log ERROR "Failed to roll back after journaling failure: $description"
+        fi
+    fi
+
+    return 1
+}
+
 doctor_fix_require_security() {
     if [[ "${DOCTOR_FIX_SECURITY_READY:-false}" == "true" ]]; then
         return 0
@@ -322,19 +361,31 @@ fix_path_ordering() {
     if [[ -f "$target_file" ]]; then
         backup_json=$(create_backup "$target_file" "path-ordering")
         restore_command="$(autofix_backup_restore_command "$backup_json" 2>/dev/null || true)"
+    else
+        restore_command="if [[ -f '$target_file' ]]; then sed -i '/$marker/,+1d' '$target_file' && if ! grep -q '[^[:space:]]' '$target_file'; then rm -f '$target_file'; fi; fi"
     fi
 
     # Apply fix
-    {
+    if ! {
         echo ""
         echo "$marker"
         echo "$export_line"
-    } >> "$target_file"
+    } >> "$target_file"; then
+        doctor_fix_log ERROR "Failed to append PATH ordering to $target_file"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     # Record change
-    record_change "path" "Added PATH ordering to $target_file" \
-        "${restore_command:-sed -i '/$marker/,+1d' '$target_file'}" \
-        false "info" "[\"$target_file\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]" >/dev/null
+    if ! doctor_fix_record_change_or_rollback \
+        "${restore_command:-if [[ -f '$target_file' ]]; then sed -i '/$marker/,+1d' '$target_file'; fi}" \
+        false \
+        "path" "Added PATH ordering to $target_file" \
+        "${restore_command:-if [[ -f '$target_file' ]]; then sed -i '/$marker/,+1d' '$target_file'; fi}" \
+        false "info" "[\"$target_file\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]"; then
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     doctor_fix_log INFO "Added PATH ordering to $target_file"
     FIXES_APPLIED+=("fix.path.ordering|Added PATH ordering to $target_file")
@@ -373,15 +424,29 @@ fix_config_copy() {
     fi
 
     # Ensure parent directory exists
-    mkdir -p "$(dirname "$dest")"
+    if ! mkdir -p "$(dirname "$dest")"; then
+        doctor_fix_log ERROR "Failed to create config destination directory: $(dirname "$dest")"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     # Copy file
-    cp -p "$src" "$dest"
+    if ! cp -p "$src" "$dest"; then
+        doctor_fix_log ERROR "Failed to copy $(basename "$src") to $dest"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     # Record change
-    record_change "config" "Copied config: $(basename "$src")" \
+    if ! doctor_fix_record_change_or_rollback \
         "rm -f '$dest'" \
-        false "info" "[\"$dest\"]" "[]" "[]" >/dev/null
+        false \
+        "config" "Copied config: $(basename "$src")" \
+        "rm -f '$dest'" \
+        false "info" "[\"$dest\"]" "[]" "[]"; then
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     doctor_fix_log INFO "Copied $(basename "$src") to $dest"
     FIXES_APPLIED+=("fix.config.copy|Copied $(basename "$src") to $dest")
@@ -438,9 +503,15 @@ fix_dcg_hook() {
 
     # Install hook
     if dcg install 2>/dev/null; then
-        record_change "hook" "Installed DCG pre-tool-use hook" \
+        if ! doctor_fix_record_change_or_rollback \
             "dcg uninstall" \
-            false "info" "[]" "[]" "[]" >/dev/null
+            false \
+            "hook" "Installed DCG pre-tool-use hook" \
+            "dcg uninstall" \
+            false "info" "[]" "[]" "[]"; then
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
 
         doctor_fix_log INFO "Installed DCG pre-tool-use hook"
         FIXES_APPLIED+=("fix.dcg.hook|Installed DCG pre-tool-use hook")
@@ -483,15 +554,29 @@ fix_symlink_create() {
     fi
 
     # Ensure symlink directory exists
-    mkdir -p "$(dirname "$symlink")"
+    if ! mkdir -p "$(dirname "$symlink")"; then
+        doctor_fix_log ERROR "Failed to create symlink directory: $(dirname "$symlink")"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     # Create symlink
-    ln -s "$binary" "$symlink"
+    if ! ln -s "$binary" "$symlink"; then
+        doctor_fix_log ERROR "Failed to create symlink: $symlink"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     # Record change
-    record_change "symlink" "Created symlink: $(basename "$symlink")" \
+    if ! doctor_fix_record_change_or_rollback \
         "rm -f '$symlink'" \
-        false "info" "[\"$symlink\"]" "[]" "[]" >/dev/null
+        false \
+        "symlink" "Created symlink: $(basename "$symlink")" \
+        "rm -f '$symlink'" \
+        false "info" "[\"$symlink\"]" "[]" "[]"; then
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     doctor_fix_log INFO "Created symlink: $(basename "$symlink") -> $binary"
     FIXES_APPLIED+=("fix.symlink.create|Created symlink $(basename "$symlink")")
@@ -537,13 +622,23 @@ fix_plugin_clone() {
     fi
 
     # Ensure plugins directory exists
-    mkdir -p "$plugins_dir"
+    if ! mkdir -p "$plugins_dir"; then
+        doctor_fix_log ERROR "Failed to create plugins directory: $plugins_dir"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     # Clone plugin
     if git clone --depth 1 "$repo_url" "$target_dir" 2>/dev/null; then
-        record_change "plugin" "Cloned zsh plugin: $plugin_name" \
+        if ! doctor_fix_record_change_or_rollback \
             "rm -rf '$target_dir'" \
-            false "info" "[\"$target_dir\"]" "[]" "[]" >/dev/null
+            false \
+            "plugin" "Cloned zsh plugin: $plugin_name" \
+            "rm -rf '$target_dir'" \
+            false "info" "[\"$target_dir\"]" "[]" "[]"; then
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
 
         doctor_fix_log INFO "Cloned zsh plugin: $plugin_name"
         FIXES_APPLIED+=("fix.plugin.clone|Cloned zsh plugin: $plugin_name")
@@ -596,19 +691,31 @@ fix_acfs_sourcing() {
     if [[ -f "$zshrc" ]]; then
         backup_json=$(create_backup "$zshrc" "acfs-sourcing")
         restore_command="$(autofix_backup_restore_command "$backup_json" 2>/dev/null || true)"
+    else
+        restore_command="if [[ -f '$zshrc' ]]; then sed -i '/$marker/,+1d' '$zshrc' && if ! grep -q '[^[:space:]]' '$zshrc'; then rm -f '$zshrc'; fi; fi"
     fi
 
     # Append sourcing line
-    {
+    if ! {
         echo ""
         echo "$marker"
         echo "$source_line"
-    } >> "$zshrc"
+    } >> "$zshrc"; then
+        doctor_fix_log ERROR "Failed to append ACFS sourcing to $zshrc"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     # Record change
-    record_change "config" "Added ACFS sourcing to .zshrc" \
-        "${restore_command:-sed -i '/$marker/,+1d' '$zshrc'}" \
-        false "info" "[\"$zshrc\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]" >/dev/null
+    if ! doctor_fix_record_change_or_rollback \
+        "${restore_command:-if [[ -f '$zshrc' ]]; then sed -i '/$marker/,+1d' '$zshrc'; fi}" \
+        false \
+        "config" "Added ACFS sourcing to .zshrc" \
+        "${restore_command:-if [[ -f '$zshrc' ]]; then sed -i '/$marker/,+1d' '$zshrc'; fi}" \
+        false "info" "[\"$zshrc\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]"; then
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     doctor_fix_log INFO "Added ACFS sourcing to .zshrc"
     FIXES_APPLIED+=("fix.acfs.sourcing|Added ACFS sourcing to .zshrc")
@@ -911,19 +1018,29 @@ fix_ssh_keepalive() {
     fi
 
     # Apply settings
-    {
+    if ! {
         echo ""
         echo "# ACFS: SSH keepalive settings (added by doctor --fix)"
         echo "ClientAliveInterval 60"
         echo "ClientAliveCountMax 3"
-    } | $sudo_cmd tee -a "$sshd_config" > /dev/null
+    } | $sudo_cmd tee -a "$sshd_config" > /dev/null; then
+        doctor_fix_log ERROR "Failed to append SSH keepalive settings to $sshd_config"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     # Restart sshd to apply
     $sudo_cmd systemctl reload ssh 2>/dev/null || $sudo_cmd systemctl reload sshd 2>/dev/null || true
 
-    record_change "config" "Configured SSH keepalive in $sshd_config" \
-        "${restore_command:-# Restore $sshd_config from its backup manually if needed}" \
-        true "info" "[\"$sshd_config\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]" >/dev/null
+    if ! doctor_fix_record_change_or_rollback \
+        "${restore_command:-# Restore $sshd_config from its backup manually if needed}; $sudo_cmd systemctl reload ssh 2>/dev/null || $sudo_cmd systemctl reload sshd 2>/dev/null || true" \
+        true \
+        "config" "Configured SSH keepalive in $sshd_config" \
+        "${restore_command:-# Restore $sshd_config from its backup manually if needed}; $sudo_cmd systemctl reload ssh 2>/dev/null || $sudo_cmd systemctl reload sshd 2>/dev/null || true" \
+        true "info" "[\"$sshd_config\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]"; then
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
 
     doctor_fix_log INFO "Configured SSH keepalive (ClientAliveInterval 60, ClientAliveCountMax 3)"
     FIXES_APPLIED+=("fix.ssh.keepalive|Configured SSH keepalive settings")
@@ -1350,7 +1467,10 @@ finalize_doctor_fix() {
 
     # End autofix session (unless dry-run)
     if [[ "$DOCTOR_FIX_DRY_RUN" != "true" ]]; then
-        end_autofix_session
+        if ! end_autofix_session; then
+            echo "ERROR: Failed to finalize autofix session" >&2
+            return 1
+        fi
 
         # Print undo summary if changes were made
         if [[ $FIX_APPLIED -gt 0 ]]; then

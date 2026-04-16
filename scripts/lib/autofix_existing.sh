@@ -261,6 +261,27 @@ autofix_existing_restore_from_backup() {
     return 0
 }
 
+autofix_existing_cleanup_failed_installation_backup_dir() {
+    local backup_dir="$1"
+    local backup_parent=""
+
+    [[ -n "$backup_dir" ]] || return 1
+    backup_parent="$(dirname "$backup_dir")"
+
+    if autofix_path_exists "$backup_dir"; then
+        if ! rm -rf "$backup_dir"; then
+            log_error "[CLEAN] Failed to remove incomplete installation backup dir: $backup_dir"
+            return 1
+        fi
+    fi
+
+    if ! fsync_directory "$backup_parent"; then
+        log_warn "[CLEAN] Failed to sync installation backup parent after cleanup: $backup_parent"
+    fi
+
+    return 0
+}
+
 autofix_existing_rollback_changes_since() {
     local start_index="${1:-0}"
     local i=0
@@ -1140,7 +1161,15 @@ create_installation_backup() {
     local backup_checksum=""
     local items_json=""
     local backup_item=""
+    local cleanup_backup_dir_on_failure=false
     local -a backed_up_items=()
+
+    trap '
+        if [[ "${cleanup_backup_dir_on_failure:-false}" == "true" && -n "${backup_dir:-}" ]]; then
+            autofix_existing_cleanup_failed_installation_backup_dir "$backup_dir" || true
+        fi
+        trap - RETURN
+    ' RETURN
 
     runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
     [[ -n "$runtime_home" ]] || return 1
@@ -1156,6 +1185,7 @@ create_installation_backup() {
         log_error "[CLEAN] Failed to create backup directory: $backup_dir"
         return 1
     fi
+    cleanup_backup_dir_on_failure=true
     if ! fsync_directory "$(dirname "$backup_dir")"; then
         log_error "[CLEAN] Failed to fsync backup directory parent: $(dirname "$backup_dir")"
         return 1
@@ -1250,6 +1280,7 @@ create_installation_backup() {
         return 1
     fi
 
+    cleanup_backup_dir_on_failure=false
     echo "$backup_dir"
 }
 

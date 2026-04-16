@@ -430,6 +430,163 @@ test_backup_creation_fsyncs_file_parent_directory() {
     return 0
 }
 
+# Test: Failed backup sync cleans up incomplete backup and fsyncs its parent directory
+test_backup_creation_cleans_up_after_sync_failure() {
+    setup_test_env
+
+    local test_file="/tmp/test_backup_sync_fail_${$}"
+    local fsync_log="$ACFS_STATE_DIR/fsync.log"
+    local original_sync_helper original_fsync_directory
+    printf 'content\n' > "$test_file"
+
+    original_sync_helper="$(declare -f autofix_sync_backup_path)"
+    original_fsync_directory="$(declare -f fsync_directory)"
+    autofix_sync_backup_path() {
+        return 1
+    }
+    fsync_directory() {
+        printf 'dir:%s\n' "$1" >> "$fsync_log"
+        return 0
+    }
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_result exit_code=0
+    backup_result=$(create_backup "$test_file" "test" 2>/dev/null) || exit_code=$?
+
+    eval "$original_sync_helper"
+    eval "$original_fsync_directory"
+
+    if [[ "$exit_code" -eq 0 ]]; then
+        echo "  Backup unexpectedly succeeded: $backup_result"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if find "$ACFS_BACKUPS_DIR" -mindepth 1 -print -quit | grep -q .; then
+        echo "  Incomplete backup path was not cleaned up after sync failure"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -Fx "dir:$ACFS_BACKUPS_DIR" "$fsync_log" >/dev/null 2>&1; then
+        echo "  Backup parent dir was not fsynced after sync-failure cleanup"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$test_file"
+    cleanup_test_env
+    return 0
+}
+
+# Test: Failed checksum computation cleans up incomplete backup artifacts
+test_backup_creation_cleans_up_after_checksum_failure() {
+    setup_test_env
+
+    local test_file="/tmp/test_backup_checksum_fail_${$}"
+    local original_checksum_helper
+    printf 'content\n' > "$test_file"
+
+    original_checksum_helper="$(declare -f calculate_backup_checksum)"
+    calculate_backup_checksum() {
+        if [[ "$1" == "$ACFS_BACKUPS_DIR/"* ]]; then
+            return 1
+        fi
+        sha256sum "$1" | cut -d' ' -f1
+    }
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_result exit_code=0
+    backup_result=$(create_backup "$test_file" "test" 2>/dev/null) || exit_code=$?
+
+    eval "$original_checksum_helper"
+
+    if [[ "$exit_code" -eq 0 ]]; then
+        echo "  Backup unexpectedly succeeded: $backup_result"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if find "$ACFS_BACKUPS_DIR" -mindepth 1 -print -quit | grep -q .; then
+        echo "  Incomplete backup path was not cleaned up after checksum failure"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$test_file"
+    cleanup_test_env
+    return 0
+}
+
+# Test: Failed backup copy cleans up partial backup artifacts and fsyncs the backup parent
+test_backup_creation_cleans_up_after_copy_failure() {
+    setup_test_env
+
+    local test_file="/tmp/test_backup_copy_fail_${$}"
+    local fsync_log="$ACFS_STATE_DIR/fsync.log"
+    local original_cp original_fsync_directory
+    printf 'content\n' > "$test_file"
+
+    original_cp="$(declare -f cp 2>/dev/null || true)"
+    original_fsync_directory="$(declare -f fsync_directory)"
+    cp() {
+        local last="${@: -1}"
+        if [[ "$last" == "$ACFS_BACKUPS_DIR/"* ]]; then
+            : > "$last"
+            return 1
+        fi
+        command cp "$@"
+    }
+    fsync_directory() {
+        printf 'dir:%s\n' "$1" >> "$fsync_log"
+        return 0
+    }
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_result exit_code=0
+    backup_result=$(create_backup "$test_file" "test" 2>/dev/null) || exit_code=$?
+
+    if [[ -n "$original_cp" ]]; then
+        eval "$original_cp"
+    else
+        unset -f cp
+    fi
+    eval "$original_fsync_directory"
+
+    if [[ "$exit_code" -eq 0 ]]; then
+        echo "  Backup unexpectedly succeeded: $backup_result"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if find "$ACFS_BACKUPS_DIR" -mindepth 1 -print -quit | grep -q .; then
+        echo "  Incomplete backup path was not cleaned up after copy failure"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -Fx "dir:$ACFS_BACKUPS_DIR" "$fsync_log" >/dev/null 2>&1; then
+        echo "  Backup parent dir was not fsynced after copy-failure cleanup"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$test_file"
+    cleanup_test_env
+    return 0
+}
+
 # Test: State integrity accepts active broken symlink backups
 test_state_integrity_accepts_broken_symlink_backup() {
     setup_test_env
@@ -687,6 +844,68 @@ test_state_repair() {
     return 0
 }
 
+# Test: State repair fails if repaired journal cannot replace changes file
+test_state_repair_fails_when_changes_rewrite_cannot_replace_file() {
+    setup_test_env
+
+    echo 'invalid json line' > "$ACFS_CHANGES_FILE"
+
+    mv() {
+        local last="${@: -1}"
+        if [[ "$last" == "$ACFS_CHANGES_FILE" ]]; then
+            return 1
+        fi
+        command mv "$@"
+    }
+
+    if repair_state_files >/dev/null 2>&1; then
+        echo "  repair_state_files unexpectedly succeeded when changes rewrite could not replace the file"
+        unset -f mv
+        cleanup_test_env
+        return 1
+    fi
+
+    unset -f mv
+
+    if ! grep -qx 'invalid json line' "$ACFS_CHANGES_FILE"; then
+        echo "  Original corrupt changes journal was not preserved after failed repair"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+# Test: Init fails closed if integrity repair fails
+test_init_autofix_state_fails_when_repair_fails() {
+    setup_test_env
+
+    verify_state_integrity() { return 1; }
+    repair_state_files() { return 1; }
+
+    if init_autofix_state >/dev/null 2>&1; then
+        echo "  init_autofix_state unexpectedly succeeded despite failed repair"
+        unset _ACFS_AUTOFIX_SOURCED
+        source "$REPO_ROOT/scripts/lib/autofix.sh"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ "$ACFS_AUTOFIX_INITIALIZED" == "true" ]]; then
+        echo "  init_autofix_state left ACFS_AUTOFIX_INITIALIZED=true after failed repair"
+        unset _ACFS_AUTOFIX_SOURCED
+        source "$REPO_ROOT/scripts/lib/autofix.sh"
+        cleanup_test_env
+        return 1
+    fi
+
+    unset _ACFS_AUTOFIX_SOURCED
+    source "$REPO_ROOT/scripts/lib/autofix.sh"
+    cleanup_test_env
+    return 0
+}
+
 # Test: Session management
 test_session_management() {
     setup_test_env
@@ -718,6 +937,179 @@ test_session_management() {
         cleanup_test_env
         return 1
     fi
+
+    cleanup_test_env
+    return 0
+}
+
+# Test: Session start fails closed if session marker cannot be persisted
+test_start_autofix_session_releases_lock_when_session_marker_write_fails() {
+    setup_test_env
+
+    write_atomic() { return 1; }
+
+    if start_autofix_session >/dev/null 2>&1; then
+        echo "  start_autofix_session unexpectedly succeeded when session marker write failed"
+        unset _ACFS_AUTOFIX_SOURCED
+        source "$REPO_ROOT/scripts/lib/autofix.sh"
+        cleanup_test_env
+        return 1
+    fi
+
+    unset _ACFS_AUTOFIX_SOURCED
+    source "$REPO_ROOT/scripts/lib/autofix.sh"
+
+    if [[ -f "$ACFS_STATE_DIR/.session" ]]; then
+        echo "  Failed start left behind a session marker"
+        cleanup_test_env
+        return 1
+    fi
+
+    exec 201>"$ACFS_LOCK_FILE" || {
+        echo "  Failed to open autofix lock file after failed session start"
+        cleanup_test_env
+        return 1
+    }
+    if ! flock -n 201; then
+        echo "  Failed start left the autofix lock held"
+        eval "exec 201>&-"
+        cleanup_test_env
+        return 1
+    fi
+    flock -u 201 2>/dev/null || true
+    eval "exec 201>&-"
+
+    cleanup_test_env
+    return 0
+}
+
+# Test: Session start rejects a preexisting unresolved session marker
+test_start_autofix_session_rejects_preexisting_session_marker() {
+    setup_test_env
+
+    printf '{"id":"stale","start":"2026-01-01T00:00:00Z","pid":123}\n' > "$ACFS_STATE_DIR/.session"
+
+    if start_autofix_session >/dev/null 2>&1; then
+        echo "  start_autofix_session unexpectedly succeeded with a preexisting session marker"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -n "${ACFS_SESSION_ID:-}" ]]; then
+        echo "  Failed start left a transient session ID behind"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -q '"id":"stale"' "$ACFS_STATE_DIR/.session"; then
+        echo "  Failed start replaced the unresolved session marker"
+        cleanup_test_env
+        return 1
+    fi
+
+    exec 201>"$ACFS_LOCK_FILE" || {
+        echo "  Failed to open autofix lock file after rejecting unresolved session marker"
+        cleanup_test_env
+        return 1
+    }
+    if ! flock -n 201; then
+        echo "  Failed start left the autofix lock held after rejecting unresolved session marker"
+        eval "exec 201>&-"
+        cleanup_test_env
+        return 1
+    fi
+    flock -u 201 2>/dev/null || true
+    eval "exec 201>&-"
+
+    cleanup_test_env
+    return 0
+}
+
+# Test: Session start clears transient session state when lock is already held
+test_start_autofix_session_clears_session_id_when_lock_is_held() {
+    setup_test_env
+
+    exec 201>"$ACFS_LOCK_FILE" || {
+        echo "  Failed to open autofix lock file for pre-lock test"
+        cleanup_test_env
+        return 1
+    }
+    if ! flock -n 201; then
+        echo "  Failed to pre-acquire autofix lock for contention test"
+        eval "exec 201>&-"
+        cleanup_test_env
+        return 1
+    fi
+
+    if start_autofix_session >/dev/null 2>&1; then
+        echo "  start_autofix_session unexpectedly succeeded while the autofix lock was held"
+        flock -u 201 2>/dev/null || true
+        eval "exec 201>&-"
+        cleanup_test_env
+        return 1
+    fi
+
+    flock -u 201 2>/dev/null || true
+    eval "exec 201>&-"
+
+    if [[ -n "${ACFS_SESSION_ID:-}" ]]; then
+        echo "  Failed start left a transient session ID behind"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -f "$ACFS_STATE_DIR/.session" ]]; then
+        echo "  Failed lock acquisition left behind a session marker"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+# Test: Session end preserves marker if integrity finalization fails
+test_end_autofix_session_preserves_marker_when_integrity_update_fails() {
+    setup_test_env
+
+    if ! start_autofix_session >/dev/null 2>&1; then
+        echo "  Failed to start session"
+        cleanup_test_env
+        return 1
+    fi
+
+    update_integrity_file() { return 1; }
+
+    if end_autofix_session >/dev/null 2>&1; then
+        echo "  end_autofix_session unexpectedly succeeded when integrity update failed"
+        unset _ACFS_AUTOFIX_SOURCED
+        source "$REPO_ROOT/scripts/lib/autofix.sh"
+        cleanup_test_env
+        return 1
+    fi
+
+    unset _ACFS_AUTOFIX_SOURCED
+    source "$REPO_ROOT/scripts/lib/autofix.sh"
+
+    if [[ ! -f "$ACFS_STATE_DIR/.session" ]]; then
+        echo "  Failed session finalization removed the session marker"
+        cleanup_test_env
+        return 1
+    fi
+
+    exec 201>"$ACFS_LOCK_FILE" || {
+        echo "  Failed to open autofix lock file after failed session finalization"
+        cleanup_test_env
+        return 1
+    }
+    if ! flock -n 201; then
+        echo "  Failed session finalization left the autofix lock held"
+        eval "exec 201>&-"
+        cleanup_test_env
+        return 1
+    fi
+    flock -u 201 2>/dev/null || true
+    eval "exec 201>&-"
 
     cleanup_test_env
     return 0
@@ -769,6 +1161,46 @@ test_record_change() {
     fi
 
     end_autofix_session 2>/dev/null || true
+    cleanup_test_env
+    return 0
+}
+
+test_record_change_requires_active_session() {
+    setup_test_env
+
+    local output_file="$ACFS_STATE_DIR/record_change_no_session.out"
+    local status=0
+
+    if record_change "test" "No session" "echo undo" "false" "info" '[]' '[]' '[]' >"$output_file" 2>/dev/null; then
+        status=0
+    else
+        status=$?
+    fi
+
+    if [[ $status -eq 0 ]]; then
+        echo "  record_change succeeded without an active session"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$output_file" ]]; then
+        echo "  record_change emitted a change id without an active session"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        echo "  changes.jsonl was modified without an active session"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ${#ACFS_CHANGE_ORDER[@]} -ne 0 ]] || [[ ${#ACFS_CHANGE_RECORDS[@]} -ne 0 ]]; then
+        echo "  In-memory change state mutated without an active session"
+        cleanup_test_env
+        return 1
+    fi
+
     cleanup_test_env
     return 0
 }
@@ -1456,6 +1888,9 @@ main() {
     run_test test_backup_creation_preserves_broken_symlink_type
     run_test test_backup_creation_fsyncs_broken_symlink_parent_directory
     run_test test_backup_creation_fsyncs_file_parent_directory
+    run_test test_backup_creation_cleans_up_after_sync_failure
+    run_test test_backup_creation_cleans_up_after_checksum_failure
+    run_test test_backup_creation_cleans_up_after_copy_failure
     run_test test_backup_nonexistent_file
     run_test test_record_checksum
     run_test test_state_integrity
@@ -1465,9 +1900,16 @@ main() {
     run_test test_state_integrity_ignores_missing_backup_for_undone_change
     run_test test_state_integrity_checks_all_active_backups
     run_test test_state_repair
+    run_test test_state_repair_fails_when_changes_rewrite_cannot_replace_file
     run_test test_init_autofix_state
+    run_test test_init_autofix_state_fails_when_repair_fails
     run_test test_session_management
+    run_test test_start_autofix_session_releases_lock_when_session_marker_write_fails
+    run_test test_start_autofix_session_rejects_preexisting_session_marker
+    run_test test_start_autofix_session_clears_session_id_when_lock_is_held
+    run_test test_end_autofix_session_preserves_marker_when_integrity_update_fails
     run_test test_record_change
+    run_test test_record_change_requires_active_session
     run_test test_record_change_fails_when_append_atomic_fails
     run_test test_record_change_normalizes_single_backup_object
     run_test test_multiple_changes_order

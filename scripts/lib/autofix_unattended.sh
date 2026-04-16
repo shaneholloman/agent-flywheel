@@ -104,6 +104,8 @@ autofix_unattended_upgrades_needs_fix() {
 autofix_unattended_upgrades_fix() {
     local mode="${1:-fix}"
     local errors=0
+    local session_owned=false
+    local result=0
 
     log_info "[AUTO-FIX:unattended] Starting unattended-upgrades fix (mode=$mode)"
 
@@ -129,6 +131,11 @@ autofix_unattended_upgrades_fix() {
         log_info "[DRY-RUN] Would run dpkg --configure -a"
         log_info "[DRY-RUN] Would run apt-get update"
         return 0
+    fi
+
+    if ! autofix_ensure_session session_owned; then
+        log_error "[AUTO-FIX:unattended] Failed to start autofix session"
+        return 2
     fi
 
     # STEP 1: Stop unattended-upgrades service
@@ -161,14 +168,21 @@ autofix_unattended_upgrades_fix() {
 
     if [[ $errors -eq 0 ]]; then
         log_info "[AUTO-FIX:unattended] Fix completed successfully"
-        return 0
+        result=0
     elif [[ $errors -lt 3 ]]; then
         log_warn "[AUTO-FIX:unattended] Fix completed with $errors warnings"
-        return 1
+        result=1
     else
         log_error "[AUTO-FIX:unattended] Fix failed with $errors errors"
+        result=2
+    fi
+
+    if ! autofix_finalize_managed_session "$session_owned"; then
+        log_error "[AUTO-FIX:unattended] Failed to finalize autofix session"
         return 2
     fi
+
+    return "$result"
 }
 
 # Stop unattended-upgrades service
@@ -187,18 +201,22 @@ _autofix_stop_unattended_service() {
         was_enabled="true"
     fi
 
-    # Record the change
-    record_change \
-        "unattended" \
-        "Stopped unattended-upgrades service (was_enabled=$was_enabled)" \
-        "$sudo_cmd systemctl start unattended-upgrades" \
-        true \
-        "warning" \
-        '[]' \
-        '[]' \
-        '[]'
-
     if $sudo_cmd systemctl stop unattended-upgrades 2>&1; then
+        if ! record_change \
+            "unattended" \
+            "Stopped unattended-upgrades service (was_enabled=$was_enabled)" \
+            "$sudo_cmd systemctl start unattended-upgrades" \
+            true \
+            "warning" \
+            '[]' \
+            '[]' \
+            '[]' >/dev/null; then
+            log_error "[AUTO-FIX:unattended] Failed to record service stop after mutating state"
+            if ! $sudo_cmd systemctl start unattended-upgrades 2>&1; then
+                log_error "[AUTO-FIX:unattended] Failed to roll back unattended-upgrades service after journaling failure"
+            fi
+            return 1
+        fi
         log_info "[AUTO-FIX:unattended] Stopped unattended-upgrades service"
         return 0
     else
@@ -239,7 +257,7 @@ _autofix_kill_stuck_processes() {
     log_warn "[AUTO-FIX:unattended] Killing stuck processes: $stuck_pids"
 
     # Record the change (no undo needed - processes were stuck)
-    record_change \
+    if ! record_change \
         "unattended" \
         "Killed stuck apt/dpkg processes (PIDs: $stuck_pids)" \
         "# No undo needed - processes were stuck" \
@@ -247,7 +265,10 @@ _autofix_kill_stuck_processes() {
         "warning" \
         '[]' \
         '[]' \
-        '[]'
+        '[]' >/dev/null; then
+        log_error "[AUTO-FIX:unattended] Failed to record stuck-process kill before mutating state"
+        return 1
+    fi
 
     # Kill each process type
     local sudo_cmd=""
@@ -290,7 +311,7 @@ _autofix_remove_stale_locks() {
         local sudo_cmd=""
         [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
 
-        record_change \
+        if ! record_change \
             "unattended" \
             "Removed stale lock file: $lock" \
             "# Lock files are recreated automatically by apt" \
@@ -298,7 +319,11 @@ _autofix_remove_stale_locks() {
             "info" \
             "[\"$lock\"]" \
             '[]' \
-            '[]'
+            '[]' >/dev/null; then
+            log_error "[AUTO-FIX:unattended] Failed to record stale lock removal for $lock"
+            failed=$((failed + 1))
+            continue
+        fi
 
         if $sudo_cmd rm -f "$lock" 2>&1; then
             log_info "[AUTO-FIX:unattended] Removed stale lock: $lock"
@@ -368,6 +393,8 @@ _autofix_update_apt() {
 # Re-enable unattended-upgrades after installation completes
 # Called at end of ACFS installation to restore normal operation
 autofix_unattended_upgrades_restore() {
+    local session_owned=false
+
     # Check if we stopped unattended-upgrades during this session
     if [[ ! -f "$ACFS_CHANGES_FILE" ]]; then
         log_debug "[POST-INSTALL] No changes file, nothing to restore"
@@ -383,6 +410,11 @@ autofix_unattended_upgrades_restore() {
     fi
 
     if [[ -f "$ACFS_UNDOS_FILE" ]] && grep -q '"auto_restored": "unattended-upgrades"' "$ACFS_UNDOS_FILE" 2>/dev/null; then
+        if autofix_path_exists "$ACFS_STATE_DIR/.session"; then
+            log_error "[POST-INSTALL] Found unattended-upgrades auto-restore marker with unresolved autofix session"
+            log_error "[POST-INSTALL] Resolve the previous autofix session before treating unattended-upgrades as restored"
+            return 1
+        fi
         log_debug "[POST-INSTALL] Unattended-upgrades already auto-restored"
         return 0
     fi
@@ -392,6 +424,11 @@ autofix_unattended_upgrades_restore() {
     local sudo_cmd=""
     [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
 
+    if ! autofix_ensure_session session_owned; then
+        log_error "[POST-INSTALL] Failed to start autofix session for restore"
+        return 1
+    fi
+
     if $sudo_cmd systemctl start unattended-upgrades 2>&1; then
         # Mark as auto-restored in undos file
         local restore_record
@@ -399,10 +436,23 @@ autofix_unattended_upgrades_restore() {
             --arg ts "$(date -Iseconds)" \
             '{auto_restored: "unattended-upgrades", timestamp: $ts}')
 
-        append_atomic "$ACFS_UNDOS_FILE" "$restore_record"
+        if ! append_atomic "$ACFS_UNDOS_FILE" "$restore_record"; then
+            log_error "[POST-INSTALL] Failed to persist unattended-upgrades auto-restore marker"
+            if ! autofix_finalize_managed_session "$session_owned"; then
+                log_error "[POST-INSTALL] Failed to finalize autofix session after restore journaling failure"
+            fi
+            return 1
+        fi
+        if ! autofix_finalize_managed_session "$session_owned"; then
+            log_error "[POST-INSTALL] Failed to finalize autofix session after restore"
+            return 1
+        fi
         log_info "[POST-INSTALL] Successfully re-enabled unattended-upgrades"
         return 0
     else
+        if ! autofix_finalize_managed_session "$session_owned"; then
+            log_error "[POST-INSTALL] Failed to finalize autofix session after restore failure"
+        fi
         log_warn "[POST-INSTALL] Could not re-enable unattended-upgrades (may need manual intervention)"
         return 1
     fi

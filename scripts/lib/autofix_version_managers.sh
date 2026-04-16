@@ -21,6 +21,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/autofix.sh"
 
+autofix_version_managers_restore() {
+    local restore_command="${1:-}"
+
+    [[ -n "$restore_command" ]] || return 1
+    bash -c "$restore_command"
+}
+
 # ============================================================
 # NVM Detection and Fix
 # ============================================================
@@ -109,6 +116,8 @@ autofix_nvm_check() {
 # Returns: 0=success, 1=partial fix, 2=failed
 autofix_nvm_fix() {
     local mode="${1:-fix}"
+    local session_owned=false
+    local result=0
 
     log_info "[AUTO-FIX:nvm] Starting nvm fix (mode=$mode)"
 
@@ -141,6 +150,11 @@ autofix_nvm_fix() {
         return 0
     fi
 
+    if ! autofix_ensure_session session_owned; then
+        log_error "[AUTO-FIX:nvm] Failed to start autofix session"
+        return 2
+    fi
+
     local partial_failure=0
 
     # STEP 1: Create verified backup of nvm directories
@@ -165,28 +179,46 @@ autofix_nvm_fix() {
             fi
 
             local backup_path backup_checksum
+            local restore_command=""
             backup_path=$(echo "$backup_info" | jq -r '.backup')
             backup_checksum=$(echo "$backup_info" | jq -r '.checksum')
+            restore_command="$(autofix_backup_restore_command "$backup_info" 2>/dev/null || true)"
 
             log_info "[AUTO-FIX:nvm] Created backup: $backup_path (checksum: ${backup_checksum:0:16}...)"
 
-            record_change \
+            if [[ -z "$restore_command" ]]; then
+                log_error "[AUTO-FIX:nvm] Failed to build restore command for $nvm_dir"
+                partial_failure=1
+                continue
+            fi
+
+            if ! rm -rf "$nvm_dir"; then
+                log_error "[AUTO-FIX:nvm] Failed to remove original nvm directory: $nvm_dir"
+                if ! autofix_version_managers_restore "$restore_command"; then
+                    log_error "[AUTO-FIX:nvm] Failed to restore $nvm_dir after removal failure"
+                fi
+                partial_failure=1
+                continue
+            fi
+
+            if ! record_change \
                 "nvm" \
                 "Backed up and moved nvm directory: $nvm_dir" \
-                "mv \"$backup_path\" \"$nvm_dir\"" \
+                "$restore_command" \
                 false \
                 "warning" \
                 "[\"$nvm_dir\"]" \
                 "[$backup_info]" \
-                '[]'
-
-            # Move the directory to backup location (create_backup already copied it)
-            if ! rm -rf "$nvm_dir"; then
-                log_error "[AUTO-FIX:nvm] Failed to remove original nvm directory: $nvm_dir"
+                '[]' >/dev/null; then
+                log_error "[AUTO-FIX:nvm] Failed to record nvm directory migration for $nvm_dir"
+                if ! autofix_version_managers_restore "$restore_command"; then
+                    log_error "[AUTO-FIX:nvm] Failed to restore $nvm_dir after journaling failure"
+                fi
                 partial_failure=1
-            else
-                log_info "[AUTO-FIX:nvm] Removed original nvm directory: $nvm_dir"
+                continue
             fi
+
+            log_info "[AUTO-FIX:nvm] Removed original nvm directory: $nvm_dir"
         fi
     done < <(echo "$check_result" | jq -r '.nvm_dirs[]')
 
@@ -200,18 +232,16 @@ autofix_nvm_fix() {
         config_backup=$(create_backup "$config" "shell-config")
         if [[ -n "$config_backup" ]]; then
             local config_backup_path
+            local restore_command=""
             config_backup_path=$(echo "$config_backup" | jq -r '.backup')
+            restore_command="$(autofix_backup_restore_command "$config_backup" 2>/dev/null || true)"
             log_info "[AUTO-FIX:nvm] Backed up config: $config_backup_path"
 
-            record_change \
-                "nvm" \
-                "Cleaned nvm references from $config" \
-                "cp \"$config_backup_path\" \"$config\"" \
-                false \
-                "info" \
-                "[\"$config\"]" \
-                "[$config_backup]" \
-                '[]'
+            if [[ -z "$restore_command" ]]; then
+                log_error "[AUTO-FIX:nvm] Failed to build restore command for $config"
+                partial_failure=1
+                continue
+            fi
 
             # Remove nvm-related lines using sed
             # Pattern: lines containing NVM_DIR, nvm.sh, nvm use, nvm alias, or NVM comments
@@ -225,7 +255,7 @@ autofix_nvm_fix() {
             fi
 
             # Apply sed to remove nvm-related lines
-            sed -i \
+            if ! sed -i \
                 -e '/export NVM_DIR/d' \
                 -e '/\[ -s.*nvm\.sh \]/d' \
                 -e '/\. "$NVM_DIR\/nvm\.sh"/d' \
@@ -235,10 +265,31 @@ autofix_nvm_fix() {
                 -e '/# NVM/d' \
                 -e '/# Node Version Manager/d' \
                 -e '/# nvm/d' \
-                "$config" || {
-                    log_warn "[AUTO-FIX:nvm] Failed to clean $config"
-                    partial_failure=1
-                }
+                "$config"; then
+                log_warn "[AUTO-FIX:nvm] Failed to clean $config"
+                if ! autofix_version_managers_restore "$restore_command"; then
+                    log_error "[AUTO-FIX:nvm] Failed to restore $config after cleanup failure"
+                fi
+                partial_failure=1
+                continue
+            fi
+
+            if ! record_change \
+                "nvm" \
+                "Cleaned nvm references from $config" \
+                "$restore_command" \
+                false \
+                "info" \
+                "[\"$config\"]" \
+                "[$config_backup]" \
+                '[]' >/dev/null; then
+                log_error "[AUTO-FIX:nvm] Failed to record shell config cleanup for $config"
+                if ! autofix_version_managers_restore "$restore_command"; then
+                    log_error "[AUTO-FIX:nvm] Failed to restore $config after journaling failure"
+                fi
+                partial_failure=1
+                continue
+            fi
         else
             log_warn "[AUTO-FIX:nvm] Failed to backup $config, skipping"
             partial_failure=1
@@ -250,11 +301,16 @@ autofix_nvm_fix() {
 
     if [[ $partial_failure -eq 1 ]]; then
         log_warn "[AUTO-FIX:nvm] Fix completed with some failures"
-        return 1
+        result=1
+    else
+        log_info "[AUTO-FIX:nvm] Fix completed successfully"
+        result=0
     fi
-
-    log_info "[AUTO-FIX:nvm] Fix completed successfully"
-    return 0
+    if ! autofix_finalize_managed_session "$session_owned"; then
+        log_error "[AUTO-FIX:nvm] Failed to finalize autofix session"
+        return 2
+    fi
+    return "$result"
 }
 
 # ============================================================
@@ -345,6 +401,8 @@ autofix_pyenv_check() {
 # Returns: 0=success, 1=partial fix, 2=failed
 autofix_pyenv_fix() {
     local mode="${1:-fix}"
+    local session_owned=false
+    local result=0
 
     log_info "[AUTO-FIX:pyenv] Starting pyenv fix (mode=$mode)"
 
@@ -377,6 +435,11 @@ autofix_pyenv_fix() {
         return 0
     fi
 
+    if ! autofix_ensure_session session_owned; then
+        log_error "[AUTO-FIX:pyenv] Failed to start autofix session"
+        return 2
+    fi
+
     local partial_failure=0
 
     # STEP 1: Create verified backup of pyenv directories
@@ -401,27 +464,46 @@ autofix_pyenv_fix() {
             fi
 
             local backup_path backup_checksum
+            local restore_command=""
             backup_path=$(echo "$backup_info" | jq -r '.backup')
             backup_checksum=$(echo "$backup_info" | jq -r '.checksum')
+            restore_command="$(autofix_backup_restore_command "$backup_info" 2>/dev/null || true)"
 
             log_info "[AUTO-FIX:pyenv] Created backup: $backup_path (checksum: ${backup_checksum:0:16}...)"
 
-            record_change \
+            if [[ -z "$restore_command" ]]; then
+                log_error "[AUTO-FIX:pyenv] Failed to build restore command for $pyenv_root"
+                partial_failure=1
+                continue
+            fi
+
+            if ! rm -rf "$pyenv_root"; then
+                log_error "[AUTO-FIX:pyenv] Failed to remove original pyenv directory: $pyenv_root"
+                if ! autofix_version_managers_restore "$restore_command"; then
+                    log_error "[AUTO-FIX:pyenv] Failed to restore $pyenv_root after removal failure"
+                fi
+                partial_failure=1
+                continue
+            fi
+
+            if ! record_change \
                 "pyenv" \
                 "Backed up and moved pyenv directory: $pyenv_root" \
-                "mv \"$backup_path\" \"$pyenv_root\"" \
+                "$restore_command" \
                 false \
                 "warning" \
                 "[\"$pyenv_root\"]" \
                 "[$backup_info]" \
-                '[]'
-
-            if ! rm -rf "$pyenv_root"; then
-                log_error "[AUTO-FIX:pyenv] Failed to remove original pyenv directory: $pyenv_root"
+                '[]' >/dev/null; then
+                log_error "[AUTO-FIX:pyenv] Failed to record pyenv directory migration for $pyenv_root"
+                if ! autofix_version_managers_restore "$restore_command"; then
+                    log_error "[AUTO-FIX:pyenv] Failed to restore $pyenv_root after journaling failure"
+                fi
                 partial_failure=1
-            else
-                log_info "[AUTO-FIX:pyenv] Removed original pyenv directory: $pyenv_root"
+                continue
             fi
+
+            log_info "[AUTO-FIX:pyenv] Removed original pyenv directory: $pyenv_root"
         fi
     done < <(echo "$check_result" | jq -r '.pyenv_roots[]')
 
@@ -434,18 +516,16 @@ autofix_pyenv_fix() {
         config_backup=$(create_backup "$config" "shell-config")
         if [[ -n "$config_backup" ]]; then
             local config_backup_path
+            local restore_command=""
             config_backup_path=$(echo "$config_backup" | jq -r '.backup')
+            restore_command="$(autofix_backup_restore_command "$config_backup" 2>/dev/null || true)"
             log_info "[AUTO-FIX:pyenv] Backed up config: $config_backup_path"
 
-            record_change \
-                "pyenv" \
-                "Cleaned pyenv references from $config" \
-                "cp \"$config_backup_path\" \"$config\"" \
-                false \
-                "info" \
-                "[\"$config\"]" \
-                "[$config_backup]" \
-                '[]'
+            if [[ -z "$restore_command" ]]; then
+                log_error "[AUTO-FIX:pyenv] Failed to build restore command for $config"
+                partial_failure=1
+                continue
+            fi
 
             # Remove pyenv-related lines
             local removed_lines
@@ -457,7 +537,7 @@ autofix_pyenv_fix() {
                 done
             fi
 
-            sed -i \
+            if ! sed -i \
                 -e '/export PYENV_ROOT/d' \
                 -e '/pyenv init/d' \
                 -e '/pyenv virtualenv-init/d' \
@@ -465,10 +545,31 @@ autofix_pyenv_fix() {
                 -e '/# Pyenv/d' \
                 -e '/eval "$(pyenv/d' \
                 -e '/PATH.*pyenv/d' \
-                "$config" || {
-                    log_warn "[AUTO-FIX:pyenv] Failed to clean $config"
-                    partial_failure=1
-                }
+                "$config"; then
+                log_warn "[AUTO-FIX:pyenv] Failed to clean $config"
+                if ! autofix_version_managers_restore "$restore_command"; then
+                    log_error "[AUTO-FIX:pyenv] Failed to restore $config after cleanup failure"
+                fi
+                partial_failure=1
+                continue
+            fi
+
+            if ! record_change \
+                "pyenv" \
+                "Cleaned pyenv references from $config" \
+                "$restore_command" \
+                false \
+                "info" \
+                "[\"$config\"]" \
+                "[$config_backup]" \
+                '[]' >/dev/null; then
+                log_error "[AUTO-FIX:pyenv] Failed to record shell config cleanup for $config"
+                if ! autofix_version_managers_restore "$restore_command"; then
+                    log_error "[AUTO-FIX:pyenv] Failed to restore $config after journaling failure"
+                fi
+                partial_failure=1
+                continue
+            fi
         else
             log_warn "[AUTO-FIX:pyenv] Failed to backup $config, skipping"
             partial_failure=1
@@ -480,11 +581,16 @@ autofix_pyenv_fix() {
 
     if [[ $partial_failure -eq 1 ]]; then
         log_warn "[AUTO-FIX:pyenv] Fix completed with some failures"
-        return 1
+        result=1
+    else
+        log_info "[AUTO-FIX:pyenv] Fix completed successfully"
+        result=0
     fi
-
-    log_info "[AUTO-FIX:pyenv] Fix completed successfully"
-    return 0
+    if ! autofix_finalize_managed_session "$session_owned"; then
+        log_error "[AUTO-FIX:pyenv] Failed to finalize autofix session"
+        return 2
+    fi
+    return "$result"
 }
 
 # ============================================================
@@ -514,8 +620,16 @@ autofix_version_managers_check() {
 autofix_version_managers_fix() {
     local mode="${1:-fix}"
     local overall_result=0
+    local session_owned=false
 
     log_info "[AUTO-FIX] Starting version managers fix (mode=$mode)"
+
+    if [[ "$mode" != "dry-run" ]]; then
+        if ! autofix_ensure_session session_owned; then
+            log_error "[AUTO-FIX] Failed to start autofix session for version manager fixes"
+            return 2
+        fi
+    fi
 
     # Fix nvm
     local nvm_result=0
@@ -548,6 +662,10 @@ autofix_version_managers_fix() {
     if [[ $overall_result -eq 0 ]]; then
         log_info "[AUTO-FIX] All version manager fixes completed successfully"
     fi
+    if ! autofix_finalize_managed_session "$session_owned"; then
+        log_error "[AUTO-FIX] Failed to finalize autofix session for version manager fixes"
+        return 2
+    fi
 
-    return $overall_result
+    return "$overall_result"
 }

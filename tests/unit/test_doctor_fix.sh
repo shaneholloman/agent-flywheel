@@ -56,6 +56,14 @@ run_test() {
 setup_test_env() {
     local test_id="${FUNCNAME[1]:-$$}_$(date +%s%N)"
 
+    unset -f record_change 2>/dev/null || true
+    unset _ACFS_AUTOFIX_SOURCED
+    unset _ACFS_DOCTOR_FIX_LOADED
+    # shellcheck source=../../scripts/lib/autofix.sh
+    source "$REPO_ROOT/scripts/lib/autofix.sh"
+    # shellcheck source=../../scripts/lib/doctor_fix.sh
+    source "$REPO_ROOT/scripts/lib/doctor_fix.sh"
+
     # Autofix state
     export ACFS_STATE_DIR="/tmp/test_doctor_fix_${test_id}"
     export ACFS_CHANGES_FILE="$ACFS_STATE_DIR/changes.jsonl"
@@ -333,6 +341,84 @@ test_fix_path_ordering_dry_run() {
     return 0
 }
 
+test_fix_path_ordering_restores_file_when_record_change_fails() {
+    setup_test_env
+
+    local zshrc="$HOME/.zshrc"
+    printf '# Initial zshrc\n' > "$zshrc"
+    local before_contents
+    before_contents="$(cat "$zshrc")"
+    local original_record_change
+    original_record_change="$(declare -f record_change)"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    record_change() { return 1; }
+
+    if fix_path_ordering "path.ordering" >/dev/null 2>&1; then
+        eval "$original_record_change"
+        echo "  fix_path_ordering unexpectedly succeeded when record_change failed"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_record_change"
+
+    if [[ "$(cat "$zshrc")" != "$before_contents" ]]; then
+        echo "  .zshrc was not restored after record_change failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_FAILED -ne 1 ]]; then
+        echo "  FIX_FAILED should be 1 after journaling failure, got $FIX_FAILED"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
+    cleanup_test_env
+    return 0
+}
+
+test_fix_path_ordering_removes_new_file_when_record_change_fails() {
+    setup_test_env
+
+    local zshrc="$HOME/.zshrc"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    record_change() {
+        return 1
+    }
+
+    if fix_path_ordering "path.ordering" >/dev/null 2>&1; then
+        echo "  fix_path_ordering unexpectedly succeeded when record_change failed for a new file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -e "$zshrc" ]]; then
+        echo "  Newly created .zshrc should have been removed after journaling failure"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
 # ============================================================
 # Test: fix_config_copy
 # ============================================================
@@ -462,6 +548,52 @@ test_fix_config_copy_dry_run() {
     return 0
 }
 
+test_fix_config_copy_removes_dest_when_record_change_fails() {
+    setup_test_env
+
+    local src="$ACFS_STATE_DIR/source_config.txt"
+    local dest="$HOME/.acfs/test_config.txt"
+    local original_record_change
+    printf 'config content\n' > "$src"
+    original_record_change="$(declare -f record_change)"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    record_change() { return 1; }
+
+    if fix_config_copy "config.test" "$src" "$dest" >/dev/null 2>&1; then
+        eval "$original_record_change"
+        echo "  fix_config_copy unexpectedly succeeded when record_change failed"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_record_change"
+
+    if [[ -e "$dest" ]]; then
+        echo "  Destination file was not removed after record_change failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_FAILED -ne 1 ]]; then
+        echo "  FIX_FAILED should be 1 after config copy journaling failure, got $FIX_FAILED"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
+    cleanup_test_env
+    return 0
+}
+
 # ============================================================
 # Test: fix_symlink_create
 # ============================================================
@@ -585,6 +717,53 @@ test_fix_symlink_create_dry_run() {
     fi
 
     DOCTOR_FIX_DRY_RUN=false
+    cleanup_test_env
+    return 0
+}
+
+test_fix_symlink_create_removes_symlink_when_record_change_fails() {
+    setup_test_env
+
+    local binary="$HOME/.cargo/bin/test_tool"
+    local symlink="$HOME/.local/bin/test_tool"
+    local original_record_change
+    printf '#!/bin/bash\necho test\n' > "$binary"
+    chmod +x "$binary"
+    original_record_change="$(declare -f record_change)"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    record_change() { return 1; }
+
+    if fix_symlink_create "symlink.test" "$binary" "$symlink" >/dev/null 2>&1; then
+        eval "$original_record_change"
+        echo "  fix_symlink_create unexpectedly succeeded when record_change failed"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_record_change"
+
+    if [[ -e "$symlink" || -L "$symlink" ]]; then
+        echo "  Symlink was not removed after record_change failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_FAILED -ne 1 ]]; then
+        echo "  FIX_FAILED should be 1 after symlink journaling failure, got $FIX_FAILED"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
     cleanup_test_env
     return 0
 }
@@ -717,6 +896,12 @@ test_dispatch_fix_config_copy_uses_target_home() {
     export TARGET_HOME="$ACFS_STATE_DIR/target-home"
     mkdir -p "$TARGET_HOME/.acfs"
 
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
     dispatch_fix "config.acfs_zshrc" "warn" >/dev/null 2>&1
 
     if [[ ! -f "$TARGET_HOME/.acfs/zsh/acfs.zshrc" ]]; then
@@ -731,6 +916,7 @@ test_dispatch_fix_config_copy_uses_target_home() {
         return 1
     fi
 
+    end_autofix_session >/dev/null
     cleanup_test_env
     return 0
 }
@@ -742,6 +928,12 @@ test_dispatch_fix_symlink_uses_target_home() {
     mkdir -p "$TARGET_HOME/.cargo/bin" "$TARGET_HOME/.local/bin"
     printf '#!/usr/bin/env bash\necho br\n' > "$TARGET_HOME/.cargo/bin/br"
     chmod +x "$TARGET_HOME/.cargo/bin/br"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
 
     dispatch_fix "symlink.br" "warn" >/dev/null 2>&1
 
@@ -757,6 +949,7 @@ test_dispatch_fix_symlink_uses_target_home() {
         return 1
     fi
 
+    end_autofix_session >/dev/null
     cleanup_test_env
     return 0
 }
@@ -811,6 +1004,38 @@ test_fix_acfs_sourcing_dry_run() {
     fi
 
     DOCTOR_FIX_DRY_RUN=false
+    cleanup_test_env
+    return 0
+}
+
+test_fix_acfs_sourcing_removes_new_file_when_record_change_fails() {
+    setup_test_env
+
+    local zshrc="$HOME/.zshrc"
+    echo "# ACFS zsh config" > "$HOME/.acfs/zsh/acfs.zshrc"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    record_change() {
+        return 1
+    }
+
+    if fix_acfs_sourcing "shell.acfs_sourced" >/dev/null 2>&1; then
+        echo "  fix_acfs_sourcing unexpectedly succeeded when record_change failed for a new file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -e "$zshrc" ]]; then
+        echo "  Newly created .zshrc should have been removed after ACFS sourcing journaling failure"
+        cleanup_test_env
+        return 1
+    fi
+
     cleanup_test_env
     return 0
 }
@@ -949,6 +1174,75 @@ EOF
     done
 
     [[ -n "$original_uname" ]] && eval "$original_uname" || unset -f uname
+    cleanup_test_env
+    return 0
+}
+
+test_fix_dcg_hook_uninstalls_when_record_change_fails() {
+    setup_test_env
+
+    local original_record_change
+    local original_path="$PATH"
+    local dcg_stub="$HOME/.local/bin/dcg"
+    original_record_change="$(declare -f record_change)"
+
+    cat > "$dcg_stub" <<EOF
+#!/usr/bin/env bash
+case "\$1 \${2-} \${3-}" in
+    "doctor --format json")
+        printf '{"hook_installed":false,"checks":[]}\n'
+        exit 0
+        ;;
+    "install  ")
+        : > "$ACFS_STATE_DIR/dcg-installed"
+        exit 0
+        ;;
+    "uninstall  ")
+        : > "$ACFS_STATE_DIR/dcg-uninstalled"
+        exit 0
+        ;;
+esac
+exit 1
+EOF
+    chmod +x "$dcg_stub"
+    export PATH="$HOME/.local/bin:$PATH"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        export PATH="$original_path"
+        cleanup_test_env
+        return 1
+    }
+
+    record_change() { return 1; }
+
+    if fix_dcg_hook "hook.dcg.test" >/dev/null 2>&1; then
+        eval "$original_record_change"
+        export PATH="$original_path"
+        echo "  fix_dcg_hook unexpectedly succeeded when record_change failed"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_record_change"
+    export PATH="$original_path"
+
+    if [[ ! -f "$ACFS_STATE_DIR/dcg-uninstalled" ]]; then
+        echo "  fix_dcg_hook did not roll back install after record_change failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_FAILED -ne 1 ]]; then
+        echo "  FIX_FAILED should be 1 after dcg hook journaling failure, got $FIX_FAILED"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
     cleanup_test_env
     return 0
 }
@@ -1365,18 +1659,22 @@ main() {
     run_test test_fix_path_ordering_applies
     run_test test_fix_path_ordering_idempotent
     run_test test_fix_path_ordering_dry_run
+    run_test test_fix_path_ordering_restores_file_when_record_change_fails
+    run_test test_fix_path_ordering_removes_new_file_when_record_change_fails
 
     # fix_config_copy tests
     run_test test_fix_config_copy_applies
     run_test test_fix_config_copy_idempotent
     run_test test_fix_config_copy_missing_source
     run_test test_fix_config_copy_dry_run
+    run_test test_fix_config_copy_removes_dest_when_record_change_fails
 
     # fix_symlink_create tests
     run_test test_fix_symlink_create_applies
     run_test test_fix_symlink_create_idempotent
     run_test test_fix_symlink_create_missing_binary
     run_test test_fix_symlink_create_dry_run
+    run_test test_fix_symlink_create_removes_symlink_when_record_change_fails
 
     # fix_acfs_sourcing tests
     run_test test_fix_acfs_sourcing_applies
@@ -1384,11 +1682,13 @@ main() {
     run_test test_fix_acfs_sourcing_uses_target_home
     run_test test_fix_acfs_sourcing_missing_acfs_config
     run_test test_fix_acfs_sourcing_dry_run
+    run_test test_fix_acfs_sourcing_removes_new_file_when_record_change_fails
 
     # fix_verified_install tests
     run_test test_fix_verified_install_applies
     run_test test_fix_verified_install_dry_run
     run_test test_fix_verified_install_ms_arm64_fallback_uses_cargo
+    run_test test_fix_dcg_hook_uninstalls_when_record_change_fails
     run_test test_dcg_hook_already_installed_detects_hook_wiring
     run_test test_agent_mail_fix_stop_fallback_cleans_up_matching_pid
     run_test test_fix_mcp_agent_mail_uses_target_home_for_systemctl_env

@@ -1492,6 +1492,57 @@ test_autofix_existing_restore_from_backup_fsyncs_restored_path() {
     cleanup_mock_env
 }
 
+test_autofix_existing_backup_cleans_partial_dir_after_copy_failure() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-backup-copy-fail-target"
+    local fsync_log="$TEST_HOME/fsync.log"
+    mkdir -p "$target_home/.acfs" "$target_home/.config/acfs" "$target_home/.local/bin"
+    printf 'installed\n' > "$target_home/.acfs/version"
+    printf 'config\n' > "$target_home/.config/acfs/settings.toml"
+    printf '#!/usr/bin/env bash\n' > "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            FSYNC_LOG_PATH="$2"
+            cp() {
+                local last="${@: -1}"
+                if [[ "$last" == "$TARGET_HOME/.acfs-backup-"* ]]; then
+                    mkdir -p "$last"
+                    return 1
+                fi
+                command cp "$@"
+            }
+            fsync_directory() { printf "dir:%s\n" "$1" >> "$FSYNC_LOG_PATH"; return 0; }
+            if create_installation_backup >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            jq -nc \
+                --arg result "$result" \
+                --arg leftover_count "$(find "$TARGET_HOME" -maxdepth 1 -type d -name ".acfs-backup-*" | wc -l | tr -d " ")" \
+                --arg parent_synced "$(grep -Fx "dir:$TARGET_HOME" "$FSYNC_LOG_PATH" >/dev/null 2>&1 && echo yes || echo no)" \
+                "{result: \$result, leftover_count: \$leftover_count, parent_synced: \$parent_synced}"
+        ' _ "$AUTOFIX_EXISTING_SH" "$fsync_log" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "failure"
+        and .leftover_count == "0"
+        and .parent_synced == "yes"
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing backup cleans partial dir after copy failure"
+    else
+        harness_fail "autofix_existing backup cleans partial dir after copy failure" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_autofix_existing_artifacts_include_global_wrapper() {
     setup_mock_env
 
@@ -5150,6 +5201,7 @@ main() {
     test_autofix_existing_backup_avoids_broken_symlink_collision || true
     test_autofix_existing_backup_fsyncs_manifest_and_parent_dir || true
     test_autofix_existing_restore_from_backup_fsyncs_restored_path || true
+    test_autofix_existing_backup_cleans_partial_dir_after_copy_failure || true
     test_autofix_existing_artifacts_include_global_wrapper || true
     test_autofix_existing_backup_preserves_symlink_artifacts || true
     test_autofix_existing_handles_broken_symlink_artifacts || true
