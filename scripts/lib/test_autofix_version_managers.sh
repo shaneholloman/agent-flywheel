@@ -20,6 +20,12 @@ TESTS_FAILED=0
 
 setup_autofix_state_dir() {
     local state_dir="$1"
+    unset -f record_change 2>/dev/null || true
+    unset _ACFS_AUTOFIX_SOURCED
+    unset _ACFS_AUTOFIX_VERSION_MANAGERS_SH_LOADED
+    # shellcheck source=autofix_version_managers.sh
+    source "$SCRIPT_DIR/autofix_version_managers.sh"
+
     export ACFS_STATE_DIR="$state_dir"
     export ACFS_CHANGES_FILE="$ACFS_STATE_DIR/changes.jsonl"
     export ACFS_UNDOS_FILE="$ACFS_STATE_DIR/undos.jsonl"
@@ -260,6 +266,65 @@ EOF
     test_pass "nvm_fix_manages_session_and_records_changes"
 }
 
+test_nvm_fix_restores_state_when_record_change_fails() {
+    local test_id="nvm_fix_restore_on_journal_failure"
+    local test_dir="/tmp/test_autofix_${test_id}_$$"
+    local state_dir="$test_dir/state"
+    mkdir -p "$test_dir/.nvm"
+
+    cat > "$test_dir/.bashrc" << 'EOF'
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+EOF
+
+    local old_home="$HOME"
+    local old_nvm_dir="${NVM_DIR:-}"
+    HOME="$test_dir"
+    unset NVM_DIR
+    setup_autofix_state_dir "$state_dir"
+
+    record_change() {
+        return 1
+    }
+
+    if autofix_nvm_fix "fix" >/dev/null 2>&1; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        cleanup_test_dir "$test_dir"
+        test_fail "nvm_fix_restores_state_when_record_change_fails" "nvm fix unexpectedly succeeded when journaling failed"
+        return
+    fi
+
+    if [[ ! -d "$test_dir/.nvm" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        cleanup_test_dir "$test_dir"
+        test_fail "nvm_fix_restores_state_when_record_change_fails" "nvm directory was not restored after journaling failure"
+        return
+    fi
+
+    if ! grep -q "NVM_DIR\\|nvm\\.sh" "$test_dir/.bashrc"; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        cleanup_test_dir "$test_dir"
+        test_fail "nvm_fix_restores_state_when_record_change_fails" "nvm shell config was not restored after journaling failure"
+        return
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+        cleanup_test_dir "$test_dir"
+        test_fail "nvm_fix_restores_state_when_record_change_fails" "nvm journaling failure still left change records behind"
+        return
+    fi
+
+    HOME="$old_home"
+    [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+    cleanup_test_dir "$test_dir"
+    test_pass "nvm_fix_restores_state_when_record_change_fails"
+}
+
 # ============================================================
 # Pyenv Tests
 # ============================================================
@@ -456,6 +521,65 @@ EOF
     test_pass "pyenv_fix_manages_session_and_records_changes"
 }
 
+test_pyenv_fix_restores_state_when_record_change_fails() {
+    local test_id="pyenv_fix_restore_on_journal_failure"
+    local test_dir="/tmp/test_autofix_${test_id}_$$"
+    local state_dir="$test_dir/state"
+    mkdir -p "$test_dir/.pyenv"
+
+    cat > "$test_dir/.bashrc" << 'EOF'
+export PYENV_ROOT="$HOME/.pyenv"
+eval "$(pyenv init -)"
+EOF
+
+    local old_home="$HOME"
+    local old_pyenv_root="${PYENV_ROOT:-}"
+    HOME="$test_dir"
+    unset PYENV_ROOT
+    setup_autofix_state_dir "$state_dir"
+
+    record_change() {
+        return 1
+    }
+
+    if autofix_pyenv_fix "fix" >/dev/null 2>&1; then
+        HOME="$old_home"
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "pyenv_fix_restores_state_when_record_change_fails" "pyenv fix unexpectedly succeeded when journaling failed"
+        return
+    fi
+
+    if [[ ! -d "$test_dir/.pyenv" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "pyenv_fix_restores_state_when_record_change_fails" "pyenv directory was not restored after journaling failure"
+        return
+    fi
+
+    if ! grep -q "PYENV_ROOT\\|pyenv init" "$test_dir/.bashrc"; then
+        HOME="$old_home"
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "pyenv_fix_restores_state_when_record_change_fails" "pyenv shell config was not restored after journaling failure"
+        return
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        HOME="$old_home"
+        [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+        cleanup_test_dir "$test_dir"
+        test_fail "pyenv_fix_restores_state_when_record_change_fails" "pyenv journaling failure still left change records behind"
+        return
+    fi
+
+    HOME="$old_home"
+    [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+    cleanup_test_dir "$test_dir"
+    test_pass "pyenv_fix_restores_state_when_record_change_fails"
+}
+
 # ============================================================
 # Combined Tests
 # ============================================================
@@ -567,6 +691,7 @@ main() {
     test_nvm_check_shell_configs
     test_nvm_fix_dry_run
     test_nvm_fix_manages_session_and_records_changes
+    test_nvm_fix_restores_state_when_record_change_fails
 
     # Pyenv tests
     test_pyenv_check_no_installation
@@ -574,6 +699,7 @@ main() {
     test_pyenv_check_shell_configs
     test_pyenv_fix_dry_run
     test_pyenv_fix_manages_session_and_records_changes
+    test_pyenv_fix_restores_state_when_record_change_fails
 
     # Combined tests
     test_combined_check_structure
