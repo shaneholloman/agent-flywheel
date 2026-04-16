@@ -1255,15 +1255,18 @@ fix_mcp_agent_mail() {
     local fixed_any=false
     local service_healthy=false
     local doctor_healthy=false
-    local project_path=""
     local runtime_home=""
     local runtime_user=""
     local am_src=""
     local am_dst=""
+    local storage_root=""
+    local unit_file=""
     runtime_home="$(doctor_fix_runtime_home)"
     runtime_user="$(doctor_fix_runtime_user)"
     am_src="$runtime_home/mcp_agent_mail/am"
     am_dst="$runtime_home/.local/bin/am"
+    storage_root="$runtime_home/.mcp_agent_mail_git_mailbox_repo"
+    unit_file="$runtime_home/.config/systemd/user/agent-mail.service"
 
     doctor_fix_source_stack_lib || {
         doctor_fix_log ERROR "Unable to load stack helper library for MCP Agent Mail repair"
@@ -1275,12 +1278,28 @@ fix_mcp_agent_mail() {
         local resolved_am=""
         resolved_am="$(command -v am 2>/dev/null || true)"
         if [[ "$resolved_am" != "$am_src" ]]; then
+            local symlink_backup_json='[]'
+            local symlink_restore_command="rm -f '$am_dst'"
+            if [[ -e "$am_dst" || -L "$am_dst" ]]; then
+                symlink_backup_json="$(create_backup "$am_dst" "doctor-fix-agent-mail-symlink" 2>/dev/null || echo '[]')"
+                symlink_restore_command="$(autofix_backup_restore_command "$symlink_backup_json" 2>/dev/null || true)"
+                [[ -n "$symlink_restore_command" ]] || symlink_restore_command="rm -f '$am_dst'"
+            fi
+
             if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
                 FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail.symlink|Ensure am symlink points at installed Rust CLI|$am_dst|ln -sf $am_src $am_dst")
                 doctor_fix_log DRY "Ensure am symlink points at $am_src"
-                return 0
-            fi
-            if TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
+            elif TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
+                if ! doctor_fix_record_change_or_rollback \
+                    "$symlink_restore_command" \
+                    false \
+                    "symlink" "Ensured am resolves to installed Rust CLI" \
+                    "$symlink_restore_command" \
+                    false "info" "[\"$am_dst\"]" "$symlink_backup_json" "[]"; then
+                    FIX_FAILED=$((FIX_FAILED + 1))
+                    return 1
+                fi
+
                 hash -r
                 doctor_fix_log INFO "Ensured am resolves to the installed Rust CLI"
                 FIXES_APPLIED+=("fix.stack.mcp_agent_mail.symlink|Ensured am resolves to installed Rust CLI")
@@ -1303,6 +1322,16 @@ fix_mcp_agent_mail() {
                 hash -r
             fi
             if command -v am &>/dev/null; then
+                if ! doctor_fix_record_change_or_rollback \
+                    "" \
+                    false \
+                    "install" "Installed MCP Agent Mail CLI via verified installer" \
+                    "# Manual rollback required: remove $runtime_home/mcp_agent_mail if undesired" \
+                    false "info" "[\"$runtime_home/mcp_agent_mail\"]" "[]" "[]"; then
+                    FIX_FAILED=$((FIX_FAILED + 1))
+                    return 1
+                fi
+
                 doctor_fix_log INFO "Installed MCP Agent Mail CLI via verified installer"
                 FIXES_APPLIED+=("fix.stack.mcp_agent_mail.install|Installed MCP Agent Mail CLI via verified installer")
                 FIX_APPLIED=$((FIX_APPLIED + 1))
@@ -1324,6 +1353,16 @@ fix_mcp_agent_mail() {
     fi
 
     if am doctor repair --yes >/dev/null 2>&1; then
+        if ! doctor_fix_record_change_or_rollback \
+            "" \
+            false \
+            "repair" "Ran MCP Agent Mail database repair" \
+            "# Manual rollback required: restore Agent Mail storage from backup if needed" \
+            false "info" "[\"$storage_root\"]" "[]" "[]"; then
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
+
         doctor_fix_log INFO "Ran MCP Agent Mail database repair"
         FIXES_APPLIED+=("fix.stack.mcp_agent_mail.repair|Ran MCP Agent Mail database repair")
         FIX_APPLIED=$((FIX_APPLIED + 1))
@@ -1333,6 +1372,16 @@ fix_mcp_agent_mail() {
     fi
 
     if am doctor fix --yes >/dev/null 2>&1; then
+        if ! doctor_fix_record_change_or_rollback \
+            "" \
+            false \
+            "repair" "Applied MCP Agent Mail doctor fixes" \
+            "# Manual rollback required: restore Agent Mail storage/config from backup if needed" \
+            false "info" "[\"$storage_root\"]" "[]" "[]"; then
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
+
         doctor_fix_log INFO "Applied MCP Agent Mail doctor fixes"
         FIXES_APPLIED+=("fix.stack.mcp_agent_mail.fix|Applied MCP Agent Mail doctor fixes")
         FIX_APPLIED=$((FIX_APPLIED + 1))
@@ -1347,6 +1396,16 @@ fix_mcp_agent_mail() {
     fi
 
     if TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_configure_agent_mail_service; then
+        if ! doctor_fix_record_change_or_rollback \
+            "" \
+            false \
+            "service" "Repaired MCP Agent Mail managed service" \
+            "# Manual rollback required: restore Agent Mail user service files if needed" \
+            true "info" "[\"$unit_file\"]" "[]" "[]"; then
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
+
         doctor_fix_log INFO "Repaired MCP Agent Mail managed service"
         FIXES_APPLIED+=("fix.stack.mcp_agent_mail.service|Repaired MCP Agent Mail managed service")
         FIX_APPLIED=$((FIX_APPLIED + 1))
