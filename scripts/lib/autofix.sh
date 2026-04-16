@@ -228,7 +228,11 @@ autofix_sync_backup_path() {
 
     case "$path_type" in
         file)
-            fsync_file "$target_path"
+            if ! fsync_file "$target_path"; then
+                return 1
+            fi
+            parent_dir="$(dirname "$target_path")"
+            fsync_directory "$parent_dir"
             return $?
             ;;
         symlink)

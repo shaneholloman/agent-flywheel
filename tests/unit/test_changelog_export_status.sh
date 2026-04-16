@@ -1445,6 +1445,53 @@ test_autofix_existing_backup_fsyncs_manifest_and_parent_dir() {
     cleanup_mock_env
 }
 
+test_autofix_existing_restore_from_backup_fsyncs_restored_path() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-restore-sync-target"
+    mkdir -p "$target_home"
+    printf 'old\n' > "$target_home/config.toml"
+    printf 'restored\n' > "$target_home/config.toml.backup"
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            fsync_log="$TARGET_HOME/fsync.log"
+            autofix_sync_backup_path() {
+                printf "%s\n" "$1" >> "$fsync_log"
+                return 0
+            }
+            backup_json=$(jq -cn \
+                --arg original "$TARGET_HOME/config.toml" \
+                --arg backup "$TARGET_HOME/config.toml.backup" \
+                "{original: \$original, backup: \$backup}")
+            if autofix_existing_restore_from_backup "$backup_json" "$TARGET_HOME/config.toml" >/dev/null 2>&1; then
+                result="success"
+            else
+                result="failure"
+            fi
+            jq -nc \
+                --arg result "$result" \
+                --arg contents "$(cat "$TARGET_HOME/config.toml" 2>/dev/null || true)" \
+                --arg fsync_log "$(cat "$fsync_log" 2>/dev/null || true)" \
+                "{result: \$result, contents: \$contents, fsync_log: \$fsync_log}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        .result == "success"
+        and .contents == "restored"
+        and (.fsync_log | contains("/config.toml"))
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing restore from backup fsyncs restored path"
+    else
+        harness_fail "autofix_existing restore from backup fsyncs restored path" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_autofix_existing_artifacts_include_global_wrapper() {
     setup_mock_env
 
@@ -5102,6 +5149,7 @@ main() {
     test_autofix_existing_backup_uses_unique_dir_when_timestamp_collides || true
     test_autofix_existing_backup_avoids_broken_symlink_collision || true
     test_autofix_existing_backup_fsyncs_manifest_and_parent_dir || true
+    test_autofix_existing_restore_from_backup_fsyncs_restored_path || true
     test_autofix_existing_artifacts_include_global_wrapper || true
     test_autofix_existing_backup_preserves_symlink_artifacts || true
     test_autofix_existing_handles_broken_symlink_artifacts || true

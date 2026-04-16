@@ -381,6 +381,55 @@ test_backup_creation_fsyncs_broken_symlink_parent_directory() {
     return 0
 }
 
+# Test: Regular file backups fsync the backup file and parent directory
+test_backup_creation_fsyncs_file_parent_directory() {
+    setup_test_env
+
+    local test_file="/tmp/test_backup_file_fsync_${$}"
+    local fsync_log="$ACFS_STATE_DIR/fsync.log"
+    local original_fsync_file original_fsync_directory
+    printf 'content\n' > "$test_file"
+
+    original_fsync_file="$(declare -f fsync_file)"
+    original_fsync_directory="$(declare -f fsync_directory)"
+    fsync_file() {
+        printf 'file:%s\n' "$1" >> "$fsync_log"
+        return 0
+    }
+    fsync_directory() {
+        printf 'dir:%s\n' "$1" >> "$fsync_log"
+        return 0
+    }
+
+    ACFS_SESSION_ID="test_sess"
+
+    local backup_json backup_path backup_parent
+    backup_json=$(create_backup "$test_file" "test")
+    backup_path=$(echo "$backup_json" | jq -r '.backup')
+    backup_parent=$(dirname "$backup_path")
+
+    eval "$original_fsync_file"
+    eval "$original_fsync_directory"
+
+    if ! grep -Fx "file:$backup_path" "$fsync_log" >/dev/null 2>&1; then
+        echo "  File backup did not fsync backup file: $backup_path"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -Fx "dir:$backup_parent" "$fsync_log" >/dev/null 2>&1; then
+        echo "  File backup did not fsync backup parent dir: $backup_parent"
+        rm -f "$test_file"
+        cleanup_test_env
+        return 1
+    fi
+
+    rm -f "$test_file"
+    cleanup_test_env
+    return 0
+}
+
 # Test: State integrity accepts active broken symlink backups
 test_state_integrity_accepts_broken_symlink_backup() {
     setup_test_env
@@ -1406,6 +1455,7 @@ main() {
     run_test test_backup_creation_preserves_symlink_type
     run_test test_backup_creation_preserves_broken_symlink_type
     run_test test_backup_creation_fsyncs_broken_symlink_parent_directory
+    run_test test_backup_creation_fsyncs_file_parent_directory
     run_test test_backup_nonexistent_file
     run_test test_record_checksum
     run_test test_state_integrity

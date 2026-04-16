@@ -230,6 +230,7 @@ autofix_existing_restore_from_backup() {
     local backup_json="$1"
     local target_path="${2:-}"
     local restore_command=""
+    local restored_path=""
 
     restore_command="$(autofix_backup_restore_command "$backup_json" 2>/dev/null || true)"
     if [[ -z "$restore_command" ]]; then
@@ -240,6 +241,21 @@ autofix_existing_restore_from_backup() {
     if ! bash -c "$restore_command"; then
         log_error "[RESTORE] Failed to restore${target_path:+ $target_path} from backup"
         return 1
+    fi
+
+    restored_path="$target_path"
+    if [[ -z "$restored_path" ]]; then
+        restored_path="$(printf '%s' "$backup_json" | jq -r '.original // empty' 2>/dev/null || true)"
+    fi
+    if [[ -n "$restored_path" ]]; then
+        if ! autofix_path_exists "$restored_path"; then
+            log_error "[RESTORE] Restored path is missing after restore: $restored_path"
+            return 1
+        fi
+        if ! autofix_sync_backup_path "$restored_path"; then
+            log_error "[RESTORE] Failed to fsync restored path: $restored_path"
+            return 1
+        fi
     fi
 
     return 0
