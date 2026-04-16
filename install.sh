@@ -3887,7 +3887,7 @@ setup_shell() {
     fi
 
     # Install zsh
-    if ! command_exists zsh; then
+    if ! binary_installed "zsh"; then
         log_detail "Installing zsh"
         try_step "Installing zsh" $SUDO apt-get install -y zsh || return 1
     fi
@@ -4047,7 +4047,7 @@ install_github_cli() {
     # GitHub CLI (gh) is a core tool for ACFS workflows (PRs, auth, issues).
     # Prefer distro apt; fall back to the official GitHub CLI apt repo if needed.
 
-    if command_exists gh; then
+    if binary_installed "gh"; then
         return 0
     fi
 
@@ -4129,7 +4129,7 @@ install_cli_tools() {
 
     # Install gum if not already installed (install_gum_early may have skipped
     # if curl/gpg weren't available at that point)
-    if command_exists gum; then
+    if binary_installed "gum"; then
         log_detail "gum already installed"
     else
         log_detail "Installing gum for glamorous shell scripts"
@@ -4149,8 +4149,10 @@ install_cli_tools() {
     try_step "Installing required apt packages" $SUDO apt-get install -y ripgrep tmux fzf direnv jq git-lfs lsof dnsutils netcat-openbsd strace rsync zstd || return 1
 
     # GitHub CLI (gh)
-    if command_exists gh; then
-        log_detail "gh already installed ($(gh --version 2>/dev/null | head -1 || echo 'gh'))"
+    local gh_bin=""
+    gh_bin="$(binary_path gh 2>/dev/null || true)"
+    if [[ -n "$gh_bin" ]]; then
+        log_detail "gh already installed ($("$gh_bin" --version 2>/dev/null | head -1 || echo 'gh'))"
     else
         if try_step "Installing GitHub CLI" install_github_cli; then
             log_success "gh installed"
@@ -4178,7 +4180,7 @@ install_cli_tools() {
     fi
 
     # Robust lazygit install (apt or binary fallback)
-    if ! command_exists lazygit; then
+    if ! binary_installed "lazygit"; then
         log_detail "Installing lazygit..."
         if ! $SUDO apt-get install -y lazygit >/dev/null 2>&1; then
             local arch=""
@@ -4202,7 +4204,7 @@ install_cli_tools() {
                     if acfs_download_file_and_verify_sha256 "$lg_url" "$lg_tmp" "$lg_sha256" "lazygit ${lg_ver} (${arch})"; then
                         if $SUDO tar -xzf "$lg_tmp" -C /usr/local/bin --no-same-owner --no-same-permissions lazygit 2>/dev/null; then
                             $SUDO chmod 0755 /usr/local/bin/lazygit 2>/dev/null || true
-                            if command_exists lazygit; then
+                            if binary_installed "lazygit"; then
                                 log_detail "lazygit installed from GitHub release"
                             else
                                 log_warn "lazygit: extracted but binary not found in PATH (skipping)"
@@ -4218,7 +4220,7 @@ install_cli_tools() {
     fi
 
     # Robust lazydocker install (binary fallback)
-    if ! command_exists lazydocker; then
+    if ! binary_installed "lazydocker"; then
         log_detail "Installing lazydocker..."
         local arch=""
         case "$(uname -m)" in
@@ -4241,7 +4243,7 @@ install_cli_tools() {
                 if acfs_download_file_and_verify_sha256 "$ld_url" "$ld_tmp" "$ld_sha256" "lazydocker ${ld_ver} (${arch})"; then
                     if $SUDO tar -xzf "$ld_tmp" -C /usr/local/bin --no-same-owner --no-same-permissions lazydocker 2>/dev/null; then
                         $SUDO chmod 0755 /usr/local/bin/lazydocker 2>/dev/null || true
-                        if command_exists lazydocker; then
+                        if binary_installed "lazydocker"; then
                             log_detail "lazydocker installed from GitHub release"
                         else
                             log_warn "lazydocker: extracted but binary not found in PATH (skipping)"
@@ -4337,13 +4339,13 @@ install_languages_legacy_lang() {
     fi
 
     # Go (system-wide)
-    if ! command_exists go; then
+    if ! binary_installed "go"; then
         log_detail "Installing Go"
         try_step "Installing Go" $SUDO apt-get install -y golang-go || return 1
     fi
 
     # uv (install as target user)
-    if [[ -x "$ACFS_BIN_DIR/uv" ]] || [[ -x "$TARGET_HOME/.cargo/bin/uv" ]] || command -v uv &>/dev/null; then
+    if binary_installed "uv"; then
         log_detail "uv already installed"
     else
         log_detail "Installing uv for $TARGET_USER"
@@ -4427,7 +4429,7 @@ install_languages_legacy_tools() {
 
     # Atuin (install as target user)
     # Check both the data directory and the binary location
-    if [[ -d "$TARGET_HOME/.atuin" ]] || [[ -x "$TARGET_HOME/.atuin/bin/atuin" ]] || command -v atuin &>/dev/null; then
+    if [[ -d "$TARGET_HOME/.atuin" ]] || binary_installed "atuin"; then
         log_detail "Atuin already installed"
     else
         log_detail "Installing Atuin for $TARGET_USER"
@@ -4455,7 +4457,7 @@ install_languages_legacy_tools() {
 
     # Zoxide - prefer apt to avoid GitHub API rate limits in CI
     # Check multiple possible locations
-    if [[ -x "$ACFS_BIN_DIR/zoxide" ]] || [[ -x "/usr/local/bin/zoxide" ]] || command -v zoxide &>/dev/null; then
+    if binary_installed "zoxide"; then
         log_detail "Zoxide already installed"
     else
         log_detail "Installing Zoxide for $TARGET_USER"
@@ -4688,8 +4690,8 @@ install_cloud_db_legacy_db() {
     # PostgreSQL 18 (via PGDG)
     if [[ "$SKIP_POSTGRES" == "true" ]]; then
         log_detail "Skipping PostgreSQL (--skip-postgres)"
-    elif command_exists psql; then
-        log_detail "PostgreSQL already installed ($(psql --version 2>/dev/null | head -1 || echo 'psql'))"
+    elif psql_bin="$(binary_path psql 2>/dev/null || true)" && [[ -n "$psql_bin" ]]; then
+        log_detail "PostgreSQL already installed ($("$psql_bin" --version 2>/dev/null | head -1 || echo 'psql'))"
     else
         # PGDG may lag behind new Ubuntu codenames (e.g. 25.10) - fall back to noble (24.04 LTS) when needed.
         local pgdg_codename="$codename"
@@ -4747,8 +4749,8 @@ install_cloud_db_legacy_tools() {
     # Vault (HashiCorp apt repo)
     if [[ "$SKIP_VAULT" == "true" ]]; then
         log_detail "Skipping Vault (--skip-vault)"
-    elif command_exists vault; then
-        log_detail "Vault already installed ($(vault --version 2>/dev/null | head -1 || echo 'vault'))"
+    elif vault_bin="$(binary_path vault 2>/dev/null || true)" && [[ -n "$vault_bin" ]]; then
+        log_detail "Vault already installed ($("$vault_bin" --version 2>/dev/null | head -1 || echo 'vault'))"
     else
         # HashiCorp doesn't always have packages for newest Ubuntu versions.
         # Check if the current codename is supported, otherwise fall back to noble (24.04 LTS).
@@ -5043,13 +5045,39 @@ install_cloud_db() {
 # Phase 8: Dicklesworthstone stack
 # ============================================================
 
-# Helper: check if a binary exists in common install locations
-binary_installed() {
+# Resolve binaries only from target-owned or stable system locations.
+# Do not trust arbitrary inherited PATH entries here: they can point at tools from
+# the caller's shell instead of the target installation we are managing.
+binary_path() {
     local name="$1"
-    [[ -x "$ACFS_BIN_DIR/$name" ]] || \
-    [[ -x "/usr/local/bin/$name" ]] || \
-    [[ -x "$TARGET_HOME/.bun/bin/$name" ]] || \
-    [[ -x "$TARGET_HOME/.cargo/bin/$name" ]]
+    local primary_bin="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    local candidate=""
+
+    for candidate in \
+        "$primary_bin/$name" \
+        "$TARGET_HOME/.local/bin/$name" \
+        "$TARGET_HOME/.acfs/bin/$name" \
+        "$TARGET_HOME/.cargo/bin/$name" \
+        "$TARGET_HOME/.bun/bin/$name" \
+        "$TARGET_HOME/.atuin/bin/$name" \
+        "$TARGET_HOME/go/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/snap/bin/$name"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+binary_installed() {
+    local path=""
+    path="$(binary_path "$1" 2>/dev/null || true)"
+    [[ -n "$path" ]]
 }
 
 install_stack_phase() {
@@ -5159,15 +5187,30 @@ NTM_CONFIG_EOF
     local target_dir="$TARGET_HOME/mcp_agent_mail"
     local am_service_ready=false
     if run_as_target bash -c 'set -euo pipefail
-        am_bin=""
-        preferred_am="$HOME/mcp_agent_mail/am"
-        if [[ -x "$preferred_am" ]]; then
-            am_bin="$preferred_am"
-        elif command -v am >/dev/null 2>&1; then
-            am_bin="$(command -v am)"
-        else
-            exit 1
-        fi
+        export PATH="${ACFS_BIN_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"
+        resolve_target_am() {
+            local primary_am="${ACFS_BIN_DIR:-$HOME/.local/bin}/am"
+            local candidate=""
+
+            for candidate in \
+                "$HOME/mcp_agent_mail/am" \
+                "$primary_am" \
+                "$HOME/.local/bin/am" \
+                "$HOME/.acfs/bin/am" \
+                "$HOME/.cargo/bin/am" \
+                "$HOME/.bun/bin/am" \
+                "$HOME/.atuin/bin/am" \
+                "$HOME/go/bin/am"; do
+                if [[ -x "$candidate" ]]; then
+                    printf "%s\n" "$candidate"
+                    return 0
+                fi
+            done
+
+            return 1
+        }
+        am_bin="$(resolve_target_am 2>/dev/null || true)"
+        [[ -n "$am_bin" ]] || exit 1
         runtime_dir="/run/user/$(id -u)"
         if [[ -d "$runtime_dir" ]]; then
             export XDG_RUNTIME_DIR="$runtime_dir"
@@ -5202,9 +5245,25 @@ NTM_CONFIG_EOF
                     # Symlink repair/normalization: prefer the freshly installed
                     # Rust CLI even if an older am is already on PATH.
                     run_as_target bash -c "
+                        export PATH=\"\${ACFS_BIN_DIR:-\$HOME/.local/bin}:\$HOME/.local/bin:\$HOME/.acfs/bin:\$HOME/.cargo/bin:\$HOME/.bun/bin:\$HOME/.atuin/bin:\$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin\"
                         am_src=\"$target_dir/am\"
                         am_dst=\"\$HOME/.local/bin/am\"
-                        resolved_am=\"\$(command -v am 2>/dev/null || true)\"
+                        primary_am=\"\${ACFS_BIN_DIR:-\$HOME/.local/bin}/am\"
+                        resolved_am=\"\"
+                        for candidate in \\
+                            \"\$am_src\" \\
+                            \"\$primary_am\" \\
+                            \"\$HOME/.local/bin/am\" \\
+                            \"\$HOME/.acfs/bin/am\" \\
+                            \"\$HOME/.cargo/bin/am\" \\
+                            \"\$HOME/.bun/bin/am\" \\
+                            \"\$HOME/.atuin/bin/am\" \\
+                            \"\$HOME/go/bin/am\"; do
+                            if [[ -x \"\$candidate\" ]]; then
+                                resolved_am=\"\$candidate\"
+                                break
+                            fi
+                        done
                         if [[ -x \"\$am_src\" ]]; then
                             mkdir -p \"\$HOME/.local/bin\"
                             if [[ \"\$resolved_am\" != \"\$am_src\" ]]; then
@@ -5214,6 +5273,7 @@ NTM_CONFIG_EOF
                         fi
                     " || true
                     if run_as_target bash -c 'set -euo pipefail
+                        export PATH="${ACFS_BIN_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"
                         sqlite_user_table_count() {
                             local db_path="$1"
                             [[ -f "$db_path" ]] || {
@@ -5250,11 +5310,23 @@ PY
                         unit_dir="$HOME/.config/systemd/user"
                         unit_file="$unit_dir/agent-mail.service"
                         preferred_am="$HOME/mcp_agent_mail/am"
-                        if [[ -x "$preferred_am" ]]; then
-                            am_bin="$preferred_am"
-                        else
-                            am_bin="$(command -v am)"
-                        fi
+                        primary_am="${ACFS_BIN_DIR:-$HOME/.local/bin}/am"
+                        am_bin=""
+                        for candidate in \
+                            "$preferred_am" \
+                            "$primary_am" \
+                            "$HOME/.local/bin/am" \
+                            "$HOME/.acfs/bin/am" \
+                            "$HOME/.cargo/bin/am" \
+                            "$HOME/.bun/bin/am" \
+                            "$HOME/.atuin/bin/am" \
+                            "$HOME/go/bin/am"; do
+                            if [[ -x "$candidate" ]]; then
+                                am_bin="$candidate"
+                                break
+                            fi
+                        done
+                        [[ -n "$am_bin" ]] || exit 1
                         if [[ -f "$install_db" ]]; then
                             install_tables="$(sqlite_user_table_count "$install_db")"
                             legacy_tables="$(sqlite_user_table_count "$legacy_db")"
@@ -6019,13 +6091,25 @@ EOF
 # Post-install smoke test
 # Runs quick, automatic verification at the end of install.sh
 # ============================================================
+_smoke_target_path() {
+    local user_home="${TARGET_HOME:-}"
+    if [[ -z "$user_home" ]]; then
+        user_home="$(acfs_home_for_user "$TARGET_USER" || true)"
+    fi
+    if [[ -z "$user_home" ]] || [[ "$user_home" != /* ]]; then
+        return 1
+    fi
+
+    printf '%s\n' "${ACFS_BIN_DIR:-$user_home/.local/bin}:$user_home/.local/bin:$user_home/.acfs/bin:$user_home/.cargo/bin:$user_home/.bun/bin:$user_home/.atuin/bin:$user_home/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+}
+
+
 _smoke_run_as_target() {
     local cmd="$1"
-    if type -t run_as_target_shell &>/dev/null; then
-        run_as_target_shell "$cmd"
-        return $?
-    fi
-    run_as_target bash -c "$cmd"
+    local smoke_path=""
+
+    smoke_path="$(_smoke_target_path)" || return 1
+    run_as_target env "PATH=$smoke_path" bash -c "set -euo pipefail; $cmd"
 }
 
 run_smoke_test() {
@@ -6107,7 +6191,7 @@ run_smoke_test() {
     [[ -x "$TARGET_HOME/.bun/bin/bun" ]] || missing_lang+=("bun")
     [[ -x "$ACFS_BIN_DIR/uv" || -x "$TARGET_HOME/.cargo/bin/uv" ]] || missing_lang+=("uv")
     [[ -x "$TARGET_HOME/.cargo/bin/cargo" ]] || missing_lang+=("cargo")
-    command_exists go || missing_lang+=("go")
+    binary_installed "go" || missing_lang+=("go")
     if [[ ${#missing_lang[@]} -eq 0 ]]; then
         echo "✅ Languages: bun, uv, cargo, go available" >&2
         ((critical_passed += 1))
@@ -6153,7 +6237,9 @@ run_smoke_test() {
 
     # Non-critical: Agent Mail service status
     if run_as_target bash -c 'set -euo pipefail
-        command -v am >/dev/null 2>&1
+        export PATH="${ACFS_BIN_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"
+        primary_am="${ACFS_BIN_DIR:-$HOME/.local/bin}/am"
+        [[ -x "$HOME/mcp_agent_mail/am" || -x "$primary_am" || -x "$HOME/.local/bin/am" || -x "$HOME/.acfs/bin/am" || -x "$HOME/.cargo/bin/am" || -x "$HOME/.bun/bin/am" || -x "$HOME/.atuin/bin/am" || -x "$HOME/go/bin/am" ]]
         runtime_dir="/run/user/$(id -u)"
         if [[ -d "$runtime_dir" ]]; then
             export XDG_RUNTIME_DIR="$runtime_dir"
@@ -6211,7 +6297,7 @@ run_smoke_test() {
     if [[ "$SKIP_VAULT" == "true" ]]; then
         echo "⚠️ Vault: skipped (optional)" >&2
         ((warnings += 1))
-    elif command_exists vault; then
+    elif binary_installed "vault"; then
         echo "✅ Vault: installed" >&2
     else
         echo "⚠️ Vault: not installed (optional)" >&2

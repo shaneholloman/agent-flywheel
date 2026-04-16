@@ -26,6 +26,7 @@ WEBHOOK_SH="$REPO_ROOT/scripts/lib/webhook.sh"
 NOTIFICATIONS_SH="$REPO_ROOT/scripts/lib/notifications.sh"
 AUTOFIX_SH="$REPO_ROOT/scripts/lib/autofix.sh"
 AUTOFIX_EXISTING_SH="$REPO_ROOT/scripts/lib/autofix_existing.sh"
+STACK_SH="$REPO_ROOT/scripts/lib/stack.sh"
 
 source "$REPO_ROOT/tests/vm/lib/test_harness.sh"
 
@@ -693,6 +694,248 @@ test_services_setup_setup_flows_tolerate_unset_status_keys() {
     fi
 
     cleanup_mock_env
+}
+
+
+test_services_setup_find_user_bin_checks_system_paths() {
+    local output=""
+
+    if output=$(SERVICES_SETUP_SH="$SERVICES_SETUP_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+export TARGET_USER="ubuntu"
+export TARGET_HOME="$tmp_dir/target-home"
+export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+mkdir -p "$TARGET_HOME"
+# shellcheck source=/dev/null
+source "$SERVICES_SETUP_SH"
+
+if out="$(find_user_bin bash 2>/dev/null)"; then
+    printf 'path=%s
+' "$out"
+else
+    printf 'rc=%s
+' "$?"
+fi
+EOF
+    ); then
+        if [[ "$output" == "/usr/bin/bash" || "$output" == "/bin/bash" || "$output" == path=/usr/bin/bash || "$output" == path=/bin/bash ]]; then
+            harness_pass "services-setup find_user_bin checks system paths"
+        else
+            harness_fail "services-setup find_user_bin checks system paths" "$output"
+        fi
+    else
+        harness_fail "services-setup find_user_bin checks system paths"
+    fi
+}
+
+test_stack_is_installed_handles_unknown_tool_under_set_u() {
+    local output=""
+
+    if output=$(STACK_SH="$STACK_SH" bash <<'EOF'
+set -u
+export TARGET_USER="ubuntu"
+export TARGET_HOME="/tmp/acfs-stack-test-home"
+# shellcheck source=/dev/null
+source "$STACK_SH"
+
+if _stack_is_installed "does_not_exist"; then
+    printf 'rc=0\n'
+else
+    printf 'rc=%s\n' "$?"
+fi
+EOF
+    ); then
+        if [[ "$output" == "rc=1" ]]; then
+            harness_pass "stack helper returns false for unknown tool under set -u"
+        else
+            harness_fail "stack helper returns false for unknown tool under set -u" "$output"
+        fi
+    else
+        harness_fail "stack helper returns false for unknown tool under set -u"
+    fi
+}
+
+test_stack_is_installed_ignores_current_shell_only_path_entries() {
+    local output=""
+
+    if output=$(STACK_SH="$STACK_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+target_home="$tmp_dir/target-home"
+global_bin="$tmp_dir/global-bin"
+mkdir -p "$target_home/.local/bin" "$global_bin"
+cat > "$global_bin/current-shell-only-tool" <<'SCRIPT'
+#!/usr/bin/env bash
+echo current-shell-only-tool
+SCRIPT
+chmod +x "$global_bin/current-shell-only-tool"
+export PATH="$global_bin:${PATH:-/usr/bin:/bin}"
+export TARGET_USER="ubuntu"
+export TARGET_HOME="$target_home"
+export ACFS_BIN_DIR="$target_home/.local/bin"
+# shellcheck source=/dev/null
+source "$STACK_SH"
+STACK_COMMANDS[ntm]="current-shell-only-tool"
+
+if _stack_is_installed "ntm"; then
+    printf 'rc=0\n'
+else
+    printf 'rc=%s\n' "$?"
+fi
+EOF
+    ); then
+        if [[ "$output" == "rc=1" ]]; then
+            harness_pass "stack helper ignores current-shell-only PATH entries"
+        else
+            harness_fail "stack helper ignores current-shell-only PATH entries" "$output"
+        fi
+    else
+        harness_fail "stack helper ignores current-shell-only PATH entries"
+    fi
+}
+
+test_stack_target_has_command_finds_target_user_local_claude() {
+    local output=""
+
+    if output=$(STACK_SH="$STACK_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+target_home="$tmp_dir/target-home"
+mkdir -p "$target_home/.local/bin"
+cat > "$target_home/.local/bin/claude" <<'SCRIPT'
+#!/usr/bin/env bash
+echo claude
+SCRIPT
+chmod +x "$target_home/.local/bin/claude"
+export PATH="/usr/bin:/bin"
+export TARGET_USER="ubuntu"
+export TARGET_HOME="$target_home"
+export ACFS_BIN_DIR="$target_home/.local/bin"
+# shellcheck source=/dev/null
+source "$STACK_SH"
+
+if _stack_target_has_command "claude"; then
+    printf 'rc=0\n'
+else
+    printf 'rc=%s\n' "$?"
+fi
+EOF
+    ); then
+        if [[ "$output" == "rc=0" ]]; then
+            harness_pass "stack helper finds target-user local claude binary"
+        else
+            harness_fail "stack helper finds target-user local claude binary" "$output"
+        fi
+    else
+        harness_fail "stack helper finds target-user local claude binary"
+    fi
+}
+
+test_stack_agent_mail_cli_path_ignores_current_shell_only_am() {
+    local output=""
+
+    if output=$(STACK_SH="$STACK_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+target_home="$tmp_dir/target-home"
+global_bin="$tmp_dir/global-bin"
+mkdir -p "$global_bin"
+cat > "$global_bin/am" <<'SCRIPT'
+#!/usr/bin/env bash
+echo am
+SCRIPT
+chmod +x "$global_bin/am"
+export PATH="$global_bin:/usr/bin:/bin"
+export TARGET_USER="ubuntu"
+export TARGET_HOME="$target_home"
+export ACFS_BIN_DIR="$target_home/.local/bin"
+# shellcheck source=/dev/null
+source "$STACK_SH"
+
+if cli_path="$(_stack_agent_mail_cli_path 2>/dev/null)"; then
+    printf 'rc=0 path=%s\n' "$cli_path"
+else
+    printf 'rc=%s\n' "$?"
+fi
+EOF
+    ); then
+        if [[ "$output" == "rc=1" ]]; then
+            harness_pass "stack agent mail cli path ignores current-shell-only am"
+        else
+            harness_fail "stack agent mail cli path ignores current-shell-only am" "$output"
+        fi
+    else
+        harness_fail "stack agent mail cli path ignores current-shell-only am"
+    fi
+}
+
+test_stack_agent_mail_ready_ignores_current_shell_only_am() {
+    local output=""
+
+    if output=$(STACK_SH="$STACK_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+target_home="$tmp_dir/target-home"
+global_bin="$tmp_dir/global-bin"
+mkdir -p "$target_home/.local/bin" "$global_bin"
+cat > "$global_bin/am" <<'SCRIPT'
+#!/usr/bin/env bash
+echo am
+SCRIPT
+chmod +x "$global_bin/am"
+cat > "$target_home/.local/bin/curl" <<'SCRIPT'
+#!/usr/bin/env bash
+case "$*" in
+    *"/health")
+        printf '%s\n' '{"status":"ready"}'
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+SCRIPT
+chmod +x "$target_home/.local/bin/curl"
+cat > "$target_home/.local/bin/systemctl" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+chmod +x "$target_home/.local/bin/systemctl"
+export PATH="$global_bin:/usr/bin:/bin"
+export HOME="$target_home"
+export TARGET_USER="ubuntu"
+export TARGET_HOME="$target_home"
+export ACFS_BIN_DIR="$target_home/.local/bin"
+# shellcheck source=/dev/null
+source "$STACK_SH"
+_stack_run_as_user() {
+    HOME="$TARGET_HOME" \
+    ACFS_BIN_DIR="$ACFS_BIN_DIR" \
+    PATH="$ACFS_BIN_DIR:${PATH:-/usr/bin:/bin}" \
+    bash -c "$1"
+}
+
+if _stack_agent_mail_ready; then
+    printf 'rc=0\n'
+else
+    printf 'rc=%s\n' "$?"
+fi
+EOF
+    ); then
+        if [[ "$output" == "rc=1" ]]; then
+            harness_pass "stack agent mail ready ignores current-shell-only am"
+        else
+            harness_fail "stack agent mail ready ignores current-shell-only am" "$output"
+        fi
+    else
+        harness_fail "stack agent mail ready ignores current-shell-only am"
+    fi
 }
 
 test_notify_uses_target_home_for_config_and_state_when_home_is_relative() {
@@ -3795,6 +4038,46 @@ test_info_uses_target_user_path_under_root_home() {
     cleanup_mock_env
 }
 
+test_info_summary_ignores_current_shell_only_binaries() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/target-home"
+    local runtime_home="$TEST_HOME/runtime-home"
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p \
+        "$runtime_home" \
+        "$TEST_FAKE_BIN" \
+        "$target_home/.oh-my-zsh" \
+        "$target_home/.local/bin" \
+        "$target_home/.bun/bin" \
+        "$target_home/.cargo/bin" \
+        "$target_home/go/bin"
+
+    write_fake_command "$target_home/.local/bin/zsh" "zsh 5.9"
+    write_fake_command "$target_home/.bun/bin/bun" "1.2.3"
+    write_fake_command "$target_home/.local/bin/uv" "uv 0.8.0"
+    write_fake_command "$target_home/.cargo/bin/rustc" "rustc 1.85.0"
+    write_fake_command "$target_home/go/bin/go" "go version go1.24.0 linux/amd64"
+
+    write_fake_command "$TEST_FAKE_BIN/claude" "claude 9.9.9"
+    write_fake_command "$TEST_FAKE_BIN/codex" "codex 9.9.9"
+    write_fake_command "$TEST_FAKE_BIN/gemini" "gemini 9.9.9"
+    write_fake_command "$TEST_FAKE_BIN/ntm" "ntm 9.9.9"
+
+    local output=""
+    output=$(HOME="$runtime_home" TARGET_HOME="$target_home" ACFS_BIN_DIR="$target_home/.local/bin" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" TEST_INFO_SCRIPT="$INFO_SH" \
+        bash -lc 'source "$TEST_INFO_SCRIPT"; info_get_installed_tools_summary' 2>/dev/null)
+
+    if [[ "$output" == shell:✓\|lang:✓\|agents:○\|stack:* ]]; then
+        harness_pass "info summary ignores current-shell-only agent binaries"
+    else
+        harness_fail "info summary ignores current-shell-only agent binaries" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_support_bundle_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
 
@@ -5247,6 +5530,14 @@ main() {
     test_services_setup_rejects_invalid_target_user_before_sudo || true
     test_services_setup_globals_are_initialized_under_set_u || true
     test_services_setup_setup_flows_tolerate_unset_status_keys || true
+    test_services_setup_find_user_bin_checks_system_paths || true
+
+    harness_section "Stack"
+    test_stack_is_installed_handles_unknown_tool_under_set_u || true
+    test_stack_is_installed_ignores_current_shell_only_path_entries || true
+    test_stack_target_has_command_finds_target_user_local_claude || true
+    test_stack_agent_mail_cli_path_ignores_current_shell_only_am || true
+    test_stack_agent_mail_ready_ignores_current_shell_only_am || true
 
     harness_section "Notification Helpers"
     test_notify_uses_target_home_for_config_and_state_when_home_is_relative || true
@@ -5356,6 +5647,7 @@ main() {
     test_info_uses_system_state_target_home_when_getent_unavailable || true
     test_info_ignores_relative_home_state_trap || true
     test_info_uses_target_user_path_under_root_home || true
+    test_info_summary_ignores_current_shell_only_binaries || true
     test_info_zero_lessons_hides_onboard_prompt_and_explains_state || true
     test_info_reads_skipped_tools_without_jq || true
     test_support_bundle_uses_installed_layout_under_root_home || true

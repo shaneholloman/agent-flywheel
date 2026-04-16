@@ -110,12 +110,15 @@ test_fix_suggestion_format() {
     local output
     output=$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1)
 
-    # Extract a sample fix suggestion from the output
+    # Extract an install-style fix suggestion from the output.
+    # Some checks legitimately emit manual repair hints (for example,
+    # `am doctor repair --yes`) before the install suggestions, so the test
+    # must not assume the first fix is always a curl installer command.
     local fix_output
-    fix_output=$(echo "$output" | jq -r '[.checks[] | select(.fix)] | .[0].fix // empty' 2>/dev/null)
+    fix_output=$(echo "$output" | jq -r '[.checks[] | select(.fix and (.fix | test("curl -fsSL")))] | .[0].fix // empty' 2>/dev/null)
 
     if [[ -z "$fix_output" ]]; then
-        harness_fail "No fix suggestions found in doctor output"
+        harness_fail "No install-style fix suggestions found in doctor output"
         harness_capture_output "doctor_output" "$output"
         return 1
     fi

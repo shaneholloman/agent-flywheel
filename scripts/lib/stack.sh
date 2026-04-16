@@ -72,6 +72,38 @@ _stack_command_exists() {
     command -v "$1" &>/dev/null
 }
 
+_stack_target_has_command() {
+    local cmd="${1:-}"
+    local target_user="${TARGET_USER:-ubuntu}"
+    local target_home=""
+    local primary_bin=""
+    local candidate=""
+
+    [[ -n "$cmd" ]] || return 1
+
+    target_home="$(_stack_target_home "$target_user" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+
+    primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    for candidate in \
+        "$primary_bin/$cmd" \
+        "$target_home/.local/bin/$cmd" \
+        "$target_home/.acfs/bin/$cmd" \
+        "$target_home/.cargo/bin/$cmd" \
+        "$target_home/.bun/bin/$cmd" \
+        "$target_home/.atuin/bin/$cmd" \
+        "$target_home/go/bin/$cmd" \
+        "$target_home/bin/$cmd" \
+        "/usr/local/bin/$cmd" \
+        "/usr/bin/$cmd" \
+        "/bin/$cmd" \
+        "/snap/bin/$cmd"; do
+        [[ -x "$candidate" ]] && return 0
+    done
+
+    return 1
+}
+
 # Check if we're in interactive mode (fallback if security.sh isn't loaded yet).
 _stack_is_interactive() {
     if declare -f _acfs_is_interactive >/dev/null 2>&1; then
@@ -238,23 +270,22 @@ _stack_agent_mail_cli_path() {
     local preferred="$target_home/mcp_agent_mail/am"
     local primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}/am"
     local fallback_bin="$target_home/.local/bin/am"
+    local candidate=""
 
-    if [[ -x "$preferred" ]]; then
-        printf '%s\n' "$preferred"
-        return 0
-    fi
-    if [[ -x "$primary_bin" ]]; then
-        printf '%s\n' "$primary_bin"
-        return 0
-    fi
-    if [[ "$fallback_bin" != "$primary_bin" ]] && [[ -x "$fallback_bin" ]]; then
-        printf '%s\n' "$fallback_bin"
-        return 0
-    fi
-    if _stack_command_exists am; then
-        command -v am
-        return 0
-    fi
+    for candidate in \
+        "$preferred" \
+        "$primary_bin" \
+        "$fallback_bin" \
+        "$target_home/.acfs/bin/am" \
+        "$target_home/.cargo/bin/am" \
+        "$target_home/.bun/bin/am" \
+        "$target_home/.atuin/bin/am" \
+        "$target_home/go/bin/am"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
 
     return 1
 }
@@ -462,31 +493,33 @@ _stack_agent_mail_healthy() {
 }
 
 _stack_agent_mail_ready() {
+    local am_cli_path=""
+    local am_cli_path_q=""
     local check_cmd
-    check_cmd="$(cat <<'EOF'
+
+    am_cli_path="$(_stack_agent_mail_cli_path 2>/dev/null || true)"
+    [[ -n "$am_cli_path" ]] || return 1
+    printf -v am_cli_path_q '%q' "$am_cli_path"
+
+    check_cmd="$(cat <<EOF
 set -euo pipefail
-preferred_am="$HOME/mcp_agent_mail/am"
-if [[ -x "$preferred_am" ]]; then
-    am_bin="$preferred_am"
-elif command -v am >/dev/null 2>&1; then
-    am_bin="$(command -v am)"
-else
-    exit 1
-fi
+export PATH="\${ACFS_BIN_DIR:-\$HOME/.local/bin}:\$HOME/.local/bin:\$HOME/.acfs/bin:\$HOME/.cargo/bin:\$HOME/.bun/bin:\$HOME/.atuin/bin:\$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"
+am_bin=$am_cli_path_q
+[[ -x "\$am_bin" ]] || exit 1
 
 if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
    ! curl -fsS --max-time 10 http://127.0.0.1:8765/healthz >/dev/null 2>&1; then
     exit 1
 fi
 
-readiness_body="$(curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null)" || exit 1
-printf '%s\n' "$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' || exit 1
+readiness_body="\$(curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null)" || exit 1
+printf '%s\n' "\$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' || exit 1
 
-runtime_dir="/run/user/$(id -u)"
-if [[ -d "$runtime_dir" ]]; then
-    export XDG_RUNTIME_DIR="$runtime_dir"
-    if [[ -S "$runtime_dir/bus" ]]; then
-        export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+runtime_dir="/run/user/\$(id -u)"
+if [[ -d "\$runtime_dir" ]]; then
+    export XDG_RUNTIME_DIR="\$runtime_dir"
+    if [[ -S "\$runtime_dir/bus" ]]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=\$runtime_dir/bus"
     fi
 fi
 
@@ -504,6 +537,7 @@ _stack_configure_agent_mail_service() {
     local service_cmd
     service_cmd="$(cat <<'EOF'
 set -euo pipefail
+export PATH="${ACFS_BIN_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"
 
 trim_ascii_whitespace() {
     local value="${1:-}"
@@ -618,13 +652,30 @@ PY
     printf '0\n'
 }
 
-am_bin=""
 preferred_am="$HOME/mcp_agent_mail/am"
-if [[ -x "$preferred_am" ]]; then
-    am_bin="$preferred_am"
-else
-    am_bin="$(command -v am 2>/dev/null || true)"
-fi
+resolve_target_am() {
+    local primary_am="${ACFS_BIN_DIR:-$HOME/.local/bin}/am"
+    local candidate=""
+
+    for candidate in \
+        "$preferred_am" \
+        "$primary_am" \
+        "$HOME/.local/bin/am" \
+        "$HOME/.acfs/bin/am" \
+        "$HOME/.cargo/bin/am" \
+        "$HOME/.bun/bin/am" \
+        "$HOME/.atuin/bin/am" \
+        "$HOME/go/bin/am"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+am_bin="$(resolve_target_am 2>/dev/null || true)"
 [[ -n "$am_bin" ]] || {
     echo "am CLI missing after install" >&2
     exit 1
@@ -849,33 +900,13 @@ _stack_wait_for_agent_mail_health() {
 # Check if a stack tool is installed
 _stack_is_installed() {
     local tool="$1"
-    local cmd="${STACK_COMMANDS[$tool]}"
+    local cmd="${STACK_COMMANDS[$tool]:-}"
 
     if [[ -z "$cmd" ]]; then
         return 1
     fi
 
-    # Check in common locations
-    local target_user="${TARGET_USER:-ubuntu}"
-    local target_home=""
-    target_home="$(_stack_target_home "$target_user")"
-
-    # Check PATH
-    if _stack_command_exists "$cmd"; then
-        return 0
-    fi
-
-    # Check user's local bin
-    if [[ -x "$target_home/.local/bin/$cmd" ]]; then
-        return 0
-    fi
-
-    # Check user's bin
-    if [[ -x "$target_home/bin/$cmd" ]]; then
-        return 0
-    fi
-
-    return 1
+    _stack_target_has_command "$cmd"
 }
 
 # PCR is only fully installed once both the hook binary and Claude settings entry exist.
@@ -1228,7 +1259,7 @@ install_dcg() {
             log_success "${STACK_NAMES[$tool]} installed"
             
             # Register hook if Claude Code is present
-            if _stack_command_exists claude; then
+            if _stack_target_has_command claude; then
                 log_detail "Registering DCG hook..."
                 _stack_run_as_user "dcg install --force" || log_warn "Failed to register DCG hook"
             fi
@@ -1410,7 +1441,7 @@ install_pcr() {
         return 0
     fi
 
-    if ! _stack_command_exists claude; then
+    if ! _stack_target_has_command claude; then
         log_detail "Skipping ${STACK_NAMES[$tool]} because Claude Code is not installed"
         return 0
     fi

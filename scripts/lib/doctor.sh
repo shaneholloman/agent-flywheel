@@ -376,13 +376,17 @@ fix_for_phase() {
 
 agent_mail_doctor_check_json() {
     local description="Agent Mail doctor check"
-    local result
+    local result=""
+    local am_bin=""
+
+    am_bin="$(doctor_agent_mail_cli_path 2>/dev/null || true)"
+    [[ -n "$am_bin" ]] || return 1
 
     local exit_status=0
     if [[ $# -gt 0 ]]; then
-        result="$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$description" am doctor check --json "$1")" || exit_status=$?
+        result="$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$description" "$am_bin" doctor check --json "$1")" || exit_status=$?
     else
-        result="$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$description" am doctor check --json)" || exit_status=$?
+        result="$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$description" "$am_bin" doctor check --json)" || exit_status=$?
     fi
 
     if [[ $exit_status -ne 0 ]] || [[ -z "$result" ]] || [[ "$result" == "TIMEOUT" ]]; then
@@ -1087,23 +1091,103 @@ check() {
     fi
 }
 
+doctor_binary_path() {
+    local name="${1:-}"
+    local runtime_home=""
+    local primary_bin_dir=""
+    local candidate=""
+    local -a candidates=()
+
+    [[ -n "$name" ]] || return 1
+
+    runtime_home="$(doctor_runtime_home)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    if [[ -n "${ACFS_HOME:-}" ]]; then
+        candidates+=("$ACFS_HOME/bin/$name")
+    fi
+    candidates+=(
+        "$primary_bin_dir/$name"
+        "$runtime_home/.local/bin/$name"
+        "$runtime_home/.acfs/bin/$name"
+        "$runtime_home/.bun/bin/$name"
+        "$runtime_home/.cargo/bin/$name"
+        "$runtime_home/.atuin/bin/$name"
+        "$runtime_home/go/bin/$name"
+        "$runtime_home/bin/$name"
+        "/usr/local/bin/$name"
+        "/usr/bin/$name"
+        "/bin/$name"
+        "/usr/local/sbin/$name"
+        "/usr/sbin/$name"
+        "/sbin/$name"
+        "/snap/bin/$name"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+doctor_binary_exists() {
+    local resolved=""
+    resolved="$(doctor_binary_path "$1" 2>/dev/null || true)"
+    [[ -n "$resolved" ]]
+}
+
+doctor_agent_mail_cli_path() {
+    local runtime_home=""
+    local primary_bin_dir=""
+    local candidate=""
+
+    runtime_home="$(doctor_runtime_home)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    for candidate in \
+        "$primary_bin_dir/am" \
+        "$runtime_home/.local/bin/am" \
+        "$runtime_home/.acfs/bin/am" \
+        "$runtime_home/.bun/bin/am" \
+        "$runtime_home/.cargo/bin/am" \
+        "$runtime_home/.atuin/bin/am" \
+        "$runtime_home/go/bin/am" \
+        "$runtime_home/bin/am"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
 # Try to retrieve a reasonably informative version line for a command without
 # assuming it supports `--version`.
 get_version_line() {
     local cmd="$1"
+    local exec_path="$cmd"
+
+    if [[ "$cmd" != */* ]]; then
+        exec_path="$(doctor_binary_path "$cmd" 2>/dev/null || true)"
+        [[ -n "$exec_path" ]] || exec_path="$cmd"
+    fi
 
     local version=""
     # UBS has a directory size check that can block --version; bypass it
-    if [[ "$cmd" == "ubs" ]]; then
-        version=$(UBS_MAX_DIR_SIZE_MB=10000 "$cmd" --version 2>/dev/null | head -n1) || true
+    if [[ "$cmd" == "ubs" ]] || [[ "$exec_path" == */ubs ]]; then
+        version=$(UBS_MAX_DIR_SIZE_MB=10000 "$exec_path" --version 2>/dev/null | head -n1) || true
     else
-        version=$("$cmd" --version 2>/dev/null | head -n1) || true
+        version=$("$exec_path" --version 2>/dev/null | head -n1) || true
     fi
     if [[ -z "$version" ]]; then
-        version=$("$cmd" -V 2>/dev/null | head -n1) || true
+        version=$("$exec_path" -V 2>/dev/null | head -n1) || true
     fi
     if [[ -z "$version" ]]; then
-        version=$("$cmd" version 2>/dev/null | head -n1) || true
+        version=$("$exec_path" version 2>/dev/null | head -n1) || true
     fi
 
     if [[ -z "$version" ]]; then
@@ -1119,10 +1203,12 @@ check_command() {
     local label="$2"
     local cmd="$3"
     local fix="${4:-}"
+    local cmd_path=""
 
-    if command -v "$cmd" &>/dev/null; then
+    cmd_path="$(doctor_binary_path "$cmd" 2>/dev/null || true)"
+    if [[ -n "$cmd_path" ]]; then
         local version
-        version=$(get_version_line "$cmd")
+        version=$(get_version_line "$cmd_path")
         check "$id" "$label ($version)" "pass" "installed"
     else
         check "$id" "$label" "fail" "not found" "$fix"
@@ -1135,10 +1221,12 @@ check_optional_command() {
     local label="$2"
     local cmd="$3"
     local fix="${4:-}"
+    local cmd_path=""
 
-    if command -v "$cmd" &>/dev/null; then
+    cmd_path="$(doctor_binary_path "$cmd" 2>/dev/null || true)"
+    if [[ -n "$cmd_path" ]]; then
         local version
-        version=$(get_version_line "$cmd")
+        version=$(get_version_line "$cmd_path")
         check "$id" "$label ($version)" "pass" "installed"
     else
         check "$id" "$label" "warn" "not found" "$fix"
@@ -1230,9 +1318,13 @@ check_shell() {
     fi
 
     # Check modern CLI tools
-    if command -v lsd &>/dev/null; then
+    local lsd_bin=""
+    local eza_bin=""
+    lsd_bin="$(doctor_binary_path lsd 2>/dev/null || true)"
+    eza_bin="$(doctor_binary_path eza 2>/dev/null || true)"
+    if [[ -n "$lsd_bin" ]]; then
         check "shell.lsd_or_eza" "lsd" "pass"
-    elif command -v eza &>/dev/null; then
+    elif [[ -n "$eza_bin" ]]; then
         check "shell.lsd_or_eza" "eza (fallback)" "pass"
     else
         check "shell.lsd_or_eza" "lsd/eza" "warn" "neither installed" "sudo apt install lsd"
@@ -1319,7 +1411,7 @@ check_agent_path_conflicts() {
     expected_native_path="$(doctor_runtime_home)/.local/bin/claude"
 
     local claude_path
-    claude_path=$(command -v claude 2>/dev/null) || true
+    claude_path="$(doctor_binary_path claude 2>/dev/null || true)"
 
     if [[ -z "$claude_path" ]]; then
         return 0  # Not installed, skip
@@ -1345,7 +1437,7 @@ check_agent_path_conflicts() {
 
 # Check DCG hook registration status
 check_dcg_hook_status() {
-    if ! command -v dcg &>/dev/null; then
+    if ! doctor_binary_exists "dcg"; then
         check "stack.dcg" "DCG" "warn" "not installed" \
             "Re-run: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/destructive_command_guard/main/install.sh | bash && dcg install"
         return
@@ -1354,7 +1446,7 @@ check_dcg_hook_status() {
     local version
     version=$(get_version_line "dcg")
 
-    if ! command -v claude &>/dev/null; then
+    if ! doctor_binary_exists "claude"; then
         check "stack.dcg" "DCG ($version)" "warn" "Claude Code not found for hook registration" \
             "Install Claude Code, then run: dcg install"
         return
@@ -1498,6 +1590,11 @@ check_cloud() {
 
 # Check Dicklesworthstone stack
 check_stack() {
+    local ubs_bin=""
+    local bv_path=""
+    local am_bin=""
+    local ru_bin=""
+
     section "Dicklesworthstone stack"
 
     check_command "stack.ntm" "NTM" "ntm" \
@@ -1506,9 +1603,9 @@ check_stack() {
         "Re-run: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/simultaneous_launch_button/main/scripts/install.sh | bash"
 
     # UBS - custom check
-    if command -v ubs &>/dev/null; then
+    if ubs_bin="$(doctor_binary_path ubs 2>/dev/null || true)" && [[ -n "$ubs_bin" ]]; then
         local version
-        version=$(get_version_line "ubs")
+        version=$(get_version_line "$ubs_bin")
         check "stack.ubs" "UBS ($version)" "pass" "installed"
     else
         check "stack.ubs" "UBS" "fail" "not found" \
@@ -1516,15 +1613,14 @@ check_stack() {
     fi
 
     # Beads Viewer - custom check to detect gcloud 'bv' shadowing
-    if command -v bv &>/dev/null; then
-        local bv_path version
-        bv_path=$(command -v bv)
+    if bv_path="$(doctor_binary_path bv 2>/dev/null || true)" && [[ -n "$bv_path" ]]; then
+        local version
         # Check if the resolved bv is gcloud's BigQuery Visualizer
         if [[ "$bv_path" == *"google-cloud-sdk"* ]]; then
             check "stack.bv" "Beads Viewer" "fail" "SHADOWED by gcloud bv at $bv_path" \
                 "gcloud's 'bv' (BigQuery) is masking beads_viewer. Fix: Ensure ~/.local/bin is before gcloud in PATH, or re-run installer."
         else
-            version=$(get_version_line "bv")
+            version=$(get_version_line "$bv_path")
             # Also warn if gcloud's bv exists anywhere in PATH
             local gcloud_bv
             gcloud_bv=$(type -ap bv 2>/dev/null | grep "google-cloud-sdk" | head -1 || true)
@@ -1541,9 +1637,9 @@ check_stack() {
     fi
 
     # CASS - custom check
-    if command -v cass &>/dev/null; then
+    if doctor_binary_exists "cass"; then
         local version
-        version=$(get_version_line "cass")
+        version=$(get_version_line "$(doctor_binary_path cass 2>/dev/null || echo cass)")
         check "stack.cass" "CASS ($version)" "pass" "installed"
     else
         check "stack.cass" "CASS" "fail" "not found" \
@@ -1561,10 +1657,10 @@ check_stack() {
     am_repair_fix='Run: am doctor repair --yes && am doctor fix --yes'
     am_label="MCP Agent Mail"
 
-    if command -v am &>/dev/null; then
+    if am_bin="$(doctor_agent_mail_cli_path 2>/dev/null || true)" && [[ -n "$am_bin" ]]; then
         local am_global_doctor_json am_project_doctor_json am_project_path am_details
 
-        am_version=$(get_version_line "am")
+        am_version=$(get_version_line "$am_bin")
         am_label="MCP Agent Mail ($am_version)"
 
         if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
@@ -1618,7 +1714,7 @@ check_stack() {
     elif [[ -d "$(doctor_runtime_home)/mcp_agent_mail" ]]; then
         local runtime_home=""
         runtime_home="$(doctor_runtime_home)"
-        if [[ -x "$runtime_home/mcp_agent_mail/am" ]] && ! command -v am &>/dev/null; then
+        if [[ -x "$runtime_home/mcp_agent_mail/am" ]] && ! doctor_agent_mail_cli_path >/dev/null 2>&1; then
             check "symlink.am" "$am_label" "warn" \
                 "binary exists at ~/mcp_agent_mail/am but symlink missing from ~/.local/bin/am" \
                 "Fix: ln -sf ~/mcp_agent_mail/am ~/.local/bin/am (or run: acfs doctor --fix)"
@@ -1630,26 +1726,20 @@ check_stack() {
     fi
 
     # Check RU (Repo Updater)
-    if command -v ru &>/dev/null; then
+    if ru_bin="$(doctor_binary_path ru 2>/dev/null || true)" && [[ -n "$ru_bin" ]]; then
         local version
-        version=$(get_version_line "ru")
+        version=$(get_version_line "$ru_bin")
         check "stack.ru" "RU ($version)" "pass" "installed"
     else
         check "stack.ru" "RU (Repo Updater)" "warn" "not installed" \
             "Re-run: curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/repo_updater/main/install.sh | bash"
     fi
 
-    # Check beads_rust (br) - local-first issue tracker
-    # Also check $HOME/.cargo/bin/ explicitly for curl|bash root installs
-    # where the target user's cargo bin may not be in the current PATH.
+    # Check beads_rust (br) - local-first issue tracker.
+    # Resolve against the target user's install first so a binary that exists
+    # only in the invoking shell does not create a false pass.
     local _br_bin=""
-    if command -v br &>/dev/null; then
-        _br_bin="br"
-    elif [[ -x "${HOME}/.cargo/bin/br" ]]; then
-        _br_bin="${HOME}/.cargo/bin/br"
-    elif [[ -n "${TARGET_HOME:-}" && -x "${TARGET_HOME}/.cargo/bin/br" ]]; then
-        _br_bin="${TARGET_HOME}/.cargo/bin/br"
-    fi
+    _br_bin="$(doctor_binary_path br 2>/dev/null || true)"
     if [[ -n "$_br_bin" ]]; then
         local version
         version=$(get_version_line "$_br_bin")
@@ -1660,9 +1750,11 @@ check_stack() {
     fi
 
     # Check meta_skill (ms)
-    if command -v ms &>/dev/null; then
+    local ms_bin=""
+    ms_bin="$(doctor_binary_path ms 2>/dev/null || true)"
+    if [[ -n "$ms_bin" ]]; then
         local version
-        version=$(get_version_line "ms")
+        version=$(get_version_line "$ms_bin")
         check "stack.meta_skill" "meta_skill ($version)" "pass" "installed"
     else
         # Detect architecture to give the right install advice
@@ -1701,13 +1793,8 @@ check_stack() {
     local runtime_home=""
     runtime_home="$(doctor_runtime_home)"
 
-    if command -v rch &>/dev/null; then
-        rch_bin="$(command -v rch)"
-    elif [[ -x "$runtime_home/.local/bin/rch" ]]; then
-        rch_bin="$runtime_home/.local/bin/rch"
-    elif [[ -x "$runtime_home/.cargo/bin/rch" ]]; then
-        rch_bin="$runtime_home/.cargo/bin/rch"
-    elif [[ -x "$runtime_home/remote_compilation_helper/rch" ]]; then
+    rch_bin="$(doctor_binary_path rch 2>/dev/null || true)"
+    if [[ -z "$rch_bin" && -x "$runtime_home/remote_compilation_helper/rch" ]]; then
         rch_bin="$runtime_home/remote_compilation_helper/rch"
     fi
 
@@ -1726,18 +1813,22 @@ check_stack() {
     fi
 
     # Check wa (WezTerm Automata) - optional
-    if command -v wa &>/dev/null; then
+    local wa_bin=""
+    wa_bin="$(doctor_binary_path wa 2>/dev/null || true)"
+    if [[ -n "$wa_bin" ]]; then
         local version
-        version=$(get_version_line "wa")
+        version=$(get_version_line "$wa_bin")
         check "stack.wezterm_automata" "wezterm_automata ($version)" "pass" "installed"
     else
         check "stack.wezterm_automata" "wezterm_automata (wa)" "skip" "not installed (optional)"
     fi
 
     # Check brenner (Brenner Bot) - optional
-    if command -v brenner &>/dev/null; then
+    local brenner_bin=""
+    brenner_bin="$(doctor_binary_path brenner 2>/dev/null || true)"
+    if [[ -n "$brenner_bin" ]]; then
         local version
-        version=$(get_version_line "brenner")
+        version=$(get_version_line "$brenner_bin")
         check "stack.brenner_bot" "brenner_bot ($version)" "pass" "installed"
     else
         check "stack.brenner_bot" "brenner_bot" "skip" "not installed (optional)"
@@ -1797,84 +1888,95 @@ check_stack() {
 # ============================================================
 
 check_utilities() {
+    local util_bin=""
+
     section "Utility tools"
 
     # tru (Token-Optimized Notation)
-    if command -v tru &>/dev/null; then
+    util_bin="$(doctor_binary_path tru 2>/dev/null || true)"
+    if [[ -n "$util_bin" ]]; then
         local version
-        version=$(get_version_line "tru")
+        version=$(get_version_line "$util_bin")
         check "util.tru" "tru ($version)" "pass" "installed"
     else
         check "util.tru" "tru (token notation)" "skip" "not installed (optional)"
     fi
 
     # rust_proxy (Transparent Proxy Routing)
-    if command -v rust_proxy &>/dev/null; then
+    util_bin="$(doctor_binary_path rust_proxy 2>/dev/null || true)"
+    if [[ -n "$util_bin" ]]; then
         local version
-        version=$(get_version_line "rust_proxy")
+        version=$(get_version_line "$util_bin")
         check "util.rust_proxy" "rust_proxy ($version)" "pass" "installed"
     else
         check "util.rust_proxy" "rust_proxy (proxy routing)" "skip" "not installed (optional)"
     fi
 
     # rano (Network Observer for AI CLIs)
-    if command -v rano &>/dev/null; then
+    util_bin="$(doctor_binary_path rano 2>/dev/null || true)"
+    if [[ -n "$util_bin" ]]; then
         local version
-        version=$(get_version_line "rano")
+        version=$(get_version_line "$util_bin")
         check "util.rano" "rano ($version)" "pass" "installed"
     else
         check "util.rano" "rano (network observer)" "skip" "not installed (optional)"
     fi
 
     # xf (X/Twitter Archive Search)
-    if command -v xf &>/dev/null; then
+    util_bin="$(doctor_binary_path xf 2>/dev/null || true)"
+    if [[ -n "$util_bin" ]]; then
         local version
-        version=$(get_version_line "xf")
+        version=$(get_version_line "$util_bin")
         check "util.xf" "xf ($version)" "pass" "installed"
     else
         check "util.xf" "xf (X archive search)" "skip" "not installed (optional)"
     fi
 
     # mdwb (Markdown Web Browser)
-    if command -v mdwb &>/dev/null; then
+    util_bin="$(doctor_binary_path mdwb 2>/dev/null || true)"
+    if [[ -n "$util_bin" ]]; then
         local version
-        version=$(get_version_line "mdwb")
+        version=$(get_version_line "$util_bin")
         check "util.mdwb" "mdwb ($version)" "pass" "installed"
     else
         check "util.mdwb" "mdwb (markdown browser)" "skip" "not installed (optional)"
     fi
 
     # pt (Process Triage)
-    if command -v pt &>/dev/null; then
+    util_bin="$(doctor_binary_path pt 2>/dev/null || true)"
+    if [[ -n "$util_bin" ]]; then
         local version
-        version=$(get_version_line "pt")
+        version=$(get_version_line "$util_bin")
         check "util.pt" "pt ($version)" "pass" "installed"
     else
         check "util.pt" "pt (process triage)" "skip" "not installed (optional)"
     fi
 
     # aadc (ASCII Diagram Corrector)
-    if command -v aadc &>/dev/null; then
+    util_bin="$(doctor_binary_path aadc 2>/dev/null || true)"
+    if [[ -n "$util_bin" ]]; then
         local version
-        version=$(get_version_line "aadc")
+        version=$(get_version_line "$util_bin")
         check "util.aadc" "aadc ($version)" "pass" "installed"
     else
         check "util.aadc" "aadc (ASCII diagram corrector)" "skip" "not installed (optional)"
     fi
 
     # s2p (Source to Prompt TUI)
-    if command -v s2p &>/dev/null; then
+    util_bin="$(doctor_binary_path s2p 2>/dev/null || true)"
+    if [[ -n "$util_bin" ]]; then
         local version
-        version=$(get_version_line "s2p")
+        version=$(get_version_line "$util_bin")
         check "util.s2p" "s2p ($version)" "pass" "installed"
     else
         check "util.s2p" "s2p (source to prompt)" "skip" "not installed (optional)"
     fi
 
     # caut (Coding Agent Usage Tracker)
-    if command -v caut &>/dev/null; then
+    util_bin="$(doctor_binary_path caut 2>/dev/null || true)"
+    if [[ -n "$util_bin" ]]; then
         local version
-        version=$(get_version_line "caut")
+        version=$(get_version_line "$util_bin")
         check "util.caut" "caut ($version)" "pass" "installed"
     else
         check "util.caut" "caut (usage tracker)" "skip" "not installed (optional)"
@@ -2433,14 +2535,15 @@ check_claude_auth() {
     local auth_home=""
     auth_home="$(doctor_runtime_home)"
 
-    # Skip if not installed
-    if ! command -v claude &>/dev/null; then
+    local claude_bin=""
+    claude_bin="$(doctor_binary_path claude 2>/dev/null || true)"
+    if [[ -z "$claude_bin" ]]; then
         check "deep.agent.claude_auth" "Claude Code" "warn" "not installed" "acfs update --force --agents-only"
         return
     fi
 
     # Check if binary works
-    if ! claude --version &>/dev/null; then
+    if ! "$claude_bin" --version &>/dev/null; then
         check "deep.agent.claude_auth" "Claude Code auth" "fail" "binary error" "Reinstall: acfs update --force --agents-only"
         return
     fi
@@ -2483,14 +2586,15 @@ check_codex_auth() {
     local auth_home=""
     auth_home="$(doctor_runtime_home)"
 
-    # Skip if not installed
-    if ! command -v codex &>/dev/null; then
+    local codex_bin=""
+    codex_bin="$(doctor_binary_path codex 2>/dev/null || true)"
+    if [[ -z "$codex_bin" ]]; then
         check "deep.agent.codex_auth" "Codex CLI" "warn" "not installed" "bun install -g --trust @openai/codex@latest"
         return
     fi
 
     # Check if binary works
-    if ! codex --version &>/dev/null; then
+    if ! "$codex_bin" --version &>/dev/null; then
         check "deep.agent.codex_auth" "Codex CLI auth" "fail" "binary error" "Reinstall: bun install -g --trust @openai/codex@latest"
         return
     fi
@@ -2546,14 +2650,15 @@ check_gemini_auth() {
     local auth_home=""
     auth_home="$(doctor_runtime_home)"
 
-    # Skip if not installed
-    if ! command -v gemini &>/dev/null; then
+    local gemini_bin=""
+    gemini_bin="$(doctor_binary_path gemini 2>/dev/null || true)"
+    if [[ -z "$gemini_bin" ]]; then
         check "deep.agent.gemini_auth" "Gemini CLI" "warn" "not installed" "bun install -g --trust @google/gemini-cli@latest"
         return
     fi
 
     # Check if binary works
-    if ! gemini --version &>/dev/null; then
+    if ! "$gemini_bin" --version &>/dev/null; then
         check "deep.agent.gemini_auth" "Gemini CLI auth" "fail" "binary error" "Reinstall: bun install -g --trust @google/gemini-cli@latest"
         return
     fi
@@ -2578,16 +2683,18 @@ check_gemini_auth() {
         local vertex_project=""
         local vertex_location=""
         local service_account_path=""
+        local gcloud_bin=""
         vertex_project="$(get_configured_value "GOOGLE_CLOUD_PROJECT" "${gemini_config_files[@]}" || get_configured_value "GOOGLE_CLOUD_PROJECT_ID" "${gemini_config_files[@]}" || true)"
         vertex_location="$(get_configured_value "GOOGLE_CLOUD_LOCATION" "${gemini_config_files[@]}" || true)"
         service_account_path="$(get_configured_value "GOOGLE_APPLICATION_CREDENTIALS" "${gemini_config_files[@]}" || true)"
+        gcloud_bin="$(doctor_binary_path gcloud 2>/dev/null || true)"
 
         if [[ -n "$vertex_project" && -n "$vertex_location" ]]; then
             if [[ -n "$service_account_path" && -f "$service_account_path" ]]; then
                 check "deep.agent.gemini_auth" "Gemini CLI auth" "pass" "via GOOGLE_APPLICATION_CREDENTIALS (Vertex AI)"
                 return
             fi
-            if command -v gcloud &>/dev/null && timeout 5 gcloud auth application-default print-access-token >/dev/null 2>&1; then
+            if [[ -n "$gcloud_bin" ]] && timeout 5 "$gcloud_bin" auth application-default print-access-token >/dev/null 2>&1; then
                 check "deep.agent.gemini_auth" "Gemini CLI auth" "pass" "via gcloud ADC (Vertex AI)"
                 return
             fi
@@ -2642,21 +2749,23 @@ deep_check_database() {
 # check_postgres_connection - Test PostgreSQL connectivity
 # Related: bead azw
 check_postgres_connection() {
+    local psql_bin=""
+
     # Skip if not installed
-    if ! command -v psql &>/dev/null; then
+    if ! psql_bin="$(doctor_binary_path psql 2>/dev/null || true)" || [[ -z "$psql_bin" ]]; then
         check "deep.db.postgres_connect" "PostgreSQL connection" "warn" "psql not installed" "sudo apt install postgresql-client"
         return
     fi
 
     # Try to connect to local postgres (5 second timeout, no password prompt)
     # Use -w to avoid password prompts (would hang)
-    if timeout 5 psql -w -h localhost -U postgres -c 'SELECT 1' &>/dev/null; then
+    if timeout 5 "$psql_bin" -w -h localhost -U postgres -c 'SELECT 1' &>/dev/null; then
         check "deep.db.postgres_connect" "PostgreSQL connection" "pass" "localhost:5432"
-    elif timeout 5 psql -w -h /var/run/postgresql -U postgres -c 'SELECT 1' &>/dev/null; then
+    elif timeout 5 "$psql_bin" -w -h /var/run/postgresql -U postgres -c 'SELECT 1' &>/dev/null; then
         check "deep.db.postgres_connect" "PostgreSQL connection" "pass" "unix socket"
     else
         # Try connecting as current user
-        if timeout 5 psql -w -c 'SELECT 1' &>/dev/null; then
+        if timeout 5 "$psql_bin" -w -c 'SELECT 1' &>/dev/null; then
             check "deep.db.postgres_connect" "PostgreSQL connection" "pass" "current user"
         else
             check "deep.db.postgres_connect" "PostgreSQL connection" "warn" "connection failed" "sudo systemctl status postgresql"
@@ -2670,8 +2779,9 @@ check_postgres_connection() {
 # Fixed: Provide actionable fix message (createuser, not systemctl status)
 # Fixed: Use bash variable substitution with validated input (:'var' syntax is unreliable across psql versions)
 check_postgres_role() {
-    # Skip if not installed
-    if ! command -v psql &>/dev/null; then
+    local psql_bin=""
+    psql_bin="$(doctor_binary_path psql 2>/dev/null || true)"
+    if [[ -z "$psql_bin" ]]; then
         return  # Already reported in connection check
     fi
 
@@ -2696,13 +2806,13 @@ check_postgres_role() {
 
     # Try connecting as current user first (mirrors check_postgres_connection behavior)
     # This works when pg_hba.conf allows peer auth for local users
-    if role_check=$(timeout 5 psql -w -tAc "$sql_query" 2>/dev/null) && [[ "$role_check" == "1" ]]; then
+    if role_check=$(timeout 5 "$psql_bin" -w -tAc "$sql_query" 2>/dev/null) && [[ "$role_check" == "1" ]]; then
         connect_success=true
     # Try localhost with postgres user as fallback
-    elif role_check=$(timeout 5 psql -w -h localhost -U postgres -tAc "$sql_query" 2>/dev/null) && [[ "$role_check" == "1" ]]; then
+    elif role_check=$(timeout 5 "$psql_bin" -w -h localhost -U postgres -tAc "$sql_query" 2>/dev/null) && [[ "$role_check" == "1" ]]; then
         connect_success=true
     # Try unix socket with postgres user as last resort
-    elif role_check=$(timeout 5 psql -w -h /var/run/postgresql -U postgres -tAc "$sql_query" 2>/dev/null) && [[ "$role_check" == "1" ]]; then
+    elif role_check=$(timeout 5 "$psql_bin" -w -h /var/run/postgresql -U postgres -tAc "$sql_query" 2>/dev/null) && [[ "$role_check" == "1" ]]; then
         connect_success=true
     fi
 
@@ -2728,7 +2838,9 @@ deep_check_cloud() {
 # Deep check: tmux responsiveness
 # Related: GitHub issue #20 (NTM: "context deadline exceeded")
 deep_check_tmux_performance() {
-    if ! command -v tmux &>/dev/null; then
+    local tmux_bin=""
+
+    if ! tmux_bin="$(doctor_binary_path tmux 2>/dev/null || true)" || [[ -z "$tmux_bin" ]]; then
         check "deep.tmux.present" "tmux responsiveness" "warn" "tmux not installed" "sudo apt install tmux"
         return
     fi
@@ -2790,8 +2902,8 @@ deep_check_tmux_performance() {
         return 0
     }
 
-    _deep_check_tmux_cmd "deep.tmux.list_sessions" "tmux list-sessions responsiveness" bash -lc "tmux list-sessions >/dev/null"
-    _deep_check_tmux_cmd "deep.tmux.list_panes" "tmux list-panes -a responsiveness" bash -lc "tmux list-panes -a -F '#{pane_id}' >/dev/null"
+    _deep_check_tmux_cmd "deep.tmux.list_sessions" "tmux list-sessions responsiveness" "$tmux_bin" list-sessions
+    _deep_check_tmux_cmd "deep.tmux.list_panes" "tmux list-panes -a responsiveness" "$tmux_bin" list-panes -a -F '#{pane_id}'
 }
 
 # Deep check: Network health
@@ -2982,10 +3094,11 @@ deep_check_notifications() {
 # Related: bead azw
 check_vault_configured() {
     local auth_home=""
+    local vault_bin=""
     auth_home="$(doctor_runtime_home)"
 
     # Skip if not installed
-    if ! command -v vault &>/dev/null; then
+    if ! vault_bin="$(doctor_binary_path vault 2>/dev/null || true)" || [[ -z "$vault_bin" ]]; then
         check "deep.cloud.vault_status" "Vault" "warn" "not installed" "Install from https://www.vaultproject.io/"
         return
     fi
@@ -3002,7 +3115,7 @@ check_vault_configured() {
     fi
 
     # VAULT_ADDR is set, try to connect
-    if timeout 10 vault status &>/dev/null; then
+    if timeout 10 "$vault_bin" status &>/dev/null; then
         check "deep.cloud.vault_status" "Vault status" "pass" "connected to $VAULT_ADDR"
     else
         check "deep.cloud.vault_status" "Vault status" "warn" "not reachable" "Check VAULT_ADDR and network"
@@ -3013,7 +3126,9 @@ check_vault_configured() {
 # Related: bead azw
 # Enhanced: Caching support (bead lz1)
 check_gh_auth() {
-    if ! command -v gh &>/dev/null; then
+    local gh_bin=""
+
+    if ! gh_bin="$(doctor_binary_path gh 2>/dev/null || true)" || [[ -z "$gh_bin" ]]; then
         check "deep.cloud.gh_auth" "GitHub CLI" "warn" "not installed" "sudo apt install gh"
         return
     fi
@@ -3027,7 +3142,7 @@ check_gh_auth() {
 
     # Run with timeout
     local result
-    result=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "GitHub CLI auth" gh auth status 2>&1)
+    result=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "GitHub CLI auth" "$gh_bin" auth status 2>&1)
     local status=$?
 
     if ((status == 124)); then
@@ -3035,7 +3150,7 @@ check_gh_auth() {
     elif ((status == 0)); then
         # Get the authenticated user for more detail
         local gh_user
-        gh_user=$(timeout 5 gh api user --jq '.login' 2>/dev/null) || gh_user="authenticated"
+        gh_user=$(timeout 5 "$gh_bin" api user --jq '.login' 2>/dev/null) || gh_user="authenticated"
         cache_result "gh_auth" "$gh_user"
         check "deep.cloud.gh_auth" "GitHub CLI auth" "pass" "$gh_user"
     else
@@ -3048,9 +3163,10 @@ check_gh_auth() {
 # Enhanced: Caching and timeout support (bead lz1)
 check_wrangler_auth() {
     local auth_home=""
+    local wrangler_bin=""
     auth_home="$(doctor_runtime_home)"
 
-    if ! command -v wrangler &>/dev/null; then
+    if ! wrangler_bin="$(doctor_binary_path wrangler 2>/dev/null || true)" || [[ -z "$wrangler_bin" ]]; then
         check "deep.cloud.wrangler_auth" "Wrangler (Cloudflare)" "warn" "not installed" "bun install -g --trust wrangler@latest"
         return
     fi
@@ -3072,7 +3188,7 @@ check_wrangler_auth() {
 
     # Run with timeout
     local result
-    result=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "Wrangler auth" wrangler whoami 2>&1)
+    result=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "Wrangler auth" "$wrangler_bin" whoami 2>&1)
     local status=$?
 
     if ((status == 124)); then
@@ -3100,9 +3216,10 @@ check_wrangler_auth() {
 # Related: bead azw
 check_supabase_auth() {
     local auth_home=""
+    local supabase_bin=""
     auth_home="$(doctor_runtime_home)"
 
-    if ! command -v supabase &>/dev/null; then
+    if ! supabase_bin="$(doctor_binary_path supabase 2>/dev/null || true)" || [[ -z "$supabase_bin" ]]; then
         check "deep.cloud.supabase_auth" "Supabase CLI" "warn" "not installed" "acfs update --cloud-only --force"
         return
     fi
@@ -3142,9 +3259,10 @@ check_supabase_auth() {
 # Related: bead azw
 check_vercel_auth() {
     local auth_home=""
+    local vercel_bin=""
     auth_home="$(doctor_runtime_home)"
 
-    if ! command -v vercel &>/dev/null; then
+    if ! vercel_bin="$(doctor_binary_path vercel 2>/dev/null || true)" || [[ -z "$vercel_bin" ]]; then
         check "deep.cloud.vercel_auth" "Vercel CLI" "warn" "not installed" "bun install -g --trust vercel@latest"
         return
     fi
@@ -3166,7 +3284,7 @@ check_vercel_auth() {
 
     # Run with timeout
     local result
-    result=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "Vercel auth" vercel whoami 2>&1)
+    result=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "Vercel auth" "$vercel_bin" whoami 2>&1)
     local status=$?
 
     if ((status == 124)); then

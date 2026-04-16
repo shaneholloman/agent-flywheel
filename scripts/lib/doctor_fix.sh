@@ -1204,9 +1204,116 @@ fix_ssh_keepalive() {
 # Fixer: MCP Agent Mail (fix.stack.mcp_agent_mail)
 # ============================================================
 
+doctor_fix_agent_mail_cli_path() {
+    local runtime_home=""
+    local primary_bin=""
+    local candidate=""
+
+    runtime_home="$(doctor_fix_runtime_home)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    primary_bin="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    for candidate in \
+        "$primary_bin/am" \
+        "$runtime_home/.local/bin/am" \
+        "$runtime_home/.acfs/bin/am" \
+        "$runtime_home/.cargo/bin/am" \
+        "$runtime_home/.bun/bin/am" \
+        "$runtime_home/.atuin/bin/am" \
+        "$runtime_home/go/bin/am"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+doctor_fix_resolve_path_target() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+
+    if readlink -f "$path_value" >/dev/null 2>&1; then
+        readlink -f "$path_value"
+        return 0
+    fi
+
+    if realpath "$path_value" >/dev/null 2>&1; then
+        realpath "$path_value"
+        return 0
+    fi
+
+    printf '%s\n' "$path_value"
+}
+
+doctor_fix_agent_mail_bin() {
+    local runtime_user=""
+    local runtime_home=""
+    local primary_bin=""
+    local candidate=""
+    local resolved=""
+
+    resolved="$(doctor_fix_agent_mail_cli_path 2>/dev/null || true)"
+    if [[ -n "$resolved" ]]; then
+        printf '%s\n' "$resolved"
+        return 0
+    fi
+
+    runtime_user="$(doctor_fix_runtime_user)"
+    runtime_home="$(doctor_fix_runtime_home)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    if doctor_fix_source_stack_lib >/dev/null 2>&1; then
+        resolved="$(TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_agent_mail_cli_path 2>/dev/null || true)"
+        if [[ -n "$resolved" ]]; then
+            printf '%s\n' "$resolved"
+            return 0
+        fi
+    fi
+
+    primary_bin="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    for candidate in \
+        "$runtime_home/mcp_agent_mail/am" \
+        "$primary_bin/am" \
+        "$runtime_home/.local/bin/am" \
+        "$runtime_home/.acfs/bin/am" \
+        "$runtime_home/.cargo/bin/am" \
+        "$runtime_home/.bun/bin/am" \
+        "$runtime_home/.atuin/bin/am" \
+        "$runtime_home/go/bin/am"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+doctor_fix_agent_mail_mcp_path() {
+    local am_bin="${1:-}"
+
+    if [[ -z "$am_bin" ]]; then
+        am_bin="$(doctor_fix_agent_mail_bin 2>/dev/null || true)"
+    fi
+    [[ -n "$am_bin" ]] || return 1
+
+    if "$am_bin" --version 2>/dev/null | grep -q '^am '; then
+        printf '/mcp/\n'
+    else
+        printf '/api/\n'
+    fi
+}
 agent_mail_fix_doctor_healthy() {
     local doctor_json=""
-    local -a cmd=(am doctor check --json)
+    local am_bin=""
+    local -a cmd=()
+
+    am_bin="$(doctor_fix_agent_mail_bin 2>/dev/null || true)"
+    [[ -n "$am_bin" ]] || return 1
+    cmd=("$am_bin" doctor check --json)
 
     if [[ $# -gt 0 ]]; then
         cmd+=("$1")
@@ -1242,17 +1349,14 @@ agent_mail_fix_write_unit() {
     local am_bin=""
     local db_url=""
 
-    if ! am_bin="$(command -v am 2>/dev/null)"; then
-        return 1
-    fi
+    am_bin="$(doctor_fix_agent_mail_bin 2>/dev/null || true)"
+    [[ -n "$am_bin" ]] || return 1
 
     db_url="sqlite+aiosqlite:///${storage_root}/storage.sqlite3"
 
-    # Detect MCP base path: Rust am uses /mcp/, Python mcp_agent_mail uses /api/
-    local am_mcp_path="/mcp/"
-    if ! "$am_bin" --version 2>/dev/null | grep -q '^am '; then
-        am_mcp_path="/api/"
-    fi
+    local am_mcp_path=""
+    am_mcp_path="$(doctor_fix_agent_mail_mcp_path "$am_bin" 2>/dev/null || true)"
+    [[ -n "$am_mcp_path" ]] || return 1
 
     mkdir -p "$storage_root" "$unit_dir" || return 1
     cat > "$unit_file" <<UNIT_EOF
@@ -1285,17 +1389,14 @@ agent_mail_fix_launch_fallback() {
     local db_url=""
     local existing_pid=""
 
-    if ! am_bin="$(command -v am 2>/dev/null)"; then
-        return 1
-    fi
+    am_bin="$(doctor_fix_agent_mail_bin 2>/dev/null || true)"
+    [[ -n "$am_bin" ]] || return 1
 
     db_url="sqlite+aiosqlite:///${storage_root}/storage.sqlite3"
 
-    # Detect MCP base path: Rust am uses /mcp/, Python mcp_agent_mail uses /api/
-    local am_mcp_path="/mcp/"
-    if ! "$am_bin" --version 2>/dev/null | grep -q '^am '; then
-        am_mcp_path="/api/"
-    fi
+    local am_mcp_path=""
+    am_mcp_path="$(doctor_fix_agent_mail_mcp_path "$am_bin" 2>/dev/null || true)"
+    [[ -n "$am_mcp_path" ]] || return 1
 
     if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
         return 0
@@ -1326,9 +1427,8 @@ agent_mail_fix_stop_fallback() {
     local am_bin=""
     local existing_pid=""
 
-    if ! am_bin="$(command -v am 2>/dev/null)"; then
-        return 1
-    fi
+    am_bin="$(doctor_fix_agent_mail_bin 2>/dev/null || true)"
+    [[ -n "$am_bin" ]] || return 1
 
     if [[ -f "$fallback_pid_file" ]]; then
         existing_pid="$(cat "$fallback_pid_file" 2>/dev/null || true)"
@@ -1374,9 +1474,13 @@ fix_mcp_agent_mail() {
     }
 
     if [[ -x "$am_src" ]]; then
-        local resolved_am=""
-        resolved_am="$(command -v am 2>/dev/null || true)"
-        if [[ "$resolved_am" != "$am_src" ]]; then
+        local resolved_am_cli=""
+        local resolved_am_target=""
+        local am_src_target=""
+        resolved_am_cli="$(doctor_fix_agent_mail_cli_path 2>/dev/null || true)"
+        resolved_am_target="$(doctor_fix_resolve_path_target "$resolved_am_cli" 2>/dev/null || true)"
+        am_src_target="$(doctor_fix_resolve_path_target "$am_src" 2>/dev/null || true)"
+        if [[ -z "$resolved_am_target" || "$resolved_am_target" != "$am_src_target" ]]; then
             local symlink_backup_json='[]'
             local symlink_restore_command="rm -f '$am_dst'"
             if [[ -e "$am_dst" || -L "$am_dst" ]]; then
@@ -1394,7 +1498,9 @@ fix_mcp_agent_mail() {
                 doctor_fix_log DRY "Ensure am symlink points at $am_src"
             elif TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
                 hash -r
-                if [[ "$(command -v am 2>/dev/null || true)" != "$am_src" ]]; then
+                resolved_am_cli="$(doctor_fix_agent_mail_cli_path 2>/dev/null || true)"
+                resolved_am_target="$(doctor_fix_resolve_path_target "$resolved_am_cli" 2>/dev/null || true)"
+                if [[ -z "$resolved_am_target" || "$resolved_am_target" != "$am_src_target" ]]; then
                     doctor_fix_log ERROR "Agent Mail CLI symlink repair completed but am still resolves away from $am_src"
                     FIX_FAILED=$((FIX_FAILED + 1))
                     return 1
@@ -1423,7 +1529,10 @@ fix_mcp_agent_mail() {
         fi
     fi
 
-    if ! command -v am &>/dev/null; then
+    local am_bin=""
+    am_bin="$(doctor_fix_agent_mail_bin 2>/dev/null || true)"
+
+    if [[ -z "$am_bin" ]]; then
         if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
             FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail|Install MCP Agent Mail via verified installer, then repair service state|$runtime_home/mcp_agent_mail|verified:mcp_agent_mail --dest $runtime_home/mcp_agent_mail --yes")
             doctor_fix_log DRY "Install MCP Agent Mail via verified installer, then repair service state"
@@ -1431,15 +1540,23 @@ fix_mcp_agent_mail() {
         fi
 
         if doctor_fix_run_verified_installer "mcp_agent_mail" --dest "$runtime_home/mcp_agent_mail" --yes >/dev/null 2>&1; then
+            local installed_cli=""
+            local installed_cli_target=""
+            local am_src_target=""
             hash -r
             if TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
                 hash -r
-            elif command -v am &>/dev/null; then
+            fi
+            installed_cli="$(doctor_fix_agent_mail_cli_path 2>/dev/null || true)"
+            installed_cli_target="$(doctor_fix_resolve_path_target "$installed_cli" 2>/dev/null || true)"
+            am_src_target="$(doctor_fix_resolve_path_target "$am_src" 2>/dev/null || true)"
+            if [[ -z "$installed_cli_target" || "$installed_cli_target" != "$am_src_target" ]]; then
                 doctor_fix_log ERROR "Installed MCP Agent Mail CLI but failed to repair am symlink"
                 FIX_FAILED=$((FIX_FAILED + 1))
                 return 1
             fi
-            if [[ "$(command -v am 2>/dev/null || true)" == "$am_src" ]]; then
+            am_bin="$(doctor_fix_agent_mail_bin 2>/dev/null || true)"
+            if [[ -n "$am_bin" ]]; then
                 if ! doctor_fix_record_change_or_rollback \
                     "" \
                     false \
@@ -1470,7 +1587,14 @@ fix_mcp_agent_mail() {
         return 0
     fi
 
-    if am doctor repair --yes >/dev/null 2>&1; then
+    am_bin="$(doctor_fix_agent_mail_bin 2>/dev/null || true)"
+    [[ -n "$am_bin" ]] || {
+        doctor_fix_log ERROR "MCP Agent Mail CLI is missing after repair attempt"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    }
+
+    if "$am_bin" doctor repair --yes >/dev/null 2>&1; then
         if ! doctor_fix_record_change_or_rollback \
             "" \
             false \
@@ -1489,7 +1613,7 @@ fix_mcp_agent_mail() {
         doctor_fix_log WARN "MCP Agent Mail database repair did not complete cleanly"
     fi
 
-    if am doctor fix --yes >/dev/null 2>&1; then
+    if "$am_bin" doctor fix --yes >/dev/null 2>&1; then
         if ! doctor_fix_record_change_or_rollback \
             "" \
             false \

@@ -306,6 +306,9 @@ find_user_bin() {
         "$TARGET_HOME/.bun/bin/$name"
         "$TARGET_HOME/.atuin/bin/$name"
         "/usr/local/bin/$name"
+        "/usr/bin/$name"
+        "/bin/$name"
+        "/snap/bin/$name"
     )
 
     local candidate

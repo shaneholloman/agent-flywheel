@@ -1772,6 +1772,7 @@ test_fix_ssh_keepalive_applies_and_records_change() {
         return 1
     }
 
+    sudo() { "$@"; }
     systemctl() { return 0; }
 
     if ! fix_ssh_keepalive "network.ssh_keepalive" >/dev/null 2>&1; then
@@ -1816,6 +1817,7 @@ test_fix_ssh_keepalive_restores_file_when_backup_and_record_change_fail() {
 
     create_backup() { return 1; }
     record_change() { return 1; }
+    sudo() { "$@"; }
     systemctl() { return 0; }
 
     if fix_ssh_keepalive "network.ssh_keepalive" >/dev/null 2>&1; then
@@ -2017,6 +2019,185 @@ EOF
     fi
 
     unset -f kill ps
+    cleanup_test_env
+    return 0
+}
+
+test_agent_mail_fix_write_unit_prefers_target_install_over_current_shell_am() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/mcp_agent_mail" "$HOME/current-shell-bin"
+    export PATH="$HOME/current-shell-bin:$PATH"
+
+    cat > "$HOME/current-shell-bin/am" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+    echo "mcp-agent-mail 0.2.19"
+    exit 0
+fi
+: > "$HOME/global-am-used"
+exit 0
+EOF
+    chmod +x "$HOME/current-shell-bin/am"
+
+    cat > "$TARGET_HOME/mcp_agent_mail/am" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+    echo "am 1.0.0"
+    exit 0
+fi
+exit 0
+EOF
+    chmod +x "$TARGET_HOME/mcp_agent_mail/am"
+
+    if ! agent_mail_fix_write_unit; then
+        echo "  agent_mail_fix_write_unit should succeed"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -f "$TARGET_HOME/.config/systemd/user/agent-mail.service" ]]; then
+        echo "  Agent Mail unit file was not written"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -Fq "ExecStart=$TARGET_HOME/mcp_agent_mail/am serve-http" "$TARGET_HOME/.config/systemd/user/agent-mail.service"; then
+        echo "  Agent Mail unit did not use the target install binary"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -Fq 'Environment=HTTP_PATH=/mcp/' "$TARGET_HOME/.config/systemd/user/agent-mail.service"; then
+        echo "  Agent Mail unit did not use the Rust /mcp/ endpoint"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -f "$HOME/global-am-used" ]]; then
+        echo "  agent_mail_fix_write_unit should not invoke the current-shell am"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+test_fix_mcp_agent_mail_repairs_missing_symlink_without_using_current_shell_am() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin" "$TARGET_HOME/mcp_agent_mail" "$HOME/current-shell-bin"
+    export PATH="$HOME/current-shell-bin:$TARGET_HOME/.local/bin:$PATH"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    cat > "$HOME/current-shell-bin/am" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+    echo "mcp-agent-mail 0.2.19"
+    exit 0
+fi
+: > "$HOME/global-am-used"
+if [[ "${1:-}" == "doctor" ]]; then
+    case "${2:-}" in
+        repair|fix)
+            exit 0
+            ;;
+        check)
+            echo '{"healthy":true}'
+            exit 0
+            ;;
+    esac
+fi
+exit 0
+EOF
+    chmod +x "$HOME/current-shell-bin/am"
+
+    cat > "$TARGET_HOME/mcp_agent_mail/am" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version)
+        echo "am 1.0.0"
+        ;;
+    doctor)
+        case "${2:-}" in
+            repair|fix)
+                exit 0
+                ;;
+            check)
+                echo '{"healthy":true}'
+                ;;
+            *)
+                exit 1
+                ;;
+        esac
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+EOF
+    chmod +x "$TARGET_HOME/mcp_agent_mail/am"
+
+    cat > "$TARGET_HOME/.local/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$HOME" >> "${TARGET_HOME}/systemctl-home.log"
+case "${2:-}" in
+    show-environment|daemon-reload|enable|restart|is-active)
+        exit 0
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$TARGET_HOME/.local/bin/systemctl"
+
+    cat > "$TARGET_HOME/.local/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+    *"/health"*)
+        printf '%s\n' '{"status":"ready"}'
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+EOF
+    chmod +x "$TARGET_HOME/.local/bin/curl"
+
+    if ! fix_mcp_agent_mail "fix.stack.mcp_agent_mail" >/dev/null 2>&1; then
+        echo "  fix_mcp_agent_mail should succeed when only the direct install exists"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -L "$TARGET_HOME/.local/bin/am" ]]; then
+        echo "  Agent Mail symlink was not created"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ "$(readlink "$TARGET_HOME/.local/bin/am")" != "$TARGET_HOME/mcp_agent_mail/am" ]]; then
+        echo "  Agent Mail symlink did not point at the installed Rust CLI"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -f "$HOME/global-am-used" ]]; then
+        echo "  fix_mcp_agent_mail should not invoke the current-shell am"
+        cleanup_test_env
+        return 1
+    fi
+
     cleanup_test_env
     return 0
 }
@@ -2522,6 +2703,8 @@ main() {
     run_test test_fix_dcg_hook_uninstalls_when_record_change_fails
     run_test test_dcg_hook_already_installed_detects_hook_wiring
     run_test test_agent_mail_fix_stop_fallback_cleans_up_matching_pid
+    run_test test_agent_mail_fix_write_unit_prefers_target_install_over_current_shell_am
+    run_test test_fix_mcp_agent_mail_repairs_missing_symlink_without_using_current_shell_am
     run_test test_fix_mcp_agent_mail_uses_target_home_for_systemctl_env
     run_test test_fix_mcp_agent_mail_dry_run_reports_symlink_and_repair
     run_test test_fix_mcp_agent_mail_fails_when_symlink_repair_fails

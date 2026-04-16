@@ -187,6 +187,54 @@ _agent_check_bun() {
     return 0
 }
 
+_agent_find_am_bin() {
+    local target_home="${1:-}"
+    local primary_bin=""
+    local candidate=""
+
+    if [[ -z "$target_home" ]]; then
+        target_home="$(_agent_target_home "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+    fi
+    [[ -n "$target_home" ]] || return 1
+
+    primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    for candidate in \
+        "$target_home/mcp_agent_mail/am" \
+        "$primary_bin/am" \
+        "$target_home/.local/bin/am" \
+        "$target_home/.acfs/bin/am" \
+        "$target_home/.cargo/bin/am" \
+        "$target_home/.bun/bin/am" \
+        "$target_home/.atuin/bin/am" \
+        "$target_home/go/bin/am"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+
+    return 1
+}
+
+_agent_detect_am_mcp_path() {
+    local target_home="${1:-}"
+    local am_bin=""
+
+    am_bin="$(_agent_find_am_bin "$target_home" 2>/dev/null || true)"
+    if [[ -n "$am_bin" ]] && "$am_bin" --version 2>/dev/null | grep -q '^am '; then
+        printf '/mcp/\n'
+        return 0
+    fi
+
+    if [[ -n "$am_bin" ]]; then
+        printf '/api/\n'
+        return 0
+    fi
+
+    printf '/mcp/\n'
+}
+
 # Create a wrapper script that uses bun as the runtime instead of node.
 # This avoids the "node not found" error when nvm hasn't added node to PATH yet.
 # The wrapper is placed in ~/.local/bin which is early in PATH.
@@ -487,11 +535,7 @@ _configure_gemini_settings() {
 
     # Detect MCP base path: Rust am uses /mcp/, Python mcp_agent_mail uses /api/
     local am_mcp_path="/mcp/"
-    if command -v am &>/dev/null; then
-        if ! am --version 2>/dev/null | grep -q '^am '; then
-            am_mcp_path="/api/"
-        fi
-    fi
+    am_mcp_path="$(_agent_detect_am_mcp_path "$target_home")"
     local am_mcp_url="http://127.0.0.1:8765${am_mcp_path}"
 
     # Create settings directory if needed
@@ -541,14 +585,14 @@ GEMINI_EOF"
         if [[ "$auth_value" == "gemini-api-key" ]]; then
             log_detail "Fixing Gemini auth from API key to OAuth..."
             needs_update=true
-        elif [[ "$auth_value" == "unset" || "$auth_value" == "error" ]]; then
+        elif [[ "$auth_value" != "oauth-personal" ]]; then
             needs_update=true
         fi
 
         # Check if MCP Agent Mail server is configured (fixes #158)
         local mcp_value
         mcp_value=$(_agent_run_as_user "jq -r '.mcpServers.\"mcp-agent-mail\".httpUrl // \"unset\"' '$settings_file'" 2>/dev/null || echo "error")
-        if [[ "$mcp_value" == "unset" || "$mcp_value" == "error" ]]; then
+        if [[ "$mcp_value" != "$am_mcp_url" ]]; then
             needs_update=true
         fi
 

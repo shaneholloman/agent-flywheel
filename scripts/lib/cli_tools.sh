@@ -69,6 +69,36 @@ _cli_command_exists() {
     command -v "$1" &>/dev/null
 }
 
+_cli_target_has_command() {
+    local cmd="${1:-}"
+    local target_user="${TARGET_USER:-ubuntu}"
+    local target_home=""
+    local primary_bin=""
+    local candidate=""
+
+    [[ -n "$cmd" ]] || return 1
+
+    target_home="$(_cli_target_home "$target_user" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+
+    primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    for candidate in \
+        "$primary_bin/$cmd" \
+        "$target_home/.local/bin/$cmd" \
+        "$target_home/.acfs/bin/$cmd" \
+        "$target_home/.cargo/bin/$cmd" \
+        "$target_home/.bun/bin/$cmd" \
+        "$target_home/.atuin/bin/$cmd" \
+        "$target_home/go/bin/$cmd" \
+        "/usr/local/bin/$cmd" \
+        "/usr/bin/$cmd" \
+        "/bin/$cmd" \
+        "/snap/bin/$cmd"; do
+        [[ -x "$candidate" ]] && return 0
+    done
+    return 1
+}
+
 # Get the sudo command if needed
 _cli_get_sudo() {
     if [[ $EUID -eq 0 ]]; then
@@ -353,7 +383,7 @@ install_cargo_cli_tools() {
     fi
 
     # Install zoxide if not already installed
-    if ! _cli_command_exists zoxide; then
+    if ! _cli_target_has_command zoxide; then
         log_detail "Installing zoxide via cargo..."
         _cli_run_as_user "$cargo_bin install zoxide --locked 2>/dev/null" || {
             # Fallback: try the official installer
@@ -372,25 +402,25 @@ install_cargo_cli_tools() {
     fi
 
     # Install ast-grep (sg command)
-    if ! _cli_command_exists sg; then
+    if ! _cli_target_has_command sg; then
         log_detail "Installing ast-grep via cargo..."
         _cli_run_as_user "$cargo_bin install ast-grep --locked 2>/dev/null" || log_warn "Could not install ast-grep"
     fi
 
     # Install lsd via cargo if apt version not available
-    if ! _cli_command_exists lsd && ! _cli_command_exists eza; then
+    if ! _cli_target_has_command lsd && ! _cli_target_has_command eza; then
         log_detail "Installing lsd via cargo..."
         _cli_run_as_user "$cargo_bin install lsd --locked 2>/dev/null" || log_warn "Could not install lsd"
     fi
 
     # Install dust via cargo if apt version not available
-    if ! _cli_command_exists dust; then
+    if ! _cli_target_has_command dust; then
         log_detail "Installing dust via cargo..."
         _cli_run_as_user "$cargo_bin install du-dust --locked 2>/dev/null" || log_warn "Could not install dust"
     fi
 
     # Install tealdeer (tldr - simplified man pages)
-    if ! _cli_command_exists tldr; then
+    if ! _cli_target_has_command tldr; then
         log_detail "Installing tealdeer (tldr) via cargo..."
         _cli_run_as_user "$cargo_bin install tealdeer --locked 2>/dev/null" || log_warn "Could not install tealdeer"
         # Fetch tldr pages cache (use full path since ~/.cargo/bin may not be in PATH yet)
@@ -604,8 +634,9 @@ install_atuin() {
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home=""
     target_home="$(_cli_target_home "$target_user")"
+    local target_atuin_bin="$target_home/.atuin/bin/atuin"
 
-    if [[ -d "$target_home/.atuin" ]] || _cli_command_exists atuin; then
+    if [[ -x "$target_atuin_bin" ]]; then
         log_detail "atuin already installed"
         _cli_normalize_atuin_shims
         return 0
@@ -628,7 +659,7 @@ install_atuin() {
         log_warn "Could not install atuin"
     fi
 
-    if [[ -d "$target_home/.atuin" ]] || _cli_command_exists atuin; then
+    if [[ -x "$target_atuin_bin" ]]; then
         _cli_normalize_atuin_shims
         log_success "atuin installed"
         return 0

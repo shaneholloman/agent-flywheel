@@ -132,6 +132,42 @@ if [[ -n "${_SMOKE_CURRENT_HOME:-}" ]] && [[ "$_SMOKE_CURRENT_HOME" != "$TARGET_
     _smoke_prepend_user_paths "$_SMOKE_CURRENT_HOME"
 fi
 
+_smoke_binary_path() {
+    local name="${1:-}"
+    local base_home="${TARGET_HOME:-}"
+    local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+    [[ -n "$base_home" ]] || return 1
+
+    for candidate in \
+        "$primary_bin_dir/$name" \
+        "$base_home/.local/bin/$name" \
+        "$base_home/.acfs/bin/$name" \
+        "$base_home/.bun/bin/$name" \
+        "$base_home/.cargo/bin/$name" \
+        "$base_home/.atuin/bin/$name" \
+        "$base_home/go/bin/$name" \
+        "$base_home/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/snap/bin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+_smoke_binary_exists() {
+    local resolved=""
+    resolved="$(_smoke_binary_path "$1" 2>/dev/null || true)"
+    [[ -n "$resolved" ]]
+}
+
 _smoke_get_local_passwd_entry() {
     local user="${1:-}"
     [[ -n "$user" ]] || return 1
@@ -268,33 +304,10 @@ _check_workspace() {
 _check_languages() {
     local missing=()
 
-    # Check bun
-    if [[ -x "$TARGET_HOME/.bun/bin/bun" ]] || command -v bun &>/dev/null; then
-        :
-    else
-        missing+=("bun")
-    fi
-
-    # Check uv
-    if [[ -x "$TARGET_HOME/.local/bin/uv" ]] || command -v uv &>/dev/null; then
-        :
-    else
-        missing+=("uv")
-    fi
-
-    # Check cargo
-    if [[ -x "$TARGET_HOME/.cargo/bin/cargo" ]] || command -v cargo &>/dev/null; then
-        :
-    else
-        missing+=("cargo")
-    fi
-
-    # Check go
-    if command -v go &>/dev/null || [[ -x "/usr/local/go/bin/go" ]]; then
-        :
-    else
-        missing+=("go")
-    fi
+    _smoke_binary_exists "bun" || missing+=("bun")
+    _smoke_binary_exists "uv" || missing+=("uv")
+    _smoke_binary_exists "cargo" || missing+=("cargo")
+    _smoke_binary_exists "go" || missing+=("go")
 
     if [[ ${#missing[@]} -eq 0 ]]; then
         _smoke_pass "Languages: bun, uv, cargo, go"
@@ -311,19 +324,19 @@ _check_agents() {
     local missing=()
 
     # Check for each agent CLI
-    if command -v claude &>/dev/null; then
+    if _smoke_binary_exists "claude"; then
         found+=("claude")
     else
         missing+=("claude")
     fi
 
-    if command -v codex &>/dev/null || [[ -x "$TARGET_HOME/.bun/bin/codex" ]]; then
+    if _smoke_binary_exists "codex"; then
         found+=("codex")
     else
         missing+=("codex")
     fi
 
-    if command -v gemini &>/dev/null || [[ -x "$TARGET_HOME/.bun/bin/gemini" ]]; then
+    if _smoke_binary_exists "gemini"; then
         found+=("gemini")
     else
         missing+=("gemini")
@@ -345,7 +358,9 @@ _check_agents() {
 
 # Check 7: NTM command works
 _check_ntm() {
-    if command -v ntm &>/dev/null || [[ -x "$TARGET_HOME/.local/bin/ntm" ]] || [[ -x "$TARGET_HOME/.acfs/bin/ntm" ]]; then
+    local ntm_bin=""
+    ntm_bin="$(_smoke_binary_path "ntm" 2>/dev/null || true)"
+    if [[ -n "$ntm_bin" ]] && "$ntm_bin" --help >/dev/null 2>&1; then
         _smoke_pass "NTM: installed"
         return 0
     else
@@ -356,7 +371,7 @@ _check_ntm() {
 
 # Check 8: Onboard command exists
 _check_onboard() {
-    if command -v onboard &>/dev/null || [[ -x "$TARGET_HOME/.local/bin/onboard" ]] || [[ -x "$TARGET_HOME/.acfs/bin/onboard" ]]; then
+    if _smoke_binary_exists "onboard"; then
         _smoke_pass "Onboard: installed"
         return 0
     else
@@ -385,7 +400,7 @@ _check_stack_tools() {
     local missing=()
 
     for tool in "${stack_tools[@]}"; do
-        if command -v "$tool" &>/dev/null || [[ -x "$TARGET_HOME/.local/bin/$tool" ]] || [[ -x "$TARGET_HOME/.acfs/bin/$tool" ]]; then
+        if _smoke_binary_exists "$tool"; then
             found+=("$tool")
         else
             missing+=("$tool")
@@ -403,7 +418,7 @@ _check_stack_tools() {
 _check_postgres() {
     if systemctl is-active --quiet postgresql 2>/dev/null; then
         _smoke_info "PostgreSQL: running"
-    elif command -v psql &>/dev/null; then
+    elif _smoke_binary_exists "psql"; then
         _smoke_warn "PostgreSQL: installed but not running" "sudo systemctl start postgresql"
     else
         _smoke_warn "PostgreSQL: not installed" "optional - install with apt"

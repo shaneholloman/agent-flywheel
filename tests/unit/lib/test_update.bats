@@ -5,6 +5,8 @@ load '../test_helper'
 setup() {
     common_setup
     
+    unset TARGET_USER TARGET_HOME ACFS_BIN_DIR ACFS_STATE_FILE ACFS_HOME
+
     # update.sh logic relies on being sourced or executed
     # We source it.
     # It has a guard at the end `if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then main "$@"; fi`
@@ -12,6 +14,7 @@ setup() {
     
     # Mock environment for update.sh
     export HOME=$(create_temp_dir)
+    export TARGET_HOME="$HOME"
     export UPDATE_LOG_DIR="$HOME/.acfs/logs/updates"
     
     source_lib "update"
@@ -49,6 +52,71 @@ EOF
     assert_output "1.75.0"
 }
 
+@test "get_version: prefers target runtime binaries when HOME differs" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    unset ACFS_BIN_DIR
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+
+    mkdir -p "$current_home/.bun/bin" "$current_home/.cargo/bin" "$current_home/.local/bin"
+    mkdir -p "$target_home/.bun/bin" "$target_home/.cargo/bin" "$target_home/.local/bin"
+
+    cat > "$current_home/.bun/bin/bun" <<'EOF'
+#!/usr/bin/env bash
+echo "0.9.0"
+EOF
+    chmod +x "$current_home/.bun/bin/bun"
+
+    cat > "$target_home/.bun/bin/bun" <<'EOF'
+#!/usr/bin/env bash
+echo "1.3.12"
+EOF
+    chmod +x "$target_home/.bun/bin/bun"
+
+    cat > "$current_home/.cargo/bin/rustc" <<'EOF'
+#!/usr/bin/env bash
+echo "rustc 1.70.0 (old)"
+EOF
+    chmod +x "$current_home/.cargo/bin/rustc"
+
+    cat > "$target_home/.cargo/bin/rustc" <<'EOF'
+#!/usr/bin/env bash
+echo "rustc 1.88.0 (target)"
+EOF
+    chmod +x "$target_home/.cargo/bin/rustc"
+
+    cat > "$current_home/.local/bin/uv" <<'EOF'
+#!/usr/bin/env bash
+echo "uv 0.10.0"
+EOF
+    chmod +x "$current_home/.local/bin/uv"
+
+    cat > "$target_home/.local/bin/uv" <<'EOF'
+#!/usr/bin/env bash
+echo "uv 0.11.6"
+EOF
+    chmod +x "$target_home/.local/bin/uv"
+
+    run get_version "bun"
+    assert_success
+    assert_output "1.3.12"
+
+    run get_version "rust"
+    assert_success
+    assert_output "1.88.0"
+
+    run get_version "uv"
+    assert_success
+    assert_output "0.11.6"
+}
+
 @test "get_version: handles unknown" {
     run get_version "nonexistent"
     assert_output "unknown"
@@ -84,6 +152,93 @@ EOF
 
     run update_target_home "../bad-user"
     assert_failure
+}
+
+@test "update_preferred_user_bin_dir: falls back to target home when HOME differs" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    unset ACFS_BIN_DIR
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+
+    run update_preferred_user_bin_dir
+    assert_success
+    assert_output "$target_home/.local/bin"
+}
+
+@test "update_binary_path: ignores current-shell-only PATH entries" {
+    init_stub_dir
+
+    local current_home
+    local target_home
+    local tool_name="acfs-test-update-tool"
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    unset ACFS_BIN_DIR
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+    mkdir -p "$target_home/.local/bin"
+
+    cat > "$STUB_DIR/$tool_name" <<'EOF'
+#!/usr/bin/env bash
+echo "current-shell-only"
+EOF
+    chmod +x "$STUB_DIR/$tool_name"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    run update_binary_path "$tool_name"
+    assert_failure
+
+    cat > "$target_home/.local/bin/$tool_name" <<'EOF'
+#!/usr/bin/env bash
+echo "target-home"
+EOF
+    chmod +x "$target_home/.local/bin/$tool_name"
+
+    run update_binary_path "$tool_name"
+    assert_success
+    assert_output "$target_home/.local/bin/$tool_name"
+}
+
+@test "update_tool_binary_path: prefers target atuin over current HOME" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    unset ACFS_BIN_DIR
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+    mkdir -p "$current_home/.atuin/bin" "$target_home/.atuin/bin"
+
+    cat > "$current_home/.atuin/bin/atuin" <<'EOF'
+#!/usr/bin/env bash
+echo "current-home"
+EOF
+    chmod +x "$current_home/.atuin/bin/atuin"
+
+    cat > "$target_home/.atuin/bin/atuin" <<'EOF'
+#!/usr/bin/env bash
+echo "target-home"
+EOF
+    chmod +x "$target_home/.atuin/bin/atuin"
+
+    run update_tool_binary_path "atuin"
+    assert_success
+    assert_output "$target_home/.atuin/bin/atuin"
 }
 
 @test "capture_version: tracks changes" {
@@ -143,6 +298,40 @@ EOF
     # Verify cargo install called
     run cat "$log_file"
     assert_output --partial "install ast-grep --locked --force"
+}
+
+@test "update.sh: runtime resolver gates avoid inherited PATH leaks" {
+    local update="$PROJECT_ROOT/scripts/lib/update.sh"
+
+    run grep -F 'cargo_bin="$(update_binary_path cargo 2>/dev/null || true)"' "$update"
+    assert_success
+
+    run grep -F 'bun_bin="$(update_binary_path bun 2>/dev/null || true)"' "$update"
+    assert_success
+
+    run grep -F 'rustup_bin="$(update_binary_path rustup 2>/dev/null || true)"' "$update"
+    assert_success
+
+    run grep -F 'uv_bin="$(update_binary_path uv 2>/dev/null || true)"' "$update"
+    assert_success
+
+    run grep -F 'if ! update_binary_exists "$binary_name"; then' "$update"
+    assert_success
+
+    run grep -F 'update_run_in_target_context "" "$cargo_bin" install --git https://github.com/Dicklesworthstone/meta_skill --force' "$update"
+    assert_success
+
+    run grep -F 'run_cmd "DCG Hook" "$dcg_bin" install --force' "$update"
+    assert_success
+
+    run grep -F '"$target_home/.atuin/bin/atuin"' "$update"
+    assert_success
+
+    run rg -n '\$HOME/\.bun/bin/bun' "$update"
+    assert_failure
+
+    run grep -F 'command -v "$binary_name"' "$update"
+    assert_failure
 }
 
 @test "apt_lock_is_held: uses plain fuser when accessible" {
@@ -295,6 +484,47 @@ EOF
     [[ "$FAIL_COUNT" -eq 0 ]]
 }
 
+@test "update_repair_atuin_install: uses target atuin as shim source when HOME differs" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$target_home/custom-bin"
+    mkdir -p "$current_home/.atuin/bin" "$target_home/.atuin/bin"
+
+    cat > "$current_home/.atuin/bin/atuin" <<'EOF'
+#!/usr/bin/env bash
+echo "current-home"
+EOF
+    chmod +x "$current_home/.atuin/bin/atuin"
+
+    cat > "$target_home/.atuin/bin/atuin" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  echo "atuin 18.14.1"
+else
+  echo "target-home"
+fi
+EOF
+    chmod +x "$target_home/.atuin/bin/atuin"
+
+    run update_repair_atuin_install
+    assert_success
+
+    [[ -L "$ACFS_BIN_DIR/atuin" ]]
+    [[ -L "$target_home/.local/bin/atuin" ]]
+
+    run readlink "$ACFS_BIN_DIR/atuin"
+    assert_output "$target_home/.atuin/bin/atuin"
+
+    run readlink "$target_home/.local/bin/atuin"
+    assert_output "$target_home/.atuin/bin/atuin"
+}
+
 @test "update_repair_atuin_install: normalizes custom and local shims" {
     export ACFS_BIN_DIR="$HOME/custom-bin"
     mkdir -p "$HOME/.atuin/bin"
@@ -320,6 +550,82 @@ EOF
 
     run readlink "$HOME/.local/bin/atuin"
     assert_output "$HOME/.atuin/bin/atuin"
+}
+
+@test "install_atuin: does not skip target install because of a global atuin or partial target dir" {
+    source_lib "cli_tools"
+    init_stub_dir
+
+    export PATH="$STUB_DIR:$PATH"
+    export TARGET_USER="tester"
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$TARGET_HOME/.local/bin" "$TARGET_HOME/.atuin"
+
+    cat > "$STUB_DIR/atuin" <<'EOF'
+#!/usr/bin/env bash
+echo "global atuin"
+EOF
+    chmod +x "$STUB_DIR/atuin"
+
+    CLI_RUN_AS_USER_CALLS=0
+
+    _cli_target_home() {
+        printf '%s\n' "$TARGET_HOME"
+    }
+
+    _cli_require_security() {
+        return 0
+    }
+
+    _cli_normalize_atuin_shims() {
+        :
+    }
+
+    _cli_run_as_user() {
+        CLI_RUN_AS_USER_CALLS=$((CLI_RUN_AS_USER_CALLS + 1))
+        mkdir -p "$TARGET_HOME/.atuin/bin"
+        cat > "$TARGET_HOME/.atuin/bin/atuin" <<'EOF'
+#!/usr/bin/env bash
+echo "atuin 18.14.1"
+EOF
+        chmod +x "$TARGET_HOME/.atuin/bin/atuin"
+        return 0
+    }
+
+    declare -gA KNOWN_INSTALLERS=(["atuin"]="https://example.com")
+    get_checksum() {
+        echo "deadbeef"
+    }
+
+    install_atuin
+
+    [[ "$CLI_RUN_AS_USER_CALLS" -eq 1 ]]
+    [[ -x "$TARGET_HOME/.atuin/bin/atuin" ]]
+}
+
+@test "_cli_target_has_command: ignores current-shell-only PATH entries" {
+    source_lib "cli_tools"
+    init_stub_dir
+
+    export PATH="$STUB_DIR:$PATH"
+    export TARGET_USER="tester"
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$TARGET_HOME/.local/bin"
+
+    cat > "$STUB_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "current shell only"
+EOF
+    chmod +x "$STUB_DIR/current-shell-only-tool"
+
+    _cli_target_home() {
+        printf '%s\n' "$TARGET_HOME"
+    }
+
+    run _cli_target_has_command "current-shell-only-tool"
+    assert_failure
 }
 
 @test "acfs.zshrc: loads atuin env before atuin init" {
@@ -709,6 +1015,127 @@ EOF
     assert_success
 }
 
+@test "agent mail MCP path detection prefers target install over current-shell am" {
+    source_lib "agents"
+
+    local target_home="$BATS_TEST_TMPDIR/target-home"
+    local target_am="$target_home/mcp_agent_mail/am"
+    local global_bin="$BATS_TEST_TMPDIR/global-bin"
+    mkdir -p "$(dirname "$target_am")" "$global_bin"
+
+    cat > "$target_am" <<'EOF'
+#!/usr/bin/env bash
+printf 'mcp-agent-mail 0.2.19\n'
+EOF
+    chmod +x "$target_am"
+
+    cat > "$global_bin/am" <<'EOF'
+#!/usr/bin/env bash
+printf 'am 0.2.39\n'
+EOF
+    chmod +x "$global_bin/am"
+
+    export PATH="$global_bin:/usr/bin:/bin"
+
+    run _agent_detect_am_mcp_path "$target_home"
+    assert_success
+    assert_output "/api/"
+}
+
+@test "agent mail MCP path detection ignores current-shell-only am" {
+    source_lib "agents"
+
+    local target_home="$BATS_TEST_TMPDIR/target-home"
+    local global_bin="$BATS_TEST_TMPDIR/global-bin"
+    mkdir -p "$global_bin"
+
+    cat > "$global_bin/am" <<'EOF'
+#!/usr/bin/env bash
+printf 'mcp-agent-mail 0.2.19\n'
+EOF
+    chmod +x "$global_bin/am"
+
+    export PATH="$global_bin:/usr/bin:/bin"
+
+    run _agent_detect_am_mcp_path "$target_home"
+    assert_success
+    assert_output "/mcp/"
+}
+
+@test "agent mail resolvers avoid system am fallback" {
+    local agents_lib="$PROJECT_ROOT/scripts/lib/agents.sh"
+    local stack_lib="$PROJECT_ROOT/scripts/lib/stack.sh"
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local doctor_fix_lib="$PROJECT_ROOT/scripts/lib/doctor_fix.sh"
+    local installer="$PROJECT_ROOT/install.sh"
+
+    run rg -n 'command -v am' "$agents_lib" "$stack_lib" "$doctor_lib" "$doctor_fix_lib" "$installer"
+    assert_failure
+
+    run rg -n '"/(usr/local/bin|usr/bin|bin|snap/bin)/am"' "$agents_lib" "$stack_lib" "$doctor_lib" "$doctor_fix_lib"
+    assert_failure
+
+    run grep -F 'resolve_target_am() {' "$installer"
+    assert_success
+
+    run grep -F 'doctor_agent_mail_cli_path() {' "$doctor_lib"
+    assert_success
+
+    run grep -F 'doctor_fix_agent_mail_cli_path() {' "$doctor_fix_lib"
+    assert_success
+}
+
+@test "configure_gemini_settings repairs stale agent mail url after migration" {
+    source_lib "agents"
+
+    local target_home="$BATS_TEST_TMPDIR/target-home"
+    local settings_dir="$target_home/.gemini"
+    local settings_file="$settings_dir/settings.json"
+    local target_am="$target_home/mcp_agent_mail/am"
+    mkdir -p "$settings_dir" "$(dirname "$target_am")"
+
+    cat > "$target_am" <<'EOF'
+#!/usr/bin/env bash
+printf 'am 0.2.39\n'
+EOF
+    chmod +x "$target_am"
+
+    cat > "$settings_file" <<'EOF'
+{
+  "selectedType": "gemini-api-key",
+  "tools": {
+    "shell": {
+      "enableInteractiveShell": true
+    }
+  },
+  "mcpServers": {
+    "mcp-agent-mail": {
+      "httpUrl": "http://127.0.0.1:8765/api/"
+    }
+  }
+}
+EOF
+
+    _agent_run_as_user() {
+        bash -c "$1"
+    }
+
+    run _configure_gemini_settings "$target_home"
+    assert_success
+
+    run jq -r '.selectedType' "$settings_file"
+    assert_success
+    assert_output 'oauth-personal'
+
+    run jq -r '.tools.shell.enableInteractiveShell' "$settings_file"
+    assert_success
+    assert_output 'false'
+
+    run jq -r '.mcpServers."mcp-agent-mail".httpUrl' "$settings_file"
+    assert_success
+    assert_output 'http://127.0.0.1:8765/mcp/'
+}
+
 @test "install and update deploy all acfs doctor-dispatched runtime scripts" {
     local installer="$PROJECT_ROOT/install.sh"
     local update="$PROJECT_ROOT/scripts/lib/update.sh"
@@ -776,6 +1203,471 @@ EOF
     assert_success
     run grep -F '[[ -n "$sanitized_bin_dir" ]] && env_args+=("ACFS_BIN_DIR=$sanitized_bin_dir")' "$update_wrapper"
     assert_success
+}
+
+@test "install.sh: target install checks avoid inherited PATH leaks" {
+    local installer="$PROJECT_ROOT/install.sh"
+
+    run grep -F 'binary_path() {' "$installer"
+    assert_success
+
+    run grep -F 'if ! binary_installed "zsh"; then' "$installer"
+    assert_success
+
+    run grep -F 'if ! binary_installed "go"; then' "$installer"
+    assert_success
+
+    run grep -F 'if binary_installed "uv"; then' "$installer"
+    assert_success
+
+    run grep -F 'if [[ -d "$TARGET_HOME/.atuin" ]] || binary_installed "atuin"; then' "$installer"
+    assert_success
+
+    run grep -F 'if binary_installed "zoxide"; then' "$installer"
+    assert_success
+
+    run grep -F 'if binary_installed "gum"; then' "$installer"
+    assert_success
+
+    run grep -F 'if binary_installed "gh"; then' "$installer"
+    assert_success
+
+    run grep -F 'if ! binary_installed "lazygit"; then' "$installer"
+    assert_success
+
+    run grep -F 'if ! binary_installed "lazydocker"; then' "$installer"
+    assert_success
+
+    run grep -F 'elif psql_bin="$(binary_path psql 2>/dev/null || true)" && [[ -n "$psql_bin" ]]; then' "$installer"
+    assert_success
+
+    run grep -F 'elif vault_bin="$(binary_path vault 2>/dev/null || true)" && [[ -n "$vault_bin" ]]; then' "$installer"
+    assert_success
+
+    run grep -F 'binary_installed "go" || missing_lang+=("go")' "$installer"
+    assert_success
+
+    run grep -F 'gh_bin="$(binary_path gh 2>/dev/null || true)"' "$installer"
+    assert_success
+
+    run grep -F 'psql_bin="$(binary_path psql 2>/dev/null || true)"' "$installer"
+    assert_success
+
+    run grep -F 'vault_bin="$(binary_path vault 2>/dev/null || true)"' "$installer"
+    assert_success
+
+    run grep -F 'export PATH="${ACFS_BIN_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"' "$installer"
+    assert_success
+
+    run grep -F 'run_as_target bash -c "' "$installer"
+    assert_success
+
+    run grep -F 'export PATH=\"\${ACFS_BIN_DIR:-\$HOME/.local/bin}:\$HOME/.local/bin:\$HOME/.acfs/bin:\$HOME/.cargo/bin:\$HOME/.bun/bin:\$HOME/.atuin/bin:\$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin\"' "$installer"
+    assert_success
+
+    run grep -F "if run_as_target bash -c 'set -euo pipefail" "$installer"
+    assert_success
+
+    run grep -F 'if ! command_exists zsh; then' "$installer"
+    assert_failure
+
+    run grep -F 'if ! command_exists go; then' "$installer"
+    assert_failure
+
+    run grep -F 'if command_exists gum; then' "$installer"
+    assert_failure
+
+    run grep -F 'if command_exists gh; then' "$installer"
+    assert_failure
+
+    run grep -F 'if ! command_exists lazygit; then' "$installer"
+    assert_failure
+
+    run grep -F 'if ! command_exists lazydocker; then' "$installer"
+    assert_failure
+
+    run grep -F 'elif command_exists psql; then' "$installer"
+    assert_failure
+
+    run grep -F 'elif command_exists vault; then' "$installer"
+    assert_failure
+
+    run grep -F 'command_exists go || missing_lang+=("go")' "$installer"
+    assert_failure
+
+    run grep -F "$(gh --version 2>/dev/null | head -1 || echo 'gh')" "$installer"
+    assert_failure
+
+    run grep -F "$(psql --version 2>/dev/null | head -1 || echo 'psql')" "$installer"
+    assert_failure
+
+    run grep -F "$(vault --version 2>/dev/null | head -1 || echo 'vault')" "$installer"
+    assert_failure
+
+    run grep -F 'command -v uv &>/dev/null' "$installer"
+    assert_failure
+
+    run grep -F 'command -v atuin &>/dev/null' "$installer"
+    assert_failure
+
+    run grep -F 'command -v zoxide &>/dev/null' "$installer"
+    assert_failure
+}
+
+@test "install.sh: binary_path ignores current-shell-only PATH entries" {
+    local installer="$PROJECT_ROOT/install.sh"
+
+    init_stub_dir
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^binary_path()/,/^}$/p' "$installer")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^binary_installed()/,/^}$/p' "$installer")"
+
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$ACFS_BIN_DIR"
+
+    cat > "$STUB_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "current-shell-only-tool"
+EOF
+    chmod +x "$STUB_DIR/current-shell-only-tool"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    run binary_path "current-shell-only-tool"
+    assert_failure
+
+    cat > "$ACFS_BIN_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "target-local-tool"
+EOF
+    chmod +x "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run binary_path "current-shell-only-tool"
+    assert_success
+    assert_output "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run binary_installed "current-shell-only-tool"
+    assert_success
+}
+
+@test "install.sh: smoke helper ignores current-shell-only PATH entries" {
+    local installer="$PROJECT_ROOT/install.sh"
+
+    init_stub_dir
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_smoke_target_path()/,/^}$/p' "$installer")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_smoke_run_as_target()/,/^}$/p' "$installer")"
+
+    export TARGET_USER="tester"
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$ACFS_BIN_DIR"
+
+    cat > "$STUB_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "current-shell-only-tool"
+EOF
+    chmod +x "$STUB_DIR/current-shell-only-tool"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    run_as_target() {
+        "$@"
+    }
+
+    run _smoke_run_as_target "command -v current-shell-only-tool >/dev/null && current-shell-only-tool --help >/dev/null 2>&1"
+    assert_failure
+
+    cat > "$ACFS_BIN_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--help" ]]; then
+  exit 0
+fi
+exit 0
+EOF
+    chmod +x "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run _smoke_run_as_target "command -v current-shell-only-tool >/dev/null && current-shell-only-tool --help >/dev/null 2>&1"
+    assert_success
+}
+
+@test "smoke_test.sh: binary helper ignores current-shell-only PATH entries" {
+    local smoke="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
+
+    init_stub_dir
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_smoke_binary_path()/,/^}$/p' "$smoke")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_smoke_binary_exists()/,/^}$/p' "$smoke")"
+
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$ACFS_BIN_DIR"
+
+    cat > "$STUB_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "current-shell-only-tool"
+EOF
+    chmod +x "$STUB_DIR/current-shell-only-tool"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    run _smoke_binary_path "current-shell-only-tool"
+    assert_failure
+
+    run _smoke_binary_exists "current-shell-only-tool"
+    assert_failure
+
+    cat > "$ACFS_BIN_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "target-local-tool"
+EOF
+    chmod +x "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run _smoke_binary_path "current-shell-only-tool"
+    assert_success
+    assert_output "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run _smoke_binary_exists "current-shell-only-tool"
+    assert_success
+}
+
+@test "info.sh: binary helper ignores current-shell-only PATH entries" {
+    local info_lib="$PROJECT_ROOT/scripts/lib/info.sh"
+
+    init_stub_dir
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^info_binary_path()/,/^}$/p' "$info_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^info_binary_exists()/,/^}$/p' "$info_lib")"
+
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$ACFS_BIN_DIR"
+
+    cat > "$STUB_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "current-shell-only-tool"
+EOF
+    chmod +x "$STUB_DIR/current-shell-only-tool"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    run info_binary_path "current-shell-only-tool"
+    assert_failure
+
+    run info_binary_exists "current-shell-only-tool"
+    assert_failure
+
+    cat > "$ACFS_BIN_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "target-local-tool"
+EOF
+    chmod +x "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run info_binary_path "current-shell-only-tool"
+    assert_success
+    assert_output "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run info_binary_exists "current-shell-only-tool"
+    assert_success
+}
+
+@test "doctor.sh: binary helper ignores current-shell-only PATH entries" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+
+    init_stub_dir
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_binary_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_binary_exists()/,/^}$/p' "$doctor_lib")"
+
+    doctor_runtime_home() {
+        printf '%s\n' "$TARGET_HOME"
+    }
+
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$ACFS_BIN_DIR"
+
+    cat > "$STUB_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "current-shell-only-tool"
+EOF
+    chmod +x "$STUB_DIR/current-shell-only-tool"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    run doctor_binary_path "current-shell-only-tool"
+    assert_failure
+
+    run doctor_binary_exists "current-shell-only-tool"
+    assert_failure
+
+    cat > "$ACFS_BIN_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo "target-local-tool"
+EOF
+    chmod +x "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run doctor_binary_path "current-shell-only-tool"
+    assert_success
+    assert_output "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run doctor_binary_exists "current-shell-only-tool"
+    assert_success
+}
+
+@test "doctor.sh: check_command ignores current-shell-only PATH entries" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+
+    init_stub_dir
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_binary_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_binary_exists()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^get_version_line()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^check_command()/,/^}$/p' "$doctor_lib")"
+
+    doctor_runtime_home() {
+        printf '%s\n' "$TARGET_HOME"
+    }
+
+    check() {
+        printf '%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "${4:-}" "${5:-}"
+    }
+
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$ACFS_BIN_DIR"
+
+    cat > "$STUB_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  echo "current-shell-only-tool 9.9.9"
+  exit 0
+fi
+echo "current-shell-only-tool"
+EOF
+    chmod +x "$STUB_DIR/current-shell-only-tool"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    run check_command "test.id" "Tool Label" "current-shell-only-tool" "fix me"
+    assert_success
+    assert_output 'test.id|Tool Label|fail|not found|fix me'
+
+    cat > "$ACFS_BIN_DIR/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  echo "target-local-tool 1.2.3"
+  exit 0
+fi
+echo "target-local-tool"
+EOF
+    chmod +x "$ACFS_BIN_DIR/current-shell-only-tool"
+
+    run check_command "test.id" "Tool Label" "current-shell-only-tool" "fix me"
+    assert_success
+    assert_output 'test.id|Tool Label (target-local-tool 1.2.3)|pass|installed|'
+}
+
+@test "doctor.sh: agent mail CLI helper ignores current-shell am and direct install without shim" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+
+    init_stub_dir
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_agent_mail_cli_path()/,/^}$/p' "$doctor_lib")"
+
+    doctor_runtime_home() {
+        printf '%s\n' "$TARGET_HOME"
+    }
+
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$TARGET_HOME/mcp_agent_mail" "$ACFS_BIN_DIR"
+
+    cat > "$STUB_DIR/am" <<'EOF'
+#!/usr/bin/env bash
+echo "current-shell am"
+EOF
+    chmod +x "$STUB_DIR/am"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    cat > "$TARGET_HOME/mcp_agent_mail/am" <<'EOF'
+#!/usr/bin/env bash
+echo "direct install"
+EOF
+    chmod +x "$TARGET_HOME/mcp_agent_mail/am"
+
+    run doctor_agent_mail_cli_path
+    assert_failure
+
+    cat > "$ACFS_BIN_DIR/am" <<'EOF'
+#!/usr/bin/env bash
+echo "target shim"
+EOF
+    chmod +x "$ACFS_BIN_DIR/am"
+
+    run doctor_agent_mail_cli_path
+    assert_success
+    assert_output "$ACFS_BIN_DIR/am"
+}
+
+@test "doctor.sh: agent mail doctor check uses target CLI instead of current-shell am" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+
+    init_stub_dir
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_agent_mail_cli_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^agent_mail_doctor_check_json()/,/^}$/p' "$doctor_lib")"
+
+    doctor_runtime_home() {
+        printf '%s\n' "$TARGET_HOME"
+    }
+
+    run_with_timeout() {
+        local _timeout="$1"
+        local _description="$2"
+        shift 2
+        "$@"
+    }
+
+    export DEEP_CHECK_TIMEOUT=5
+    export TARGET_HOME="$HOME/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$ACFS_BIN_DIR"
+
+    cat > "$STUB_DIR/am" <<'EOF'
+#!/usr/bin/env bash
+: > "$HOME/global-am-used"
+echo '{"healthy":false,"source":"global"}'
+EOF
+    chmod +x "$STUB_DIR/am"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    cat > "$ACFS_BIN_DIR/am" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "doctor" && "${2:-}" == "check" && "${3:-}" == "--json" ]]; then
+  echo '{"healthy":true,"source":"target"}'
+  exit 0
+fi
+exit 1
+EOF
+    chmod +x "$ACFS_BIN_DIR/am"
+
+    run agent_mail_doctor_check_json
+    assert_success
+    assert_output '{"healthy":true,"source":"target"}'
+    [[ ! -f "$HOME/global-am-used" ]]
 }
 
 @test "update_zoxide: retries transient reinstall failures before succeeding" {

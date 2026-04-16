@@ -343,6 +343,42 @@ info_prepend_user_paths() {
     done
 }
 
+info_binary_path() {
+    local name="${1:-}"
+    local base_home="${TARGET_HOME:-${_INFO_CURRENT_HOME:-}}"
+    local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+    [[ -n "$base_home" ]] || return 1
+
+    for candidate in \
+        "$primary_bin_dir/$name" \
+        "$base_home/.local/bin/$name" \
+        "$base_home/.acfs/bin/$name" \
+        "$base_home/.bun/bin/$name" \
+        "$base_home/.cargo/bin/$name" \
+        "$base_home/.atuin/bin/$name" \
+        "$base_home/go/bin/$name" \
+        "$base_home/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/snap/bin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+info_binary_exists() {
+    local resolved=""
+    resolved="$(info_binary_path "$1" 2>/dev/null || true)"
+    [[ -n "$resolved" ]]
+}
+
 info_prepare_context() {
     local data_home=""
     local state_file=""
@@ -758,30 +794,30 @@ info_get_installed_tools_summary() {
 
     # Shell tools
     shell_ok="○"
-    if command -v zsh &>/dev/null && [[ -d "$shell_home/.oh-my-zsh" ]]; then
+    if info_binary_exists "zsh" && [[ -d "$shell_home/.oh-my-zsh" ]]; then
         shell_ok="✓"
     fi
 
     # Languages
     lang_ok="○"
     local lang_count=0
-    command -v bun &>/dev/null && lang_count=$((lang_count + 1))
-    command -v uv &>/dev/null && lang_count=$((lang_count + 1))
-    command -v rustc &>/dev/null && lang_count=$((lang_count + 1))
-    command -v go &>/dev/null && lang_count=$((lang_count + 1))
+    info_binary_exists "bun" && lang_count=$((lang_count + 1))
+    info_binary_exists "uv" && lang_count=$((lang_count + 1))
+    info_binary_exists "rustc" && lang_count=$((lang_count + 1))
+    info_binary_exists "go" && lang_count=$((lang_count + 1))
     [[ $lang_count -ge 3 ]] && lang_ok="✓"
 
     # Agents
     agents_ok="○"
     local agent_count=0
-    command -v claude &>/dev/null && agent_count=$((agent_count + 1))
-    command -v codex &>/dev/null && agent_count=$((agent_count + 1))
-    command -v gemini &>/dev/null && agent_count=$((agent_count + 1))
+    info_binary_exists "claude" && agent_count=$((agent_count + 1))
+    info_binary_exists "codex" && agent_count=$((agent_count + 1))
+    info_binary_exists "gemini" && agent_count=$((agent_count + 1))
     [[ $agent_count -ge 2 ]] && agents_ok="✓"
 
     # Stack tools
     stack_ok="○"
-    command -v ntm &>/dev/null && stack_ok="✓"
+    info_binary_exists "ntm" && stack_ok="✓"
 
     echo "shell:$shell_ok|lang:$lang_ok|agents:$agents_ok|stack:$stack_ok"
 }

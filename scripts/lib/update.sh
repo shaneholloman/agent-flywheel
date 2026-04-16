@@ -171,15 +171,21 @@ update_source_stack_lib() {
 update_preferred_user_bin_dir() {
     local state_file=""
     local bin_dir=""
+    local target_user=""
+    local target_home=""
 
     if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
         printf '%s\n' "${ACFS_BIN_DIR%/}"
         return 0
     fi
 
+    target_user="$(update_target_user)"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+
     for state_file in \
         "${ACFS_STATE_FILE:-}" \
         "${ACFS_HOME:-}/state.json" \
+        "$target_home/.acfs/state.json" \
         "$HOME/.acfs/state.json" \
         "/var/lib/acfs/state.json"; do
         [[ -n "$state_file" && -f "$state_file" ]] || continue
@@ -196,17 +202,89 @@ update_preferred_user_bin_dir() {
         fi
     done
 
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "$target_home/.local/bin"
+        return 0
+    fi
+
     printf '%s\n' "$HOME/.local/bin"
 }
 
 update_default_user_bin_dir() {
+    local target_user=""
+    local target_home=""
+
+    target_user="$(update_target_user)"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "$target_home/.local/bin"
+        return 0
+    fi
+
     printf '%s\n' "$HOME/.local/bin"
+}
+
+update_binary_path() {
+    local tool="$1"
+    local target_user=""
+    local target_home=""
+    local primary_bin=""
+    local candidate=""
+
+    [[ -n "$tool" ]] || return 1
+
+    target_user="$(update_target_user)"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -z "$target_home" ]] && [[ -n "${HOME:-}" ]] && [[ "$HOME" == /* ]] && [[ "$HOME" != "/" ]]; then
+        target_home="${HOME%/}"
+    fi
+    [[ -n "$target_home" ]] || return 1
+
+    primary_bin="$(update_preferred_user_bin_dir 2>/dev/null || true)"
+    if [[ -z "$primary_bin" ]] || [[ "$primary_bin" != /* ]] || [[ "$primary_bin" == "/" ]]; then
+        primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    fi
+
+    for candidate in \
+        "$primary_bin/$tool" \
+        "$target_home/.local/bin/$tool" \
+        "$target_home/.acfs/bin/$tool" \
+        "$target_home/.bun/bin/$tool" \
+        "$target_home/.cargo/bin/$tool" \
+        "$target_home/.atuin/bin/$tool" \
+        "$target_home/go/bin/$tool" \
+        "$target_home/bin/$tool" \
+        "/usr/local/go/bin/$tool" \
+        "/usr/local/bin/$tool" \
+        "/usr/bin/$tool" \
+        "/bin/$tool" \
+        "/usr/local/sbin/$tool" \
+        "/usr/sbin/$tool" \
+        "/sbin/$tool" \
+        "/snap/bin/$tool"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+update_binary_exists() {
+    local resolved=""
+    resolved="$(update_binary_path "$1" 2>/dev/null || true)"
+    [[ -n "$resolved" ]]
 }
 
 update_tool_binary_path() {
     local tool="$1"
     local primary_bin=""
-    local user_bin
+    local user_bin=""
+    local target_user=""
+    local target_home=""
+
+    target_user="$(update_target_user)"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
     user_bin="$(update_default_user_bin_dir)"
     primary_bin="$(update_preferred_user_bin_dir)"
 
@@ -215,6 +293,7 @@ update_tool_binary_path() {
             for candidate in \
                 "$primary_bin/atuin" \
                 "$user_bin/atuin" \
+                "$target_home/.atuin/bin/atuin" \
                 "$HOME/.atuin/bin/atuin"; do
                 [[ -x "$candidate" ]] || continue
                 printf '%s\n' "$candidate"
@@ -234,12 +313,7 @@ update_tool_binary_path() {
             ;;
     esac
 
-    if cmd_exists "$tool"; then
-        command -v "$tool"
-        return 0
-    fi
-
-    return 1
+    update_binary_path "$tool"
 }
 
 update_tool_version_from_path() {
@@ -384,50 +458,65 @@ update_ensure_jq_available() {
 get_version() {
     local tool="$1"
     local version=""
+    local tool_bin=""
 
     case "$tool" in
         bun)
-            version=$("$HOME/.bun/bin/bun" --version 2>/dev/null || echo "unknown")
+            tool_bin="$(update_binary_path "bun" 2>/dev/null || true)"
+            if [[ -n "$tool_bin" ]]; then
+                version=$("$tool_bin" --version 2>/dev/null || echo "unknown")
+            else
+                version="unknown"
+            fi
             ;;
         rust)
-            version=$("$HOME/.cargo/bin/rustc" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+            tool_bin="$(update_binary_path "rustc" 2>/dev/null || true)"
+            if [[ -n "$tool_bin" ]]; then
+                version=$("$tool_bin" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+            else
+                version="unknown"
+            fi
             ;;
         uv)
-            version=$("${ACFS_BIN_DIR:-$HOME/.local/bin}/uv" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+            tool_bin="$(update_binary_path "uv" 2>/dev/null || true)"
+            if [[ -n "$tool_bin" ]]; then
+                version=$("$tool_bin" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+            else
+                version="unknown"
+            fi
             ;;
-        claude)
-            version=$(claude --version 2>/dev/null | head -1 || echo "unknown")
-            ;;
-        codex)
-            version=$(codex --version 2>/dev/null || echo "unknown")
-            ;;
-        gemini)
-            version=$(gemini --version 2>/dev/null || echo "unknown")
-            ;;
-        wrangler)
-            version=$(wrangler --version 2>/dev/null || echo "unknown")
-            ;;
-        supabase)
-            version=$(supabase --version 2>/dev/null || echo "unknown")
-            ;;
-        vercel)
-            version=$(vercel --version 2>/dev/null || echo "unknown")
+        claude|codex|gemini|wrangler|supabase|vercel)
+            tool_bin="$(update_binary_path "$tool" 2>/dev/null || true)"
+            if [[ -n "$tool_bin" ]]; then
+                version=$("$tool_bin" --version 2>/dev/null | head -1 || echo "unknown")
+            else
+                version="unknown"
+            fi
             ;;
         pcr)
-            local pcr_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}/claude-post-compact-reminder"
-            if [[ -x "$pcr_bin" ]]; then
+            local pcr_bin=""
+            pcr_bin="$(update_binary_path "claude-post-compact-reminder" 2>/dev/null || true)"
+            if [[ -n "$pcr_bin" ]]; then
                 version=$("$pcr_bin" --version 2>/dev/null | head -1 || echo "unknown")
-            elif cmd_exists claude-post-compact-reminder; then
-                version=$(claude-post-compact-reminder --version 2>/dev/null | head -1 || echo "unknown")
             else
                 version="unknown"
             fi
             ;;
         ntm|ubs|bv|cass|cm|caam|slb|ru|dcg|apr|pt|xf|jfp|ms|br|rch|giil|csctf|srps|tru|rano|mdwb|s2p|brenner|fsfs|sbh|casr|dsr|asb)
-            version=$("$tool" --version 2>/dev/null | head -1 || echo "unknown")
+            tool_bin="$(update_binary_path "$tool" 2>/dev/null || true)"
+            if [[ -n "$tool_bin" ]]; then
+                version=$("$tool_bin" --version 2>/dev/null | head -1 || echo "unknown")
+            else
+                version="unknown"
+            fi
             ;;
         sg|lsd|dust|tldr)
-            version=$("$tool" --version 2>/dev/null | head -1 || echo "unknown")
+            tool_bin="$(update_binary_path "$tool" 2>/dev/null || true)"
+            if [[ -n "$tool_bin" ]]; then
+                version=$("$tool_bin" --version 2>/dev/null | head -1 || echo "unknown")
+            else
+                version="unknown"
+            fi
             ;;
         atuin)
             version=$(update_tool_version_from_path "atuin" "$(update_tool_binary_path "atuin" 2>/dev/null || true)")
@@ -653,9 +742,15 @@ update_shell_tool_state_improved() {
 }
 
 update_repair_atuin_install() {
-    local preferred_src="$HOME/.atuin/bin/atuin"
+    local target_user=""
+    local target_home=""
+    local preferred_src=""
     local primary_dir=""
-    local user_bin
+    local user_bin=""
+
+    target_user="$(update_target_user)"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    preferred_src="${target_home:-$HOME}/.atuin/bin/atuin"
     primary_dir="$(update_preferred_user_bin_dir)"
     user_bin="$(update_default_user_bin_dir)"
     local -a bin_dirs=("$primary_dir")
@@ -1754,13 +1849,15 @@ update_is_linux_arm64() {
 }
 
 update_run_meta_skill_source_install() {
-    if ! command -v cargo >/dev/null 2>&1; then
-        echo "meta_skill ARM64 Linux fallback requires cargo in PATH" >&2
+    local cargo_bin=""
+    cargo_bin="$(update_binary_path cargo 2>/dev/null || true)"
+    if [[ -z "$cargo_bin" ]]; then
+        echo "meta_skill ARM64 Linux fallback requires cargo for the target user" >&2
         return 1
     fi
 
     echo "meta_skill: Linux ARM64 detected, building from source via cargo" >&2
-    cargo install --git https://github.com/Dicklesworthstone/meta_skill --force
+    update_run_in_target_context "" "$cargo_bin" install --git https://github.com/Dicklesworthstone/meta_skill --force
 }
 
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via run_cmd()
@@ -2476,9 +2573,10 @@ update_bun() {
 
     log_section "Bun Runtime"
 
-    local bun_bin="$HOME/.bun/bin/bun"
+    local bun_bin=""
+    bun_bin="$(update_binary_path bun 2>/dev/null || true)"
 
-    if [[ ! -x "$bun_bin" ]]; then
+    if [[ -z "$bun_bin" ]]; then
         log_item "skip" "Bun" "not installed"
         return 0
     fi
@@ -2499,6 +2597,11 @@ update_agents() {
         return 0
     fi
 
+    local target_user=""
+    local target_home=""
+    target_user="$(update_target_user)"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+
     log_section "Coding Agents"
 
     # Claude Code - can update without bun; supports install/reinstall with --force.
@@ -2507,7 +2610,7 @@ update_agents() {
     # The native install goes to ~/.local/bin/claude which should take precedence,
     # but having both can cause PATH confusion and doctor warnings.
     local claude_path=""
-    claude_path=$(command -v claude 2>/dev/null) || true
+    claude_path="$(update_binary_path claude 2>/dev/null || true)"
     local bun_claude_detected=false
 
     # Check if claude is bun-installed. This can happen in two ways:
@@ -2527,17 +2630,18 @@ update_agents() {
 
     if [[ "$bun_claude_detected" == "true" ]] && [[ "$FORCE_MODE" == "true" ]]; then
         log_to_file "Removing bun-installed Claude to switch to native version: $claude_path"
-        local bun_bin="$HOME/.bun/bin/bun"
-        if [[ -x "$bun_bin" ]]; then
+        local bun_remove_bin=""
+        bun_remove_bin="$(update_binary_path bun 2>/dev/null || true)"
+        if [[ -n "$bun_remove_bin" ]]; then
             # Try to uninstall via bun
-            "$bun_bin" remove -g @anthropic-ai/claude-code 2>/dev/null || true
+            "$bun_remove_bin" remove -g @anthropic-ai/claude-code 2>/dev/null || true
         fi
         # Also remove the symlink/binary directly if it still exists
         if [[ -f "$claude_path" || -L "$claude_path" ]]; then
             rm -f "$claude_path" 2>/dev/null || true
         fi
         # Remove the actual bun binary too if it's separate from the symlink
-        local bun_claude_bin="$HOME/.bun/bin/claude"
+        local bun_claude_bin="${target_home:-$HOME}/.bun/bin/claude"
         if [[ -f "$bun_claude_bin" || -L "$bun_claude_bin" ]] && [[ "$bun_claude_bin" != "$claude_path" ]]; then
             rm -f "$bun_claude_bin" 2>/dev/null || true
         fi
@@ -2545,7 +2649,7 @@ update_agents() {
         claude_path=""
     fi
 
-    if cmd_exists claude && [[ "$bun_claude_detected" != "true" || "$FORCE_MODE" != "true" ]]; then
+    if [[ -n "$claude_path" ]] && [[ "$bun_claude_detected" != "true" || "$FORCE_MODE" != "true" ]]; then
         capture_version_before "claude"
 
         # Try native update first
@@ -2578,8 +2682,9 @@ update_agents() {
         log_item "skip" "Claude Code" "not installed (use --force to install)"
     fi
 
-    local bun_bin="$HOME/.bun/bin/bun"
-    if [[ ! -x "$bun_bin" ]]; then
+    local bun_bin=""
+    bun_bin="$(update_binary_path bun 2>/dev/null || true)"
+    if [[ -z "$bun_bin" ]]; then
         log_item "fail" "Bun not installed" "required for Codex/Gemini updates"
         return 0
     fi
@@ -2587,9 +2692,7 @@ update_agents() {
     # Codex CLI via bun (--trust allows postinstall scripts)
     # Uses fallback chain: @latest -> unversioned -> pinned 0.87.0
     # npm can 404 briefly after publishing; pinned version is reliable fallback
-    if cmd_exists codex || [[ "$FORCE_MODE" == "true" ]]; then
-        local codex_bin_local="${ACFS_BIN_DIR:-$HOME/.local/bin}/codex"
-        local codex_bin_bun="$HOME/.bun/bin/codex"
+    if update_binary_exists codex || [[ "$FORCE_MODE" == "true" ]]; then
         local codex_fallback_version="0.87.0"
 
         capture_version_before "codex"
@@ -2644,7 +2747,7 @@ update_agents() {
     fi
 
     # Gemini CLI via bun (--trust allows postinstall scripts)
-    if cmd_exists gemini || [[ "$FORCE_MODE" == "true" ]]; then
+    if update_binary_exists gemini || [[ "$FORCE_MODE" == "true" ]]; then
         local gemini_patch_ready=true
         local gemini_nvm_bin=""
         local gemini_patch_skip_reason="Node.js runtime unavailable"
@@ -2914,12 +3017,13 @@ update_cloud() {
 
     log_section "Cloud CLIs"
 
-    local bun_bin="$HOME/.bun/bin/bun"
+    local bun_bin=""
     local has_bun=false
-    [[ -x "$bun_bin" ]] && has_bun=true
+    bun_bin="$(update_binary_path bun 2>/dev/null || true)"
+    [[ -n "$bun_bin" ]] && has_bun=true
 
     # Wrangler (--trust allows postinstall scripts for native binaries)
-    if cmd_exists wrangler || [[ "$FORCE_MODE" == "true" ]]; then
+    if update_binary_exists wrangler || [[ "$FORCE_MODE" == "true" ]]; then
         if [[ "$has_bun" == "true" ]]; then
             run_cmd_bun_with_retry "Wrangler (Cloudflare)" "$bun_bin" install -g --trust wrangler@latest
         else
@@ -2930,7 +3034,7 @@ update_cloud() {
     fi
 
     # Supabase (verified GitHub release binary; installed to ~/.local/bin)
-    if cmd_exists supabase || [[ "$FORCE_MODE" == "true" ]]; then
+    if update_binary_exists supabase || [[ "$FORCE_MODE" == "true" ]]; then
         capture_version_before "supabase"
         run_cmd "Supabase CLI" bash -c "$(supabase_release_update_script)"
         # Refresh PATH in case ~/.local/bin was created during install.
@@ -2943,7 +3047,7 @@ update_cloud() {
     fi
 
     # Vercel (--trust allows postinstall scripts for native binaries)
-    if cmd_exists vercel || [[ "$FORCE_MODE" == "true" ]]; then
+    if update_binary_exists vercel || [[ "$FORCE_MODE" == "true" ]]; then
         if [[ "$has_bun" == "true" ]]; then
             run_cmd_bun_with_retry "Vercel CLI" "$bun_bin" install -g --trust vercel@latest
         else
@@ -2954,14 +3058,16 @@ update_cloud() {
     fi
 
     # GitHub CLI (gh) - update extensions
-    if cmd_exists gh; then
+    local gh_bin=""
+    gh_bin="$(update_binary_path gh 2>/dev/null || true)"
+    if [[ -n "$gh_bin" ]]; then
         capture_version_before "gh"
         # Update gh extensions if any are installed
         local gh_extensions=0
-        gh_extensions=$(gh extension list 2>/dev/null | grep -v "no installed extensions found" | grep -c -v "No extensions installed" || true)
+        gh_extensions=$("$gh_bin" extension list 2>/dev/null | grep -v "no installed extensions found" | grep -c -v "No extensions installed" || true)
         gh_extensions=$((gh_extensions + 0))  # Strip whitespace, ensure integer
         if [[ $gh_extensions -gt 0 ]]; then
-            run_cmd "GitHub CLI extensions" gh extension upgrade --all
+            run_cmd "GitHub CLI extensions" "$gh_bin" extension upgrade --all
         else
             log_item "ok" "GitHub CLI" "no extensions to update"
         fi
@@ -2974,7 +3080,9 @@ update_cloud() {
     fi
 
     # Google Cloud SDK (gcloud)
-    if cmd_exists gcloud; then
+    local gcloud_bin=""
+    gcloud_bin="$(update_binary_path gcloud 2>/dev/null || true)"
+    if [[ -n "$gcloud_bin" ]]; then
         if dpkg -s google-cloud-cli >/dev/null 2>&1; then
             # apt-managed installs disable `gcloud components update`;
             # the package is updated via apt-get instead.
@@ -2983,7 +3091,7 @@ update_cloud() {
         else
             capture_version_before "gcloud"
             # gcloud components update requires --quiet for non-interactive
-            run_cmd "Google Cloud SDK" gcloud components update --quiet
+            run_cmd "Google Cloud SDK" "$gcloud_bin" components update --quiet
             if capture_version_after "gcloud"; then
                 [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[gcloud]}" "${VERSION_AFTER[gcloud]}"
             fi
@@ -3000,9 +3108,10 @@ update_rust() {
 
     log_section "Rust Toolchain"
 
-    local rustup_bin="$HOME/.cargo/bin/rustup"
+    local rustup_bin=""
+    rustup_bin="$(update_binary_path rustup 2>/dev/null || true)"
 
-    if [[ ! -x "$rustup_bin" ]]; then
+    if [[ -z "$rustup_bin" ]]; then
         log_item "skip" "Rust" "not installed"
         return 0
     fi
@@ -3039,8 +3148,9 @@ update_cargo_tools() {
 
     log_section "Cargo Tools"
 
-    local cargo_bin="$HOME/.cargo/bin/cargo"
-    if [[ ! -x "$cargo_bin" ]]; then
+    local cargo_bin=""
+    cargo_bin="$(update_binary_path cargo 2>/dev/null || true)"
+    if [[ -z "$cargo_bin" ]]; then
         log_item "skip" "Cargo tools" "cargo not found"
         return 0
     fi
@@ -3053,7 +3163,7 @@ update_cargo_tools() {
         local tool="${entry%|*}"
         local binary_name="${entry#*|}"
 
-        if ! command -v "$binary_name" &>/dev/null && [[ ! -x "$HOME/.cargo/bin/$binary_name" ]]; then
+        if ! update_binary_exists "$binary_name"; then
             continue
         fi
 
@@ -3076,9 +3186,10 @@ update_uv() {
 
     log_section "Python Tools (uv)"
 
-    local uv_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}/uv"
+    local uv_bin=""
+    uv_bin="$(update_binary_path uv 2>/dev/null || true)"
 
-    if [[ ! -x "$uv_bin" ]]; then
+    if [[ -z "$uv_bin" ]]; then
         log_item "skip" "uv" "not installed"
         return 0
     fi
@@ -3102,14 +3213,14 @@ update_go() {
     log_section "Go Runtime"
 
     # Check if go is installed
-    if ! command -v go &>/dev/null; then
+    local go_path=""
+    go_path="$(update_binary_path go 2>/dev/null || true)"
+    if [[ -z "$go_path" ]]; then
         log_item "skip" "Go" "not installed"
         return 0
     fi
 
     # Determine how Go was installed
-    local go_path
-    go_path=$(command -v go 2>/dev/null || true)
 
     # Check if it's apt-managed (system install)
     if [[ "$go_path" == "/usr/bin/go" ]] || [[ "$go_path" == "/usr/local/go/bin/go" ]]; then
@@ -3132,7 +3243,7 @@ update_go() {
 
     # For other installations, just log the version
     local go_version
-    go_version=$(go version 2>/dev/null | awk '{print $3}' | sed 's/go//')
+    go_version=$("$go_path" version 2>/dev/null | awk '{print $3}' | sed 's/go//')
     log_item "ok" "Go $go_version" "no auto-update available"
     log_to_file "Go version: $go_version (path: $go_path)"
 }
@@ -3243,7 +3354,7 @@ update_stack() {
 
     # JeffreysPrompts (jfp) - only update if already installed
     # Note: JFP requires a paid subscription to jeffreysprompts.com
-    if cmd_exists jfp; then
+    if update_binary_exists jfp; then
         run_cmd "JeffreysPrompts" update_run_verified_installer jfp
     fi
 
@@ -3274,8 +3385,12 @@ update_stack() {
     # DCG (Destructive Command Guard) - always install/update
     run_cmd "DCG" update_run_verified_installer dcg --easy-mode
     # Re-register hook after install/update to ensure latest version is active
-    if cmd_exists dcg && cmd_exists claude; then
-        run_cmd "DCG Hook" dcg install --force 2>/dev/null || true
+    if update_binary_exists dcg && update_binary_exists claude; then
+        local dcg_bin=""
+        dcg_bin="$(update_binary_path dcg 2>/dev/null || true)"
+        if [[ -n "$dcg_bin" ]]; then
+            run_cmd "DCG Hook" "$dcg_bin" install --force 2>/dev/null || true
+        fi
     fi
 
     # RCH (Remote Compilation Helper) - always install/update
@@ -3312,21 +3427,21 @@ update_stack() {
     run_cmd "CASR" update_run_verified_installer casr
 
     # ASCII Art Diagram Corrector (aadc) - update when installed, or install with --force
-    if cmd_exists aadc || [[ "$FORCE_MODE" == "true" ]]; then
+    if update_binary_exists aadc || [[ "$FORCE_MODE" == "true" ]]; then
         capture_version_before "aadc"
         run_cmd "AADC" bash -c 'ACFS_TMP_DIR="$(mktemp -d)"; trap "[ -n \\\"$ACFS_TMP_DIR\\\" ] && rm -rf \\\"$ACFS_TMP_DIR\\\"" EXIT; git clone --depth 1 https://github.com/Dicklesworthstone/aadc.git "$ACFS_TMP_DIR/aadc" && cd "$ACFS_TMP_DIR/aadc" && cargo build --release && cp target/release/aadc ~/.cargo/bin/'
         capture_version_after "aadc"
     fi
 
     # Rust Proxy (rust_proxy) - update when installed, or install with --force
-    if cmd_exists rust_proxy || [[ "$FORCE_MODE" == "true" ]]; then
+    if update_binary_exists rust_proxy || [[ "$FORCE_MODE" == "true" ]]; then
         capture_version_before "rust_proxy"
         run_cmd "Rust Proxy" bash -c 'ACFS_TMP_DIR="$(mktemp -d)"; trap "[ -n \\\"$ACFS_TMP_DIR\\\" ] && rm -rf \\\"$ACFS_TMP_DIR\\\"" EXIT; git clone --depth 1 https://github.com/Dicklesworthstone/rust_proxy.git "$ACFS_TMP_DIR/rust_proxy" && cd "$ACFS_TMP_DIR/rust_proxy" && cargo build --release && cp target/release/rust_proxy ~/.cargo/bin/'
         capture_version_after "rust_proxy"
     fi
 
     # Agent Settings Backup (asb) - update when installed, or install with --force
-    if cmd_exists asb || [[ "$FORCE_MODE" == "true" ]]; then
+    if update_binary_exists asb || [[ "$FORCE_MODE" == "true" ]]; then
         capture_version_before "asb"
         run_cmd "ASB" update_run_verified_installer asb
         if capture_version_after "asb"; then
@@ -3338,7 +3453,7 @@ update_stack() {
 
     # Post-Compact Reminder (pcr) - only update when Claude Code is installed
     local pcr_hook_script="${ACFS_BIN_DIR:-$HOME/.local/bin}/claude-post-compact-reminder"
-    if ! cmd_exists claude; then
+    if ! update_binary_exists claude; then
         log_item "skip" "PCR" "Claude Code not installed"
     elif [[ -x "$pcr_hook_script" || "$FORCE_MODE" == "true" ]]; then
         local pcr_mtime_before=""
@@ -3378,7 +3493,10 @@ update_stack() {
 update_root_agents_md() {
     log_section "Root AGENTS.md"
 
-    if ! cmd_exists flywheel-update-agents-md; then
+    local root_agents_generator=""
+    root_agents_generator="$(update_binary_path flywheel-update-agents-md 2>/dev/null || true)"
+
+    if [[ -z "$root_agents_generator" ]]; then
         local generator=""
         local candidate=""
         local -a security_candidates=(
@@ -3407,7 +3525,9 @@ update_root_agents_md() {
         fi
     fi
 
-    run_cmd_sudo "Root AGENTS.md" flywheel-update-agents-md
+    root_agents_generator="$(update_binary_path flywheel-update-agents-md 2>/dev/null || true)"
+    [[ -n "$root_agents_generator" ]] || root_agents_generator="flywheel-update-agents-md"
+    run_cmd_sudo "Root AGENTS.md" "$root_agents_generator"
 }
 
 # ============================================================
