@@ -537,7 +537,7 @@ test_backup_creation_cleans_up_after_copy_failure() {
     original_cp="$(declare -f cp 2>/dev/null || true)"
     original_fsync_directory="$(declare -f fsync_directory)"
     cp() {
-        local last="${@: -1}"
+        local last="${!#}"
         if [[ "$last" == "$ACFS_BACKUPS_DIR/"* ]]; then
             : > "$last"
             return 1
@@ -851,7 +851,7 @@ test_state_repair_fails_when_changes_rewrite_cannot_replace_file() {
     echo 'invalid json line' > "$ACFS_CHANGES_FILE"
 
     mv() {
-        local last="${@: -1}"
+        local last="${!#}"
         if [[ "$last" == "$ACFS_CHANGES_FILE" ]]; then
             return 1
         fi
@@ -874,6 +874,26 @@ test_state_repair_fails_when_changes_rewrite_cannot_replace_file() {
     fi
 
     cleanup_test_env
+    return 0
+}
+
+test_autofix_globals_are_initialized_under_set_u() {
+    local output=""
+
+    if ! output="$(bash -c '
+        set -u
+        source "$1"
+        printf "records=%s order=%s\n" "${#ACFS_CHANGE_RECORDS[@]}" "${#ACFS_CHANGE_ORDER[@]}"
+    ' _ "$REPO_ROOT/scripts/lib/autofix.sh" 2>&1)"; then
+        echo "  Sourcing autofix.sh under set -u failed: $output"
+        return 1
+    fi
+
+    if [[ "$output" != "records=0 order=0" ]]; then
+        echo "  Expected empty initialized globals under set -u, got: $output"
+        return 1
+    fi
+
     return 0
 }
 
@@ -1901,6 +1921,7 @@ main() {
     run_test test_state_integrity_checks_all_active_backups
     run_test test_state_repair
     run_test test_state_repair_fails_when_changes_rewrite_cannot_replace_file
+    run_test test_autofix_globals_are_initialized_under_set_u
     run_test test_init_autofix_state
     run_test test_init_autofix_state_fails_when_repair_fails
     run_test test_session_management

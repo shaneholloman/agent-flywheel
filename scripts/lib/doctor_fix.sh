@@ -266,6 +266,15 @@ doctor_fix_build_remove_tree_rollback() {
     printf '%s\n' "$rollback_command"
 }
 
+doctor_fix_build_remove_binary_rollback() {
+    local target_path="${1:-}"
+    local rollback_command=""
+
+    [[ -n "$target_path" ]] || return 1
+    printf -v rollback_command 'rm -f %q' "$target_path"
+    printf '%s\n' "$rollback_command"
+}
+
 doctor_fix_run_rollback_command() {
     local rollback_command="$1"
     local requires_root="${2:-false}"
@@ -932,6 +941,7 @@ fix_stack_install() {
     local binary_name="$2"
     local install_cmd="$3"
     local installed_path=""
+    local rollback_command=""
 
     # Guard: Check if already installed
     if command -v "$binary_name" &>/dev/null; then
@@ -955,13 +965,15 @@ fix_stack_install() {
             FIX_FAILED=$((FIX_FAILED + 1))
             return 1
         fi
+        rollback_command="$(doctor_fix_build_remove_binary_rollback "$installed_path")"
 
         if ! doctor_fix_record_change_or_rollback \
-            "" \
+            "$rollback_command" \
             false \
             "install" "Installed $binary_name" \
             "# Manual rollback required: remove $binary_name if undesired" \
             false "info" "[\"$installed_path\"]" "[]" "[]"; then
+            hash -r
             FIX_FAILED=$((FIX_FAILED + 1))
             return 1
         fi
@@ -985,6 +997,7 @@ fix_verified_install() {
     local args=("$@")
     local args_display="${args[*]:-}"
     local installed_path=""
+    local rollback_command=""
 
     if command -v "$binary_name" &>/dev/null; then
         doctor_fix_log INFO "$binary_name already installed"
@@ -1001,12 +1014,14 @@ fix_verified_install() {
         hash -r
         installed_path="$(command -v "$binary_name" 2>/dev/null || true)"
         if [[ -n "$installed_path" ]]; then
+            rollback_command="$(doctor_fix_build_remove_binary_rollback "$installed_path")"
             if ! doctor_fix_record_change_or_rollback \
-                "" \
+                "$rollback_command" \
                 false \
                 "install" "Installed $binary_name via verified installer" \
                 "# Manual rollback required: remove $binary_name if undesired" \
                 false "info" "[\"$installed_path\"]" "[]" "[]"; then
+                hash -r
                 FIX_FAILED=$((FIX_FAILED + 1))
                 return 1
             fi

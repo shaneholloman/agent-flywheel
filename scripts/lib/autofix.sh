@@ -131,8 +131,8 @@ autofix_refresh_state_paths() {
 autofix_refresh_state_paths
 
 # In-memory change records
-declare -gA ACFS_CHANGE_RECORDS  # id -> JSON record (global; file may be sourced inside a function)
-declare -ga ACFS_CHANGE_ORDER    # Ordered list of change IDs (global)
+declare -gA ACFS_CHANGE_RECORDS=()  # id -> JSON record (global; file may be sourced inside a function)
+declare -ga ACFS_CHANGE_ORDER=()    # Ordered list of change IDs (global)
 
 # Session management
 ACFS_SESSION_ID=""

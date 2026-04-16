@@ -1411,6 +1411,49 @@ test_fix_stack_install_fails_when_binary_missing_after_successful_command() {
     return 0
 }
 
+test_fix_stack_install_removes_binary_when_record_change_fails() {
+    setup_test_env
+    export PATH="$HOME/.local/bin:$PATH"
+    local original_record_change=""
+    original_record_change="$(declare -f record_change)"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    record_change() { return 1; }
+
+    if fix_stack_install "agent.codex" "codex-journal-fail" "cat > \"$HOME/.local/bin/codex-journal-fail\" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x \"$HOME/.local/bin/codex-journal-fail\"" >/dev/null 2>&1; then
+        eval "$original_record_change"
+        echo "  fix_stack_install should fail when record_change fails"
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_record_change"
+
+    if [[ -e "$HOME/.local/bin/codex-journal-fail" ]]; then
+        echo "  fix_stack_install left the installed binary behind after journaling failure"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        echo "  fix_stack_install should not persist a journal entry when journaling fails"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
 # ============================================================
 # Test: fix_verified_install
 # ============================================================
@@ -1564,6 +1607,57 @@ EOF
     done
 
     [[ -n "$original_uname" ]] && eval "$original_uname" || unset -f uname
+    cleanup_test_env
+    return 0
+}
+
+test_fix_verified_install_removes_binary_when_record_change_fails() {
+    setup_test_env
+    export PATH="$HOME/.local/bin:$PATH"
+    local original_doctor_fix_run_verified_installer=""
+    local original_record_change=""
+    original_doctor_fix_run_verified_installer="$(declare -f doctor_fix_run_verified_installer)"
+    original_record_change="$(declare -f record_change)"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    doctor_fix_run_verified_installer() {
+        cat > "$HOME/.local/bin/ms-journal-fail" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+        chmod +x "$HOME/.local/bin/ms-journal-fail"
+        return 0
+    }
+    record_change() { return 1; }
+
+    if fix_verified_install "stack.meta_skill" "ms-journal-fail" "ms" --easy-mode >/dev/null 2>&1; then
+        eval "$original_doctor_fix_run_verified_installer"
+        eval "$original_record_change"
+        echo "  fix_verified_install should fail when record_change fails"
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_doctor_fix_run_verified_installer"
+    eval "$original_record_change"
+
+    if [[ -e "$HOME/.local/bin/ms-journal-fail" ]]; then
+        echo "  fix_verified_install left the installed binary behind after journaling failure"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        echo "  fix_verified_install should not persist a journal entry when journaling fails"
+        cleanup_test_env
+        return 1
+    fi
+
     cleanup_test_env
     return 0
 }
@@ -2414,11 +2508,13 @@ main() {
     run_test test_fix_acfs_sourcing_removes_new_file_when_record_change_fails
     run_test test_fix_stack_install_applies_and_records_change
     run_test test_fix_stack_install_fails_when_binary_missing_after_successful_command
+    run_test test_fix_stack_install_removes_binary_when_record_change_fails
 
     # fix_verified_install tests
     run_test test_fix_verified_install_applies
     run_test test_fix_verified_install_dry_run
     run_test test_fix_verified_install_ms_arm64_fallback_uses_cargo
+    run_test test_fix_verified_install_removes_binary_when_record_change_fails
     run_test test_fix_ssh_server_records_change_when_enabling_service
     run_test test_fix_ssh_server_fails_when_service_enable_fails
     run_test test_fix_ssh_keepalive_applies_and_records_change
