@@ -179,8 +179,8 @@ init_target_context() {
         return 1
     fi
 
-    if [[ -z "${BUN_BIN:-}" ]]; then
-        BUN_BIN="$TARGET_HOME/.bun/bin/bun"
+    if [[ -z "${BUN_BIN:-}" || ! -x "${BUN_BIN:-}" ]]; then
+        BUN_BIN="$(find_user_bin "bun" 2>/dev/null || true)"
     fi
 }
 
@@ -576,9 +576,10 @@ check_gemini_status() {
 }
 
 check_vercel_status() {
-    local vercel_bin="$TARGET_HOME/.bun/bin/vercel"
+    local vercel_bin
+    vercel_bin="$(find_user_bin "vercel" 2>/dev/null || true)"
 
-    if [[ ! -x "$vercel_bin" ]]; then
+    if [[ -z "$vercel_bin" || ! -x "$vercel_bin" ]]; then
         SERVICE_STATUS[vercel]="not_installed"
         return
     fi
@@ -614,9 +615,10 @@ check_supabase_status() {
 }
 
 check_wrangler_status() {
-    local wrangler_bin="$TARGET_HOME/.bun/bin/wrangler"
+    local wrangler_bin
+    wrangler_bin="$(find_user_bin "wrangler" 2>/dev/null || true)"
 
-    if [[ ! -x "$wrangler_bin" ]]; then
+    if [[ -z "$wrangler_bin" || ! -x "$wrangler_bin" ]]; then
         SERVICE_STATUS[wrangler]="not_installed"
         return
     fi
@@ -1047,9 +1049,10 @@ Press Enter to launch Gemini login..."
 }
 
 setup_vercel() {
-    local vercel_bin="$TARGET_HOME/.bun/bin/vercel"
+    local vercel_bin
+    vercel_bin="$(find_user_bin "vercel" 2>/dev/null || true)"
 
-    if [[ ! -x "$vercel_bin" ]]; then
+    if [[ -z "$vercel_bin" || ! -x "$vercel_bin" ]]; then
         gum_error "Vercel CLI not installed. Run the main installer first."
         return 1
     fi
@@ -1126,9 +1129,10 @@ Press Enter to continue with Supabase login..."
 }
 
 setup_wrangler() {
-    local wrangler_bin="$TARGET_HOME/.bun/bin/wrangler"
+    local wrangler_bin
+    wrangler_bin="$(find_user_bin "wrangler" 2>/dev/null || true)"
 
-    if [[ ! -x "$wrangler_bin" ]]; then
+    if [[ -z "$wrangler_bin" || ! -x "$wrangler_bin" ]]; then
         gum_error "Wrangler (Cloudflare) CLI not installed. Run the main installer first."
         return 1
     fi

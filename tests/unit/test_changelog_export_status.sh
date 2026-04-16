@@ -730,6 +730,116 @@ EOF
     fi
 }
 
+
+test_services_setup_repairs_invalid_bun_bin_from_target_user_paths() {
+    local output=""
+
+    if output=$(SERVICES_SETUP_SH="$SERVICES_SETUP_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+target_home="$tmp_dir/target-home"
+mkdir -p "$target_home/.local/bin"
+cat > "$target_home/.local/bin/bun" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+chmod +x "$target_home/.local/bin/bun"
+export TARGET_USER="ubuntu"
+export TARGET_HOME="$target_home"
+export ACFS_BIN_DIR="$target_home/.local/bin"
+export BUN_BIN="$target_home/.bun/bin/bun"
+# shellcheck source=/dev/null
+source "$SERVICES_SETUP_SH"
+
+if ! init_target_context; then
+    printf 'init-failed
+'
+    exit 1
+fi
+
+if [[ "$BUN_BIN" == "$target_home/.local/bin/bun" ]]; then
+    printf 'resolved
+'
+else
+    printf 'bun=%s
+' "$BUN_BIN"
+fi
+EOF
+    ); then
+        if [[ "$output" == "resolved" ]]; then
+            harness_pass "services-setup repairs invalid BUN_BIN from target-user paths"
+        else
+            harness_fail "services-setup repairs invalid BUN_BIN from target-user paths" "$output"
+        fi
+    else
+        harness_fail "services-setup repairs invalid BUN_BIN from target-user paths"
+    fi
+}
+
+test_services_setup_cloud_clis_use_find_user_bin() {
+    local output=""
+
+    if output=$(SERVICES_SETUP_SH="$SERVICES_SETUP_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+target_home="$tmp_dir/target-home"
+mkdir -p "$target_home/.local/bin"
+for tool in vercel wrangler; do
+    cat > "$target_home/.local/bin/$tool" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+    chmod +x "$target_home/.local/bin/$tool"
+done
+export TARGET_USER="ubuntu"
+export TARGET_HOME="$target_home"
+export ACFS_BIN_DIR="$target_home/.local/bin"
+export BUN_BIN="/bin/true"
+# shellcheck source=/dev/null
+source "$SERVICES_SETUP_SH"
+
+HAS_GUM=false
+gum_confirm() { return 0; }
+gum_box() { :; }
+gum_detail() { :; }
+gum_error() { printf 'error:%s
+' "$*"; }
+gum_warn() { :; }
+gum_success() { :; }
+read() { return 0; }
+run_as_user() { return 1; }
+
+check_vercel_status
+check_wrangler_status
+printf 'statuses=%s,%s
+' "${SERVICE_STATUS[vercel]:-missing}" "${SERVICE_STATUS[wrangler]:-missing}"
+
+run_as_user() {
+    printf '%s
+' "$1" >> "$target_home/run.log"
+    return 0
+}
+
+setup_vercel </dev/null
+setup_wrangler </dev/null
+
+if [[ -f "$target_home/run.log" ]]; then
+    cat "$target_home/run.log"
+fi
+EOF
+    ); then
+        if [[ "$output" == *"statuses=installed,installed"* ]]             && [[ "$output" == *"/target-home/.local/bin/vercel"* ]]             && [[ "$output" == *"/target-home/.local/bin/wrangler"* ]]             && [[ "$output" != *"error:Vercel CLI not installed"* ]]             && [[ "$output" != *"error:Wrangler (Cloudflare) CLI not installed"* ]]; then
+            harness_pass "services-setup cloud CLIs resolve via find_user_bin"
+        else
+            harness_fail "services-setup cloud CLIs resolve via find_user_bin" "$output"
+        fi
+    else
+        harness_fail "services-setup cloud CLIs resolve via find_user_bin"
+    fi
+}
+
 test_stack_is_installed_handles_unknown_tool_under_set_u() {
     local output=""
 
@@ -5531,6 +5641,8 @@ main() {
     test_services_setup_globals_are_initialized_under_set_u || true
     test_services_setup_setup_flows_tolerate_unset_status_keys || true
     test_services_setup_find_user_bin_checks_system_paths || true
+    test_services_setup_repairs_invalid_bun_bin_from_target_user_paths || true
+    test_services_setup_cloud_clis_use_find_user_bin || true
 
     harness_section "Stack"
     test_stack_is_installed_handles_unknown_tool_under_set_u || true
