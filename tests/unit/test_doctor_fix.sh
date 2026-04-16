@@ -62,6 +62,9 @@ setup_test_env() {
     unset -f sudo 2>/dev/null || true
     unset -f systemctl 2>/dev/null || true
     unset -f sshd 2>/dev/null || true
+    unset -f git 2>/dev/null || true
+    unset -f cp 2>/dev/null || true
+    unset -f ln 2>/dev/null || true
     unset -f uname 2>/dev/null || true
     unset -f doctor_fix_run_verified_installer 2>/dev/null || true
     unset _ACFS_AUTOFIX_SOURCED
@@ -123,6 +126,7 @@ setup_test_env() {
     export HOME="$TEST_HOME"
     unset TARGET_HOME
     unset ACFS_HOME
+    unset DOCTOR_FIX_SSHD_CONFIG
 }
 
 # Cleanup test environment
@@ -133,6 +137,9 @@ cleanup_test_env() {
     unset -f sudo 2>/dev/null || true
     unset -f systemctl 2>/dev/null || true
     unset -f sshd 2>/dev/null || true
+    unset -f git 2>/dev/null || true
+    unset -f cp 2>/dev/null || true
+    unset -f ln 2>/dev/null || true
     unset -f uname 2>/dev/null || true
     unset -f doctor_fix_run_verified_installer 2>/dev/null || true
 
@@ -145,6 +152,7 @@ cleanup_test_env() {
     fi
     unset TARGET_HOME
     unset ACFS_HOME
+    unset DOCTOR_FIX_SSHD_CONFIG
     rm -rf "/tmp/test_doctor_fix_"* 2>/dev/null || true
 }
 
@@ -610,6 +618,89 @@ test_fix_config_copy_removes_dest_when_record_change_fails() {
     return 0
 }
 
+test_fix_config_copy_removes_created_dirs_when_record_change_fails() {
+    setup_test_env
+
+    local src="$ACFS_STATE_DIR/source_config_nested.txt"
+    local dest="$HOME/.brand-new-acfs/zsh/acfs.zshrc"
+    local original_record_change
+    printf 'config content\n' > "$src"
+    original_record_change="$(declare -f record_change)"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    record_change() { return 1; }
+
+    if fix_config_copy "config.test" "$src" "$dest" >/dev/null 2>&1; then
+        eval "$original_record_change"
+        echo "  fix_config_copy unexpectedly succeeded when record_change failed for nested destination"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_record_change"
+
+    if [[ -e "$dest" ]]; then
+        echo "  Nested destination file was not removed after record_change failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -d "$HOME/.brand-new-acfs" || -d "$HOME/.brand-new-acfs/zsh" ]]; then
+        echo "  Nested config copy left newly created parent directories behind after journaling failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
+    cleanup_test_env
+    return 0
+}
+
+test_fix_config_copy_cleans_created_dirs_on_copy_failure() {
+    setup_test_env
+
+    local src="$ACFS_STATE_DIR/source_config_copy_failure.txt"
+    local dest="$HOME/.copy-failure-acfs/zsh/acfs.zshrc"
+    printf 'config content\n' > "$src"
+
+    cp() { return 1; }
+
+    if fix_config_copy "config.test" "$src" "$dest" >/dev/null 2>&1; then
+        echo "  fix_config_copy unexpectedly succeeded when cp failed"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -e "$dest" ]]; then
+        echo "  fix_config_copy left destination behind after copy failure"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -d "$HOME/.copy-failure-acfs" || -d "$HOME/.copy-failure-acfs/zsh" ]]; then
+        echo "  fix_config_copy left newly created parent directories behind after copy failure"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_FAILED -ne 1 ]]; then
+        echo "  FIX_FAILED should be 1 after copy failure, got $FIX_FAILED"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
 # ============================================================
 # Test: fix_symlink_create
 # ============================================================
@@ -774,6 +865,208 @@ test_fix_symlink_create_removes_symlink_when_record_change_fails() {
 
     if [[ $FIX_FAILED -ne 1 ]]; then
         echo "  FIX_FAILED should be 1 after symlink journaling failure, got $FIX_FAILED"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
+    cleanup_test_env
+    return 0
+}
+
+test_fix_symlink_create_removes_created_dirs_when_record_change_fails() {
+    setup_test_env
+
+    local binary_dir="$HOME/bin-src"
+    local binary="$binary_dir/test_tool"
+    local symlink="$HOME/.new-links/bin/test_tool"
+    local original_record_change
+    mkdir -p "$binary_dir"
+    printf '#!/bin/bash\necho test\n' > "$binary"
+    chmod +x "$binary"
+    original_record_change="$(declare -f record_change)"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    record_change() { return 1; }
+
+    if fix_symlink_create "symlink.test" "$binary" "$symlink" >/dev/null 2>&1; then
+        eval "$original_record_change"
+        echo "  fix_symlink_create unexpectedly succeeded when record_change failed for nested destination"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_record_change"
+
+    if [[ -e "$symlink" || -L "$symlink" ]]; then
+        echo "  Nested symlink was not removed after record_change failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -d "$HOME/.new-links" || -d "$HOME/.new-links/bin" ]]; then
+        echo "  Symlink creation left newly created parent directories behind after journaling failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
+    cleanup_test_env
+    return 0
+}
+
+test_fix_symlink_create_cleans_created_dirs_on_symlink_failure() {
+    setup_test_env
+
+    local binary_dir="$HOME/bin-src"
+    local binary="$binary_dir/test_tool"
+    local symlink="$HOME/.symlink-failure/bin/test_tool"
+    mkdir -p "$binary_dir"
+    printf '#!/bin/bash\necho test\n' > "$binary"
+    chmod +x "$binary"
+
+    ln() { return 1; }
+
+    if fix_symlink_create "symlink.test" "$binary" "$symlink" >/dev/null 2>&1; then
+        echo "  fix_symlink_create unexpectedly succeeded when ln failed"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -e "$symlink" || -L "$symlink" ]]; then
+        echo "  fix_symlink_create left symlink destination behind after ln failure"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -d "$HOME/.symlink-failure" || -d "$HOME/.symlink-failure/bin" ]]; then
+        echo "  fix_symlink_create left newly created parent directories behind after ln failure"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_FAILED -ne 1 ]]; then
+        echo "  FIX_FAILED should be 1 after symlink failure, got $FIX_FAILED"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+test_fix_plugin_clone_removes_created_dirs_when_record_change_fails() {
+    setup_test_env
+
+    local plugin_name="zsh-autosuggestions"
+    local plugin_root="$HOME/.oh-my-zsh"
+    local target_dir="$plugin_root/custom/plugins/$plugin_name"
+    local original_record_change
+
+    mkdir -p "$plugin_root"
+    original_record_change="$(declare -f record_change)"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    git() {
+        if [[ "${1:-}" == "clone" ]]; then
+            mkdir -p "$target_dir"
+            printf 'plugin\n' > "$target_dir/README.md"
+            return 0
+        fi
+        return 1
+    }
+    record_change() { return 1; }
+
+    if fix_plugin_clone "shell.plugins.zsh_autosuggestions" "$plugin_name" "https://example.invalid/$plugin_name.git" >/dev/null 2>&1; then
+        eval "$original_record_change"
+        echo "  fix_plugin_clone unexpectedly succeeded when record_change failed"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_record_change"
+
+    if [[ -d "$target_dir" ]]; then
+        echo "  Plugin directory was not removed after record_change failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -d "$plugin_root/custom" || -d "$plugin_root/custom/plugins" ]]; then
+        echo "  Plugin clone left newly created parent directories behind after journaling failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
+    cleanup_test_env
+    return 0
+}
+
+test_fix_plugin_clone_cleans_partial_clone_on_clone_failure() {
+    setup_test_env
+
+    local plugin_name="zsh-syntax-highlighting"
+    local plugin_root="$HOME/.oh-my-zsh"
+    local target_dir="$plugin_root/custom/plugins/$plugin_name"
+
+    mkdir -p "$plugin_root"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    git() {
+        if [[ "${1:-}" == "clone" ]]; then
+            mkdir -p "$target_dir"
+            printf 'partial\n' > "$target_dir/README.md"
+            return 1
+        fi
+        return 1
+    }
+
+    if fix_plugin_clone "shell.plugins.zsh_syntax_highlighting" "$plugin_name" "https://example.invalid/$plugin_name.git" >/dev/null 2>&1; then
+        echo "  fix_plugin_clone unexpectedly succeeded when git clone failed"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -d "$target_dir" ]]; then
+        echo "  Partial plugin clone directory was not cleaned up after clone failure"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -d "$plugin_root/custom" || -d "$plugin_root/custom/plugins" ]]; then
+        echo "  Plugin clone failure left newly created parent directories behind"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_FAILED -ne 1 ]]; then
+        echo "  FIX_FAILED should be 1 after clone failure, got $FIX_FAILED"
         end_autofix_session >/dev/null 2>&1 || true
         cleanup_test_env
         return 1
@@ -1373,6 +1666,102 @@ test_fix_ssh_server_fails_when_service_enable_fails() {
     return 0
 }
 
+test_fix_ssh_keepalive_applies_and_records_change() {
+    setup_test_env
+
+    export DOCTOR_FIX_SSHD_CONFIG="$ACFS_STATE_DIR/sshd_config"
+    printf 'Port 22\n' > "$DOCTOR_FIX_SSHD_CONFIG"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    systemctl() { return 0; }
+
+    if ! fix_ssh_keepalive "network.ssh_keepalive" >/dev/null 2>&1; then
+        echo "  fix_ssh_keepalive should succeed against an override sshd_config path"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -q 'ClientAliveInterval 60' "$DOCTOR_FIX_SSHD_CONFIG"; then
+        echo "  fix_ssh_keepalive did not append ClientAliveInterval"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! jq -e --arg path "$DOCTOR_FIX_SSHD_CONFIG" 'select(.description == ("Configured SSH keepalive in " + $path))' "$ACFS_CHANGES_FILE" >/dev/null 2>&1; then
+        echo "  fix_ssh_keepalive did not record the keepalive change"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+test_fix_ssh_keepalive_restores_file_when_backup_and_record_change_fail() {
+    setup_test_env
+
+    export DOCTOR_FIX_SSHD_CONFIG="$ACFS_STATE_DIR/sshd_config"
+    printf 'Port 22\n' > "$DOCTOR_FIX_SSHD_CONFIG"
+    local original_content=""
+    local original_create_backup=""
+    local original_record_change=""
+    original_content="$(cat "$DOCTOR_FIX_SSHD_CONFIG")"
+    original_create_backup="$(declare -f create_backup)"
+    original_record_change="$(declare -f record_change)"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    create_backup() { return 1; }
+    record_change() { return 1; }
+    systemctl() { return 0; }
+
+    if fix_ssh_keepalive "network.ssh_keepalive" >/dev/null 2>&1; then
+        eval "$original_create_backup"
+        eval "$original_record_change"
+        echo "  fix_ssh_keepalive unexpectedly succeeded when backup and journaling failed"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_create_backup"
+    eval "$original_record_change"
+
+    if [[ "$(cat "$DOCTOR_FIX_SSHD_CONFIG")" != "$original_content" ]]; then
+        echo "  fix_ssh_keepalive did not restore sshd_config after fallback rollback"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if grep -q 'ClientAliveInterval 60' "$DOCTOR_FIX_SSHD_CONFIG"; then
+        echo "  fix_ssh_keepalive left keepalive settings behind after rollback"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_FAILED -ne 1 ]]; then
+        echo "  FIX_FAILED should be 1 after keepalive journaling failure, got $FIX_FAILED"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
+    cleanup_test_env
+    return 0
+}
+
 test_fix_dcg_hook_uninstalls_when_record_change_fails() {
     setup_test_env
 
@@ -1545,6 +1934,12 @@ test_fix_mcp_agent_mail_uses_target_home_for_systemctl_env() {
     mkdir -p "$TARGET_HOME/.local/bin" "$TARGET_HOME/mcp_agent_mail"
     export PATH="$TARGET_HOME/.local/bin:$PATH"
 
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
     cat > "$TARGET_HOME/.local/bin/am" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -1587,7 +1982,15 @@ EOF
 
     cat > "$TARGET_HOME/.local/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+case "$*" in
+    *"/health"*)
+        printf '%s\n' '{"status":"ready"}'
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
 EOF
     chmod +x "$TARGET_HOME/.local/bin/curl"
 
@@ -1623,6 +2026,131 @@ EOF
 
     if ! grep -Fxq "$TARGET_HOME" "$TARGET_HOME/systemctl-home.log"; then
         echo "  systemctl did not receive TARGET_HOME"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! jq -e 'select(.description == "Ran MCP Agent Mail database repair")' "$ACFS_CHANGES_FILE" >/dev/null 2>&1; then
+        echo "  MCP Agent Mail repair was not recorded in the autofix journal"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! jq -e 'select(.description == "Applied MCP Agent Mail doctor fixes")' "$ACFS_CHANGES_FILE" >/dev/null 2>&1; then
+        echo "  MCP Agent Mail doctor fix was not recorded in the autofix journal"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! jq -e 'select(.description == "Repaired MCP Agent Mail managed service")' "$ACFS_CHANGES_FILE" >/dev/null 2>&1; then
+        echo "  MCP Agent Mail service repair was not recorded in the autofix journal"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+test_fix_mcp_agent_mail_dry_run_reports_symlink_and_repair() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin" "$TARGET_HOME/mcp_agent_mail"
+    export PATH="$TARGET_HOME/.local/bin:$PATH"
+
+    cat > "$TARGET_HOME/.local/bin/am" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$TARGET_HOME/.local/bin/am"
+
+    cat > "$TARGET_HOME/mcp_agent_mail/am" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version)
+        echo "am 1.0.0"
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+EOF
+    chmod +x "$TARGET_HOME/mcp_agent_mail/am"
+
+    DOCTOR_FIX_DRY_RUN=true
+    FIXES_DRY_RUN=()
+
+    if ! fix_mcp_agent_mail "fix.stack.mcp_agent_mail" >/dev/null 2>&1; then
+        echo "  fix_mcp_agent_mail dry-run should succeed"
+        DOCTOR_FIX_DRY_RUN=false
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! printf '%s\n' "${FIXES_DRY_RUN[@]}" | grep -Fq 'fix.stack.mcp_agent_mail.symlink|Ensure am symlink points at installed Rust CLI'; then
+        echo "  dry-run did not report the Agent Mail symlink repair"
+        DOCTOR_FIX_DRY_RUN=false
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! printf '%s\n' "${FIXES_DRY_RUN[@]}" | grep -Fq 'fix.stack.mcp_agent_mail|Repair MCP Agent Mail and apply upstream doctor fixes'; then
+        echo "  dry-run stopped after symlink repair and did not report the main Agent Mail repair"
+        DOCTOR_FIX_DRY_RUN=false
+        cleanup_test_env
+        return 1
+    fi
+
+    DOCTOR_FIX_DRY_RUN=false
+    cleanup_test_env
+    return 0
+}
+
+test_fix_mcp_agent_mail_fails_when_symlink_repair_fails() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin" "$TARGET_HOME/mcp_agent_mail"
+    export PATH="$TARGET_HOME/.local/bin:$PATH"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    cat > "$TARGET_HOME/.local/bin/am" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$TARGET_HOME/.local/bin/am"
+
+    cat > "$TARGET_HOME/mcp_agent_mail/am" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --version)
+        echo "am 1.0.0"
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+EOF
+    chmod +x "$TARGET_HOME/mcp_agent_mail/am"
+
+    _stack_repair_agent_mail_cli_symlink() {
+        return 1
+    }
+
+    if fix_mcp_agent_mail "fix.stack.mcp_agent_mail" >/dev/null 2>&1; then
+        echo "  fix_mcp_agent_mail should fail when the am symlink repair fails"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        echo "  fix_mcp_agent_mail should not record changes when symlink repair fails before repair work starts"
         cleanup_test_env
         return 1
     fi
@@ -1863,6 +2391,8 @@ main() {
     run_test test_fix_config_copy_missing_source
     run_test test_fix_config_copy_dry_run
     run_test test_fix_config_copy_removes_dest_when_record_change_fails
+    run_test test_fix_config_copy_removes_created_dirs_when_record_change_fails
+    run_test test_fix_config_copy_cleans_created_dirs_on_copy_failure
 
     # fix_symlink_create tests
     run_test test_fix_symlink_create_applies
@@ -1870,6 +2400,10 @@ main() {
     run_test test_fix_symlink_create_missing_binary
     run_test test_fix_symlink_create_dry_run
     run_test test_fix_symlink_create_removes_symlink_when_record_change_fails
+    run_test test_fix_symlink_create_removes_created_dirs_when_record_change_fails
+    run_test test_fix_symlink_create_cleans_created_dirs_on_symlink_failure
+    run_test test_fix_plugin_clone_removes_created_dirs_when_record_change_fails
+    run_test test_fix_plugin_clone_cleans_partial_clone_on_clone_failure
 
     # fix_acfs_sourcing tests
     run_test test_fix_acfs_sourcing_applies
@@ -1887,10 +2421,14 @@ main() {
     run_test test_fix_verified_install_ms_arm64_fallback_uses_cargo
     run_test test_fix_ssh_server_records_change_when_enabling_service
     run_test test_fix_ssh_server_fails_when_service_enable_fails
+    run_test test_fix_ssh_keepalive_applies_and_records_change
+    run_test test_fix_ssh_keepalive_restores_file_when_backup_and_record_change_fail
     run_test test_fix_dcg_hook_uninstalls_when_record_change_fails
     run_test test_dcg_hook_already_installed_detects_hook_wiring
     run_test test_agent_mail_fix_stop_fallback_cleans_up_matching_pid
     run_test test_fix_mcp_agent_mail_uses_target_home_for_systemctl_env
+    run_test test_fix_mcp_agent_mail_dry_run_reports_symlink_and_repair
+    run_test test_fix_mcp_agent_mail_fails_when_symlink_repair_fails
 
     # dispatch_fix tests
     run_test test_dispatch_fix_skips_pass

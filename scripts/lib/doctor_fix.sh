@@ -217,6 +217,55 @@ dir_in_path() {
     esac
 }
 
+doctor_fix_nearest_existing_parent() {
+    local path="${1:-}"
+    path="$(dirname "$path")"
+
+    while [[ "$path" != "/" && ! -d "$path" ]]; do
+        path="$(dirname "$path")"
+    done
+
+    printf '%s\n' "$path"
+}
+
+doctor_fix_build_remove_path_rollback() {
+    local target_path="${1:-}"
+    local existing_parent="${2:-}"
+    local target_parent=""
+    local rollback_command=""
+
+    target_parent="$(dirname "$target_path")"
+    if [[ -z "$existing_parent" || "$existing_parent" == "$target_parent" ]]; then
+        printf -v rollback_command 'rm -f %q' "$target_path"
+        printf '%s\n' "$rollback_command"
+        return 0
+    fi
+
+    printf -v rollback_command \
+        'rm -f %q; cleanup_dir=%q; stop_dir=%q; while [[ "$cleanup_dir" != "$stop_dir" ]]; do rmdir "$cleanup_dir" 2>/dev/null || break; cleanup_dir=$(dirname "$cleanup_dir"); done' \
+        "$target_path" "$target_parent" "$existing_parent"
+    printf '%s\n' "$rollback_command"
+}
+
+doctor_fix_build_remove_tree_rollback() {
+    local target_path="${1:-}"
+    local existing_parent="${2:-}"
+    local target_parent=""
+    local rollback_command=""
+
+    target_parent="$(dirname "$target_path")"
+    if [[ -z "$existing_parent" || "$existing_parent" == "$target_parent" ]]; then
+        printf -v rollback_command 'rm -rf %q' "$target_path"
+        printf '%s\n' "$rollback_command"
+        return 0
+    fi
+
+    printf -v rollback_command \
+        'rm -rf %q; cleanup_dir=%q; stop_dir=%q; while [[ "$cleanup_dir" != "$stop_dir" ]]; do rmdir "$cleanup_dir" 2>/dev/null || break; cleanup_dir=$(dirname "$cleanup_dir"); done' \
+        "$target_path" "$target_parent" "$existing_parent"
+    printf '%s\n' "$rollback_command"
+}
+
 doctor_fix_run_rollback_command() {
     local rollback_command="$1"
     local requires_root="${2:-false}"
@@ -403,6 +452,9 @@ fix_config_copy() {
     local check_id="$1"
     local src="$2"
     local dest="$3"
+    local dest_parent=""
+    local existing_parent=""
+    local rollback_command=""
 
     # Guard: Source must exist
     if [[ ! -f "$src" ]]; then
@@ -423,15 +475,22 @@ fix_config_copy() {
         return 0
     fi
 
+    dest_parent="$(dirname "$dest")"
+    existing_parent="$(doctor_fix_nearest_existing_parent "$dest")"
+    rollback_command="$(doctor_fix_build_remove_path_rollback "$dest" "$existing_parent")"
+
     # Ensure parent directory exists
-    if ! mkdir -p "$(dirname "$dest")"; then
-        doctor_fix_log ERROR "Failed to create config destination directory: $(dirname "$dest")"
+    if ! mkdir -p "$dest_parent"; then
+        doctor_fix_log ERROR "Failed to create config destination directory: $dest_parent"
         FIX_FAILED=$((FIX_FAILED + 1))
         return 1
     fi
 
     # Copy file
     if ! cp -p "$src" "$dest"; then
+        if ! doctor_fix_run_rollback_command "$rollback_command" false; then
+            doctor_fix_log ERROR "Failed to clean copied-config destination after copy failure: $dest"
+        fi
         doctor_fix_log ERROR "Failed to copy $(basename "$src") to $dest"
         FIX_FAILED=$((FIX_FAILED + 1))
         return 1
@@ -439,10 +498,10 @@ fix_config_copy() {
 
     # Record change
     if ! doctor_fix_record_change_or_rollback \
-        "rm -f '$dest'" \
+        "$rollback_command" \
         false \
         "config" "Copied config: $(basename "$src")" \
-        "rm -f '$dest'" \
+        "$rollback_command" \
         false "info" "[\"$dest\"]" "[]" "[]"; then
         FIX_FAILED=$((FIX_FAILED + 1))
         return 1
@@ -533,6 +592,9 @@ fix_symlink_create() {
     local check_id="$1"
     local binary="$2"
     local symlink="$3"
+    local symlink_parent=""
+    local existing_parent=""
+    local rollback_command=""
 
     # Guard: Binary must exist and be executable
     if [[ ! -x "$binary" ]]; then
@@ -553,15 +615,22 @@ fix_symlink_create() {
         return 0
     fi
 
+    symlink_parent="$(dirname "$symlink")"
+    existing_parent="$(doctor_fix_nearest_existing_parent "$symlink")"
+    rollback_command="$(doctor_fix_build_remove_path_rollback "$symlink" "$existing_parent")"
+
     # Ensure symlink directory exists
-    if ! mkdir -p "$(dirname "$symlink")"; then
-        doctor_fix_log ERROR "Failed to create symlink directory: $(dirname "$symlink")"
+    if ! mkdir -p "$symlink_parent"; then
+        doctor_fix_log ERROR "Failed to create symlink directory: $symlink_parent"
         FIX_FAILED=$((FIX_FAILED + 1))
         return 1
     fi
 
     # Create symlink
     if ! ln -s "$binary" "$symlink"; then
+        if ! doctor_fix_run_rollback_command "$rollback_command" false; then
+            doctor_fix_log ERROR "Failed to clean symlink destination after symlink failure: $symlink"
+        fi
         doctor_fix_log ERROR "Failed to create symlink: $symlink"
         FIX_FAILED=$((FIX_FAILED + 1))
         return 1
@@ -569,10 +638,10 @@ fix_symlink_create() {
 
     # Record change
     if ! doctor_fix_record_change_or_rollback \
-        "rm -f '$symlink'" \
+        "$rollback_command" \
         false \
         "symlink" "Created symlink: $(basename "$symlink")" \
-        "rm -f '$symlink'" \
+        "$rollback_command" \
         false "info" "[\"$symlink\"]" "[]" "[]"; then
         FIX_FAILED=$((FIX_FAILED + 1))
         return 1
@@ -595,6 +664,8 @@ fix_plugin_clone() {
     local plugin_name="$2"
     local repo_url="$3"
     local runtime_home=""
+    local existing_parent=""
+    local rollback_command=""
     runtime_home="$(doctor_fix_runtime_home)"
 
     local plugins_dir="${ZSH_CUSTOM:-$runtime_home/.oh-my-zsh/custom}/plugins"
@@ -621,6 +692,9 @@ fix_plugin_clone() {
         return 0
     fi
 
+    existing_parent="$(doctor_fix_nearest_existing_parent "$target_dir")"
+    rollback_command="$(doctor_fix_build_remove_tree_rollback "$target_dir" "$existing_parent")"
+
     # Ensure plugins directory exists
     if ! mkdir -p "$plugins_dir"; then
         doctor_fix_log ERROR "Failed to create plugins directory: $plugins_dir"
@@ -631,10 +705,10 @@ fix_plugin_clone() {
     # Clone plugin
     if git clone --depth 1 "$repo_url" "$target_dir" 2>/dev/null; then
         if ! doctor_fix_record_change_or_rollback \
-            "rm -rf '$target_dir'" \
+            "$rollback_command" \
             false \
             "plugin" "Cloned zsh plugin: $plugin_name" \
-            "rm -rf '$target_dir'" \
+            "$rollback_command" \
             false "info" "[\"$target_dir\"]" "[]" "[]"; then
             FIX_FAILED=$((FIX_FAILED + 1))
             return 1
@@ -645,6 +719,11 @@ fix_plugin_clone() {
         FIX_APPLIED=$((FIX_APPLIED + 1))
         return 0
     else
+        if [[ -d "$target_dir" ]]; then
+            if ! doctor_fix_run_rollback_command "$rollback_command" false; then
+                doctor_fix_log ERROR "Failed to clean partial plugin clone after clone failure: $plugin_name"
+            fi
+        fi
         doctor_fix_log ERROR "Failed to clone plugin: $plugin_name"
         FIX_FAILED=$((FIX_FAILED + 1))
         return 1
@@ -1036,7 +1115,9 @@ fix_ssh_server() {
 # Configure SSH keepalive settings
 fix_ssh_keepalive() {
     local check_id="$1"
-    local sshd_config="/etc/ssh/sshd_config"
+    local sshd_config="${DOCTOR_FIX_SSHD_CONFIG:-/etc/ssh/sshd_config}"
+    local marker="# ACFS: SSH keepalive settings (added by doctor --fix)"
+    local fallback_restore_command=""
 
     local sudo_cmd=""
     [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
@@ -1064,6 +1145,9 @@ fix_ssh_keepalive() {
     # Create backup
     local backup_json=""
     local restore_command=""
+    printf -v fallback_restore_command \
+        "sed -i '/%s/,+2d' %q" \
+        "$marker" "$sshd_config"
     if [[ -f "$sshd_config" ]]; then
         backup_json=$(create_backup "$sshd_config" "ssh-keepalive")
         restore_command="$(autofix_backup_restore_command "$backup_json" 2>/dev/null || true)"
@@ -1072,7 +1156,7 @@ fix_ssh_keepalive() {
     # Apply settings
     if ! {
         echo ""
-        echo "# ACFS: SSH keepalive settings (added by doctor --fix)"
+        echo "$marker"
         echo "ClientAliveInterval 60"
         echo "ClientAliveCountMax 3"
     } | $sudo_cmd tee -a "$sshd_config" > /dev/null; then
@@ -1085,10 +1169,10 @@ fix_ssh_keepalive() {
     $sudo_cmd systemctl reload ssh 2>/dev/null || $sudo_cmd systemctl reload sshd 2>/dev/null || true
 
     if ! doctor_fix_record_change_or_rollback \
-        "${restore_command:-# Restore $sshd_config from its backup manually if needed}; $sudo_cmd systemctl reload ssh 2>/dev/null || $sudo_cmd systemctl reload sshd 2>/dev/null || true" \
+        "${restore_command:-$fallback_restore_command}; $sudo_cmd systemctl reload ssh 2>/dev/null || $sudo_cmd systemctl reload sshd 2>/dev/null || true" \
         true \
         "config" "Configured SSH keepalive in $sshd_config" \
-        "${restore_command:-# Restore $sshd_config from its backup manually if needed}; $sudo_cmd systemctl reload ssh 2>/dev/null || $sudo_cmd systemctl reload sshd 2>/dev/null || true" \
+        "${restore_command:-$fallback_restore_command}; $sudo_cmd systemctl reload ssh 2>/dev/null || $sudo_cmd systemctl reload sshd 2>/dev/null || true" \
         true "info" "[\"$sshd_config\"]" "$(echo "${backup_json:-[]}" | jq -c 'if type == \"object\" then [.] else . end' 2>/dev/null || echo '[]')" "[]"; then
         FIX_FAILED=$((FIX_FAILED + 1))
         return 1
@@ -1283,13 +1367,24 @@ fix_mcp_agent_mail() {
             if [[ -e "$am_dst" || -L "$am_dst" ]]; then
                 symlink_backup_json="$(create_backup "$am_dst" "doctor-fix-agent-mail-symlink" 2>/dev/null || echo '[]')"
                 symlink_restore_command="$(autofix_backup_restore_command "$symlink_backup_json" 2>/dev/null || true)"
-                [[ -n "$symlink_restore_command" ]] || symlink_restore_command="rm -f '$am_dst'"
+                if [[ -z "$symlink_restore_command" || "$symlink_backup_json" == '[]' ]]; then
+                    doctor_fix_log ERROR "Failed to back up existing am entry before repairing CLI symlink"
+                    FIX_FAILED=$((FIX_FAILED + 1))
+                    return 1
+                fi
             fi
 
             if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
                 FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail.symlink|Ensure am symlink points at installed Rust CLI|$am_dst|ln -sf $am_src $am_dst")
                 doctor_fix_log DRY "Ensure am symlink points at $am_src"
             elif TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
+                hash -r
+                if [[ "$(command -v am 2>/dev/null || true)" != "$am_src" ]]; then
+                    doctor_fix_log ERROR "Agent Mail CLI symlink repair completed but am still resolves away from $am_src"
+                    FIX_FAILED=$((FIX_FAILED + 1))
+                    return 1
+                fi
+
                 if ! doctor_fix_record_change_or_rollback \
                     "$symlink_restore_command" \
                     false \
@@ -1305,6 +1400,10 @@ fix_mcp_agent_mail() {
                 FIXES_APPLIED+=("fix.stack.mcp_agent_mail.symlink|Ensured am resolves to installed Rust CLI")
                 FIX_APPLIED=$((FIX_APPLIED + 1))
                 fixed_any=true
+            else
+                doctor_fix_log ERROR "Failed to repair Agent Mail CLI symlink"
+                FIX_FAILED=$((FIX_FAILED + 1))
+                return 1
             fi
         fi
     fi
@@ -1320,8 +1419,12 @@ fix_mcp_agent_mail() {
             hash -r
             if TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
                 hash -r
+            elif command -v am &>/dev/null; then
+                doctor_fix_log ERROR "Installed MCP Agent Mail CLI but failed to repair am symlink"
+                FIX_FAILED=$((FIX_FAILED + 1))
+                return 1
             fi
-            if command -v am &>/dev/null; then
+            if [[ "$(command -v am 2>/dev/null || true)" == "$am_src" ]]; then
                 if ! doctor_fix_record_change_or_rollback \
                     "" \
                     false \
@@ -1337,7 +1440,7 @@ fix_mcp_agent_mail() {
                 FIX_APPLIED=$((FIX_APPLIED + 1))
                 fixed_any=true
             else
-                doctor_fix_log ERROR "Verified MCP Agent Mail install completed without providing 'am'"
+                doctor_fix_log ERROR "Verified MCP Agent Mail install completed but am does not resolve to $am_src"
                 FIX_FAILED=$((FIX_FAILED + 1))
                 return 1
             fi
