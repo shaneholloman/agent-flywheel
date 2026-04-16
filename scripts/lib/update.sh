@@ -2975,11 +2975,18 @@ update_cloud() {
 
     # Google Cloud SDK (gcloud)
     if cmd_exists gcloud; then
-        capture_version_before "gcloud"
-        # gcloud components update requires --quiet for non-interactive
-        run_cmd "Google Cloud SDK" gcloud components update --quiet
-        if capture_version_after "gcloud"; then
-            [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[gcloud]}" "${VERSION_AFTER[gcloud]}"
+        if dpkg -s google-cloud-cli >/dev/null 2>&1; then
+            # apt-managed installs disable `gcloud components update`;
+            # the package is updated via apt-get instead.
+            log_item "ok" "Google Cloud SDK" "apt-managed (update via apt-get upgrade)"
+            log_to_file "gcloud is apt-managed; components update disabled by Google. Update with: sudo apt-get install -y --only-upgrade google-cloud-cli"
+        else
+            capture_version_before "gcloud"
+            # gcloud components update requires --quiet for non-interactive
+            run_cmd "Google Cloud SDK" gcloud components update --quiet
+            if capture_version_after "gcloud"; then
+                [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[gcloud]}" "${VERSION_AFTER[gcloud]}"
+            fi
         fi
     else
         log_item "skip" "Google Cloud SDK" "not installed"
