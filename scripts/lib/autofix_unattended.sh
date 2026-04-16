@@ -256,20 +256,6 @@ _autofix_kill_stuck_processes() {
 
     log_warn "[AUTO-FIX:unattended] Killing stuck processes: $stuck_pids"
 
-    # Record the change (no undo needed - processes were stuck)
-    if ! record_change \
-        "unattended" \
-        "Killed stuck apt/dpkg processes (PIDs: $stuck_pids)" \
-        "# No undo needed - processes were stuck" \
-        true \
-        "warning" \
-        '[]' \
-        '[]' \
-        '[]' >/dev/null; then
-        log_error "[AUTO-FIX:unattended] Failed to record stuck-process kill before mutating state"
-        return 1
-    fi
-
     # Kill each process type
     local sudo_cmd=""
     [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
@@ -284,6 +270,20 @@ _autofix_kill_stuck_processes() {
     # Verify processes are gone
     if pgrep -x "apt|apt-get|dpkg" &>/dev/null; then
         log_error "[AUTO-FIX:unattended] Some processes still running after kill"
+        return 1
+    fi
+
+    # Record the change (no undo needed - processes were stuck)
+    if ! record_change \
+        "unattended" \
+        "Killed stuck apt/dpkg processes (PIDs: $stuck_pids)" \
+        "# No undo needed - processes were stuck" \
+        true \
+        "warning" \
+        '[]' \
+        '[]' \
+        '[]' >/dev/null; then
+        log_error "[AUTO-FIX:unattended] Failed to record stuck-process kill after mutating state"
         return 1
     fi
 
@@ -307,25 +307,23 @@ _autofix_remove_stale_locks() {
             continue
         fi
 
-        # Record the change
         local sudo_cmd=""
         [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
 
-        if ! record_change \
-            "unattended" \
-            "Removed stale lock file: $lock" \
-            "# Lock files are recreated automatically by apt" \
-            true \
-            "info" \
-            "[\"$lock\"]" \
-            '[]' \
-            '[]' >/dev/null; then
-            log_error "[AUTO-FIX:unattended] Failed to record stale lock removal for $lock"
-            failed=$((failed + 1))
-            continue
-        fi
-
         if $sudo_cmd rm -f "$lock" 2>&1; then
+            if ! record_change \
+                "unattended" \
+                "Removed stale lock file: $lock" \
+                "# Lock files are recreated automatically by apt" \
+                true \
+                "info" \
+                "[\"$lock\"]" \
+                '[]' \
+                '[]' >/dev/null; then
+                log_error "[AUTO-FIX:unattended] Failed to record stale lock removal for $lock"
+                failed=$((failed + 1))
+                continue
+            fi
             log_info "[AUTO-FIX:unattended] Removed stale lock: $lock"
             ((removed++)) || true
         else

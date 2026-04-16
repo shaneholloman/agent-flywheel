@@ -302,6 +302,7 @@ test_stop_service_rolls_back_when_record_change_fails() {
     setup_autofix_state_dir "$state_dir"
 
     if (
+        # shellcheck disable=SC2123
         PATH="/definitely-missing-for-this-test"
 
         systemctl() {
@@ -350,6 +351,42 @@ test_stop_service_rolls_back_when_record_change_fails() {
 
     cleanup_test_dir "$test_dir"
     test_pass "stop_service_rolls_back_when_record_change_fails"
+}
+
+test_kill_stuck_processes_does_not_record_failed_kill() {
+    local test_dir="/tmp/test_autofix_unattended_kill_failure_$$"
+    local state_dir="$test_dir/state"
+    mkdir -p "$test_dir"
+    setup_autofix_state_dir "$state_dir"
+
+    if (
+        pgrep() {
+            if [[ "${1:-}" == "-x" ]]; then
+                echo "123"
+                return 0
+            fi
+            return 1
+        }
+
+        pkill() {
+            return 0
+        }
+
+        _autofix_kill_stuck_processes
+    ) >/dev/null 2>&1; then
+        cleanup_test_dir "$test_dir"
+        test_fail "kill_stuck_processes_does_not_record_failed_kill" "kill helper unexpectedly succeeded while processes still appeared alive"
+        return
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        cleanup_test_dir "$test_dir"
+        test_fail "kill_stuck_processes_does_not_record_failed_kill" "failed kill still wrote a change record"
+        return
+    fi
+
+    cleanup_test_dir "$test_dir"
+    test_pass "kill_stuck_processes_does_not_record_failed_kill"
 }
 
 # Test: CLI modes work
@@ -413,6 +450,7 @@ main() {
     test_restore_manages_session_and_persists_marker
     test_restore_fails_closed_on_unresolved_session_marker
     test_stop_service_rolls_back_when_record_change_fails
+    test_kill_stuck_processes_does_not_record_failed_kill
     test_cli_modes
     test_lock_file_constants
 

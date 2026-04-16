@@ -56,7 +56,14 @@ run_test() {
 setup_test_env() {
     local test_id="${FUNCNAME[1]:-$$}_$(date +%s%N)"
 
+    autofix_release_session_lock 2>/dev/null || true
+    ACFS_SESSION_ID=""
     unset -f record_change 2>/dev/null || true
+    unset -f sudo 2>/dev/null || true
+    unset -f systemctl 2>/dev/null || true
+    unset -f sshd 2>/dev/null || true
+    unset -f uname 2>/dev/null || true
+    unset -f doctor_fix_run_verified_installer 2>/dev/null || true
     unset _ACFS_AUTOFIX_SOURCED
     unset _ACFS_DOCTOR_FIX_LOADED
     # shellcheck source=../../scripts/lib/autofix.sh
@@ -120,6 +127,15 @@ setup_test_env() {
 
 # Cleanup test environment
 cleanup_test_env() {
+    autofix_release_session_lock 2>/dev/null || true
+    ACFS_SESSION_ID=""
+    unset -f record_change 2>/dev/null || true
+    unset -f sudo 2>/dev/null || true
+    unset -f systemctl 2>/dev/null || true
+    unset -f sshd 2>/dev/null || true
+    unset -f uname 2>/dev/null || true
+    unset -f doctor_fix_run_verified_installer 2>/dev/null || true
+
     # Restore HOME
     if [[ -n "${ORIGINAL_HOME:-}" ]]; then
         export HOME="$ORIGINAL_HOME"
@@ -1040,6 +1056,68 @@ test_fix_acfs_sourcing_removes_new_file_when_record_change_fails() {
     return 0
 }
 
+test_fix_stack_install_applies_and_records_change() {
+    setup_test_env
+    export PATH="$HOME/.local/bin:$PATH"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    if ! fix_stack_install "agent.codex" "codex-test-bin" "cat > \"$HOME/.local/bin/codex-test-bin\" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x \"$HOME/.local/bin/codex-test-bin\"" >/dev/null 2>&1; then
+        echo "  fix_stack_install should succeed"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -x "$HOME/.local/bin/codex-test-bin" ]]; then
+        echo "  fix_stack_install did not create the expected binary"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! jq -e 'select(.description == "Installed codex-test-bin" and .reversible == false)' "$ACFS_CHANGES_FILE" >/dev/null 2>&1; then
+        echo "  fix_stack_install did not record a non-reversible install change"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+test_fix_stack_install_fails_when_binary_missing_after_successful_command() {
+    setup_test_env
+    export PATH="$HOME/.local/bin:$PATH"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    if fix_stack_install "agent.codex" "codex-missing-bin" "true" >/dev/null 2>&1; then
+        echo "  fix_stack_install should fail when installer reports success but binary is missing"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        echo "  fix_stack_install should not record a change when the binary is still missing"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
 # ============================================================
 # Test: fix_verified_install
 # ============================================================
@@ -1049,6 +1127,12 @@ test_fix_verified_install_applies() {
     local original_doctor_fix_run_verified_installer
     original_doctor_fix_run_verified_installer="$(declare -f doctor_fix_run_verified_installer)"
     export PATH="$HOME/.local/bin:$PATH"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
 
     doctor_fix_run_verified_installer() {
         cat > "$HOME/.local/bin/ms-test-bin" <<'EOF'
@@ -1075,6 +1159,13 @@ EOF
 
     if [[ $FIX_APPLIED -ne 1 ]]; then
         echo "  FIX_APPLIED should be 1, got $FIX_APPLIED"
+        eval "$original_doctor_fix_run_verified_installer"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! jq -e 'select(.description == "Installed ms-test-bin via verified installer" and .reversible == false)' "$ACFS_CHANGES_FILE" >/dev/null 2>&1; then
+        echo "  fix_verified_install did not record a non-reversible install change"
         eval "$original_doctor_fix_run_verified_installer"
         cleanup_test_env
         return 1
@@ -1115,6 +1206,12 @@ test_fix_verified_install_dry_run() {
 test_fix_verified_install_ms_arm64_fallback_uses_cargo() {
     setup_test_env
     export PATH="$HOME/.local/bin:$PATH"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
 
     local cargo_signal="$ACFS_STATE_DIR/cargo.args"
     cat > "$HOME/.local/bin/cargo" <<EOF
@@ -1174,6 +1271,104 @@ EOF
     done
 
     [[ -n "$original_uname" ]] && eval "$original_uname" || unset -f uname
+    cleanup_test_env
+    return 0
+}
+
+test_fix_ssh_server_records_change_when_enabling_service() {
+    setup_test_env
+    local created_systemd_dir=false
+
+    if [[ ! -d /run/systemd/system ]]; then
+        mkdir -p /run/systemd/system || {
+            echo "  Failed to create /run/systemd/system for SSH server test"
+            cleanup_test_env
+            return 1
+        }
+        created_systemd_dir=true
+    fi
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        if [[ "$created_systemd_dir" == "true" ]]; then rmdir /run/systemd/system 2>/dev/null || true; fi
+        cleanup_test_env
+        return 1
+    }
+
+    sshd() { return 0; }
+    sudo() { "$@"; }
+    systemctl() {
+        case "${1:-}" in
+            is-active) return 1 ;;
+            enable) return 0 ;;
+            *) return 0 ;;
+        esac
+    }
+
+    if ! fix_ssh_server "network.ssh_server" >/dev/null 2>&1; then
+        echo "  fix_ssh_server should succeed when systemctl enable/start succeeds"
+        if [[ "$created_systemd_dir" == "true" ]]; then rmdir /run/systemd/system 2>/dev/null || true; fi
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! jq -e 'select(.description == "Enabled and started SSH server")' "$ACFS_CHANGES_FILE" >/dev/null 2>&1; then
+        echo "  fix_ssh_server did not record the SSH enable/start change"
+        if [[ "$created_systemd_dir" == "true" ]]; then rmdir /run/systemd/system 2>/dev/null || true; fi
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ "$created_systemd_dir" == "true" ]]; then rmdir /run/systemd/system 2>/dev/null || true; fi
+    cleanup_test_env
+    return 0
+}
+
+test_fix_ssh_server_fails_when_service_enable_fails() {
+    setup_test_env
+    local created_systemd_dir=false
+
+    if [[ ! -d /run/systemd/system ]]; then
+        mkdir -p /run/systemd/system || {
+            echo "  Failed to create /run/systemd/system for SSH server test"
+            cleanup_test_env
+            return 1
+        }
+        created_systemd_dir=true
+    fi
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        if [[ "$created_systemd_dir" == "true" ]]; then rmdir /run/systemd/system 2>/dev/null || true; fi
+        cleanup_test_env
+        return 1
+    }
+
+    sshd() { return 0; }
+    sudo() { "$@"; }
+    systemctl() {
+        case "${1:-}" in
+            is-active) return 1 ;;
+            enable) return 1 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    if fix_ssh_server "network.ssh_server" >/dev/null 2>&1; then
+        echo "  fix_ssh_server should fail when systemctl enable/start fails"
+        if [[ "$created_systemd_dir" == "true" ]]; then rmdir /run/systemd/system 2>/dev/null || true; fi
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -s "$ACFS_CHANGES_FILE" ]]; then
+        echo "  fix_ssh_server should not record a change when enable/start fails"
+        if [[ "$created_systemd_dir" == "true" ]]; then rmdir /run/systemd/system 2>/dev/null || true; fi
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ "$created_systemd_dir" == "true" ]]; then rmdir /run/systemd/system 2>/dev/null || true; fi
     cleanup_test_env
     return 0
 }
@@ -1683,11 +1878,15 @@ main() {
     run_test test_fix_acfs_sourcing_missing_acfs_config
     run_test test_fix_acfs_sourcing_dry_run
     run_test test_fix_acfs_sourcing_removes_new_file_when_record_change_fails
+    run_test test_fix_stack_install_applies_and_records_change
+    run_test test_fix_stack_install_fails_when_binary_missing_after_successful_command
 
     # fix_verified_install tests
     run_test test_fix_verified_install_applies
     run_test test_fix_verified_install_dry_run
     run_test test_fix_verified_install_ms_arm64_fallback_uses_cargo
+    run_test test_fix_ssh_server_records_change_when_enabling_service
+    run_test test_fix_ssh_server_fails_when_service_enable_fails
     run_test test_fix_dcg_hook_uninstalls_when_record_change_fails
     run_test test_dcg_hook_already_installed_detects_hook_wiring
     run_test test_agent_mail_fix_stop_fallback_cleans_up_matching_pid

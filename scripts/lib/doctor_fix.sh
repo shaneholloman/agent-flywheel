@@ -852,6 +852,7 @@ fix_stack_install() {
     local check_id="$1"
     local binary_name="$2"
     local install_cmd="$3"
+    local installed_path=""
 
     # Guard: Check if already installed
     if command -v "$binary_name" &>/dev/null; then
@@ -868,15 +869,33 @@ fix_stack_install() {
 
     # Run installer
     if eval "$install_cmd" 2>/dev/null; then
+        hash -r
+        installed_path="$(command -v "$binary_name" 2>/dev/null || true)"
+        if [[ -z "$installed_path" ]]; then
+            doctor_fix_log ERROR "Installer reported success but $binary_name is still unavailable"
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
+
+        if ! doctor_fix_record_change_or_rollback \
+            "" \
+            false \
+            "install" "Installed $binary_name" \
+            "# Manual rollback required: remove $binary_name if undesired" \
+            false "info" "[\"$installed_path\"]" "[]" "[]"; then
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
+
         doctor_fix_log INFO "Installed $binary_name"
         FIXES_APPLIED+=("fix.stack.$binary_name|Installed $binary_name")
         FIX_APPLIED=$((FIX_APPLIED + 1))
         return 0
-    else
-        doctor_fix_log ERROR "Failed to install $binary_name"
-        FIX_FAILED=$((FIX_FAILED + 1))
-        return 1
     fi
+
+    doctor_fix_log ERROR "Failed to install $binary_name"
+    FIX_FAILED=$((FIX_FAILED + 1))
+    return 1
 }
 
 fix_verified_install() {
@@ -886,6 +905,7 @@ fix_verified_install() {
     shift 3
     local args=("$@")
     local args_display="${args[*]:-}"
+    local installed_path=""
 
     if command -v "$binary_name" &>/dev/null; then
         doctor_fix_log INFO "$binary_name already installed"
@@ -900,7 +920,18 @@ fix_verified_install() {
 
     if doctor_fix_run_verified_installer "$tool" "${args[@]}" >/dev/null 2>&1; then
         hash -r
-        if command -v "$binary_name" &>/dev/null; then
+        installed_path="$(command -v "$binary_name" 2>/dev/null || true)"
+        if [[ -n "$installed_path" ]]; then
+            if ! doctor_fix_record_change_or_rollback \
+                "" \
+                false \
+                "install" "Installed $binary_name via verified installer" \
+                "# Manual rollback required: remove $binary_name if undesired" \
+                false "info" "[\"$installed_path\"]" "[]" "[]"; then
+                FIX_FAILED=$((FIX_FAILED + 1))
+                return 1
+            fi
+
             doctor_fix_log INFO "Installed $binary_name via verified installer"
             FIXES_APPLIED+=("fix.stack.$binary_name|Installed $binary_name via verified installer")
             FIX_APPLIED=$((FIX_APPLIED + 1))
@@ -920,6 +951,8 @@ fix_verified_install() {
 # Install and enable SSH server
 fix_ssh_server() {
     local check_id="$1"
+    local sudo_cmd=""
+    [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
 
     # Guard: Check if already installed
     if command -v sshd &>/dev/null || [[ -f /etc/ssh/sshd_config ]]; then
@@ -930,9 +963,6 @@ fix_ssh_server() {
                 return 0
             fi
 
-            local sudo_cmd=""
-            [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
-
             # Installed but not running - enable and start
             if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
                 FIXES_DRY_RUN+=("fix.ssh.server|Enable and start SSH server|/etc/ssh/sshd_config|$sudo_cmd systemctl enable --now ssh")
@@ -941,21 +971,28 @@ fix_ssh_server() {
             fi
 
             if $sudo_cmd systemctl enable --now ssh 2>/dev/null || $sudo_cmd systemctl enable --now sshd 2>/dev/null; then
+                if ! doctor_fix_record_change_or_rollback \
+                    "$sudo_cmd systemctl disable --now ssh 2>/dev/null || $sudo_cmd systemctl disable --now sshd 2>/dev/null || true" \
+                    true \
+                    "service" "Enabled and started SSH server" \
+                    "$sudo_cmd systemctl disable --now ssh 2>/dev/null || $sudo_cmd systemctl disable --now sshd 2>/dev/null || true" \
+                    true "info" "[\"/etc/ssh/sshd_config\"]" "[]" "[]"; then
+                    FIX_FAILED=$((FIX_FAILED + 1))
+                    return 1
+                fi
+
                 doctor_fix_log INFO "Enabled and started SSH server"
                 FIXES_APPLIED+=("fix.ssh.server|Enabled and started SSH server")
                 FIX_APPLIED=$((FIX_APPLIED + 1))
                 return 0
-            else
-                doctor_fix_log ERROR "Failed to start SSH server"
-                FIX_FAILED=$((FIX_FAILED + 1))
-                return 1
             fi
+
+            doctor_fix_log ERROR "Failed to start SSH server"
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
         fi
         return 0
     fi
-
-    local sudo_cmd=""
-    [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
 
     # Not installed - install it
     if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
@@ -965,16 +1002,31 @@ fix_ssh_server() {
     fi
 
     if $sudo_cmd apt-get install -y openssh-server 2>/dev/null; then
-        $sudo_cmd systemctl enable --now ssh 2>/dev/null || $sudo_cmd systemctl enable --now sshd 2>/dev/null || true
+        if ! ($sudo_cmd systemctl enable --now ssh 2>/dev/null || $sudo_cmd systemctl enable --now sshd 2>/dev/null); then
+            doctor_fix_log ERROR "Installed openssh-server but failed to enable/start SSH service"
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
+
+        if ! doctor_fix_record_change_or_rollback \
+            "" \
+            false \
+            "install" "Installed and enabled openssh-server" \
+            "# Manual rollback required: remove openssh-server if undesired" \
+            true "info" "[\"/etc/ssh/sshd_config\"]" "[]" "[]"; then
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
+
         doctor_fix_log INFO "Installed and enabled openssh-server"
         FIXES_APPLIED+=("fix.ssh.server|Installed and enabled openssh-server")
         FIX_APPLIED=$((FIX_APPLIED + 1))
         return 0
-    else
-        doctor_fix_log ERROR "Failed to install openssh-server"
-        FIX_FAILED=$((FIX_FAILED + 1))
-        return 1
     fi
+
+    doctor_fix_log ERROR "Failed to install openssh-server"
+    FIX_FAILED=$((FIX_FAILED + 1))
+    return 1
 }
 
 # ============================================================
