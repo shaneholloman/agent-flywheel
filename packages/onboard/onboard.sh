@@ -262,6 +262,42 @@ onboard_resolve_runtime_home() {
 }
 
 ONBOARD_RUNTIME_HOME="$(onboard_resolve_runtime_home)"
+
+onboard_runtime_binary_path() {
+    local name="${1:-}"
+    local runtime_home="${ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}"
+    local primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "$primary_bin_dir/$name" \
+        "$runtime_home/.local/bin/$name" \
+        "$runtime_home/.acfs/bin/$name" \
+        "$runtime_home/.cargo/bin/$name" \
+        "$runtime_home/.bun/bin/$name" \
+        "$runtime_home/.atuin/bin/$name" \
+        "$runtime_home/go/bin/$name" \
+        "/usr/local/go/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/snap/bin/$name"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s
+' "$candidate"
+            return 0
+        fi
+    done
+
+    if command -v "$name" >/dev/null 2>&1; then
+        command -v "$name"
+        return 0
+    fi
+
+    return 1
+}
 LESSONS_DIR="${ACFS_LESSONS_DIR:-$ACFS_HOME/onboard/lessons}"
 PROGRESS_FILE="${ACFS_PROGRESS_FILE:-$ACFS_HOME/onboard_progress.json}"
 PROGRESS_LOCK_FILE="${PROGRESS_FILE}.lock"
@@ -1178,7 +1214,9 @@ check_auth_status() {
             [[ "$status" == "Running" ]] && return 0 || return 1
             ;;
         claude)
-            if ! command -v claude &>/dev/null; then
+            local claude_bin=""
+            claude_bin="$(onboard_runtime_binary_path "claude" 2>/dev/null || true)"
+            if [[ -z "$claude_bin" || ! -x "$claude_bin" ]]; then
                 return 2
             fi
             # Claude Code stores OAuth credentials in ~/.claude/.credentials.json.
@@ -1194,7 +1232,9 @@ check_auth_status() {
             grep -Eq '"accessToken"[[:space:]]*:[[:space:]]*"[[:space:]]*[^[:space:]"][^"]*"' "$creds_file" && return 0 || return 1
             ;;
         codex)
-            if ! command -v codex &>/dev/null; then
+            local codex_bin=""
+            codex_bin="$(onboard_runtime_binary_path "codex" 2>/dev/null || true)"
+            if [[ -z "$codex_bin" || ! -x "$codex_bin" ]]; then
                 return 2
             fi
             # Codex stores auth in ~/.codex/auth.json (or $CODEX_HOME/auth.json).
@@ -1213,7 +1253,9 @@ check_auth_status() {
             grep -Eq '"(access(_token|Token)|OPENAI_API_KEY)"[[:space:]]*:[[:space:]]*"[[:space:]]*[^[:space:]"][^"]*"' "$auth_file" && return 0 || return 1
             ;;
         gemini)
-            if ! command -v gemini &>/dev/null; then
+            local gemini_bin=""
+            gemini_bin="$(onboard_runtime_binary_path "gemini" 2>/dev/null || true)"
+            if [[ -z "$gemini_bin" || ! -x "$gemini_bin" ]]; then
                 return 2
             fi
             local gemini_home="${GEMINI_CLI_HOME:-$runtime_home}"
@@ -1283,14 +1325,16 @@ check_auth_status() {
             gh auth status -h github.com &>/dev/null && return 0 || return 1
             ;;
         vercel)
-            if ! command -v vercel &>/dev/null; then
+            local vercel_bin=""
+            vercel_bin="$(onboard_runtime_binary_path "vercel" 2>/dev/null || true)"
+            if [[ -z "$vercel_bin" || ! -x "$vercel_bin" ]]; then
                 return 2
             fi
             if get_configured_secret "VERCEL_TOKEN" "${shell_config_files[@]}" >/dev/null; then
                 return 0
             fi
             local vercel_output=""
-            vercel_output="$(vercel whoami 2>/dev/null || true)"
+            vercel_output="$("$vercel_bin" whoami 2>/dev/null || true)"
             if [[ -n "$vercel_output" ]] && [[ "${vercel_output,,}" != *"not logged"* ]]; then
                 return 0
             fi
@@ -1313,7 +1357,9 @@ check_auth_status() {
             return 1
             ;;
         supabase)
-            if ! command -v supabase &>/dev/null; then
+            local supabase_bin=""
+            supabase_bin="$(onboard_runtime_binary_path "supabase" 2>/dev/null || true)"
+            if [[ -z "$supabase_bin" || ! -x "$supabase_bin" ]]; then
                 return 2
             fi
             if get_configured_secret "SUPABASE_ACCESS_TOKEN" "${shell_config_files[@]}" >/dev/null; then
@@ -1325,14 +1371,16 @@ check_auth_status() {
             return 1
             ;;
         cloudflare)
-            if ! command -v wrangler &>/dev/null; then
+            local wrangler_bin=""
+            wrangler_bin="$(onboard_runtime_binary_path "wrangler" 2>/dev/null || true)"
+            if [[ -z "$wrangler_bin" || ! -x "$wrangler_bin" ]]; then
                 return 2
             fi
             if get_configured_secret "CLOUDFLARE_API_TOKEN" "${shell_config_files[@]}" >/dev/null; then
                 return 0
             fi
             # Prefer the CLI check when available (more reliable than config file presence).
-            if wrangler whoami &>/dev/null; then
+            if "$wrangler_bin" whoami &>/dev/null; then
                 return 0
             fi
             return 1

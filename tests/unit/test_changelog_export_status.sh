@@ -5499,6 +5499,53 @@ JSON
     cleanup_mock_env
 }
 
+test_onboard_auth_checks_find_target_binaries_outside_current_path() {
+    setup_installed_layout_env
+
+    mkdir -p         "$TEST_TARGET_HOME/.codex"         "$TEST_TARGET_HOME/.gemini"         "$TEST_TARGET_HOME/.config/vercel"         "$TEST_TARGET_HOME/.supabase"
+
+    cat > "$TEST_TARGET_HOME/.codex/auth.json" <<'JSON'
+{
+  "tokens": {
+    "access_token": "codex-token"
+  }
+}
+JSON
+
+    cat > "$TEST_TARGET_HOME/.gemini/google_accounts.json" <<'JSON'
+{
+  "active": "tester@example.com"
+}
+JSON
+
+    cat > "$TEST_TARGET_HOME/.config/vercel/auth.json" <<'JSON'
+{
+  "token": "vercel-token"
+}
+JSON
+
+    printf 'supabase-token
+' > "$TEST_TARGET_HOME/.supabase/access-token"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/vercel" "tester@example.com"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/wrangler" "tester@example.com"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/supabase" "supabase 2.99.0"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         bash -lc 'source "'"$ONBOARD_SH"'" help >/dev/null; for svc in codex gemini vercel supabase cloudflare; do check_auth_status "$svc" && rc=0 || rc=$?; printf "%s\n" "$svc=$rc"; done')
+
+    if [[ "$output" == *$'codex=0
+'* ]]         && [[ "$output" == *$'gemini=0
+'* ]]         && [[ "$output" == *$'vercel=0
+'* ]]         && [[ "$output" == *$'supabase=0
+'* ]]         && [[ "$output" == *$'cloudflare=0'* ]]; then
+        harness_pass "onboard auth checks find target binaries outside current PATH"
+    else
+        harness_fail "onboard auth checks find target binaries outside current PATH" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_onboard_copy_install_uses_system_state_under_root_home() {
     setup_mock_env
 
@@ -5770,6 +5817,7 @@ main() {
     test_onboard_uses_installed_layout_under_root_home || true
     test_onboard_cheatsheet_uses_installed_layout_under_root_home || true
     test_onboard_auth_checks_use_installed_target_home_under_root_home || true
+    test_onboard_auth_checks_find_target_binaries_outside_current_path || true
     test_onboard_copy_install_uses_system_state_under_root_home || true
     test_onboard_copy_install_uses_target_home_only_system_state_under_root_home || true
     test_onboard_copy_install_ignores_relative_home_trap || true
