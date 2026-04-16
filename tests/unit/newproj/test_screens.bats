@@ -583,6 +583,36 @@ teardown() {
     [[ "$name" == *"Git"* ]]
 }
 
+@test "render_progress_screen tolerates missing step status under set -u" {
+    run bash -c '
+        set -euo pipefail
+        export NEWPROJ_LIB_DIR="'"$ACFS_LIB_DIR"'"
+        source "'"$ACFS_LIB_DIR"'/newproj_screens.sh"
+        load_screens >/dev/null
+
+        TERM_HAS_UNICODE=false
+        TUI_GRAY=
+        TUI_PRIMARY=
+        TUI_SUCCESS=
+        TUI_ERROR=
+        TUI_NC=
+        BOX_CHECK=x
+        BOX_CROSS=!
+
+        render_screen_header() { :; }
+        render_progress() { :; }
+        log_info() { :; }
+
+        state_set "project_name" "demo-project"
+        STEP_ORDER=(create_dir)
+        STEP_STATUS=()
+
+        render_progress_screen >/dev/null
+    '
+
+    assert_success
+}
+
 @test "create_claude step skips when legacy Claude settings already exist" {
     source_lib "newproj_screens"
     load_screens

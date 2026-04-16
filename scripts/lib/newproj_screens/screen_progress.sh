@@ -146,7 +146,7 @@ render_progress_screen() {
     local total=${#STEP_ORDER[@]}
     local completed=0
     for step in "${STEP_ORDER[@]}"; do
-        if [[ "${STEP_STATUS[$step]}" == "success" ]]; then
+        if [[ "${STEP_STATUS[$step]:-pending}" == "success" ]]; then
             completed=$((completed + 1))
         fi
     done
