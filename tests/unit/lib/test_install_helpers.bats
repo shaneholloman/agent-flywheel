@@ -331,3 +331,51 @@ EOF
     [[ "$captured" == *'env ACFS_TARGET_PATH_PREFIX=$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin bash -c export PATH="$ACFS_TARGET_PATH_PREFIX:$PATH"; command -v br'* ]] \
         || fail "Expected target-user installed check to extend PATH, got: $captured"
 }
+
+@test "acfs_module_is_installed: target_user checks fail closed without run_as_target" {
+    unset ACFS_MODULE_INSTALLED_CHECK ACFS_MODULE_INSTALLED_CHECK_RUN_AS
+    declare -gA ACFS_MODULE_INSTALLED_CHECK=( ["mod1"]="command -v false-positive-tool" )
+    declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=( ["mod1"]="target_user" )
+
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$BATS_TEST_TMPDIR/target-home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$ACFS_BIN_DIR" "$BATS_TEST_TMPDIR/global-bin"
+
+    cat > "$BATS_TEST_TMPDIR/global-bin/false-positive-tool" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/global-bin/false-positive-tool"
+    export PATH="$BATS_TEST_TMPDIR/global-bin:/usr/bin:/bin"
+
+    unset -f run_as_target
+
+    run acfs_module_is_installed "mod1"
+    assert_failure
+}
+
+@test "acfs_module_is_installed: root checks fail closed without sudo" {
+    unset ACFS_MODULE_INSTALLED_CHECK ACFS_MODULE_INSTALLED_CHECK_RUN_AS
+    declare -gA ACFS_MODULE_INSTALLED_CHECK=( ["mod1"]="command -v false-positive-root-tool" )
+    declare -gA ACFS_MODULE_INSTALLED_CHECK_RUN_AS=( ["mod1"]="root" )
+    local original_path="$PATH"
+
+    mkdir -p "$BATS_TEST_TMPDIR/global-bin"
+    cat > "$BATS_TEST_TMPDIR/global-bin/bash" <<'EOF'
+#!/usr/bin/env bash
+exec /bin/bash "$@"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/global-bin/bash"
+
+    cat > "$BATS_TEST_TMPDIR/global-bin/false-positive-root-tool" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/global-bin/false-positive-root-tool"
+    export PATH="$BATS_TEST_TMPDIR/global-bin"
+
+    run acfs_module_is_installed "mod1"
+    export PATH="$original_path"
+    assert_failure
+}

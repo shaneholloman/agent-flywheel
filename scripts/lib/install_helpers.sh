@@ -963,10 +963,10 @@ acfs_module_is_installed() {
                     bash -c "export PATH=\"\$ACFS_TARGET_PATH_PREFIX:\$PATH\"; $check_cmd" >/dev/null 2>&1
                 return $?
             fi
-            # Fallback to current user if run_as_target not available
-            env "ACFS_TARGET_PATH_PREFIX=$path_prefix" \
-                bash -c "export PATH=\"\$ACFS_TARGET_PATH_PREFIX:\$PATH\"; $check_cmd" >/dev/null 2>&1
-            return $?
+            # Target-user checks must fail closed when we cannot execute in the
+            # target context. Falling back to the current shell can incorrectly
+            # mark a tool as installed based on host-only PATH entries.
+            return 1
             ;;
         root)
             if [[ "$EUID" -eq 0 ]]; then
@@ -977,9 +977,10 @@ acfs_module_is_installed() {
                 sudo bash -c "$check_cmd" >/dev/null 2>&1
                 return $?
             fi
-            # Fallback
-            bash -c "$check_cmd" >/dev/null 2>&1
-            return $?
+            # Root checks must fail closed when sudo is unavailable. Falling
+            # back to the current shell can incorrectly treat user-only tools
+            # as root-installed.
+            return 1
             ;;
         current|*)
             bash -c "$check_cmd" >/dev/null 2>&1
