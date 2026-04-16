@@ -668,6 +668,7 @@ test_services_setup_setup_flows_tolerate_unset_status_keys() {
         gum_error() { :; }
         gum_warn() { :; }
         gum_success() { :; }
+        read() { return 0; }
         find_user_bin() { printf "/bin/true\n"; }
         run_as_user() { return 0; }
         check_claude_status() { SERVICE_STATUS[claude]=configured; }
