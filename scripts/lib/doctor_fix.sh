@@ -93,6 +93,58 @@ doctor_fix_runtime_user() {
     id -un 2>/dev/null || whoami 2>/dev/null || printf 'ubuntu\n'
 }
 
+doctor_fix_binary_path() {
+    local tool="$1"
+    local runtime_home=""
+    local primary_bin=""
+    local candidate=""
+
+    [[ -n "$tool" ]] || return 1
+
+    runtime_home="$(doctor_fix_runtime_home)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    primary_bin="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    for candidate in \
+        "$primary_bin/$tool" \
+        "$runtime_home/.local/bin/$tool" \
+        "$runtime_home/.acfs/bin/$tool" \
+        "$runtime_home/.cargo/bin/$tool" \
+        "$runtime_home/.bun/bin/$tool" \
+        "$runtime_home/.atuin/bin/$tool" \
+        "$runtime_home/go/bin/$tool" \
+        "$runtime_home/bin/$tool" \
+        "/usr/local/go/bin/$tool" \
+        "/usr/local/bin/$tool" \
+        "/usr/bin/$tool" \
+        "/bin/$tool" \
+        "/usr/local/sbin/$tool" \
+        "/usr/sbin/$tool" \
+        "/sbin/$tool" \
+        "/snap/bin/$tool"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+doctor_fix_runtime_path() {
+    local runtime_home=""
+    local primary_bin=""
+    local current_path=""
+
+    runtime_home="$(doctor_fix_runtime_home)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    primary_bin="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    current_path="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
+    printf '%s\n' "$primary_bin:$runtime_home/.local/bin:$runtime_home/.acfs/bin:$runtime_home/.cargo/bin:$runtime_home/.bun/bin:$runtime_home/.atuin/bin:$runtime_home/go/bin:$current_path"
+}
+
 doctor_fix_source_stack_lib() {
     if declare -f _stack_configure_agent_mail_service >/dev/null 2>&1; then
         return 0
@@ -347,13 +399,20 @@ doctor_fix_run_verified_installer() {
     ms_arch="$(uname -m 2>/dev/null || true)"
 
     if [[ "$tool" == "ms" ]] && [[ "$(uname -s 2>/dev/null)" == "Linux" ]] && [[ "$ms_arch" == "aarch64" || "$ms_arch" == "arm64" ]]; then
-        if ! command -v cargo >/dev/null 2>&1; then
-            doctor_fix_log WARN "meta_skill ARM64 Linux fallback requires cargo in PATH"
+        local cargo_bin=""
+        local runtime_home=""
+        local runtime_path=""
+
+        cargo_bin="$(doctor_fix_binary_path cargo 2>/dev/null || true)"
+        runtime_home="$(doctor_fix_runtime_home)"
+        runtime_path="$(doctor_fix_runtime_path 2>/dev/null || true)"
+        if [[ -z "$cargo_bin" || -z "$runtime_home" || -z "$runtime_path" ]]; then
+            doctor_fix_log WARN "meta_skill ARM64 Linux fallback requires cargo for the runtime home"
             return 1
         fi
 
         doctor_fix_log INFO "meta_skill: Linux ARM64 detected, rebuilding from source via cargo"
-        cargo install --git https://github.com/Dicklesworthstone/meta_skill --force
+        env HOME="$runtime_home" PATH="$runtime_path" "$cargo_bin" install --git https://github.com/Dicklesworthstone/meta_skill --force
         return $?
     fi
 
@@ -529,8 +588,16 @@ fix_config_copy() {
 
 dcg_hook_already_installed() {
     local doctor_json=""
+    local dcg_bin=""
+    local runtime_home=""
+    local runtime_path=""
 
-    doctor_json="$(dcg doctor --format json 2>/dev/null)" || return 1
+    dcg_bin="$(doctor_fix_binary_path dcg 2>/dev/null || true)"
+    runtime_home="$(doctor_fix_runtime_home)"
+    runtime_path="$(doctor_fix_runtime_path 2>/dev/null || true)"
+    [[ -n "$dcg_bin" && -n "$runtime_home" && -n "$runtime_path" ]] || return 1
+
+    doctor_json="$(env HOME="$runtime_home" PATH="$runtime_path" "$dcg_bin" doctor --format json 2>/dev/null)" || return 1
     [[ -n "$doctor_json" ]] || return 1
 
     if command -v jq &>/dev/null; then
@@ -549,12 +616,22 @@ dcg_hook_already_installed() {
 # Install DCG pre-tool-use hook
 fix_dcg_hook() {
     local check_id="$1"
+    local dcg_bin=""
+    local runtime_home=""
+    local runtime_path=""
+    local dcg_uninstall_cmd=""
+
+    dcg_bin="$(doctor_fix_binary_path dcg 2>/dev/null || true)"
+    runtime_home="$(doctor_fix_runtime_home)"
+    runtime_path="$(doctor_fix_runtime_path 2>/dev/null || true)"
 
     # Guard: dcg command must exist
-    if ! command -v dcg &>/dev/null; then
-        doctor_fix_log WARN "DCG not installed, cannot fix hook"
+    if [[ -z "$dcg_bin" || -z "$runtime_home" || -z "$runtime_path" ]]; then
+        doctor_fix_log WARN "DCG not installed for the runtime home, cannot fix hook"
         return 1
     fi
+
+    dcg_uninstall_cmd="env HOME=$(printf '%q' "$runtime_home") PATH=$(printf '%q' "$runtime_path") $(printf '%q' "$dcg_bin") uninstall"
 
     # Guard: Check if already installed
     if dcg_hook_already_installed; then
@@ -570,12 +647,12 @@ fix_dcg_hook() {
     fi
 
     # Install hook
-    if dcg install 2>/dev/null; then
+    if env HOME="$runtime_home" PATH="$runtime_path" "$dcg_bin" install 2>/dev/null; then
         if ! doctor_fix_record_change_or_rollback \
-            "dcg uninstall" \
+            "$dcg_uninstall_cmd" \
             false \
             "hook" "Installed DCG pre-tool-use hook" \
-            "dcg uninstall" \
+            "$dcg_uninstall_cmd" \
             false "info" "[]" "[]" "[]"; then
             FIX_FAILED=$((FIX_FAILED + 1))
             return 1
@@ -942,9 +1019,20 @@ fix_stack_install() {
     local install_cmd="$3"
     local installed_path=""
     local rollback_command=""
+    local runtime_home=""
+    local runtime_path=""
 
-    # Guard: Check if already installed
-    if command -v "$binary_name" &>/dev/null; then
+    runtime_home="$(doctor_fix_runtime_home)"
+    runtime_path="$(doctor_fix_runtime_path 2>/dev/null || true)"
+    if [[ -z "$runtime_home" || -z "$runtime_path" ]]; then
+        doctor_fix_log ERROR "Failed to resolve runtime environment for $binary_name install"
+        FIX_FAILED=$((FIX_FAILED + 1))
+        return 1
+    fi
+
+    # Guard: Check if already installed for the runtime home
+    installed_path="$(doctor_fix_binary_path "$binary_name" 2>/dev/null || true)"
+    if [[ -n "$installed_path" ]]; then
         doctor_fix_log INFO "$binary_name already installed"
         return 0
     fi
@@ -956,10 +1044,11 @@ fix_stack_install() {
         return 0
     fi
 
-    # Run installer
-    if eval "$install_cmd" 2>/dev/null; then
+    # Run installer inside the runtime home so shell expansions and PATH resolution
+    # match the target account instead of the caller shell.
+    if env HOME="$runtime_home" PATH="$runtime_path" bash -c "$install_cmd" 2>/dev/null; then
         hash -r
-        installed_path="$(command -v "$binary_name" 2>/dev/null || true)"
+        installed_path="$(doctor_fix_binary_path "$binary_name" 2>/dev/null || true)"
         if [[ -z "$installed_path" ]]; then
             doctor_fix_log ERROR "Installer reported success but $binary_name is still unavailable"
             FIX_FAILED=$((FIX_FAILED + 1))
@@ -999,7 +1088,8 @@ fix_verified_install() {
     local installed_path=""
     local rollback_command=""
 
-    if command -v "$binary_name" &>/dev/null; then
+    installed_path="$(doctor_fix_binary_path "$binary_name" 2>/dev/null || true)"
+    if [[ -n "$installed_path" ]]; then
         doctor_fix_log INFO "$binary_name already installed"
         return 0
     fi
@@ -1012,7 +1102,7 @@ fix_verified_install() {
 
     if doctor_fix_run_verified_installer "$tool" "${args[@]}" >/dev/null 2>&1; then
         hash -r
-        installed_path="$(command -v "$binary_name" 2>/dev/null || true)"
+        installed_path="$(doctor_fix_binary_path "$binary_name" 2>/dev/null || true)"
         if [[ -n "$installed_path" ]]; then
             rollback_command="$(doctor_fix_build_remove_binary_rollback "$installed_path")"
             if ! doctor_fix_record_change_or_rollback \

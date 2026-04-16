@@ -1385,6 +1385,46 @@ chmod +x \"$HOME/.local/bin/codex-test-bin\"" >/dev/null 2>&1; then
     return 0
 }
 
+test_fix_stack_install_uses_target_runtime_home() {
+    setup_test_env
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin" "$HOME/.local/bin"
+    export PATH="$HOME/.local/bin:$PATH"
+
+    cat > "$HOME/.local/bin/codex-target-bin" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$HOME/.local/bin/codex-target-bin"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    local install_cmd='cat > "$HOME/.local/bin/codex-target-bin" <<'"'"'EOF'"'"'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$HOME/.local/bin/codex-target-bin"'
+
+    if ! fix_stack_install "agent.codex" "codex-target-bin" "$install_cmd" >/dev/null 2>&1; then
+        echo "  fix_stack_install should succeed for TARGET_HOME installs"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -x "$TARGET_HOME/.local/bin/codex-target-bin" ]]; then
+        echo "  fix_stack_install did not install into TARGET_HOME"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
 test_fix_stack_install_fails_when_binary_missing_after_successful_command() {
     setup_test_env
     export PATH="$HOME/.local/bin:$PATH"
@@ -1512,6 +1552,67 @@ EOF
     return 0
 }
 
+test_fix_verified_install_uses_target_runtime_home() {
+    setup_test_env
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin" "$HOME/.local/bin"
+    export PATH="$HOME/.local/bin:$PATH"
+
+    local original_doctor_fix_run_verified_installer=""
+    local installer_signal="$ACFS_STATE_DIR/verified-installer-invoked"
+    original_doctor_fix_run_verified_installer="$(declare -f doctor_fix_run_verified_installer)"
+
+    cat > "$HOME/.local/bin/ms-target-bin" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$HOME/.local/bin/ms-target-bin"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    doctor_fix_run_verified_installer() {
+        local runtime_home=""
+        runtime_home="$(doctor_fix_runtime_home)"
+        : > "$installer_signal"
+        mkdir -p "$runtime_home/.local/bin"
+        cat > "$runtime_home/.local/bin/ms-target-bin" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+        chmod +x "$runtime_home/.local/bin/ms-target-bin"
+        return 0
+    }
+
+    if ! fix_verified_install "stack.meta_skill" "ms-target-bin" "ms" --easy-mode >/dev/null 2>&1; then
+        echo "  fix_verified_install should succeed for TARGET_HOME installs"
+        eval "$original_doctor_fix_run_verified_installer"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -f "$installer_signal" ]]; then
+        echo "  fix_verified_install incorrectly treated current-shell binary as already installed"
+        eval "$original_doctor_fix_run_verified_installer"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ ! -x "$TARGET_HOME/.local/bin/ms-target-bin" ]]; then
+        echo "  fix_verified_install did not detect the target-home binary after install"
+        eval "$original_doctor_fix_run_verified_installer"
+        cleanup_test_env
+        return 1
+    fi
+
+    eval "$original_doctor_fix_run_verified_installer"
+    cleanup_test_env
+    return 0
+}
+
 test_fix_verified_install_dry_run() {
     setup_test_env
 
@@ -1541,6 +1642,8 @@ test_fix_verified_install_dry_run() {
 
 test_fix_verified_install_ms_arm64_fallback_uses_cargo() {
     setup_test_env
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.cargo/bin" "$TARGET_HOME/.local/bin" "$HOME/.local/bin"
     export PATH="$HOME/.local/bin:$PATH"
 
     start_autofix_session >/dev/null || {
@@ -1549,24 +1652,33 @@ test_fix_verified_install_ms_arm64_fallback_uses_cargo() {
         return 1
     }
 
-    local cargo_signal="$ACFS_STATE_DIR/cargo.args"
+    local cargo_signal="$ACFS_STATE_DIR/target-cargo.args"
+    local caller_signal="$ACFS_STATE_DIR/caller-cargo.args"
     cat > "$HOME/.local/bin/cargo" <<EOF
 #!/usr/bin/env bash
+: > "$caller_signal"
+exit 99
+EOF
+    chmod +x "$HOME/.local/bin/cargo"
+
+    cat > "$TARGET_HOME/.cargo/bin/cargo" <<EOF
+#!/usr/bin/env bash
 printf '%s\n' "\$*" > "$cargo_signal"
-cat > "$HOME/.local/bin/ms-test-bin" <<'BIN_EOF'
+mkdir -p "\$HOME/.local/bin"
+cat > "\$HOME/.local/bin/ms-test-bin" <<'BIN_EOF'
 #!/usr/bin/env bash
 exit 0
 BIN_EOF
-chmod +x "$HOME/.local/bin/ms-test-bin"
+chmod +x "\$HOME/.local/bin/ms-test-bin"
 exit 0
 EOF
-    chmod +x "$HOME/.local/bin/cargo"
+    chmod +x "$TARGET_HOME/.cargo/bin/cargo"
 
     local original_uname=""
     original_uname="$(declare -f uname 2>/dev/null || true)"
     local arch=""
     for arch in aarch64 arm64; do
-        rm -f "$cargo_signal" "$HOME/.local/bin/ms-test-bin"
+        rm -f "$cargo_signal" "$caller_signal" "$TARGET_HOME/.local/bin/ms-test-bin"
 
         uname() {
             case "${1:-}" in
@@ -1584,7 +1696,14 @@ EOF
         fi
 
         if [[ ! -f "$cargo_signal" ]]; then
-            echo "  cargo fallback was not invoked for arch $arch"
+            echo "  target-home cargo fallback was not invoked for arch $arch"
+            [[ -n "$original_uname" ]] && eval "$original_uname" || unset -f uname
+            cleanup_test_env
+            return 1
+        fi
+
+        if [[ -f "$caller_signal" ]]; then
+            echo "  fix_verified_install used caller-shell cargo instead of TARGET_HOME cargo for arch $arch"
             [[ -n "$original_uname" ]] && eval "$original_uname" || unset -f uname
             cleanup_test_env
             return 1
@@ -1598,8 +1717,8 @@ EOF
             return 1
         fi
 
-        if [[ ! -x "$HOME/.local/bin/ms-test-bin" ]]; then
-            echo "  cargo fallback did not produce ms-test-bin for arch $arch"
+        if [[ ! -x "$TARGET_HOME/.local/bin/ms-test-bin" ]]; then
+            echo "  cargo fallback did not produce ms-test-bin in TARGET_HOME for arch $arch"
             [[ -n "$original_uname" ]] && eval "$original_uname" || unset -f uname
             cleanup_test_env
             return 1
@@ -1610,7 +1729,6 @@ EOF
     cleanup_test_env
     return 0
 }
-
 test_fix_verified_install_removes_binary_when_record_change_fails() {
     setup_test_env
     export PATH="$HOME/.local/bin:$PATH"
@@ -1861,12 +1979,30 @@ test_fix_ssh_keepalive_restores_file_when_backup_and_record_change_fail() {
 test_fix_dcg_hook_uninstalls_when_record_change_fails() {
     setup_test_env
 
-    local original_record_change
+    local original_record_change=""
     local original_path="$PATH"
-    local dcg_stub="$HOME/.local/bin/dcg"
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin" "$HOME/.local/bin"
+    export PATH="$HOME/.local/bin:$PATH"
     original_record_change="$(declare -f record_change)"
 
-    cat > "$dcg_stub" <<EOF
+    cat > "$HOME/.local/bin/dcg" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$ACFS_STATE_DIR/caller-dcg.log"
+case "\$1 \${2-} \${3-}" in
+    "doctor --format json")
+        printf '{"hook_installed":false,"checks":[]}\n'
+        exit 0
+        ;;
+    "install  "|"uninstall  ")
+        exit 0
+        ;;
+esac
+exit 1
+EOF
+    chmod +x "$HOME/.local/bin/dcg"
+
+    cat > "$TARGET_HOME/.local/bin/dcg" <<EOF
 #!/usr/bin/env bash
 case "\$1 \${2-} \${3-}" in
     "doctor --format json")
@@ -1884,8 +2020,7 @@ case "\$1 \${2-} \${3-}" in
 esac
 exit 1
 EOF
-    chmod +x "$dcg_stub"
-    export PATH="$HOME/.local/bin:$PATH"
+    chmod +x "$TARGET_HOME/.local/bin/dcg"
 
     start_autofix_session >/dev/null || {
         echo "  Failed to start autofix session"
@@ -1915,6 +2050,13 @@ EOF
         return 1
     fi
 
+    if [[ -f "$ACFS_STATE_DIR/caller-dcg.log" ]]; then
+        echo "  fix_dcg_hook used caller-shell dcg instead of TARGET_HOME dcg"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
     if [[ $FIX_FAILED -ne 1 ]]; then
         echo "  FIX_FAILED should be 1 after dcg hook journaling failure, got $FIX_FAILED"
         end_autofix_session >/dev/null 2>&1 || true
@@ -1926,34 +2068,46 @@ EOF
     cleanup_test_env
     return 0
 }
-
 test_dcg_hook_already_installed_detects_hook_wiring() {
     setup_test_env
-    local original_dcg
-    original_dcg="$(declare -f dcg 2>/dev/null || true)"
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin" "$HOME/.local/bin"
+    export PATH="$HOME/.local/bin:$PATH"
 
-    dcg() {
-        if [[ "${1:-}" == "doctor" && "${2:-}" == "--format" && "${3:-}" == "json" ]]; then
-            cat <<'EOF'
-{"checks":[{"id":"hook_wiring","status":"ok","message":"dcg hook registered"}]}
+    cat > "$HOME/.local/bin/dcg" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$ACFS_STATE_DIR/caller-dcg.log"
+exit 1
 EOF
-            return 0
-        fi
-        return 1
-    }
+    chmod +x "$HOME/.local/bin/dcg"
+
+    cat > "$TARGET_HOME/.local/bin/dcg" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "doctor" && "${2:-}" == "--format" && "${3:-}" == "json" ]]; then
+    cat <<'JSON_EOF'
+{"checks":[{"id":"hook_wiring","status":"ok","message":"dcg hook registered"}]}
+JSON_EOF
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TARGET_HOME/.local/bin/dcg"
 
     if ! dcg_hook_already_installed; then
         echo "  Expected hook_wiring=ok to be treated as installed"
-        [[ -n "$original_dcg" ]] && eval "$original_dcg" || unset -f dcg
         cleanup_test_env
         return 1
     fi
 
-    [[ -n "$original_dcg" ]] && eval "$original_dcg" || unset -f dcg
+    if [[ -f "$ACFS_STATE_DIR/caller-dcg.log" ]]; then
+        echo "  dcg_hook_already_installed used caller-shell dcg instead of TARGET_HOME dcg"
+        cleanup_test_env
+        return 1
+    fi
+
     cleanup_test_env
     return 0
 }
-
 test_agent_mail_fix_stop_fallback_cleans_up_matching_pid() {
     setup_test_env
     export PATH="$HOME/.local/bin:$PATH"
@@ -2688,11 +2842,13 @@ main() {
     run_test test_fix_acfs_sourcing_dry_run
     run_test test_fix_acfs_sourcing_removes_new_file_when_record_change_fails
     run_test test_fix_stack_install_applies_and_records_change
+    run_test test_fix_stack_install_uses_target_runtime_home
     run_test test_fix_stack_install_fails_when_binary_missing_after_successful_command
     run_test test_fix_stack_install_removes_binary_when_record_change_fails
 
     # fix_verified_install tests
     run_test test_fix_verified_install_applies
+    run_test test_fix_verified_install_uses_target_runtime_home
     run_test test_fix_verified_install_dry_run
     run_test test_fix_verified_install_ms_arm64_fallback_uses_cargo
     run_test test_fix_verified_install_removes_binary_when_record_change_fails
