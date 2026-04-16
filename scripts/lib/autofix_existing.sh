@@ -858,6 +858,7 @@ update_path_entries() {
     local backup=""
     local restore_command=""
     local files_json=""
+    local recovery_incomplete=false
 
     while IFS= read -r config; do
         [[ -n "$config" ]] || continue
@@ -885,6 +886,10 @@ update_path_entries() {
                     log_error "[UPGRADE] Failed to append PATH entry to $config"
                     if ! autofix_existing_restore_from_backup "$backup" "$edit_config"; then
                         log_error "[UPGRADE] Failed to restore $config after PATH update failure"
+                        recovery_incomplete=true
+                    fi
+                    if [[ "$recovery_incomplete" == "true" ]]; then
+                        return 2
                     fi
                     return 1
                 fi
@@ -901,6 +906,10 @@ update_path_entries() {
                     log_error "[UPGRADE] Failed to record PATH update for $config"
                     if ! autofix_existing_restore_from_backup "$backup" "$edit_config"; then
                         log_error "[UPGRADE] Failed to restore $config after journaling failure"
+                        recovery_incomplete=true
+                    fi
+                    if [[ "$recovery_incomplete" == "true" ]]; then
+                        return 2
                     fi
                     return 1
                 fi
@@ -1032,7 +1041,10 @@ upgrade_existing_installation() {
     fi
 
     # Step 4: Update PATH entries if needed
-    if ! update_path_entries; then
+    local path_update_status=0
+    update_path_entries
+    path_update_status=$?
+    if (( path_update_status != 0 )); then
         local rollback_ok=false
         local restore_ok=false
         log_error "[UPGRADE] Failed to repair shell PATH entries"
@@ -1046,10 +1058,12 @@ upgrade_existing_installation() {
         else
             restore_ok=true
         fi
-        if [[ "$rollback_ok" == "true" && "$restore_ok" == "true" ]]; then
+        if [[ "$rollback_ok" == "true" && "$restore_ok" == "true" && $path_update_status -ne 2 ]]; then
             if ! autofix_existing_drop_changes_since "$rollback_start_index"; then
                 log_error "[UPGRADE] Failed to prune rolled-back upgrade journal entries after PATH repair failure"
             fi
+        else
+            log_warn "[UPGRADE] Preserving upgrade journal because rollback after PATH repair failure was incomplete"
         fi
         return 1
     fi
@@ -1262,6 +1276,7 @@ clean_shell_configs() {
     local temp_owner=""
     local grep_exit=0
     local failed=0
+    local recovery_incomplete=0
 
     while IFS= read -r config; do
         [[ -n "$config" ]] || continue
@@ -1339,6 +1354,7 @@ clean_shell_configs() {
                     log_error "[CLEAN] Failed to record shell config cleanup for $config"
                     if ! autofix_existing_restore_from_backup "$config_backup" "$edit_config"; then
                         log_error "[CLEAN] Failed to restore $config after journaling failure"
+                        recovery_incomplete=1
                     fi
                     failed=1
                 fi
@@ -1346,6 +1362,9 @@ clean_shell_configs() {
         fi
     done < <(autofix_existing_shell_configs 2>/dev/null || true)
 
+    if (( recovery_incomplete != 0 )); then
+        return 2
+    fi
     [[ $failed -eq 0 ]]
 }
 
@@ -1499,35 +1518,63 @@ clean_reinstall() {
 
     # Step 3: Remove existing installation
     if ! remove_acfs_artifacts; then
+        local restore_ok=false
+        local state_restore_ok=false
         log_error "[CLEAN] Failed to remove one or more ACFS artifacts"
         if ! autofix_existing_restore_installation_backup "$backup_dir"; then
             log_error "[CLEAN] Failed to restore installation backup after artifact removal failure"
-        fi
-        if ! autofix_existing_drop_changes_since "$clean_record_index"; then
-            log_error "[CLEAN] Failed to prune aborted clean reinstall journal entries after artifact removal failure"
+        else
+            restore_ok=true
         fi
         if ! autofix_existing_restore_relocated_state_after_clean_abort true; then
             log_error "[CLEAN] Failed to restore relocated autofix state after artifact removal failure"
+        else
+            state_restore_ok=true
+        fi
+        if [[ "$restore_ok" == "true" && "$state_restore_ok" == "true" ]]; then
+            if ! autofix_existing_drop_changes_since "$clean_record_index"; then
+                log_error "[CLEAN] Failed to prune aborted clean reinstall journal entries after artifact removal failure"
+            fi
+        else
+            log_warn "[CLEAN] Preserving aborted clean reinstall journal because recovery after artifact removal failure was incomplete"
         fi
         return 1
     fi
 
     # Step 4: Clean shell configs
-    if ! clean_shell_configs; then
+    local clean_shell_status=0
+    clean_shell_configs
+    clean_shell_status=$?
+    if (( clean_shell_status != 0 )); then
+        local cleanup_rollback_ok=false
+        local restore_ok=false
+        local state_restore_ok=false
         log_error "[CLEAN] Failed to clean one or more shell configs"
         if (( clean_record_index >= 0 )); then
             if ! autofix_existing_rollback_changes_since "$((clean_record_index + 1))"; then
                 log_error "[CLEAN] Failed to roll back shell config cleanups after clean reinstall failure"
+            else
+                cleanup_rollback_ok=true
             fi
+        else
+            cleanup_rollback_ok=true
         fi
         if ! autofix_existing_restore_installation_backup "$backup_dir"; then
             log_error "[CLEAN] Failed to restore installation backup after shell config cleanup failure"
-        fi
-        if ! autofix_existing_drop_changes_since "$clean_record_index"; then
-            log_error "[CLEAN] Failed to prune aborted clean reinstall journal entries after shell config cleanup failure"
+        else
+            restore_ok=true
         fi
         if ! autofix_existing_restore_relocated_state_after_clean_abort true; then
             log_error "[CLEAN] Failed to restore relocated autofix state after shell config cleanup failure"
+        else
+            state_restore_ok=true
+        fi
+        if [[ "$cleanup_rollback_ok" == "true" && "$restore_ok" == "true" && "$state_restore_ok" == "true" && $clean_shell_status -ne 2 ]]; then
+            if ! autofix_existing_drop_changes_since "$clean_record_index"; then
+                log_error "[CLEAN] Failed to prune aborted clean reinstall journal entries after shell config cleanup failure"
+            fi
+        else
+            log_warn "[CLEAN] Preserving aborted clean reinstall journal because shell config cleanup recovery was incomplete"
         fi
         return 1
     fi
