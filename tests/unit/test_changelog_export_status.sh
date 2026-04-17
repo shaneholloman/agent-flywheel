@@ -3755,17 +3755,28 @@ test_cheatsheet_can_be_sourced_without_running_main() {
             set -- --bogus keep
             source "$TEST_CHEATSHEET_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s\n" "$-"
+                printf "bad-shell-flags:%s
+" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail\n"
+                printf "bad-shell-flags:pipefail
+"
                 exit 1
             fi
-            printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "${ACFS_HOME:-}" "${SCRIPT_DIR:-}" "${ACFS_VERSION:-}" "${HAS_GUM:-}"
+            acfs_home_set=unset
+            script_dir_set=unset
+            acfs_version_set=unset
+            has_gum_set=unset
+            [[ -v ACFS_HOME ]] && acfs_home_set=set
+            [[ -v SCRIPT_DIR ]] && script_dir_set=set
+            [[ -v ACFS_VERSION ]] && acfs_version_set=set
+            [[ -v HAS_GUM ]] && has_gum_set=set
+            printf "%s|%s|%s|%s|%s|%s|%s|%s
+" "$HOME" "$#" "$1" "$2" "$acfs_home_set" "$script_dir_set" "$acfs_version_set" "$has_gum_set"
         ' 2>/dev/null)
 
-    if [[ "$output" == "relative-home|2|--bogus|keep||||" ]]; then
+    if [[ "$output" == "relative-home|2|--bogus|keep|unset|unset|unset|unset" ]]; then
         harness_pass "cheatsheet can be sourced without leaking install context"
     else
         harness_fail "cheatsheet can be sourced without leaking install context" "$output"
@@ -3995,18 +4006,23 @@ test_status_can_be_sourced_without_running_main() {
             set -- --bogus keep
             source "$TEST_STATUS_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s\n" "$-"
+                printf "bad-shell-flags:%s
+" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail\n"
+                printf "bad-shell-flags:pipefail
+"
                 exit 1
             fi
+            script_dir_set=unset
+            [[ -v SCRIPT_DIR ]] && script_dir_set=set
             declare -F status_main >/dev/null
-            printf "%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "${SCRIPT_DIR:-}"
+            printf "%s|%s|%s|%s|%s
+" "$HOME" "$#" "$1" "$2" "$script_dir_set"
         ' 2>/dev/null)
 
-    if [[ "$output" == "relative-home|2|--bogus|keep|" ]]; then
+    if [[ "$output" == "relative-home|2|--bogus|keep|unset" ]]; then
         harness_pass "status can be sourced without leaking script path state"
     else
         harness_fail "status can be sourced without leaking script path state" "$output"
@@ -4134,6 +4150,61 @@ EOF
         harness_pass "changelog ignores relative HOME trap"
     else
         harness_fail "changelog ignores relative HOME trap" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_changelog_can_be_sourced_without_leaking_install_context() {
+    local output=""
+
+    output=$(HOME='relative-home' bash -c '
+        set +e +u
+        set +o pipefail
+        set -- --bogus keep
+        source "'$CHANGELOG_SH'" >/dev/null 2>&1
+        errexit=off
+        nounset=off
+        pipefail_state=off
+        acfs_home_set=unset
+        acfs_repo_set=unset
+        color_set=unset
+        [[ $- == *e* ]] && errexit=on
+        [[ $- == *u* ]] && nounset=on
+        if shopt -qo pipefail 2>/dev/null; then
+            pipefail_state=on
+        fi
+        [[ -v ACFS_HOME ]] && acfs_home_set=set
+        [[ -v ACFS_REPO ]] && acfs_repo_set=set
+        [[ -v C_RESET ]] && color_set=set
+        printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$errexit" "$nounset" "$pipefail_state" "$#" "$1" "$2" "$acfs_home_set" "$acfs_repo_set" "$color_set"
+    ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|off|off|off|2|--bogus|keep|unset|unset|unset" ]]; then
+        harness_pass "changelog can be sourced without leaking install context"
+    else
+        harness_fail "changelog can be sourced without leaking install context" "$output"
+    fi
+}
+
+test_changelog_sourced_helper_uses_cached_current_home_when_runtime_home_is_poisoned() {
+    setup_mock_env
+
+    local current_user=""
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    local output=""
+    output=$(HOME="$TEST_HOME" CURRENT_USER="$current_user" TEST_CHANGELOG_SCRIPT="$CHANGELOG_SH"         bash -c '
+            source "$TEST_CHANGELOG_SCRIPT" >/dev/null 2>&1
+            HOME=relative-home
+            getent() { return 127; }
+            printf "%s\n" "$(changelog_home_for_user "$CURRENT_USER" 2>/dev/null || true)"
+        ' 2>/dev/null)
+
+    if [[ "$output" == "$TEST_HOME" ]]; then
+        harness_pass "changelog sourced helper uses cached current home when runtime HOME is poisoned"
+    else
+        harness_fail "changelog sourced helper uses cached current home when runtime HOME is poisoned" "$output"
     fi
 
     cleanup_mock_env
@@ -4302,18 +4373,41 @@ test_export_config_can_be_sourced_without_mutating_caller_env() {
             set -- --bogus keep
             source "$TEST_EXPORT_CONFIG_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s\n" "$-"
+                printf "bad-shell-flags:%s
+" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail\n"
+                printf "bad-shell-flags:pipefail
+"
                 exit 1
             fi
+            target_home_set=unset
+            target_user_set=unset
+            acfs_home_set=unset
+            script_dir_set=unset
+            output_format_set=unset
+            output_file_set=unset
+            state_file_set=unset
+            version_file_set=unset
+            helpers_file_set=unset
+            manifest_file_set=unset
+            [[ -v TARGET_HOME ]] && target_home_set=set
+            [[ -v TARGET_USER ]] && target_user_set=set
+            [[ -v ACFS_HOME ]] && acfs_home_set=set
+            [[ -v SCRIPT_DIR ]] && script_dir_set=set
+            [[ -v OUTPUT_FORMAT ]] && output_format_set=set
+            [[ -v OUTPUT_FILE ]] && output_file_set=set
+            [[ -v STATE_FILE ]] && state_file_set=set
+            [[ -v VERSION_FILE ]] && version_file_set=set
+            [[ -v INSTALL_HELPERS_FILE ]] && helpers_file_set=set
+            [[ -v MANIFEST_INDEX_FILE ]] && manifest_file_set=set
             declare -F export_config_main >/dev/null
-            printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "$PATH" "${TARGET_HOME:-}" "${TARGET_USER:-}" "${ACFS_HOME:-}" "${SCRIPT_DIR:-}" "${OUTPUT_FORMAT:-}" "${OUTPUT_FILE:-}" "${STATE_FILE:-}" "${VERSION_FILE:-}" "${INSTALL_HELPERS_FILE:-}" "${MANIFEST_INDEX_FILE:-}"
+            printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s
+" "$HOME" "$#" "$1" "$2" "$PATH" "$target_home_set" "$target_user_set" "$acfs_home_set" "$script_dir_set" "$output_format_set" "$output_file_set" "$state_file_set" "$version_file_set" "$helpers_file_set" "$manifest_file_set"
         ' 2>/dev/null)
 
-    if [[ "$output" == "relative-home|2|--bogus|keep|/usr/bin:/bin||||||||||" ]]; then
+    if [[ "$output" == "relative-home|2|--bogus|keep|/usr/bin:/bin|unset|unset|unset|unset|unset|unset|unset|unset|unset|unset" ]]; then
         harness_pass "export-config can be sourced without leaking install context"
     else
         harness_fail "export-config can be sourced without leaking install context" "$output"
@@ -4561,6 +4655,61 @@ test_continue_live_log_hint_uses_installed_layout_log_dir() {
         harness_pass "continue live-log hint uses installed-layout log dir"
     else
         harness_fail "continue live-log hint uses installed-layout log dir" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_continue_can_be_sourced_without_leaking_install_context() {
+    local output=""
+
+    output=$(HOME='relative-home' bash -c '
+        set +e +u
+        set +o pipefail
+        set -- --bogus keep
+        source "'$CONTINUE_SH'" >/dev/null 2>&1
+        errexit=off
+        nounset=off
+        pipefail_state=off
+        script_dir_set=unset
+        log_dir_set=unset
+        color_set=unset
+        [[ $- == *e* ]] && errexit=on
+        [[ $- == *u* ]] && nounset=on
+        if shopt -qo pipefail 2>/dev/null; then
+            pipefail_state=on
+        fi
+        [[ -v SCRIPT_DIR ]] && script_dir_set=set
+        [[ -v ACFS_LOG_DIR ]] && log_dir_set=set
+        [[ -v RED ]] && color_set=set
+        printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$errexit" "$nounset" "$pipefail_state" "$#" "$1" "$2" "$script_dir_set" "$log_dir_set" "$color_set"
+    ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|off|off|off|2|--bogus|keep|unset|unset|unset" ]]; then
+        harness_pass "continue can be sourced without leaking install context"
+    else
+        harness_fail "continue can be sourced without leaking install context" "$output"
+    fi
+}
+
+test_continue_sourced_helper_uses_cached_current_home_when_runtime_home_is_poisoned() {
+    setup_mock_env
+
+    local current_user=""
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    local output=""
+    output=$(HOME="$TEST_HOME" CURRENT_USER="$current_user" TEST_CONTINUE_SCRIPT="$CONTINUE_SH"         bash -c '
+            source "$TEST_CONTINUE_SCRIPT" >/dev/null 2>&1
+            HOME=relative-home
+            getent() { return 127; }
+            printf "%s\n" "$(home_for_user "$CURRENT_USER" 2>/dev/null || true)"
+        ' 2>/dev/null)
+
+    if [[ "$output" == "$TEST_HOME" ]]; then
+        harness_pass "continue sourced helper uses cached current home when runtime HOME is poisoned"
+    else
+        harness_fail "continue sourced helper uses cached current home when runtime HOME is poisoned" "$output"
     fi
 
     cleanup_mock_env
@@ -4955,19 +5104,26 @@ test_support_can_be_sourced_without_running_main() {
             set -- --bogus keep
             source "$TEST_SUPPORT_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s\n" "$-"
+                printf "bad-shell-flags:%s
+" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail\n"
+                printf "bad-shell-flags:pipefail
+"
                 exit 1
             fi
+            acfs_home_set=unset
+            script_dir_set=unset
+            [[ -v ACFS_HOME ]] && acfs_home_set=set
+            [[ -v SCRIPT_DIR ]] && script_dir_set=set
             declare -F redact_file >/dev/null
             declare -F redact_bundle >/dev/null
-            printf "%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "${ACFS_HOME:-}" "${SCRIPT_DIR:-}"
+            printf "%s|%s|%s|%s|%s|%s
+" "$HOME" "$#" "$1" "$2" "$acfs_home_set" "$script_dir_set"
         ' 2>/dev/null)
 
-    if [[ "$output" == "relative-home|2|--bogus|keep||" ]]; then
+    if [[ "$output" == "relative-home|2|--bogus|keep|unset|unset" ]]; then
         harness_pass "support can be sourced without leaking install context"
     else
         harness_fail "support can be sourced without leaking install context" "$output"
@@ -5175,7 +5331,7 @@ EOF
 
     local output=""
     output=$(HOME="relative-home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        bash -c 'source "$1"; printf "target_home=%s\n" "$TARGET_HOME"' _ \
+        bash -c 'source "$1"; printf "target_home=%s\n" "${_SMOKE_TARGET_HOME:-}"' _ \
         "$SMOKE_TEST_SH")
 
     local resolved_home=""
@@ -5205,13 +5361,53 @@ EOF
 
     local output=""
     output=$(HOME="relative-home" TARGET_USER="ghostuser" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        bash -c 'source "$1"; echo "target_home=${TARGET_HOME:-}"' _ \
+        bash -c 'source "$1"; echo "target_home=${_SMOKE_TARGET_HOME:-}"' _ \
         "$SMOKE_TEST_SH")
 
     if [[ "$output" == "target_home=" ]]; then
         harness_pass "smoke test does not guess target home from username"
     else
         harness_fail "smoke test does not guess target home from username" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_smoke_test_can_be_sourced_without_leaking_install_context() {
+    local output=""
+
+    output=$(HOME='relative-home' PATH='/usr/bin:/bin' bash -c '
+        set +e +u
+        set -- --bogus keep
+        source "'$SMOKE_TEST_SH'" >/dev/null 2>&1
+        target_user_set=unset
+        target_home_set=unset
+        script_dir_set=unset
+        counter_set=unset
+        [[ -v TARGET_USER ]] && target_user_set=set
+        [[ -v TARGET_HOME ]] && target_home_set=set
+        [[ -v SCRIPT_DIR ]] && script_dir_set=set
+        [[ -v CRITICAL_PASS ]] && counter_set=set
+        printf "%s|%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "$PATH" "$target_user_set" "$target_home_set" "$script_dir_set" "$counter_set"
+    ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|2|--bogus|keep|/usr/bin:/bin|unset|unset|unset|unset" ]]; then
+        harness_pass "smoke test can be sourced without leaking install context"
+    else
+        harness_fail "smoke test can be sourced without leaking install context" "$output"
+    fi
+}
+
+test_smoke_test_run_preserves_caller_path_when_sourced() {
+    setup_installed_layout_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$TEST_TARGET_HOME" TARGET_USER="tester" PATH="/usr/bin:/bin"         bash -c 'source "$1" >/dev/null 2>&1; old_path="$PATH"; run_smoke_test >/dev/null 2>&1 || true; printf "%s\n" "$PATH"' _         "$SMOKE_TEST_SH")
+
+    if [[ "$output" == "/usr/bin:/bin" ]]; then
+        harness_pass "smoke test run preserves caller PATH when sourced"
+    else
+        harness_fail "smoke test run preserves caller PATH when sourced" "$output"
     fi
 
     cleanup_mock_env
@@ -5295,7 +5491,7 @@ EOF
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
         PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        bash -c 'source "$1"; printf "target_user=%s\ntarget_home=%s\nbinary=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "$(_smoke_binary_path claude 2>/dev/null || true)"' \
+        bash -c 'source "$1"; printf "target_user=%s\ntarget_home=%s\nbinary=%s\n" "${_SMOKE_TARGET_USER:-}" "${_SMOKE_TARGET_HOME:-}" "$(_smoke_binary_path claude 2>/dev/null || true)"' \
         _ "$SMOKE_TEST_SH")
 
     if [[ "$output" == *"target_user=tester"* ]] \
@@ -7190,18 +7386,29 @@ test_onboard_can_be_sourced_without_mutating_caller_env() {
             set -- --bogus keep
             source "$TEST_ONBOARD_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s\n" "$-"
+                printf "bad-shell-flags:%s
+" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail\n"
+                printf "bad-shell-flags:pipefail
+"
                 exit 1
             fi
+            acfs_home_set=unset
+            script_path_set=unset
+            script_dir_set=unset
+            runtime_home_set=unset
+            [[ -v ACFS_HOME ]] && acfs_home_set=set
+            [[ -v SCRIPT_PATH ]] && script_path_set=set
+            [[ -v SCRIPT_DIR ]] && script_dir_set=set
+            [[ -v ONBOARD_RUNTIME_HOME ]] && runtime_home_set=set
             declare -F onboard_main >/dev/null
-            printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "${ACFS_HOME:-}" "${SCRIPT_PATH:-}" "${SCRIPT_DIR:-}" "${ONBOARD_RUNTIME_HOME:-}"
+            printf "%s|%s|%s|%s|%s|%s|%s|%s
+" "$HOME" "$#" "$1" "$2" "$acfs_home_set" "$script_path_set" "$script_dir_set" "$runtime_home_set"
         ' 2>/dev/null)
 
-    if [[ "$output" == "relative-home|2|--bogus|keep||||" ]]; then
+    if [[ "$output" == "relative-home|2|--bogus|keep|unset|unset|unset|unset" ]]; then
         harness_pass "onboard can be sourced without leaking install context"
     else
         harness_fail "onboard can be sourced without leaking install context" "$output"
@@ -7393,6 +7600,8 @@ main() {
     test_changelog_uses_system_state_target_home_when_getent_unavailable || true
     test_changelog_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_changelog_ignores_relative_home_trap || true
+    test_changelog_can_be_sourced_without_leaking_install_context || true
+    test_changelog_sourced_helper_uses_cached_current_home_when_runtime_home_is_poisoned || true
 
     harness_section "Continue"
     test_continue_uses_installed_layout_under_root_home || true
@@ -7402,6 +7611,8 @@ main() {
     test_continue_failed_state_beats_runtime_probe || true
     test_continue_reports_installed_layout_log_locations || true
     test_continue_live_log_hint_uses_installed_layout_log_dir || true
+    test_continue_can_be_sourced_without_leaking_install_context || true
+    test_continue_sourced_helper_uses_cached_current_home_when_runtime_home_is_poisoned || true
     test_continue_scans_nonstandard_homes_via_getent || true
 
     harness_section "Dashboard"
@@ -7420,6 +7631,8 @@ main() {
     test_state_library_ignores_relative_home_target_resolution || true
     test_smoke_test_ignores_relative_home_target_resolution || true
     test_smoke_test_does_not_guess_target_home_from_username || true
+    test_smoke_test_can_be_sourced_without_leaking_install_context || true
+    test_smoke_test_run_preserves_caller_path_when_sourced || true
     test_smoke_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir || true
     test_smoke_installed_script_ignores_poisoned_explicit_acfs_home || true
     test_smoke_bootstrap_uses_system_state_target_home_when_getent_unavailable || true

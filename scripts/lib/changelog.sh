@@ -31,6 +31,25 @@ if [[ -n "${_ACFS_CHANGELOG_SH_LOADED:-}" ]]; then
 fi
 _ACFS_CHANGELOG_SH_LOADED=1
 
+_CHANGELOG_WAS_SOURCED=false
+_CHANGELOG_ORIGINAL_HOME=""
+_CHANGELOG_ORIGINAL_HOME_WAS_SET=false
+_CHANGELOG_RESTORE_ERREXIT=false
+_CHANGELOG_RESTORE_NOUNSET=false
+_CHANGELOG_RESTORE_PIPEFAIL=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    _CHANGELOG_WAS_SOURCED=true
+    if [[ -v HOME ]]; then
+        _CHANGELOG_ORIGINAL_HOME="$HOME"
+        _CHANGELOG_ORIGINAL_HOME_WAS_SET=true
+    fi
+    [[ $- == *e* ]] && _CHANGELOG_RESTORE_ERREXIT=true
+    [[ $- == *u* ]] && _CHANGELOG_RESTORE_NOUNSET=true
+    if shopt -qo pipefail 2>/dev/null; then
+        _CHANGELOG_RESTORE_PIPEFAIL=true
+    fi
+fi
+
 set -euo pipefail
 
 changelog_sanitize_abs_nonroot_path() {
@@ -84,19 +103,19 @@ fi
 # ============================================================
 # Configuration
 # ============================================================
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_CHANGELOG_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _CHANGELOG_EXPLICIT_ACFS_HOME="$(changelog_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 _CHANGELOG_DEFAULT_ACFS_HOME=""
 [[ -n "$_CHANGELOG_CURRENT_HOME" ]] && _CHANGELOG_DEFAULT_ACFS_HOME="${_CHANGELOG_CURRENT_HOME}/.acfs"
-ACFS_HOME="${_CHANGELOG_EXPLICIT_ACFS_HOME:-$_CHANGELOG_DEFAULT_ACFS_HOME}"
+_CHANGELOG_ACFS_HOME="${_CHANGELOG_EXPLICIT_ACFS_HOME:-$_CHANGELOG_DEFAULT_ACFS_HOME}"
 _CHANGELOG_EXPLICIT_ACFS_REPO="$(changelog_sanitize_abs_nonroot_path "${ACFS_REPO:-}" 2>/dev/null || true)"
-ACFS_REPO="${_CHANGELOG_EXPLICIT_ACFS_REPO:-$ACFS_HOME}"
+_CHANGELOG_ACFS_REPO="${_CHANGELOG_EXPLICIT_ACFS_REPO:-$_CHANGELOG_ACFS_HOME}"
 _CHANGELOG_SYSTEM_STATE_FILE="$(changelog_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_CHANGELOG_SYSTEM_STATE_FILE" ]]; then
     _CHANGELOG_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
 fi
 _CHANGELOG_RESOLVED_ACFS_HOME=""
-CHANGELOG_FILE="${ACFS_REPO:+${ACFS_REPO}/CHANGELOG.md}"
+_CHANGELOG_FILE="${_CHANGELOG_ACFS_REPO:+${_CHANGELOG_ACFS_REPO}/CHANGELOG.md}"
 
 # Find CHANGELOG.md - check multiple locations
 find_changelog() {
@@ -104,8 +123,8 @@ find_changelog() {
         "/data/projects/agentic_coding_flywheel_setup/CHANGELOG.md"
     )
 
-    [[ -n "$CHANGELOG_FILE" ]] && locations=("${CHANGELOG_FILE}" "${locations[@]}")
-    [[ -n "$ACFS_HOME" ]] && locations=("${ACFS_HOME}/CHANGELOG.md" "${locations[@]}")
+    [[ -n "$_CHANGELOG_FILE" ]] && locations=("${_CHANGELOG_FILE}" "${locations[@]}")
+    [[ -n "$_CHANGELOG_ACFS_HOME" ]] && locations=("${_CHANGELOG_ACFS_HOME}/CHANGELOG.md" "${locations[@]}")
     [[ -n "$_CHANGELOG_CURRENT_HOME" ]] && locations+=("${_CHANGELOG_CURRENT_HOME}/.acfs/CHANGELOG.md")
 
     for loc in "${locations[@]}"; do
@@ -123,25 +142,25 @@ find_changelog() {
 # NO_COLOR with any value disables colors. Related: bd-39ye
 # ============================================================
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
-    C_RESET='\033[0m'
-    C_BOLD='\033[1m'
-    C_DIM='\033[2m'
-    C_GREEN='\033[0;32m'
-    C_CYAN='\033[0;36m'
-    C_YELLOW='\033[0;33m'
-    C_RED='\033[0;31m'
-    C_MAGENTA='\033[0;35m'
-    C_GRAY='\033[0;90m'
+    _CHANGELOG_C_RESET='\033[0m'
+    _CHANGELOG_C_BOLD='\033[1m'
+    _CHANGELOG_C_DIM='\033[2m'
+    _CHANGELOG_C_GREEN='\033[0;32m'
+    _CHANGELOG_C_CYAN='\033[0;36m'
+    _CHANGELOG_C_YELLOW='\033[0;33m'
+    _CHANGELOG_C_RED='\033[0;31m'
+    _CHANGELOG_C_MAGENTA='\033[0;35m'
+    _CHANGELOG_C_GRAY='\033[0;90m'
 else
-    C_RESET=''
-    C_BOLD=''
-    C_DIM=''
-    C_GREEN=''
-    C_CYAN=''
-    C_YELLOW=''
-    C_RED=''
-    C_MAGENTA=''
-    C_GRAY=''
+    _CHANGELOG_C_RESET=''
+    _CHANGELOG_C_BOLD=''
+    _CHANGELOG_C_DIM=''
+    _CHANGELOG_C_GREEN=''
+    _CHANGELOG_C_CYAN=''
+    _CHANGELOG_C_YELLOW=''
+    _CHANGELOG_C_RED=''
+    _CHANGELOG_C_MAGENTA=''
+    _CHANGELOG_C_GRAY=''
 fi
 
 # ============================================================
@@ -184,7 +203,7 @@ changelog_home_for_user() {
 
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
-        home_candidate="$(changelog_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        home_candidate="$(changelog_sanitize_abs_nonroot_path "${_CHANGELOG_CURRENT_HOME:-${HOME:-}}" 2>/dev/null || true)"
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -229,7 +248,7 @@ changelog_read_target_home_from_state() {
 
 changelog_script_acfs_home() {
     local candidate=""
-    candidate=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
+    candidate=$(cd "$_CHANGELOG_SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
     [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
     printf '%s\n' "$candidate"
 }
@@ -282,21 +301,21 @@ resolve_changelog_acfs_home() {
         fi
     fi
 
-    if [[ -n "$ACFS_HOME" ]] && [[ -f "$ACFS_HOME/state.json" || -f "$ACFS_HOME/VERSION" || -f "$ACFS_HOME/CHANGELOG.md" ]]; then
-        _CHANGELOG_RESOLVED_ACFS_HOME="$ACFS_HOME"
+    if [[ -n "$_CHANGELOG_ACFS_HOME" ]] && [[ -f "$_CHANGELOG_ACFS_HOME/state.json" || -f "$_CHANGELOG_ACFS_HOME/VERSION" || -f "$_CHANGELOG_ACFS_HOME/CHANGELOG.md" ]]; then
+        _CHANGELOG_RESOLVED_ACFS_HOME="$_CHANGELOG_ACFS_HOME"
         printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
         return 0
     fi
 
-    _CHANGELOG_RESOLVED_ACFS_HOME="$ACFS_HOME"
+    _CHANGELOG_RESOLVED_ACFS_HOME="$_CHANGELOG_ACFS_HOME"
     printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
 }
 
 resolve_changelog_state_file() {
     local candidate=""
 
-    if [[ -n "$ACFS_HOME" ]]; then
-        candidate="${ACFS_HOME}/state.json"
+    if [[ -n "$_CHANGELOG_ACFS_HOME" ]]; then
+        candidate="${_CHANGELOG_ACFS_HOME}/state.json"
     fi
 
     if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
@@ -313,13 +332,13 @@ resolve_changelog_state_file() {
 }
 
 refresh_changelog_paths() {
-    ACFS_HOME="$(resolve_changelog_acfs_home)"
+    _CHANGELOG_ACFS_HOME="$(resolve_changelog_acfs_home)"
     if [[ -n "$_CHANGELOG_EXPLICIT_ACFS_REPO" ]]; then
-        ACFS_REPO="$_CHANGELOG_EXPLICIT_ACFS_REPO"
+        _CHANGELOG_ACFS_REPO="$_CHANGELOG_EXPLICIT_ACFS_REPO"
     else
-        ACFS_REPO="$ACFS_HOME"
+        _CHANGELOG_ACFS_REPO="$_CHANGELOG_ACFS_HOME"
     fi
-    CHANGELOG_FILE="${ACFS_REPO:+${ACFS_REPO}/CHANGELOG.md}"
+    _CHANGELOG_FILE="${_CHANGELOG_ACFS_REPO:+${_CHANGELOG_ACFS_REPO}/CHANGELOG.md}"
 }
 
 read_state_timestamp() {
@@ -396,35 +415,35 @@ format_change_type() {
     local type="$1"
     case "$type" in
         Added|added)
-            printf "%b\n" "${C_GREEN}+"
+            printf "%b\n" "${_CHANGELOG_C_GREEN}+"
             ;;
         Changed|changed)
-            printf "%b\n" "${C_YELLOW}~"
+            printf "%b\n" "${_CHANGELOG_C_YELLOW}~"
             ;;
         Deprecated|deprecated)
-            printf "%b\n" "${C_MAGENTA}!"
+            printf "%b\n" "${_CHANGELOG_C_MAGENTA}!"
             ;;
         Removed|removed)
-            printf "%b\n" "${C_RED}-"
+            printf "%b\n" "${_CHANGELOG_C_RED}-"
             ;;
         Fixed|fixed)
-            printf "%b\n" "${C_CYAN}*"
+            printf "%b\n" "${_CHANGELOG_C_CYAN}*"
             ;;
         Security|security)
-            printf "%b\n" "${C_RED}!"
+            printf "%b\n" "${_CHANGELOG_C_RED}!"
             ;;
         Migration|migration)
-            printf "%b\n" "${C_YELLOW}>"
+            printf "%b\n" "${_CHANGELOG_C_YELLOW}>"
             ;;
         *)
-            printf "%b\n" "${C_GRAY}*"
+            printf "%b\n" "${_CHANGELOG_C_GRAY}*"
             ;;
     esac
 }
 
 # Get ACFS version from VERSION file
 get_acfs_version() {
-    local version_file="${ACFS_HOME}/VERSION"
+    local version_file="${_CHANGELOG_ACFS_HOME}/VERSION"
     if [[ -f "$version_file" ]]; then
         cat "$version_file"
     else
@@ -545,7 +564,7 @@ format_terminal() {
             if [[ "$count" -gt 0 ]]; then
                 echo ""  # Space between versions
             fi
-            printf "%b\n" "${C_BOLD}${C_CYAN}## ${version}${C_RESET}${C_GRAY} - ${date}${C_RESET}"
+            printf "%b\n" "${_CHANGELOG_C_BOLD}${_CHANGELOG_C_CYAN}## ${version}${_CHANGELOG_C_RESET}${_CHANGELOG_C_GRAY} - ${date}${_CHANGELOG_C_RESET}"
             last_version="$version"
             last_date="$date"
             last_type=""
@@ -553,23 +572,23 @@ format_terminal() {
 
         # New type header
         if [[ "$type" != "$last_type" ]] && [[ -n "$type" ]]; then
-            printf "%b\n" "${C_DIM}### ${type}${C_RESET}"
+            printf "%b\n" "${_CHANGELOG_C_DIM}### ${type}${_CHANGELOG_C_RESET}"
             last_type="$type"
         fi
 
         # Entry with icon
         local icon
         icon=$(format_change_type "$type")
-        printf "%b\n" "  ${icon} ${entry}${C_RESET}"
+        printf "%b\n" "  ${icon} ${entry}${_CHANGELOG_C_RESET}"
 
         ((++count))
     done
 
     if [[ "$count" -eq 0 ]]; then
-        printf "%b\n" "${C_GREEN}You're up to date! No new changes since your last update.${C_RESET}"
+        printf "%b\n" "${_CHANGELOG_C_GREEN}You're up to date! No new changes since your last update.${_CHANGELOG_C_RESET}"
     else
         echo ""
-        printf "%b\n" "${C_DIM}${count} change(s) shown${C_RESET}"
+        printf "%b\n" "${_CHANGELOG_C_DIM}${count} change(s) shown${_CHANGELOG_C_RESET}"
     fi
 }
 
@@ -676,8 +695,8 @@ main() {
     if ! changelog_path=$(find_changelog); then
         echo "Error: CHANGELOG.md not found" >&2
         echo "Looked in:" >&2
-        echo "  - ${CHANGELOG_FILE}" >&2
-        echo "  - ${ACFS_HOME}/CHANGELOG.md" >&2
+        echo "  - ${_CHANGELOG_FILE}" >&2
+        echo "  - ${_CHANGELOG_ACFS_HOME}/CHANGELOG.md" >&2
         exit 1
     fi
 
@@ -698,11 +717,11 @@ main() {
 
     # Header for terminal output
     if [[ "$json_output" != "true" ]]; then
-        printf "%b\n" "${C_BOLD}ACFS Changelog${C_RESET}"
+        printf "%b\n" "${_CHANGELOG_C_BOLD}ACFS Changelog${_CHANGELOG_C_RESET}"
         if [[ "$show_all" == "true" ]]; then
-            printf "%b\n" "${C_DIM}Showing all changes${C_RESET}"
+            printf "%b\n" "${_CHANGELOG_C_DIM}Showing all changes${_CHANGELOG_C_RESET}"
         else
-            printf "%b\n" "${C_DIM}Changes since: ${since_date}${C_RESET}"
+            printf "%b\n" "${_CHANGELOG_C_DIM}Changes since: ${since_date}${_CHANGELOG_C_RESET}"
         fi
         echo ""
     fi
@@ -714,6 +733,23 @@ main() {
         parse_changelog "$changelog_path" | filter_by_date "$since_date" | format_terminal
     fi
 }
+
+changelog_restore_shell_state_if_sourced() {
+    [[ "$_CHANGELOG_WAS_SOURCED" == "true" ]] || return 0
+
+    if [[ "$_CHANGELOG_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+        HOME="$_CHANGELOG_ORIGINAL_HOME"
+        export HOME
+    else
+        unset HOME
+    fi
+
+    [[ "$_CHANGELOG_RESTORE_ERREXIT" == "true" ]] || set +e
+    [[ "$_CHANGELOG_RESTORE_NOUNSET" == "true" ]] || set +u
+    [[ "$_CHANGELOG_RESTORE_PIPEFAIL" == "true" ]] || set +o pipefail
+}
+
+changelog_restore_shell_state_if_sourced
 
 # Run if executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

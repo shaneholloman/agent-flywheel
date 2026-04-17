@@ -14,6 +14,25 @@
 # Related bead: hun4
 # ============================================================
 
+_CONTINUE_WAS_SOURCED=false
+_CONTINUE_ORIGINAL_HOME=""
+_CONTINUE_ORIGINAL_HOME_WAS_SET=false
+_CONTINUE_RESTORE_ERREXIT=false
+_CONTINUE_RESTORE_NOUNSET=false
+_CONTINUE_RESTORE_PIPEFAIL=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    _CONTINUE_WAS_SOURCED=true
+    if [[ -v HOME ]]; then
+        _CONTINUE_ORIGINAL_HOME="$HOME"
+        _CONTINUE_ORIGINAL_HOME_WAS_SET=true
+    fi
+    [[ $- == *e* ]] && _CONTINUE_RESTORE_ERREXIT=true
+    [[ $- == *u* ]] && _CONTINUE_RESTORE_NOUNSET=true
+    if shopt -qo pipefail 2>/dev/null; then
+        _CONTINUE_RESTORE_PIPEFAIL=true
+    fi
+fi
+
 set -euo pipefail
 
 continue_sanitize_abs_nonroot_path() {
@@ -65,29 +84,29 @@ if [[ -n "$_CONTINUE_CURRENT_HOME" ]]; then
 fi
 
 # Constants
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACFS_LOG_DIR="/var/log/acfs"
-ACFS_INSTALL_LOG="${ACFS_LOG_DIR}/install.log"
-ACFS_UPGRADE_LOG="${ACFS_LOG_DIR}/upgrade_resume.log"
-ACFS_SYSTEM_STATE_FILE="$(continue_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
-if [[ -z "$ACFS_SYSTEM_STATE_FILE" ]]; then
-    ACFS_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+_CONTINUE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_CONTINUE_LOG_DIR="/var/log/acfs"
+_CONTINUE_INSTALL_LOG="${_CONTINUE_LOG_DIR}/install.log"
+_CONTINUE_UPGRADE_LOG="${_CONTINUE_LOG_DIR}/upgrade_resume.log"
+_CONTINUE_SYSTEM_STATE_FILE="$(continue_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$_CONTINUE_SYSTEM_STATE_FILE" ]]; then
+    _CONTINUE_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
 fi
-ACFS_STATE_FILE="$(continue_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
+_CONTINUE_STATE_FILE="$(continue_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
 _CONTINUE_EXPLICIT_ACFS_HOME="$(continue_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 _CONTINUE_DEFAULT_ACFS_HOME=""
 [[ -n "$_CONTINUE_CURRENT_HOME" ]] && _CONTINUE_DEFAULT_ACFS_HOME="${_CONTINUE_CURRENT_HOME}/.acfs"
-SERVICE_NAME="acfs-upgrade-resume"
+_CONTINUE_SERVICE_NAME="acfs-upgrade-resume"
 
 # Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-DIM='\033[2m'
-NC='\033[0m'
+_CONTINUE_RED='\033[0;31m'
+_CONTINUE_GREEN='\033[0;32m'
+_CONTINUE_YELLOW='\033[1;33m'
+_CONTINUE_BLUE='\033[0;34m'
+_CONTINUE_CYAN='\033[0;36m'
+_CONTINUE_BOLD='\033[1m'
+_CONTINUE_DIM='\033[2m'
+_CONTINUE_NC='\033[0m'
 
 # ============================================================
 # Helper Functions
@@ -95,15 +114,15 @@ NC='\033[0m'
 
 print_header() {
     echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}  ${BOLD}ACFS Installation Progress${NC}                                 ${CYAN}║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${_CONTINUE_CYAN}╔══════════════════════════════════════════════════════════════╗${_CONTINUE_NC}"
+    echo -e "${_CONTINUE_CYAN}║${_CONTINUE_NC}  ${_CONTINUE_BOLD}ACFS Installation Progress${_CONTINUE_NC}                                 ${_CONTINUE_CYAN}║${_CONTINUE_NC}"
+    echo -e "${_CONTINUE_CYAN}╚══════════════════════════════════════════════════════════════╝${_CONTINUE_NC}"
     echo ""
 }
 
 # Check if the upgrade service is running
 is_upgrade_service_running() {
-    systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null
+    systemctl is-active --quiet "${_CONTINUE_SERVICE_NAME}.service" 2>/dev/null
 }
 
 # Check if the installer process is running
@@ -145,7 +164,7 @@ home_for_user() {
 
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
-        home_candidate="$(continue_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        home_candidate="$(continue_sanitize_abs_nonroot_path "${_CONTINUE_CURRENT_HOME:-${HOME:-}}" 2>/dev/null || true)"
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -156,7 +175,7 @@ home_for_user() {
 }
 
 read_target_user_from_state() {
-    local state_file="${1:-$ACFS_SYSTEM_STATE_FILE}"
+    local state_file="${1:-$_CONTINUE_SYSTEM_STATE_FILE}"
     read_state_string_from_state "$state_file" "target_user"
 }
 
@@ -178,7 +197,7 @@ read_state_string_from_state() {
 }
 
 read_target_home_from_state() {
-    local state_file="${1:-$ACFS_SYSTEM_STATE_FILE}"
+    local state_file="${1:-$_CONTINUE_SYSTEM_STATE_FILE}"
     local target_home=""
 
     target_home="$(read_state_string_from_state "$state_file" "target_home" 2>/dev/null || true)"
@@ -190,7 +209,7 @@ read_target_home_from_state() {
 
 script_acfs_home() {
     local candidate=""
-    candidate=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
+    candidate=$(cd "$_CONTINUE_SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
     [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
     printf '%s\n' "$candidate"
 }
@@ -238,8 +257,8 @@ get_install_state_file() {
     local target_user=""
     local target_home=""
 
-    if [[ -n "${ACFS_STATE_FILE:-}" ]] && [[ -f "${ACFS_STATE_FILE}" ]] && [[ "${ACFS_STATE_FILE}" != "$ACFS_SYSTEM_STATE_FILE" ]]; then
-        echo "$ACFS_STATE_FILE"
+    if [[ -n "${_CONTINUE_STATE_FILE:-}" ]] && [[ -f "${_CONTINUE_STATE_FILE}" ]] && [[ "${_CONTINUE_STATE_FILE}" != "$_CONTINUE_SYSTEM_STATE_FILE" ]]; then
+        echo "$_CONTINUE_STATE_FILE"
         return 0
     fi
 
@@ -263,7 +282,7 @@ get_install_state_file() {
         fi
     fi
 
-    target_home=$(read_target_home_from_state "$ACFS_SYSTEM_STATE_FILE" || true)
+    target_home=$(read_target_home_from_state "$_CONTINUE_SYSTEM_STATE_FILE" || true)
     if [[ -n "$target_home" ]]; then
         candidate="${target_home}/.acfs/state.json"
         if [[ -f "$candidate" ]]; then
@@ -272,7 +291,7 @@ get_install_state_file() {
         fi
     fi
 
-    target_user=$(read_target_user_from_state "$ACFS_SYSTEM_STATE_FILE" || true)
+    target_user=$(read_target_user_from_state "$_CONTINUE_SYSTEM_STATE_FILE" || true)
     if [[ -n "$target_user" ]]; then
         target_home=$(home_for_user "$target_user" || true)
         candidate="${target_home}/.acfs/state.json"
@@ -309,8 +328,8 @@ select_state_file_for_key() {
     local candidate=""
 
     if [[ "$key" == *"ubuntu_upgrade"* ]]; then
-        if [[ -f "$ACFS_SYSTEM_STATE_FILE" ]]; then
-            echo "$ACFS_SYSTEM_STATE_FILE"
+        if [[ -f "$_CONTINUE_SYSTEM_STATE_FILE" ]]; then
+            echo "$_CONTINUE_SYSTEM_STATE_FILE"
             return 0
         fi
         install_state_file=$(get_install_state_file || true)
@@ -324,8 +343,8 @@ select_state_file_for_key() {
             echo "$install_state_file"
             return 0
         fi
-        if [[ -f "$ACFS_SYSTEM_STATE_FILE" ]]; then
-            echo "$ACFS_SYSTEM_STATE_FILE"
+        if [[ -f "$_CONTINUE_SYSTEM_STATE_FILE" ]]; then
+            echo "$_CONTINUE_SYSTEM_STATE_FILE"
             return 0
         fi
     fi
@@ -451,8 +470,8 @@ get_latest_install_log() {
         fi
     fi
 
-    if [[ -f "$ACFS_INSTALL_LOG" ]]; then
-        echo "$ACFS_INSTALL_LOG"
+    if [[ -f "$_CONTINUE_INSTALL_LOG" ]]; then
+        echo "$_CONTINUE_INSTALL_LOG"
         return 0
     fi
 
@@ -468,10 +487,10 @@ get_active_log() {
 
     # If upgrade is in progress, or continuation is still running under the
     # upgrade wrapper, prefer the upgrade log.
-    if [[ -n "$upgrade_stage" ]] && [[ -f "$ACFS_UPGRADE_LOG" ]] && \
+    if [[ -n "$upgrade_stage" ]] && [[ -f "$_CONTINUE_UPGRADE_LOG" ]] && \
        { [[ "$upgrade_stage" != "completed" ]] || is_upgrade_service_running || is_continuation_running; }; then
-        if [[ -f "$ACFS_UPGRADE_LOG" ]]; then
-            echo "$ACFS_UPGRADE_LOG"
+        if [[ -f "$_CONTINUE_UPGRADE_LOG" ]]; then
+            echo "$_CONTINUE_UPGRADE_LOG"
             return 0
         fi
     fi
@@ -482,8 +501,8 @@ get_active_log() {
     fi
 
     # Check for any log file
-    if [[ -f "$ACFS_UPGRADE_LOG" ]]; then
-        echo "$ACFS_UPGRADE_LOG"
+    if [[ -f "$_CONTINUE_UPGRADE_LOG" ]]; then
+        echo "$_CONTINUE_UPGRADE_LOG"
         return 0
     fi
 
@@ -503,7 +522,7 @@ get_log_root_hint() {
         fi
     fi
 
-    printf '%s\n' "$ACFS_LOG_DIR"
+    printf '%s\n' "$_CONTINUE_LOG_DIR"
 }
 
 print_log_locations() {
@@ -514,18 +533,18 @@ print_log_locations() {
     if [[ -n "$install_log" ]]; then
         have_logs=true
     fi
-    if [[ -f "$ACFS_UPGRADE_LOG" ]]; then
+    if [[ -f "$_CONTINUE_UPGRADE_LOG" ]]; then
         have_logs=true
     fi
 
     $have_logs || return 1
 
-    echo -e "  ${DIM}Log files:${NC}"
+    echo -e "  ${_CONTINUE_DIM}Log files:${_CONTINUE_NC}"
     if [[ -n "$install_log" ]]; then
-        echo -e "    ${DIM}Install:  $install_log${NC}"
+        echo -e "    ${_CONTINUE_DIM}Install:  $install_log${_CONTINUE_NC}"
     fi
-    if [[ -f "$ACFS_UPGRADE_LOG" ]]; then
-        echo -e "    ${DIM}Upgrade:  $ACFS_UPGRADE_LOG${NC}"
+    if [[ -f "$_CONTINUE_UPGRADE_LOG" ]]; then
+        echo -e "    ${_CONTINUE_DIM}Upgrade:  $_CONTINUE_UPGRADE_LOG${_CONTINUE_NC}"
     fi
     echo ""
 }
@@ -546,45 +565,45 @@ show_status() {
     # contradictory output such as "in progress" with failure details below.
     if is_upgrade_service_running; then
         is_running=true
-        status_msg="${YELLOW}Ubuntu upgrade in progress${NC}"
+        status_msg="${_CONTINUE_YELLOW}Ubuntu upgrade in progress${_CONTINUE_NC}"
     elif [[ "$install_status" == "failed" ]]; then
-        status_msg="${RED}Installation failed${NC}"
+        status_msg="${_CONTINUE_RED}Installation failed${_CONTINUE_NC}"
     elif is_installer_running; then
         is_running=true
-        status_msg="${BLUE}Installation in progress${NC}"
+        status_msg="${_CONTINUE_BLUE}Installation in progress${_CONTINUE_NC}"
     else
         case "$install_status" in
             running)
                 is_running=true
-                status_msg="${BLUE}Installation in progress${NC}"
+                status_msg="${_CONTINUE_BLUE}Installation in progress${_CONTINUE_NC}"
                 ;;
             failed)
-                status_msg="${RED}Installation failed${NC}"
+                status_msg="${_CONTINUE_RED}Installation failed${_CONTINUE_NC}"
                 ;;
             complete)
-                status_msg="${GREEN}Installation complete${NC}"
+                status_msg="${_CONTINUE_GREEN}Installation complete${_CONTINUE_NC}"
                 ;;
             *)
-                status_msg="${GREEN}No active installation${NC}"
+                status_msg="${_CONTINUE_GREEN}No active installation${_CONTINUE_NC}"
                 ;;
         esac
     fi
 
-    echo -e "  ${BOLD}Status:${NC} $status_msg"
+    echo -e "  ${_CONTINUE_BOLD}Status:${_CONTINUE_NC} $status_msg"
 
     if [[ "$is_running" == "true" ]]; then
         # Show current phase only when installation is actually active.
         local phase
         phase=$(get_current_phase)
         if [[ "$phase" != "unknown" ]]; then
-            echo -e "  ${BOLD}Phase:${NC}  $phase"
+            echo -e "  ${_CONTINUE_BOLD}Phase:${_CONTINUE_NC}  $phase"
         fi
 
         # Show current step only when installation is actually active.
         local step
         step=$(get_current_step)
         if [[ -n "$step" ]]; then
-            echo -e "  ${BOLD}Step:${NC}   $step"
+            echo -e "  ${_CONTINUE_BOLD}Step:${_CONTINUE_NC}   $step"
         fi
     fi
 
@@ -594,10 +613,10 @@ show_status() {
         failed_step=$(get_failed_step)
 
         if [[ -n "$failed_phase" ]]; then
-            echo -e "  ${BOLD}Failed:${NC} Phase: ${RED}$failed_phase${NC}"
+            echo -e "  ${_CONTINUE_BOLD}Failed:${_CONTINUE_NC} Phase: ${_CONTINUE_RED}$failed_phase${_CONTINUE_NC}"
         fi
         if [[ -n "$failed_step" ]]; then
-            echo -e "  ${BOLD}Cause:${NC}  Step: ${RED}$failed_step${NC}"
+            echo -e "  ${_CONTINUE_BOLD}Cause:${_CONTINUE_NC}  Step: ${_CONTINUE_RED}$failed_step${_CONTINUE_NC}"
         fi
     fi
 
@@ -605,7 +624,7 @@ show_status() {
     local upgrade_stage
     upgrade_stage=$(get_upgrade_status)
     if [[ -n "$upgrade_stage" ]] && [[ "$upgrade_stage" != "completed" ]]; then
-        echo -e "  ${BOLD}Ubuntu:${NC} Upgrade stage: ${YELLOW}$upgrade_stage${NC}"
+        echo -e "  ${_CONTINUE_BOLD}Ubuntu:${_CONTINUE_NC} Upgrade stage: ${_CONTINUE_YELLOW}$upgrade_stage${_CONTINUE_NC}"
     fi
 
     echo ""
@@ -625,21 +644,21 @@ show_live_log() {
     local log_root_hint=""
     log_file=$(get_active_log) || {
         log_root_hint=$(get_log_root_hint)
-        echo -e "${YELLOW}No log files found yet.${NC}"
-        echo -e "${DIM}Logs will appear at: $log_root_hint${NC}"
+        echo -e "${_CONTINUE_YELLOW}No log files found yet.${_CONTINUE_NC}"
+        echo -e "${_CONTINUE_DIM}Logs will appear at: $log_root_hint${_CONTINUE_NC}"
         return 1
     }
 
-    echo -e "${BOLD}Showing live output from:${NC} $log_file"
-    echo -e "${DIM}Press Ctrl+C to stop watching${NC}"
+    echo -e "${_CONTINUE_BOLD}Showing live output from:${_CONTINUE_NC} $log_file"
+    echo -e "${_CONTINUE_DIM}Press Ctrl+C to stop watching${_CONTINUE_NC}"
     echo ""
     echo "────────────────────────────────────────────────────────────────"
 
     # Use tail -f to show live output
     # Show last 20 lines first, then follow
     tail -n 20 -f "$log_file" 2>/dev/null || {
-        echo -e "${RED}Unable to read log file${NC}"
-        echo -e "${DIM}You may need to run with sudo: sudo acfs continue${NC}"
+        echo -e "${_CONTINUE_RED}Unable to read log file${_CONTINUE_NC}"
+        echo -e "${_CONTINUE_DIM}You may need to run with sudo: sudo acfs continue${_CONTINUE_NC}"
         return 1
     }
 }
@@ -688,7 +707,7 @@ main() {
                 exit 0
                 ;;
             *)
-                echo -e "${RED}Unknown option: $1${NC}"
+                echo -e "${_CONTINUE_RED}Unknown option: $1${_CONTINUE_NC}"
                 echo "Use 'acfs continue --help' for usage"
                 exit 1
                 ;;
@@ -706,7 +725,7 @@ main() {
         local status
         status=$(get_install_status)
         if [[ "$status" == "complete" ]]; then
-            echo -e "${GREEN}${BOLD}Installation completed successfully!${NC}"
+            echo -e "${_CONTINUE_GREEN}${_CONTINUE_BOLD}Installation completed successfully!${_CONTINUE_NC}"
             echo ""
             echo "Next steps:"
             echo "  1. Log out and back in (or run: source ~/.zshrc)"
@@ -717,7 +736,7 @@ main() {
             failed_phase=$(get_failed_phase)
             failed_step=$(get_failed_step)
 
-            echo -e "${RED}${BOLD}Installation failed.${NC}"
+            echo -e "${_CONTINUE_RED}${_CONTINUE_BOLD}Installation failed.${_CONTINUE_NC}"
             if [[ -n "$failed_phase" ]]; then
                 echo "Failed phase: $failed_phase"
             fi
@@ -731,13 +750,13 @@ main() {
             install_log=$(get_latest_install_log || true)
 
             # Only show log viewing instructions if logs exist
-            if [[ -n "$install_log" ]] || [[ -f "$ACFS_UPGRADE_LOG" ]]; then
+            if [[ -n "$install_log" ]] || [[ -f "$_CONTINUE_UPGRADE_LOG" ]]; then
                 echo "To view past logs:"
                 if [[ -n "$install_log" ]]; then
                     echo "  cat $install_log"
                 fi
-                if [[ -f "$ACFS_UPGRADE_LOG" ]]; then
-                    echo "  cat $ACFS_UPGRADE_LOG"
+                if [[ -f "$_CONTINUE_UPGRADE_LOG" ]]; then
+                    echo "  cat $_CONTINUE_UPGRADE_LOG"
                 fi
             else
                 echo "No ACFS installation logs found."
@@ -746,6 +765,23 @@ main() {
         fi
     fi
 }
+
+continue_restore_shell_state_if_sourced() {
+    [[ "$_CONTINUE_WAS_SOURCED" == "true" ]] || return 0
+
+    if [[ "$_CONTINUE_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+        HOME="$_CONTINUE_ORIGINAL_HOME"
+        export HOME
+    else
+        unset HOME
+    fi
+
+    [[ "$_CONTINUE_RESTORE_ERREXIT" == "true" ]] || set +e
+    [[ "$_CONTINUE_RESTORE_NOUNSET" == "true" ]] || set +u
+    [[ "$_CONTINUE_RESTORE_PIPEFAIL" == "true" ]] || set +o pipefail
+}
+
+continue_restore_shell_state_if_sourced
 
 # Run if executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

@@ -5,11 +5,22 @@
 # Fast verification that runs at the end of install.sh
 # ============================================================
 
+_SMOKE_WAS_SOURCED=false
+_SMOKE_ORIGINAL_HOME=""
+_SMOKE_ORIGINAL_HOME_WAS_SET=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    _SMOKE_WAS_SOURCED=true
+    if [[ -v HOME ]]; then
+        _SMOKE_ORIGINAL_HOME="$HOME"
+        _SMOKE_ORIGINAL_HOME_WAS_SET=true
+    fi
+fi
+
 # Ensure we have logging functions available
 if [[ -z "${ACFS_BLUE:-}" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    _SMOKE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     # shellcheck source=logging.sh
-    source "$SCRIPT_DIR/logging.sh"
+    source "$_SMOKE_SCRIPT_DIR/logging.sh"
 fi
 
 _smoke_sanitize_abs_nonroot_path() {
@@ -81,10 +92,10 @@ _smoke_script_acfs_home() {
 # ============================================================
 
 # Test result counters (reset in run_smoke_test)
-CRITICAL_PASS=0
-CRITICAL_FAIL=0
-NONCRITICAL_PASS=0
-WARNING_COUNT=0
+_SMOKE_CRITICAL_PASS=0
+_SMOKE_CRITICAL_FAIL=0
+_SMOKE_NONCRITICAL_PASS=0
+_SMOKE_WARNING_COUNT=0
 
 _smoke_read_state_string() {
     local state_file="$1"
@@ -174,50 +185,50 @@ _SMOKE_BOOTSTRAP_STATE_FILE="$(_smoke_resolve_bootstrap_state_file 2>/dev/null |
 _SMOKE_TARGET_USER_DEFAULTED=false
 
 # Target user (from install.sh, persisted state, home ownership, or default)
-TARGET_USER="${TARGET_USER:-}"
-if [[ -z "${TARGET_USER:-}" ]]; then
-    TARGET_USER="$(_smoke_read_state_string "$_SMOKE_BOOTSTRAP_STATE_FILE" "target_user" 2>/dev/null || true)"
+_SMOKE_TARGET_USER="${TARGET_USER:-}"
+if [[ -z "${_SMOKE_TARGET_USER:-}" ]]; then
+    _SMOKE_TARGET_USER="$(_smoke_read_state_string "$_SMOKE_BOOTSTRAP_STATE_FILE" "target_user" 2>/dev/null || true)"
 fi
-if [[ -z "${TARGET_USER:-}" ]]; then
-    TARGET_USER="ubuntu"
+if [[ -z "${_SMOKE_TARGET_USER:-}" ]]; then
+    _SMOKE_TARGET_USER="ubuntu"
     _SMOKE_TARGET_USER_DEFAULTED=true
 fi
 
-TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
-if [[ -z "${TARGET_HOME:-}" ]]; then
-    TARGET_HOME="$(_smoke_read_state_string "$_SMOKE_BOOTSTRAP_STATE_FILE" "target_home" 2>/dev/null || true)"
-    TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+_SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+if [[ -z "${_SMOKE_TARGET_HOME:-}" ]]; then
+    _SMOKE_TARGET_HOME="$(_smoke_read_state_string "$_SMOKE_BOOTSTRAP_STATE_FILE" "target_home" 2>/dev/null || true)"
+    _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${_SMOKE_TARGET_HOME:-}" 2>/dev/null || true)"
 fi
-if [[ -z "${TARGET_HOME:-}" ]]; then
-    _smoke_target_passwd_entry="$(getent passwd "$TARGET_USER" 2>/dev/null || true)"
+if [[ -z "${_SMOKE_TARGET_HOME:-}" ]]; then
+    _smoke_target_passwd_entry="$(getent passwd "$_SMOKE_TARGET_USER" 2>/dev/null || true)"
     if [[ -n "$_smoke_target_passwd_entry" ]]; then
-        TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "$(printf '%s\n' "$_smoke_target_passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-    elif [[ "${TARGET_USER}" == "root" ]]; then
-        TARGET_HOME="/root"
-    elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
-        TARGET_HOME="$_SMOKE_CURRENT_HOME"
+        _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "$(printf '%s\n' "$_smoke_target_passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+    elif [[ "${_SMOKE_TARGET_USER}" == "root" ]]; then
+        _SMOKE_TARGET_HOME="/root"
+    elif [[ "${_SMOKE_TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
+        _SMOKE_TARGET_HOME="$_SMOKE_CURRENT_HOME"
     fi
     unset _smoke_target_passwd_entry
 fi
-if [[ "${TARGET_HOME:-}" != /* ]]; then
-    if [[ "${TARGET_USER}" == "root" ]]; then
-        TARGET_HOME="/root"
-    elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
-        TARGET_HOME="$_SMOKE_CURRENT_HOME"
+if [[ "${_SMOKE_TARGET_HOME:-}" != /* ]]; then
+    if [[ "${_SMOKE_TARGET_USER}" == "root" ]]; then
+        _SMOKE_TARGET_HOME="/root"
+    elif [[ "${_SMOKE_TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
+        _SMOKE_TARGET_HOME="$_SMOKE_CURRENT_HOME"
     else
-        TARGET_HOME=""
+        _SMOKE_TARGET_HOME=""
     fi
 fi
-if [[ "$_SMOKE_TARGET_USER_DEFAULTED" == true ]] && [[ -n "${TARGET_HOME:-}" ]]; then
-    _smoke_inferred_target_user="$(_smoke_read_user_for_home "$TARGET_HOME" 2>/dev/null || true)"
+if [[ "$_SMOKE_TARGET_USER_DEFAULTED" == true ]] && [[ -n "${_SMOKE_TARGET_HOME:-}" ]]; then
+    _smoke_inferred_target_user="$(_smoke_read_user_for_home "$_SMOKE_TARGET_HOME" 2>/dev/null || true)"
     if [[ -n "$_smoke_inferred_target_user" ]]; then
-        TARGET_USER="$_smoke_inferred_target_user"
+        _SMOKE_TARGET_USER="$_smoke_inferred_target_user"
         _SMOKE_TARGET_USER_DEFAULTED=false
     fi
     unset _smoke_inferred_target_user
 fi
-if [[ ! "$TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-    TARGET_USER="ubuntu"
+if [[ ! "$_SMOKE_TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+    _SMOKE_TARGET_USER="ubuntu"
 fi
 
 _smoke_resolve_state_file() {
@@ -244,8 +255,8 @@ _smoke_resolve_state_file() {
         fi
     fi
 
-    if [[ -n "${TARGET_HOME:-}" ]]; then
-        target_state_file="${TARGET_HOME}/.acfs/state.json"
+    if [[ -n "${_SMOKE_TARGET_HOME:-}" ]]; then
+        target_state_file="${_SMOKE_TARGET_HOME}/.acfs/state.json"
         if [[ -f "$target_state_file" ]]; then
             printf '%s\n' "$target_state_file"
             return 0
@@ -288,7 +299,7 @@ _smoke_read_bin_dir_from_state() {
 }
 
 _smoke_preferred_bin_dir() {
-    local base_home="${1:-${TARGET_HOME:-}}"
+    local base_home="${1:-${_SMOKE_TARGET_HOME:-}}"
     local state_file=""
     local candidate=""
 
@@ -336,14 +347,10 @@ _smoke_prepend_user_paths() {
     done
 }
 
-_smoke_prepend_user_paths "$TARGET_HOME"
-if [[ -n "${_SMOKE_CURRENT_HOME:-}" ]] && [[ "$_SMOKE_CURRENT_HOME" != "$TARGET_HOME" ]]; then
-    _smoke_prepend_user_paths "$_SMOKE_CURRENT_HOME"
-fi
 
 _smoke_binary_path() {
     local name="${1:-}"
-    local base_home="${TARGET_HOME:-}"
+    local base_home="${_SMOKE_TARGET_HOME:-}"
     local primary_bin_dir=""
     local candidate=""
 
@@ -415,7 +422,7 @@ _smoke_external_shell_handoff_configured() {
 _smoke_pass() {
     local label="$1"
     echo -e "  ${ACFS_GREEN-\033[0;32m}✅${ACFS_NC-\033[0m} $label"
-    ((CRITICAL_PASS += 1))
+    ((_SMOKE_CRITICAL_PASS += 1))
 }
 
 _smoke_fail() {
@@ -425,7 +432,7 @@ _smoke_fail() {
     if [[ -n "$fix" ]]; then
         echo -e "     ${ACFS_GRAY-\033[0;90m}Fix: $fix${ACFS_NC-\033[0m}"
     fi
-    ((CRITICAL_FAIL += 1))
+    ((_SMOKE_CRITICAL_FAIL += 1))
 }
 
 _smoke_warn() {
@@ -435,14 +442,14 @@ _smoke_warn() {
     if [[ -n "$note" ]]; then
         echo -e "     ${ACFS_GRAY-\033[0;90m}$note${ACFS_NC-\033[0m}"
     fi
-    ((WARNING_COUNT += 1))
+    ((_SMOKE_WARNING_COUNT += 1))
 }
 
 # Non-critical pass (doesn't affect critical count)
 _smoke_info() {
     local label="$1"
     echo -e "  ${ACFS_GREEN-\033[0;32m}✅${ACFS_NC-\033[0m} $label"
-    ((NONCRITICAL_PASS += 1))
+    ((_SMOKE_NONCRITICAL_PASS += 1))
 }
 
 _smoke_header() {
@@ -459,11 +466,11 @@ _smoke_header() {
 _check_user() {
     local current_user
     current_user=$(whoami)
-    if [[ "$current_user" == "$TARGET_USER" ]]; then
-        _smoke_pass "User: $TARGET_USER"
+    if [[ "$current_user" == "$_SMOKE_TARGET_USER" ]]; then
+        _smoke_pass "User: $_SMOKE_TARGET_USER"
         return 0
     else
-        _smoke_fail "User: expected $TARGET_USER, got $current_user" "ssh $TARGET_USER@YOUR_SERVER"
+        _smoke_fail "User: expected $_SMOKE_TARGET_USER, got $current_user" "ssh $_SMOKE_TARGET_USER@YOUR_SERVER"
         return 1
     fi
 }
@@ -471,13 +478,13 @@ _check_user() {
 # Check 2: Shell is zsh
 _check_shell() {
     local shell
-    shell=$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f7)
+    shell=$(getent passwd "$_SMOKE_TARGET_USER" 2>/dev/null | cut -d: -f7)
     # Check if configured shell is zsh (the actual login shell, not just that zsh exists)
     if [[ "$shell" == *"zsh"* ]]; then
         _smoke_pass "Shell: zsh"
         return 0
-    elif _smoke_is_externally_managed_user "$TARGET_USER"; then
-        if _smoke_external_shell_handoff_configured "$TARGET_HOME"; then
+    elif _smoke_is_externally_managed_user "$_SMOKE_TARGET_USER"; then
+        if _smoke_external_shell_handoff_configured "$_SMOKE_TARGET_HOME"; then
             _smoke_pass "Shell: externally managed login hands off to zsh"
         else
             _smoke_warn "Shell: externally managed account reports ${shell:-unknown}" \
@@ -507,7 +514,7 @@ _check_workspace() {
         _smoke_pass "Workspace: /data/projects exists"
         return 0
     else
-        _smoke_fail "Workspace: /data/projects missing" "sudo mkdir -p /data/projects && sudo chown $TARGET_USER:$TARGET_USER /data/projects"
+        _smoke_fail "Workspace: /data/projects missing" "sudo mkdir -p /data/projects && sudo chown $_SMOKE_TARGET_USER:$_SMOKE_TARGET_USER /data/projects"
         return 1
     fi
 }
@@ -643,10 +650,17 @@ _check_postgres() {
 
 run_smoke_test() {
     # Reset counters (important if run multiple times in same shell)
-    CRITICAL_PASS=0
-    CRITICAL_FAIL=0
-    NONCRITICAL_PASS=0
-    WARNING_COUNT=0
+    _SMOKE_CRITICAL_PASS=0
+    _SMOKE_CRITICAL_FAIL=0
+    _SMOKE_NONCRITICAL_PASS=0
+    _SMOKE_WARNING_COUNT=0
+
+    local original_path="$PATH"
+
+    _smoke_prepend_user_paths "$_SMOKE_TARGET_HOME"
+    if [[ -n "${_SMOKE_CURRENT_HOME:-}" ]] && [[ "$_SMOKE_CURRENT_HOME" != "$_SMOKE_TARGET_HOME" ]]; then
+        _smoke_prepend_user_paths "$_SMOKE_CURRENT_HOME"
+    fi
 
     local start_time
     start_time=$(date +%s)
@@ -680,23 +694,28 @@ run_smoke_test() {
 
     # Print summary
     echo ""
-    local total_critical=$((CRITICAL_PASS + CRITICAL_FAIL))
+    local total_critical=$((_SMOKE_CRITICAL_PASS + _SMOKE_CRITICAL_FAIL))
 
-    if [[ $CRITICAL_FAIL -eq 0 ]]; then
-        echo -e "${ACFS_GREEN-\033[0;32m}Smoke test: $CRITICAL_PASS/$total_critical critical passed${ACFS_NC-\033[0m}"
+    if [[ $_SMOKE_CRITICAL_FAIL -eq 0 ]]; then
+        echo -e "${ACFS_GREEN-\033[0;32m}Smoke test: $_SMOKE_CRITICAL_PASS/$total_critical critical passed${ACFS_NC-\033[0m}"
     else
-        echo -e "${ACFS_RED-\033[0;31m}Smoke test: $CRITICAL_PASS/$total_critical critical passed, $CRITICAL_FAIL failed${ACFS_NC-\033[0m}"
+        echo -e "${ACFS_RED-\033[0;31m}Smoke test: $_SMOKE_CRITICAL_PASS/$total_critical critical passed, $_SMOKE_CRITICAL_FAIL failed${ACFS_NC-\033[0m}"
     fi
 
-    if [[ $WARNING_COUNT -gt 0 ]]; then
-        echo -e "${ACFS_YELLOW-\033[0;33m}$WARNING_COUNT warning(s)${ACFS_NC-\033[0m}"
+    if [[ $_SMOKE_WARNING_COUNT -gt 0 ]]; then
+        echo -e "${ACFS_YELLOW-\033[0;33m}$_SMOKE_WARNING_COUNT warning(s)${ACFS_NC-\033[0m}"
     fi
 
     echo -e "${ACFS_GRAY-\033[0;90m}Completed in ${duration}s${ACFS_NC-\033[0m}"
     echo ""
 
+    if [[ "$_SMOKE_WAS_SOURCED" == "true" ]]; then
+        PATH="$original_path"
+        export PATH
+    fi
+
     # Return exit code based on critical failures
-    if [[ $CRITICAL_FAIL -gt 0 ]]; then
+    if [[ $_SMOKE_CRITICAL_FAIL -gt 0 ]]; then
         echo -e "${ACFS_YELLOW-\033[0;33m}Some critical checks failed. Run 'acfs doctor' for detailed diagnostics.${ACFS_NC-\033[0m}"
         return 1
     fi
@@ -704,6 +723,19 @@ run_smoke_test() {
     echo -e "${ACFS_GREEN-\033[0;32m}Installation successful! Run 'onboard' to start the tutorial.${ACFS_NC-\033[0m}"
     return 0
 }
+
+_smoke_restore_home_if_sourced() {
+    [[ "$_SMOKE_WAS_SOURCED" == "true" ]] || return 0
+
+    if [[ "$_SMOKE_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+        HOME="$_SMOKE_ORIGINAL_HOME"
+        export HOME
+    else
+        unset HOME
+    fi
+}
+
+_smoke_restore_home_if_sourced
 
 # ============================================================
 # Module can be sourced or run directly
