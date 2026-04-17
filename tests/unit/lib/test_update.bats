@@ -209,6 +209,38 @@ EOF
     assert_output "$target_home/.local/bin"
 }
 
+@test "update_preferred_user_bin_dir: parses bin_dir from state without jq" {
+    local current_home
+    local target_home
+    local state_file
+    local fake_path
+    local original_path="${PATH-}"
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    state_file="$BATS_TEST_TMPDIR/update-state.json"
+    fake_path="$(create_temp_dir)"
+
+    cat > "$state_file" <<EOF
+{"bin_dir":"$target_home/custom-bin"}
+EOF
+
+    ln -s /usr/bin/sed "$fake_path/sed"
+    ln -s /usr/bin/head "$fake_path/head"
+
+    export HOME="$current_home"
+    export PATH="$fake_path"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    export ACFS_STATE_FILE="$state_file"
+    unset ACFS_BIN_DIR
+    unset ACFS_HOME
+
+    run update_preferred_user_bin_dir
+    PATH="${original_path:-/usr/bin:/bin}"
+    assert_success
+    assert_output "$target_home/custom-bin"
+}
+
 @test "update_preferred_user_bin_dir: does not fall back to current HOME for different unresolved target" {
     local current_home
     current_home="$(create_temp_dir)"

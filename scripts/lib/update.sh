@@ -238,7 +238,7 @@ update_preferred_user_bin_dir() {
         if command -v jq &>/dev/null; then
             bin_dir="$(jq -r '.bin_dir // empty' "$state_file" 2>/dev/null || true)"
         else
-            bin_dir="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\(^["]*\)".*/\1/p' "$state_file" | head -n 1)"
+            bin_dir="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
         fi
 
         if [[ -n "$bin_dir" ]] && [[ "$bin_dir" == /* ]] && [[ "$bin_dir" != "/" ]]; then
