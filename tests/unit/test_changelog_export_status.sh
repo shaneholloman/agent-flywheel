@@ -4674,7 +4674,7 @@ test_support_bundle_repo_local_ignores_poisoned_explicit_acfs_home() {
     if [[ -f "$bundle_dir/environment.json" ]] \
         && [[ -f "$bundle_dir/state.json" ]] \
         && jq -e --arg acfs_home "$TEST_INSTALLED_ACFS" --arg target_home "$TEST_TARGET_HOME" \
-            ".acfs_home == $acfs_home and .home == $target_home and .user == "tester"" \
+            '.acfs_home == $acfs_home and .home == $target_home and .user == "tester"' \
             "$bundle_dir/environment.json" >/dev/null 2>&1; then
         harness_pass "support bundle repo-local script ignores poisoned explicit ACFS_HOME"
     else
