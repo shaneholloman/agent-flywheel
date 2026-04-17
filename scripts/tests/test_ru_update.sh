@@ -59,14 +59,21 @@ test_get_version_ru() {
 
     tmpdir="$(mktemp -d)" || return 1
 
-    cat > "$tmpdir/ru" <<'EOF'
+    # update_binary_path() deliberately ignores $PATH and scans hardcoded
+    # TARGET_HOME-relative paths (e027f1bd/6ef2eeec hardened this against
+    # caller-shell PATH pollution). Drop the fake binary into a location
+    # it actually searches — $TARGET_HOME/.local/bin — and point
+    # HOME/TARGET_HOME at our tmpdir so the search resolves there.
+    mkdir -p "$tmpdir/.local/bin"
+    cat > "$tmpdir/.local/bin/ru" <<'EOF'
 #!/usr/bin/env bash
 echo "ru 9.9.9"
 EOF
-    chmod +x "$tmpdir/ru"
+    chmod +x "$tmpdir/.local/bin/ru"
 
-    PATH="$tmpdir:$PATH" UPDATE_SH_PATH="$update_sh" bash -c '
+    HOME="$tmpdir" TARGET_HOME="$tmpdir" UPDATE_SH_PATH="$update_sh" bash -c '
         set -euo pipefail
+        unset ACFS_BIN_DIR
         source "$UPDATE_SH_PATH"
         [[ "$(get_version ru)" == "ru 9.9.9" ]]
     '

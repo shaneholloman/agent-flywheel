@@ -6912,9 +6912,17 @@ main() {
             acfs_notify_install_success 2>/dev/null || true
         fi
 
+        # Skip the post-install smoke test when --only / --only-phase was
+        # used: the user asked for a targeted subset, so the full-stack
+        # checks (agents, ntm, onboard, languages, …) will fail by design.
+        # They can still run `acfs doctor` if they want a broader health check.
         SMOKE_TEST_FAILED=false
-        if ! run_smoke_test; then
-            SMOKE_TEST_FAILED=true
+        if [[ ${#ONLY_MODULES[@]} -eq 0 ]] && [[ ${#ONLY_PHASES[@]} -eq 0 ]]; then
+            if ! run_smoke_test; then
+                SMOKE_TEST_FAILED=true
+            fi
+        else
+            log_debug "Skipping post-install smoke test (--only/--only-phase mode)"
         fi
     fi
 
