@@ -1391,6 +1391,51 @@ EOF
     [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_stack_run_as_user should not invoke sudo for invalid TARGET_USER"
 }
 
+@test "run-as-user helper libs reject unresolved TARGET_HOME before sudo" {
+    export TARGET_USER="missinguser"
+    export TARGET_HOME=""
+    export ACFS_BIN_DIR="/home/tester/.local/bin"
+
+    getent() {
+        return 2
+    }
+
+    source_lib "cli_tools"
+    spy_command "sudo"
+    run _cli_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_HOME for 'missinguser': <empty>"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_cli_run_as_user should not invoke sudo for unresolved TARGET_HOME"
+
+    source_lib "agents"
+    : > "$STUB_DIR/sudo.log"
+    run _agent_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_HOME for 'missinguser': <empty>"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_agent_run_as_user should not invoke sudo for unresolved TARGET_HOME"
+
+    source_lib "languages"
+    : > "$STUB_DIR/sudo.log"
+    run _lang_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_HOME for 'missinguser': <empty>"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_lang_run_as_user should not invoke sudo for unresolved TARGET_HOME"
+
+    source_lib "cloud_db"
+    : > "$STUB_DIR/sudo.log"
+    run _cloud_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_HOME for 'missinguser': <empty>"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_cloud_run_as_user should not invoke sudo for unresolved TARGET_HOME"
+
+    source_lib "stack"
+    : > "$STUB_DIR/sudo.log"
+    run _stack_run_as_user env
+    assert_failure
+    assert_output --partial "Invalid TARGET_HOME for 'missinguser': <empty>"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_stack_run_as_user should not invoke sudo for unresolved TARGET_HOME"
+}
+
 @test "cloud_db username validation accepts dotted target usernames" {
     source_lib "cloud_db"
 

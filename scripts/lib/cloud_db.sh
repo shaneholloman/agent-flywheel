@@ -96,14 +96,9 @@ _cloud_target_home() {
         fi
     fi
 
-    current_user="$(whoami 2>/dev/null || true)"
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     if [[ "$current_user" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
         printf '%s\n' "${HOME%/}"
-        return 0
-    fi
-
-    if [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        printf '/home/%s\n' "$target_user"
         return 0
     fi
 
