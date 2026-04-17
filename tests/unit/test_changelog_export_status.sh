@@ -45,6 +45,7 @@ TEST_SYSTEM_STATE_FILE=""
 TEST_DEV_REPO=""
 RELATIVE_HOME=""
 STALE_HOME=""
+TEST_POISONED_ACFS_HOME=""
 
 setup_mock_env() {
     TEST_HOME="$(mktemp -d)"
@@ -81,14 +82,14 @@ EOF
     TEST_INSTALL_HELPERS="$TEST_HOME/mock_install_helpers.sh"
     TEST_MANIFEST_INDEX="$TEST_HOME/mock_manifest_index.sh"
 
-    cat > "$TEST_INSTALL_HELPERS" <<'EOF'
+    cat > "$TEST_INSTALL_HELPERS" <<EOF
 #!/usr/bin/env bash
 acfs_module_is_installed() {
-    [[ "${TARGET_USER:-}" == "tester" ]] || return 1
-    [[ "${TARGET_HOME:-}" == "/home/tester" ]] || return 1
+    [[ "\${TARGET_USER:-}" == "tester" ]] || return 1
+    [[ "\${TARGET_HOME:-}" == "$TEST_HOME" ]] || return 1
 
-    case "$1" in
-        alpha|'module "beta" \\ path') return 0 ;;
+    case "\$1" in
+        alpha|'module "beta" \\\\ path') return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -236,6 +237,38 @@ EOF
     write_fake_command "$TEST_TARGET_HOME/.bun/bin/bun" "1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.cargo/bin/cargo" "cargo 1.85.0"
     write_fake_command "$TEST_TARGET_HOME/go/bin/go" "go version go1.24.0 linux/amd64"
+}
+
+setup_poisoned_acfs_home() {
+    TEST_POISONED_ACFS_HOME="$TEST_HOME/poisoned/.acfs"
+    mkdir -p "$TEST_POISONED_ACFS_HOME/onboard/lessons" "$TEST_POISONED_ACFS_HOME/zsh" "$TEST_POISONED_ACFS_HOME/logs"
+
+    cat > "$TEST_POISONED_ACFS_HOME/state.json" <<'JSON'
+{
+  "mode": "poison",
+  "target_user": "tester",
+  "target_home": "/poison/home",
+  "started_at": "2030-01-01T00:00:00Z",
+  "last_updated": "2030-01-02T00:00:00Z",
+  "current_phase": { "id": "poison" },
+  "current_step": "Poisoned state"
+}
+JSON
+    printf '9.9.9\n' > "$TEST_POISONED_ACFS_HOME/VERSION"
+
+    cat > "$TEST_POISONED_ACFS_HOME/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [9.9.9] - 2030-01-01
+
+### Added
+- Poisoned entry
+EOF
+    printf '# Poison Lesson\n' > "$TEST_POISONED_ACFS_HOME/onboard/lessons/01_poison.md"
+    cat > "$TEST_POISONED_ACFS_HOME/zsh/acfs.zshrc" <<'EOF'
+alias poisoned='trap'
+EOF
+    printf 'poison install log\n' > "$TEST_POISONED_ACFS_HOME/logs/install-poison.log"
 }
 
 setup_system_state_only_env() {
@@ -3483,10 +3516,12 @@ EOF
 
 test_dashboard_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
     cp "$DASHBOARD_SH" "$TEST_INSTALLED_ACFS/scripts/lib/dashboard.sh"
 
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/dashboard.sh" generate --force)
 
     if [[ "$output" == *"$TEST_INSTALLED_ACFS/dashboard/index.html"* ]] \
@@ -3557,6 +3592,7 @@ EOF
 
 test_cheatsheet_uses_installed_layout_and_target_path_under_root_home() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
     cp "$CHEATSHEET_SH" "$TEST_INSTALLED_ACFS/scripts/lib/cheatsheet.sh"
 
     mkdir -p "$TEST_INSTALLED_ACFS/zsh"
@@ -3569,6 +3605,7 @@ EOF
 
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/cheatsheet.sh" --json)
 
     if printf '%s\n' "$output" | jq -e --arg zshrc "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" \
@@ -3637,9 +3674,11 @@ test_doctor_entrypoint_dispatches_helper_commands() {
 
 test_status_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
 
     local output
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/status.sh" --json)
 
     if printf '%s\n' "$output" | jq -e '.status == "ok" and .last_update == "2026-03-10T12:34:56Z" and (.errors | length == 0)' >/dev/null 2>&1; then
@@ -3783,9 +3822,11 @@ JSON
 
 test_changelog_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
 
     local output
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/changelog.sh" --json)
 
     if printf '%s\n' "$output" | jq -e '.changes | (length == 1 and .[0].version == "2.0.0")' >/dev/null 2>&1; then
@@ -3874,6 +3915,39 @@ test_export_config_uses_installed_layout_under_root_home() {
     cleanup_mock_env
 }
 
+test_export_config_installed_script_ignores_poisoned_explicit_acfs_home() {
+    setup_installed_layout_env
+
+    local poisoned_acfs_home="$TEST_HOME/poisoned/.acfs"
+    mkdir -p "$poisoned_acfs_home"
+
+    cat > "$poisoned_acfs_home/state.json" <<'JSON'
+{
+  "mode": "poison",
+  "target_user": "tester",
+  "target_home": "/poison/home",
+  "started_at": "2030-01-01T00:00:00Z",
+  "last_updated": "2030-01-02T00:00:00Z"
+}
+JSON
+    printf '9.9.9\n' > "$poisoned_acfs_home/VERSION"
+
+    local output
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$poisoned_acfs_home" \
+        ACFS_INSTALL_HELPERS_SH="$TEST_INSTALLED_HELPERS" \
+        ACFS_MANIFEST_INDEX_SH="$TEST_INSTALLED_MANIFEST_INDEX" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/export-config.sh" --json)
+
+    if printf '%s\n' "$output" | jq -e '.metadata.acfs_version == "2.0.0" and .settings.mode == "safe" and .tools.bun.version == "1.2.3" and .agents.claude.version == "1.2.3" and (.modules | length == 2)' >/dev/null 2>&1; then
+        harness_pass "export-config installed script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "export-config installed script ignores poisoned explicit ACFS_HOME" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_export_config_uses_system_state_when_user_state_missing() {
     setup_system_state_only_env
 
@@ -3946,11 +4020,43 @@ JSON
     cleanup_mock_env
 }
 
+test_export_config_does_not_infer_target_home_from_markerless_acfs_home() {
+    setup_mock_env
+
+    local bogus_acfs_home="$TEST_HOME/bogus/.acfs"
+    mkdir -p "$bogus_acfs_home"
+
+    cat > "$TEST_INSTALL_HELPERS" <<EOF
+#!/usr/bin/env bash
+acfs_module_is_installed() {
+    [[ "\${TARGET_HOME:-}" == "$TEST_HOME/bogus" ]] || return 1
+    [[ "\$1" == "alpha" ]]
+}
+EOF
+    chmod +x "$TEST_INSTALL_HELPERS"
+
+    local output=""
+    output=$(HOME="relative-home" ACFS_HOME="$bogus_acfs_home" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json" \
+        ACFS_INSTALL_HELPERS_SH="$TEST_INSTALL_HELPERS" ACFS_MANIFEST_INDEX_SH="$TEST_MANIFEST_INDEX" \
+        PATH="/usr/bin:/bin" bash "$EXPORT_CONFIG_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '(.modules | length) == 0' >/dev/null 2>&1; then
+        harness_pass "export-config ignores markerless ACFS_HOME target-home inference"
+    else
+        harness_fail "export-config ignores markerless ACFS_HOME target-home inference" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_continue_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
 
     local output
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/continue.sh" --status)
 
     if [[ "$output" == *"Installation in progress"* ]] && [[ "$output" == *"Phase:"*bootstrap* ]]; then
@@ -4015,6 +4121,7 @@ JSON
 
 test_continue_ignores_generic_install_process_matches() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
 
     cat > "$TEST_INSTALLED_ACFS/state.json" <<'JSON'
 {
@@ -4038,6 +4145,7 @@ EOF
 
     local output
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/continue.sh" --status)
 
     if [[ "$output" == *"No active installation"* ]] && [[ "$output" != *"Installation in progress"* ]]; then
@@ -4051,6 +4159,7 @@ EOF
 
 test_continue_failed_state_beats_runtime_probe() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
 
     cat > "$TEST_INSTALLED_ACFS/state.json" <<'JSON'
 {
@@ -4071,6 +4180,7 @@ EOF
 
     local output
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/continue.sh" --status)
 
     if [[ "$output" == *"Installation failed"* ]] && \
@@ -4086,11 +4196,13 @@ EOF
 
 test_continue_reports_installed_layout_log_locations() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
     mkdir -p "$TEST_INSTALLED_ACFS/logs"
     printf 'install log\n' > "$TEST_INSTALLED_ACFS/logs/install-20260310.log"
 
     local output
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/continue.sh" --status)
 
     if [[ "$output" == *"$TEST_INSTALLED_ACFS/logs/install-20260310.log"* ]]; then
@@ -4104,9 +4216,11 @@ test_continue_reports_installed_layout_log_locations() {
 
 test_continue_live_log_hint_uses_installed_layout_log_dir() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
 
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash -c '
             source "'"$TEST_INSTALLED_ACFS"'/scripts/lib/continue.sh"
             get_log_root_hint
@@ -4167,9 +4281,11 @@ EOF
 
 test_info_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
 
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/info.sh" --json)
 
     if printf '%s\n' "$output" | jq -e \
@@ -4237,9 +4353,11 @@ EOF
 
 test_info_uses_target_user_path_under_root_home() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
 
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         TEST_INFO_SCRIPT="$TEST_INSTALLED_ACFS/scripts/lib/info.sh" \
         bash -lc '
             source "$TEST_INFO_SCRIPT"
@@ -4331,12 +4449,14 @@ EOF
 
 test_support_bundle_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
+    setup_poisoned_acfs_home
 
     local output_dir="$TEST_HOME/support-out"
     mkdir -p "$output_dir"
 
     local archive_path=""
     archive_path=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
         bash "$TEST_INSTALLED_ACFS/scripts/lib/support.sh" --output "$output_dir")
 
     local bundle_dir="$archive_path"
@@ -4500,10 +4620,37 @@ EOF
     local resolved_home=""
     resolved_home="$(printf '%s\n' "$output" | sed -n 's/^target_home=//p' | head -n 1)"
 
-    if [[ "$resolved_home" == /* ]] && [[ "$resolved_home" != "/" ]] && [[ "$resolved_home" != "relative-home" ]]; then
+    if [[ -z "$resolved_home" ]]; then
+        harness_pass "smoke test ignores relative HOME during target resolution"
+    elif [[ "$resolved_home" == /* ]] && [[ "$resolved_home" != "/" ]] && [[ "$resolved_home" != "relative-home" ]]; then
         harness_pass "smoke test ignores relative HOME during target resolution"
     else
         harness_fail "smoke test ignores relative HOME during target resolution" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_smoke_test_does_not_guess_target_home_from_username() {
+    setup_mock_env
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p "$TEST_FAKE_BIN"
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    local output=""
+    output=$(HOME="relative-home" TARGET_USER="ghostuser" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash -c 'source "$1"; echo "target_home=${TARGET_HOME:-}"' _ \
+        "$SMOKE_TEST_SH")
+
+    if [[ "$output" == "target_home=" ]]; then
+        harness_pass "smoke test does not guess target home from username"
+    else
+        harness_fail "smoke test does not guess target home from username" "$output"
     fi
 
     cleanup_mock_env
@@ -4549,6 +4696,23 @@ EOF
         harness_pass "smoke binary path prefers persisted bin_dir over poisoned env bin_dir"
     else
         harness_fail "smoke binary path prefers persisted bin_dir over poisoned env bin_dir" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_smoke_installed_script_ignores_poisoned_explicit_acfs_home() {
+    setup_installed_layout_env
+    setup_poisoned_acfs_home
+    cp "$SMOKE_TEST_SH" "$TEST_INSTALLED_ACFS/scripts/lib/smoke_test.sh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_POISONED_ACFS_HOME" ACFS_BLUE=1 bash -c 'source "$1"; printf "bootstrap=%s\nstate=%s\n" "$(_smoke_resolve_bootstrap_state_file)" "$(_smoke_resolve_state_file)"' _ "$TEST_INSTALLED_ACFS/scripts/lib/smoke_test.sh")
+
+    if [[ "$output" == *"bootstrap=$TEST_INSTALLED_ACFS/state.json"* ]] && [[ "$output" == *"state=$TEST_INSTALLED_ACFS/state.json"* ]]; then
+        harness_pass "smoke installed script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "smoke installed script ignores poisoned explicit ACFS_HOME" "$output"
     fi
 
     cleanup_mock_env
@@ -4633,7 +4797,50 @@ EOF
     cleanup_mock_env
 }
 
-test_runtime_helpers_reject_invalid_passwd_home_for_target_user() {
+
+
+test_runtime_helpers_fail_closed_when_current_home_unresolved() {
+    setup_mock_env
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p "$TEST_FAKE_BIN"
+
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    local failures=""
+
+    while IFS='|' read -r label script func; do
+        [[ -n "$label" ]] || continue
+        local output=""
+        local status=0
+        output=$(HOME="relative-home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+            bash -c 'script="$1"; func="$2"; shift 2; set --; source "$script"; "$func"' _ \
+            "$script" "$func" 2>&1) || status=$?
+
+        if [[ $status -eq 0 ]] || [[ -n "$output" ]]; then
+            failures+="${label}: status=${status} output=${output}"$'\n'
+        fi
+    done <<EOF
+continue|$CONTINUE_SH|continue_resolve_current_home
+dashboard|$DASHBOARD_SH|dashboard_resolve_current_home
+info|$INFO_SH|info_resolve_current_home
+changelog|$CHANGELOG_SH|changelog_resolve_current_home
+EOF
+
+    if [[ -z "$failures" ]]; then
+        harness_pass "runtime helpers fail closed when current home is unresolved"
+    else
+        harness_fail "runtime helpers fail closed when current home is unresolved" "$failures"
+    fi
+
+    cleanup_mock_env
+}
+
+test_runtime_helpers_fail_closed_on_invalid_passwd_home_for_target_user() {
     setup_mock_env
 
     TEST_FAKE_BIN="$TEST_HOME/fake-bin"
@@ -4659,7 +4866,7 @@ EOF
             bash -c 'script="$1"; func="$2"; shift 2; set --; source "$script"; "$func" tester' _ \
             "$script" "$func" 2>&1) || status=$?
 
-        if [[ $status -ne 0 ]] || [[ "$output" != "/home/tester" ]]; then
+        if [[ $status -eq 0 ]] || [[ -n "$output" ]]; then
             failures+="${label}: status=${status} output=${output}"$'\n'
         fi
     done <<EOF
@@ -4670,15 +4877,16 @@ changelog|$CHANGELOG_SH|changelog_home_for_user
 EOF
 
     if [[ -z "$failures" ]]; then
-        harness_pass "runtime helpers reject malformed passwd homes for target users"
+        harness_pass "runtime helpers fail closed on invalid passwd homes for target users"
     else
-        harness_fail "runtime helpers reject malformed passwd homes for target users" "$failures"
+        harness_fail "runtime helpers fail closed on invalid passwd homes for target users" "$failures"
     fi
 
     cleanup_mock_env
 }
 
 test_doctor_dispatches_installed_layout_under_root_home() {
+
     setup_installed_layout_env
 
     local output
@@ -6396,6 +6604,29 @@ EOF
     cleanup_mock_env
 }
 
+test_runtime_helpers_do_not_guess_home_paths_from_usernames() {
+    local output=""
+
+    output="$( {
+        grep -RFn "printf '/home/%s\\n' \"\\$current_user\"" \
+            "$CONTINUE_SH" "$DASHBOARD_SH" "$INFO_SH" "$CHANGELOG_SH" "$EXPORT_CONFIG_SH" \
+            "$STATUS_SH" "$SUPPORT_SH" "$CHEATSHEET_SH" "$DOCTOR_SH" \
+            "$REPO_ROOT/scripts/lib/doctor_fix.sh" "$NOTIFY_SH" "$NOTIFICATIONS_SH" \
+            "$WEBHOOK_SH" "$SMOKE_TEST_SH" "$STATE_SH" 2>/dev/null || true
+        grep -RFn 'echo "/home/$user"' \
+            "$CONTINUE_SH" "$DASHBOARD_SH" "$INFO_SH" "$CHANGELOG_SH" "$EXPORT_CONFIG_SH" \
+            "$STATUS_SH" "$SUPPORT_SH" "$CHEATSHEET_SH" 2>/dev/null || true
+        grep -RFn "printf '/home/%s\\n' \"\\$TARGET_USER\"" "$STATE_SH" 2>/dev/null || true
+        grep -RFn 'TARGET_HOME="/home/$TARGET_USER"' "$SMOKE_TEST_SH" 2>/dev/null || true
+    } )"
+
+    if [[ -z "$output" ]]; then
+        harness_pass "runtime helpers do not guess home paths from usernames"
+    else
+        harness_fail "runtime helpers do not guess home paths from usernames" "$output"
+    fi
+}
+
 test_state_driven_helpers_reject_invalid_target_home_from_state() {
     if grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$INFO_SH" \
         && grep -Fq '[[ "$target_home" != "/" ]] || return 1' "$STATUS_SH" \
@@ -6496,9 +6727,11 @@ main() {
     harness_section "Export Config"
     test_export_config_json_is_valid || true
     test_export_config_uses_installed_layout_under_root_home || true
+    test_export_config_installed_script_ignores_poisoned_explicit_acfs_home || true
     test_export_config_uses_system_state_when_user_state_missing || true
     test_export_config_uses_system_state_target_home_when_getent_unavailable || true
     test_export_config_ignores_relative_home_state_trap || true
+    test_export_config_does_not_infer_target_home_from_markerless_acfs_home || true
 
     harness_section "Status"
     test_status_rejects_unknown_flags || true
@@ -6540,7 +6773,9 @@ main() {
     harness_section "Cheatsheet"
     test_state_library_ignores_relative_home_target_resolution || true
     test_smoke_test_ignores_relative_home_target_resolution || true
+    test_smoke_test_does_not_guess_target_home_from_username || true
     test_smoke_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir || true
+    test_smoke_installed_script_ignores_poisoned_explicit_acfs_home || true
     test_smoke_bootstrap_uses_system_state_target_home_when_getent_unavailable || true
     test_cheatsheet_uses_installed_layout_and_target_path_under_root_home || true
     test_cheatsheet_copy_install_uses_target_home_only_system_state || true
@@ -6549,7 +6784,7 @@ main() {
     harness_section "Info / Support / Onboard"
     test_state_driven_helpers_reject_invalid_target_home_from_state || true
     test_runtime_helpers_resolve_current_home_from_passwd_when_home_invalid || true
-    test_runtime_helpers_reject_invalid_passwd_home_for_target_user || true
+    test_runtime_helpers_fail_closed_on_invalid_passwd_home_for_target_user || true
     test_info_uses_installed_layout_under_root_home || true
     test_info_uses_system_state_target_home_when_getent_unavailable || true
     test_info_ignores_relative_home_state_trap || true

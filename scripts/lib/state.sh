@@ -181,9 +181,13 @@ state_resolve_current_home() {
             fi
         fi
 
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '/home/%s\n' "$current_user"
-            return 0
+        if [[ "$current_user" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            home_candidate="$(eval "printf '%s\\n' ~$current_user" 2>/dev/null || true)"
+            home_candidate="$(state_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+            if [[ -n "$home_candidate" ]]; then
+                printf '%s\n' "$home_candidate"
+                return 0
+            fi
         fi
     fi
 
@@ -215,7 +219,7 @@ state_resolve_target_home() {
             fi
         fi
 
-        if [[ "$(whoami 2>/dev/null || true)" == "$TARGET_USER" ]] && [[ -n "${HOME:-}" ]]; then
+        if [[ "$(id -un 2>/dev/null || whoami 2>/dev/null || true)" == "$TARGET_USER" ]] && [[ -n "${HOME:-}" ]]; then
             resolved_home="$(state_resolve_current_home 2>/dev/null || true)"
             if [[ -n "$resolved_home" ]]; then
                 printf '%s\n' "$resolved_home"
@@ -223,10 +227,6 @@ state_resolve_target_home() {
             fi
         fi
 
-        if [[ "$TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '/home/%s\n' "$TARGET_USER"
-            return 0
-        fi
 
         return 1
     fi
@@ -251,7 +251,8 @@ state_get_file() {
     fi
 
     local state_home
-    state_home="$(state_resolve_target_home)"
+    state_home="$(state_resolve_target_home 2>/dev/null || true)"
+    [[ -n "$state_home" ]] || return 1
     printf '%s\n' "${state_home}/.acfs/state.json"
 }
 

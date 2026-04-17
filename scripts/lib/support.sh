@@ -46,11 +46,6 @@ support_resolve_current_home() {
         fi
     fi
 
-    if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        printf '/home/%s\n' "$current_user"
-        return 0
-    fi
-
     return 1
 }
 
@@ -150,6 +145,7 @@ support_home_for_user() {
     local user="$1"
     local passwd_entry=""
     local home_candidate=""
+    local current_user=""
 
     [[ -n "$user" ]] || return 1
 
@@ -169,9 +165,13 @@ support_home_for_user() {
         return 0
     fi
 
-    if [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        echo "/home/$user"
-        return 0
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$user" == "$current_user" ]]; then
+        home_candidate="$(support_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
     fi
 
     return 1
@@ -261,14 +261,14 @@ support_resolve_acfs_home() {
     local candidate=""
     local target_user=""
 
-    if [[ -n "$ACFS_HOME" ]]; then
-        printf '%s\n' "$ACFS_HOME"
-        return 0
-    fi
-
     candidate=$(support_script_acfs_home 2>/dev/null || true)
     if support_candidate_has_acfs_data "$candidate"; then
         printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    if [[ -n "$ACFS_HOME" ]]; then
+        printf '%s\n' "$ACFS_HOME"
         return 0
     fi
 

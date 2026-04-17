@@ -48,10 +48,6 @@ _acfs_doctor_resolve_current_home() {
             fi
         fi
 
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '/home/%s\n' "$current_user"
-            return 0
-        fi
     fi
 
     return 1

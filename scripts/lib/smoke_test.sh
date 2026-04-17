@@ -51,10 +51,6 @@ _smoke_resolve_current_home() {
             fi
         fi
 
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '/home/%s\n' "$current_user"
-            return 0
-        fi
     fi
 
     return 1
@@ -72,6 +68,13 @@ _SMOKE_SYSTEM_STATE_FILE="$(_smoke_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STAT
 if [[ -z "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
     _SMOKE_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
 fi
+
+_smoke_script_acfs_home() {
+    local candidate=""
+    candidate=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd) || return 1
+    [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
+    printf '%s\n' "$candidate"
+}
 
 # ============================================================
 # Configuration
@@ -103,6 +106,12 @@ _smoke_read_state_string() {
 _smoke_resolve_bootstrap_state_file() {
     local candidate=""
     local env_state_file=""
+
+    candidate="$(_smoke_script_acfs_home 2>/dev/null || true)"
+    if [[ -n "$candidate" ]] && [[ -f "$candidate/state.json" ]]; then
+        printf '%s\n' "$candidate/state.json"
+        return 0
+    fi
 
     if [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]]; then
         candidate="$_SMOKE_EXPLICIT_ACFS_HOME/state.json"
@@ -187,8 +196,6 @@ if [[ -z "${TARGET_HOME:-}" ]]; then
         TARGET_HOME="/root"
     elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
         TARGET_HOME="$_SMOKE_CURRENT_HOME"
-    elif [[ "${TARGET_USER}" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        TARGET_HOME="/home/$TARGET_USER"
     fi
     unset _smoke_target_passwd_entry
 fi
@@ -197,8 +204,6 @@ if [[ "${TARGET_HOME:-}" != /* ]]; then
         TARGET_HOME="/root"
     elif [[ "${TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
         TARGET_HOME="$_SMOKE_CURRENT_HOME"
-    elif [[ "${TARGET_USER}" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        TARGET_HOME="/home/$TARGET_USER"
     else
         TARGET_HOME=""
     fi
@@ -221,6 +226,15 @@ _smoke_resolve_state_file() {
     local target_state_file=""
     local current_state_file=""
     local env_state_file=""
+
+    candidate="$(_smoke_script_acfs_home 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        current_state_file="$candidate/state.json"
+        if [[ -f "$current_state_file" ]]; then
+            printf '%s\n' "$current_state_file"
+            return 0
+        fi
+    fi
 
     if [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]]; then
         explicit_state_file="$_SMOKE_EXPLICIT_ACFS_HOME/state.json"
@@ -260,6 +274,7 @@ _smoke_resolve_state_file() {
     candidate="${env_state_file:-${current_state_file:-${target_state_file:-$explicit_state_file}}}"
     printf '%s\n' "$candidate"
 }
+
 _smoke_read_bin_dir_from_state() {
     local state_file="${1:-}"
     local bin_dir=""

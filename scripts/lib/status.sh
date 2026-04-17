@@ -60,11 +60,6 @@ _status_resolve_current_home() {
         fi
     fi
 
-    if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        printf '/home/%s\n' "$current_user"
-        return 0
-    fi
-
     return 1
 }
 
@@ -200,6 +195,7 @@ _status_home_for_user() {
     local user="$1"
     local passwd_entry=""
     local home_candidate=""
+    local current_user=""
 
     [[ -n "$user" ]] || return 1
 
@@ -219,9 +215,13 @@ _status_home_for_user() {
         return 0
     fi
 
-    if [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        echo "/home/$user"
-        return 0
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$user" == "$current_user" ]]; then
+        home_candidate="$(_status_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
     fi
 
     return 1
@@ -325,15 +325,15 @@ _status_resolve_acfs_home() {
     local target_home=""
     local target_user=""
 
-    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]]; then
-        _STATUS_RESOLVED_ACFS_HOME="$_STATUS_EXPLICIT_ACFS_HOME"
+    candidate=$(_status_script_acfs_home 2>/dev/null || true)
+    if [[ -n "$candidate" ]] && [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+        _STATUS_RESOLVED_ACFS_HOME="$candidate"
         printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
         return 0
     fi
 
-    candidate=$(_status_script_acfs_home 2>/dev/null || true)
-    if [[ -n "$candidate" ]] && [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
-        _STATUS_RESOLVED_ACFS_HOME="$candidate"
+    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]]; then
+        _STATUS_RESOLVED_ACFS_HOME="$_STATUS_EXPLICIT_ACFS_HOME"
         printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
         return 0
     fi
