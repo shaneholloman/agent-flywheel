@@ -3654,7 +3654,9 @@ test_cheatsheet_copy_install_uses_target_home_only_system_state() {
     chmod +x "$TEST_ROOT_HOME/.local/bin/cheatsheet"
 
     cat > "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" <<'EOF'
-alias cod='codex'
+if command -v codex >/dev/null 2>&1; then
+  alias cod='codex'
+fi
 EOF
     write_fake_command "$TEST_TARGET_HOME/.local/bin/codex" "codex 1.2.3"
 

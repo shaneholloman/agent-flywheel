@@ -303,8 +303,8 @@ cheatsheet_prepare_context() {
   fi
 
   if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]]; then
-    _CHEATSHEET_RESOLVED_TARGET_HOME="$(cheatsheet_read_target_home_from_state "$state_file" 2>/dev/null || \
-      cheatsheet_read_target_home_from_state "$_CHEATSHEET_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+    _CHEATSHEET_RESOLVED_TARGET_HOME="$(cheatsheet_read_target_home_from_state "$_CHEATSHEET_SYSTEM_STATE_FILE" 2>/dev/null || \
+      cheatsheet_read_target_home_from_state "$state_file" 2>/dev/null || true)"
     if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ -n "$_CHEATSHEET_RESOLVED_TARGET_USER" ]]; then
       _CHEATSHEET_RESOLVED_TARGET_HOME="$(cheatsheet_home_for_user "$_CHEATSHEET_RESOLVED_TARGET_USER" 2>/dev/null || true)"
     fi

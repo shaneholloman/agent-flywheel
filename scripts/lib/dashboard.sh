@@ -248,8 +248,8 @@ dashboard_prepare_context() {
     fi
 
     if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
-        _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_read_target_home_from_state "$state_file" 2>/dev/null || \
-            dashboard_read_target_home_from_state "$_DASHBOARD_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+        _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_read_target_home_from_state "$_DASHBOARD_SYSTEM_STATE_FILE" 2>/dev/null || \
+            dashboard_read_target_home_from_state "$state_file" 2>/dev/null || true)"
         if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$_DASHBOARD_RESOLVED_TARGET_USER" ]]; then
             _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_home_for_user "$_DASHBOARD_RESOLVED_TARGET_USER" 2>/dev/null || true)"
         fi
