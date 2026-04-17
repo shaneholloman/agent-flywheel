@@ -378,6 +378,7 @@ _stack_run_as_user() {
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home=""
     local resolved_bin_dir=""
+    local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
     _stack_validate_target_user "$target_user" || return 1
     target_home="$(_stack_target_home "$target_user" 2>/dev/null || true)"
     if [[ -z "$target_home" ]] || [[ "$target_home" == "/" ]] || [[ "$target_home" != /* ]]; then
@@ -398,7 +399,7 @@ _stack_run_as_user() {
     printf -v acfs_bin_dir_q '%q' "$resolved_bin_dir"
 
     wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q ACFS_BIN_DIR=$acfs_bin_dir_q;"
-    wrapped_cmd+=" export PATH=\"$target_path_prefix:\$PATH\"; set -o pipefail; $cmd"
+    wrapped_cmd+=" export PATH=\"$target_path_prefix:$system_path_prefix:\$PATH\"; set -o pipefail; $cmd"
 
     if [[ "$(whoami)" == "$target_user" ]]; then
         bash -c "$wrapped_cmd"

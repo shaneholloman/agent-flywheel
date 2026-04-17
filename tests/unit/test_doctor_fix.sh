@@ -277,6 +277,27 @@ test_doctor_fix_runtime_path_ignores_relative_bin_dir() {
     return 0
 }
 
+test_doctor_fix_runtime_path_prefers_system_bins_over_current_shell_path() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    local fake_bin="$ACFS_STATE_DIR/fake-bin"
+    mkdir -p "$TARGET_HOME/.local/bin" "$fake_bin"
+    export PATH="$fake_bin:/usr/bin:/bin"
+
+    local runtime_path=""
+    runtime_path="$(doctor_fix_runtime_path)"
+
+    if [[ "$runtime_path" != *":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$fake_bin:/usr/bin:/bin" ]]; then
+        echo "  Expected runtime PATH to place trusted system dirs before inherited PATH, got $runtime_path"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
 test_doctor_fix_runtime_home_ignores_relative_home() {
     setup_test_env
 
@@ -2922,6 +2943,7 @@ main() {
     run_test test_doctor_fix_prefers_target_home_over_poisoned_acfs_home
     run_test test_doctor_fix_binary_path_ignores_relative_bin_dir
     run_test test_doctor_fix_runtime_path_ignores_relative_bin_dir
+    run_test test_doctor_fix_runtime_path_prefers_system_bins_over_current_shell_path
     run_test test_doctor_fix_runtime_home_ignores_relative_home
 
     # fix_path_ordering tests

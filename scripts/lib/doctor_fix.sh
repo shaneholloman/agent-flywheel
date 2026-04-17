@@ -160,6 +160,7 @@ doctor_fix_runtime_path() {
     local runtime_home=""
     local primary_bin=""
     local current_path=""
+    local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
 
     runtime_home="$(doctor_fix_runtime_home)"
     [[ -n "$runtime_home" ]] || return 1
@@ -167,7 +168,7 @@ doctor_fix_runtime_path() {
     primary_bin="$(doctor_fix_runtime_bin_dir)"
     current_path="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 
-    printf '%s\n' "$primary_bin:$runtime_home/.local/bin:$runtime_home/.acfs/bin:$runtime_home/.cargo/bin:$runtime_home/.bun/bin:$runtime_home/.atuin/bin:$runtime_home/go/bin:$current_path"
+    printf '%s\n' "$primary_bin:$runtime_home/.local/bin:$runtime_home/.acfs/bin:$runtime_home/.cargo/bin:$runtime_home/.bun/bin:$runtime_home/.atuin/bin:$runtime_home/go/bin:$runtime_home/google-cloud-sdk/bin:$system_path_prefix:$current_path"
 }
 
 doctor_fix_curl() {

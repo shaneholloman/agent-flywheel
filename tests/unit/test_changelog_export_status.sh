@@ -1048,6 +1048,45 @@ EOF
     fi
 }
 
+test_stack_run_as_user_prefers_system_bins_over_current_shell_path() {
+    local output=""
+
+    if output=$(STACK_SH="$STACK_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+target_home="$tmp_dir/target-home"
+global_bin="$tmp_dir/global-bin"
+current_user="$(id -un)"
+mkdir -p "$target_home/.local/bin" "$global_bin"
+cat > "$global_bin/curl" <<'SCRIPT'
+#!/usr/bin/env bash
+echo POISONED_CURL
+SCRIPT
+chmod +x "$global_bin/curl"
+export PATH="$global_bin:/usr/bin:/bin"
+export TARGET_USER="$current_user"
+export TARGET_HOME="$target_home"
+export ACFS_BIN_DIR="$target_home/.local/bin"
+# shellcheck source=/dev/null
+source "$STACK_SH"
+resolved_curl="$(_stack_run_as_user 'command -v curl' 2>/dev/null || true)"
+curl_banner="$(_stack_run_as_user 'curl --version 2>&1 | head -n1' 2>/dev/null || true)"
+printf 'curl=%s
+banner=%s
+' "$resolved_curl" "$curl_banner"
+EOF
+    ); then
+        if [[ "$output" == *$'curl='* ]] && [[ "$output" != *"banner=POISONED_CURL"* ]] && [[ "$output" != *"/global-bin/curl"* ]]; then
+            harness_pass "stack run-as-user prefers system bins over current-shell PATH"
+        else
+            harness_fail "stack run-as-user prefers system bins over current-shell PATH" "$output"
+        fi
+    else
+        harness_fail "stack run-as-user prefers system bins over current-shell PATH"
+    fi
+}
+
 test_notify_uses_target_home_for_config_and_state_when_home_is_relative() {
     setup_mock_env
 
@@ -5338,6 +5377,59 @@ EOF
     cleanup_mock_env
 }
 
+test_doctor_manifest_checks_prefer_system_bins_over_current_shell_path() {
+    setup_installed_layout_env
+
+    local sourceable_doctor="$TEST_HOME/sourceable-doctor.sh"
+    sed '$d' "$DOCTOR_SH" > "$sourceable_doctor"
+    chmod +x "$sourceable_doctor"
+
+    cat > "$TEST_FAKE_BIN/curl" <<'EOF'
+#!/usr/bin/env bash
+echo POISONED_CURL
+EOF
+    chmod +x "$TEST_FAKE_BIN/curl"
+
+    local current_user=""
+    current_user="$(id -un)"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" CURRENT_USER="$current_user"         TARGET_USER="$current_user" TARGET_HOME="$TEST_TARGET_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS"         ACFS_STATE_FILE="$TEST_INSTALLED_ACFS/state.json" ACFS_BIN_DIR="$TEST_TARGET_HOME/.local/bin"         bash -c 'source "$1" >/dev/null 2>&1 || true; TARGET_USER="$CURRENT_USER"; TARGET_HOME="$2"; ACFS_BIN_DIR="$3"; _doctor_run_manifest_check target_user "command -v curl"' _ "$sourceable_doctor" "$TEST_TARGET_HOME" "$TEST_TARGET_HOME/.local/bin")
+
+    if [[ -n "$output" ]] && [[ "$output" != "$TEST_FAKE_BIN/curl" ]] && [[ "$output" != "POISONED_CURL" ]]; then
+        harness_pass "doctor manifest checks prefer system bins over current-shell PATH"
+    else
+        harness_fail "doctor manifest checks prefer system bins over current-shell PATH" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_doctor_deep_optional_probe_ignores_current_shell_only_path_entries() {
+    setup_installed_layout_env
+
+    local sourceable_doctor="$TEST_HOME/sourceable-doctor.sh"
+    sed '$d' "$DOCTOR_SH" > "$sourceable_doctor"
+    chmod +x "$sourceable_doctor"
+
+    cat > "$TEST_FAKE_BIN/current-shell-only-tool" <<'EOF'
+#!/usr/bin/env bash
+echo current-shell-only-tool
+EOF
+    chmod +x "$TEST_FAKE_BIN/current-shell-only-tool"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TARGET_USER="tester" TARGET_HOME="$TEST_TARGET_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS"         ACFS_STATE_FILE="$TEST_INSTALLED_ACFS/state.json" ACFS_BIN_DIR="$TEST_TARGET_HOME/.local/bin"         bash -c 'source "$1" >/dev/null 2>&1 || true; JSON_MODE=true; PASS_COUNT=0; WARN_COUNT=0; FAIL_COUNT=0; JSON_CHECKS=(); deep_check_optional_probe "deep.test.current_shell_only_tool" "Current-shell-only tool probe" "current-shell-only-tool" "Install it" "current-shell-only-tool --help"; printf "%s\n" "${JSON_CHECKS[0]}"' _ "$sourceable_doctor")
+
+    if [[ "$output" == *'"id":"deep.test.current_shell_only_tool"'* ]]         && [[ "$output" == *'"status":"warn"'* ]]         && [[ "$output" == *'"details":"not installed"'* ]]; then
+        harness_pass "doctor deep optional probe ignores current-shell-only PATH entries"
+    else
+        harness_fail "doctor deep optional probe ignores current-shell-only PATH entries" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_doctor_agent_checks_use_target_context_under_root_home() {
     setup_installed_layout_env
 
@@ -6164,6 +6256,7 @@ main() {
     test_stack_target_has_command_finds_target_user_local_claude || true
     test_stack_agent_mail_cli_path_ignores_current_shell_only_am || true
     test_stack_agent_mail_ready_ignores_current_shell_only_am || true
+    test_stack_run_as_user_prefers_system_bins_over_current_shell_path || true
 
     harness_section "Notification Helpers"
     test_notify_uses_target_home_for_config_and_state_when_home_is_relative || true
@@ -6302,6 +6395,8 @@ main() {
     test_doctor_dispatches_installed_layout_under_root_home || true
     test_doctor_ignores_relative_home_state_trap || true
     test_doctor_prefers_target_home_over_poisoned_acfs_home || true
+    test_doctor_manifest_checks_prefer_system_bins_over_current_shell_path || true
+    test_doctor_deep_optional_probe_ignores_current_shell_only_path_entries || true
     test_acfs_update_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_update_wrapper_repairs_runtime_home_on_direct_exec || true
     test_acfs_update_wrapper_passes_bin_dir_from_state || true

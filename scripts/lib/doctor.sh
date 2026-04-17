@@ -1249,6 +1249,28 @@ doctor_binary_path() {
     return 1
 }
 
+
+doctor_runtime_path() {
+    local runtime_home=""
+    local primary_bin_dir=""
+    local current_path=""
+    local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+    local path_prefix=""
+
+    runtime_home="$(doctor_runtime_home)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    current_path="${PATH:-$system_path_prefix}"
+    path_prefix="$primary_bin_dir:$runtime_home/.local/bin:$runtime_home/.acfs/bin:$runtime_home/.bun/bin:$runtime_home/.cargo/bin:$runtime_home/.atuin/bin:$runtime_home/go/bin:$runtime_home/google-cloud-sdk/bin:$system_path_prefix"
+
+    if [[ -n "${ACFS_HOME:-}" ]]; then
+        path_prefix="$ACFS_HOME/bin:$path_prefix"
+    fi
+
+    printf '%s\n' "$path_prefix:$current_path"
+}
+
 doctor_binary_exists() {
     local resolved=""
     resolved="$(doctor_binary_path "$1" 2>/dev/null || true)"
@@ -2170,7 +2192,8 @@ _doctor_run_manifest_check() {
     fi
 
     local target_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
-    target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+    local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+    target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:$target_home/google-cloud-sdk/bin:$system_path_prefix:${PATH:-$system_path_prefix}"
 
     case "$run_as" in
         target_user)
@@ -2394,9 +2417,13 @@ deep_check_optional_probe() {
     local fix="$4"
     shift 4
     local runtime_home=""
+    local binary_path=""
+    local runtime_path=""
     runtime_home="$(doctor_runtime_home)"
+    binary_path="$(doctor_binary_path "$binary" 2>/dev/null || true)"
+    runtime_path="$(doctor_runtime_path 2>/dev/null || true)"
 
-    if ! command -v "$binary" &>/dev/null; then
+    if [[ -z "$binary_path" || -z "$runtime_path" ]]; then
         check "$id" "$label" "warn" "not installed" "$fix"
         return 0
     fi
@@ -2416,7 +2443,7 @@ deep_check_optional_probe() {
     local last_timeout=false
 
     for cmd in "$@"; do
-        output=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$label via $cmd" env HOME="$runtime_home" PATH="$PATH" bash -o pipefail -c "$cmd")
+        output=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$label via $cmd" env HOME="$runtime_home" PATH="$runtime_path" bash -o pipefail -c "$cmd")
         status=$?
 
         if ((status == 0)); then
