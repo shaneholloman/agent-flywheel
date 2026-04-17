@@ -6608,7 +6608,7 @@ test_runtime_helpers_do_not_guess_home_paths_from_usernames() {
     local output=""
 
     output="$( {
-        grep -RFn "printf '/home/%s\\n' \"\\$current_user\"" \
+        grep -RFn "printf '/home/%s\\n' \"\\\$current_user\"" \
             "$CONTINUE_SH" "$DASHBOARD_SH" "$INFO_SH" "$CHANGELOG_SH" "$EXPORT_CONFIG_SH" \
             "$STATUS_SH" "$SUPPORT_SH" "$CHEATSHEET_SH" "$DOCTOR_SH" \
             "$REPO_ROOT/scripts/lib/doctor_fix.sh" "$NOTIFY_SH" "$NOTIFICATIONS_SH" \
@@ -6616,7 +6616,7 @@ test_runtime_helpers_do_not_guess_home_paths_from_usernames() {
         grep -RFn 'echo "/home/$user"' \
             "$CONTINUE_SH" "$DASHBOARD_SH" "$INFO_SH" "$CHANGELOG_SH" "$EXPORT_CONFIG_SH" \
             "$STATUS_SH" "$SUPPORT_SH" "$CHEATSHEET_SH" 2>/dev/null || true
-        grep -RFn "printf '/home/%s\\n' \"\\$TARGET_USER\"" "$STATE_SH" 2>/dev/null || true
+        grep -RFn "printf '/home/%s\\n' \"\\\$TARGET_USER\"" "$STATE_SH" 2>/dev/null || true
         grep -RFn 'TARGET_HOME="/home/$TARGET_USER"' "$SMOKE_TEST_SH" 2>/dev/null || true
     } )"
 
@@ -6783,7 +6783,9 @@ main() {
 
     harness_section "Info / Support / Onboard"
     test_state_driven_helpers_reject_invalid_target_home_from_state || true
+    test_runtime_helpers_do_not_guess_home_paths_from_usernames || true
     test_runtime_helpers_resolve_current_home_from_passwd_when_home_invalid || true
+    test_runtime_helpers_fail_closed_when_current_home_unresolved || true
     test_runtime_helpers_fail_closed_on_invalid_passwd_home_for_target_user || true
     test_info_uses_installed_layout_under_root_home || true
     test_info_uses_system_state_target_home_when_getent_unavailable || true
