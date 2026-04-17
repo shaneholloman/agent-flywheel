@@ -3603,7 +3603,7 @@ test_dashboard_repo_local_ignores_poisoned_explicit_acfs_home() {
         bash -lc '
             source "$TEST_DASHBOARD_SCRIPT"
             dashboard_prepare_context
-            printf "home=%s\nstate=%s\ntarget=%s\n" "$ACFS_HOME" "$(dashboard_resolve_state_file)" "${TARGET_HOME:-}"
+            printf "home=%s\nstate=%s\ntarget=%s\n" "$ACFS_HOME" "$(dashboard_resolve_state_file)" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}"
         ' 2>/dev/null)
 
     if [[ "$output" == *"home=$TEST_INSTALLED_ACFS"* ]] \
