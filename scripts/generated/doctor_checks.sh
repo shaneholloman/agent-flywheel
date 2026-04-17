@@ -246,6 +246,7 @@ run_manifest_check_command() {
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home="${TARGET_HOME:-}"
     local target_path=""
+    local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
 
     if declare -f _acfs_validate_target_user >/dev/null 2>&1; then
         _acfs_validate_target_user "$target_user" "TARGET_USER" || return 1
@@ -285,7 +286,7 @@ run_manifest_check_command() {
                 log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${target_bin:-<empty>})"
                 return 1
             fi
-            target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+            target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:$target_home/google-cloud-sdk/bin:$system_path_prefix:${PATH:-$system_path_prefix}"
             if [[ "$(id -un 2>/dev/null || true)" == "$target_user" ]]; then
                 TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
                 return $?
@@ -303,17 +304,17 @@ run_manifest_check_command() {
         root)
             if [[ $EUID -eq 0 ]]; then
                 if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-                    TARGET_USER="$target_user" TARGET_HOME="$target_home" bash -o pipefail -c "$cmd"
+                    TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
                 else
-                    TARGET_USER="$target_user" bash -o pipefail -c "$cmd"
+                    TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
                 fi
                 return $?
             fi
             if command -v sudo >/dev/null 2>&1; then
                 if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-                    sudo -n env TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}" bash -o pipefail -c "$cmd"
+                    sudo -n env TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
                 else
-                    sudo -n env TARGET_USER="$target_user" PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}" bash -o pipefail -c "$cmd"
+                    sudo -n env TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
                 fi
                 return $?
             fi
