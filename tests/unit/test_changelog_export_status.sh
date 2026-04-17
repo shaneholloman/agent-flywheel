@@ -5481,6 +5481,114 @@ EOF
     cleanup_mock_env
 }
 
+test_doctor_manifest_checks_fail_closed_when_target_home_is_unresolved() {
+    setup_installed_layout_env
+
+    local sourceable_doctor="$TEST_HOME/sourceable-doctor.sh"
+    sed '$d' "$DOCTOR_SH" > "$sourceable_doctor"
+    chmod +x "$sourceable_doctor"
+
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    cat > "$TEST_FAKE_BIN/sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'sudo-called=%s\n' "$*"
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent" "$TEST_FAKE_BIN/sudo"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TARGET_USER="missinguser" TARGET_HOME="" ACFS_HOME="$TEST_INSTALLED_ACFS" \
+        ACFS_STATE_FILE="$TEST_INSTALLED_ACFS/state.json" ACFS_BIN_DIR="$TEST_TARGET_HOME/.local/bin" \
+        bash -c 'source "$1" >/dev/null 2>&1 || true; TARGET_USER="missinguser"; TARGET_HOME=""; _doctor_run_manifest_check target_user "printf unreachable\\n"' _ "$sourceable_doctor" 2>&1 || true)
+
+    if [[ "$output" == *"Invalid TARGET_HOME for 'missinguser': <empty> (must be an absolute path and cannot be '/')"* ]] \
+        && [[ "$output" != *"sudo-called="* ]] \
+        && [[ "$output" != *"unreachable"* ]]; then
+        harness_pass "doctor manifest checks fail closed when target_home is unresolved"
+    else
+        harness_fail "doctor manifest checks fail closed when target_home is unresolved" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_doctor_manifest_checks_reject_invalid_target_user_before_sudo() {
+    setup_installed_layout_env
+
+    local sourceable_doctor="$TEST_HOME/sourceable-doctor.sh"
+    sed '$d' "$DOCTOR_SH" > "$sourceable_doctor"
+    chmod +x "$sourceable_doctor"
+
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+printf 'getent-called=%s\n' "$*"
+exit 2
+EOF
+    cat > "$TEST_FAKE_BIN/runuser" <<'EOF'
+#!/usr/bin/env bash
+printf 'runuser-called=%s\n' "$*"
+EOF
+    cat > "$TEST_FAKE_BIN/sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'sudo-called=%s\n' "$*"
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent" "$TEST_FAKE_BIN/runuser" "$TEST_FAKE_BIN/sudo"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TARGET_USER="../bad user" TARGET_HOME="" ACFS_HOME="$TEST_INSTALLED_ACFS" \
+        ACFS_STATE_FILE="$TEST_INSTALLED_ACFS/state.json" \
+        bash -c 'source "$1" >/dev/null 2>&1 || true; TARGET_USER="../bad user"; TARGET_HOME=""; _doctor_run_manifest_check target_user "printf unreachable\\n"' _ "$sourceable_doctor" 2>&1 || true)
+
+    if [[ "$output" == *"Invalid TARGET_USER '../bad user' (expected: lowercase user name like 'ubuntu')"* ]] \
+        && [[ "$output" != *"getent-called="* ]] \
+        && [[ "$output" != *"sudo-called="* ]] \
+        && [[ "$output" != *"runuser-called="* ]] \
+        && [[ "$output" != *"unreachable"* ]]; then
+        harness_pass "doctor manifest checks reject invalid target_user before sudo"
+    else
+        harness_fail "doctor manifest checks reject invalid target_user before sudo" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_doctor_root_manifest_checks_run_when_target_home_is_unresolved() {
+    setup_installed_layout_env
+
+    local sourceable_doctor="$TEST_HOME/sourceable-doctor.sh"
+    sed '$d' "$DOCTOR_SH" > "$sourceable_doctor"
+    chmod +x "$sourceable_doctor"
+
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    cat > "$TEST_FAKE_BIN/sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'sudo-called=%s\n' "$*"
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent" "$TEST_FAKE_BIN/sudo"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TARGET_USER="missinguser" TARGET_HOME="" ACFS_HOME="$TEST_INSTALLED_ACFS" \
+        ACFS_STATE_FILE="$TEST_INSTALLED_ACFS/state.json" \
+        bash -c 'source "$1" >/dev/null 2>&1 || true; TARGET_USER="missinguser"; TARGET_HOME=""; _doctor_run_manifest_check root "printf root-check-ran\\n"' _ "$sourceable_doctor" 2>&1 || true)
+
+    if [[ "$output" == *'sudo-called=-n env TARGET_USER=missinguser PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin bash -o pipefail -c printf root-check-ran\n'* ]] \
+        && [[ "$output" != *"Invalid TARGET_HOME"* ]]; then
+        harness_pass "doctor root manifest checks still run when target_home is unresolved"
+    else
+        harness_fail "doctor root manifest checks still run when target_home is unresolved" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_doctor_deep_optional_probe_ignores_current_shell_only_path_entries() {
     setup_installed_layout_env
 
@@ -6472,6 +6580,9 @@ main() {
     test_doctor_ignores_relative_home_state_trap || true
     test_doctor_prefers_target_home_over_poisoned_acfs_home || true
     test_doctor_manifest_checks_prefer_system_bins_over_current_shell_path || true
+    test_doctor_manifest_checks_fail_closed_when_target_home_is_unresolved || true
+    test_doctor_manifest_checks_reject_invalid_target_user_before_sudo || true
+    test_doctor_root_manifest_checks_run_when_target_home_is_unresolved || true
     test_doctor_deep_optional_probe_ignores_current_shell_only_path_entries || true
     test_acfs_update_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_update_wrapper_repairs_runtime_home_on_direct_exec || true

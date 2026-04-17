@@ -380,6 +380,24 @@ test_root_checks_preserve_target_context() {
     fi
 }
 
+test_generated_manifest_checks_use_hardened_target_path() {
+    harness_section "Test: Generated manifest checks use hardened target PATH"
+
+    local checks_file="$REPO_ROOT/scripts/generated/doctor_checks.sh"
+
+    if grep -Fq 'local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"' "$checks_file"; then
+        harness_pass "generated doctor_checks.sh defines trusted system path prefix"
+    else
+        harness_fail "generated doctor_checks.sh does not define trusted system path prefix"
+    fi
+
+    if grep -Fq 'local -a target_path_entries=()' "$checks_file"         && grep -Fq 'target_path_prefix=$(IFS=:; echo "${target_path_entries[*]}")' "$checks_file"         && grep -Fq 'target_path="$target_path_prefix${PATH:+:$PATH}"' "$checks_file"; then
+        harness_pass "generated doctor_checks.sh prefers trusted target PATH ordering"
+    else
+        harness_fail "generated doctor_checks.sh does not use hardened target PATH ordering"
+    fi
+}
+
 test_generated_run_manifest_check_command_handles_unresolved_target_home_by_context() {
     harness_section "Test: Generated run_manifest_check_command only requires TARGET_HOME for target_user checks"
 
@@ -607,6 +625,7 @@ main() {
     test_manifest_checks_have_required_fields
     test_doctor_summary_counts
     test_root_checks_preserve_target_context
+    test_generated_manifest_checks_use_hardened_target_path
     test_generated_run_manifest_check_command_handles_unresolved_target_home_by_context
     test_workspace_checks_are_not_required_health_failures
     test_generated_target_home_fallbacks_are_dynamic

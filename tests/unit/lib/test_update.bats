@@ -154,6 +154,18 @@ EOF
     assert_failure
 }
 
+@test "update_target_home: fails closed when valid user home is unresolved" {
+    export TARGET_HOME="/"
+    export HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    run update_target_home "missinguser"
+    assert_failure
+}
+
 @test "update_preferred_user_bin_dir: falls back to target home when HOME differs" {
     local current_home
     local target_home
@@ -170,6 +182,66 @@ EOF
     run update_preferred_user_bin_dir
     assert_success
     assert_output "$target_home/.local/bin"
+}
+
+@test "update_preferred_user_bin_dir: ignores relative ACFS_BIN_DIR and falls back to target home" {
+    local current_home
+    local target_home
+    local cwd
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    cwd="$(create_temp_dir)"
+
+    mkdir -p "$cwd/relative/bin"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="relative/bin"
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+
+    pushd "$cwd" >/dev/null
+    run update_preferred_user_bin_dir
+    popd >/dev/null
+
+    assert_success
+    assert_output "$target_home/.local/bin"
+}
+
+@test "update_preferred_user_bin_dir: does not fall back to current HOME for different unresolved target" {
+    local current_home
+    current_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+    unset ACFS_BIN_DIR
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+
+    getent() {
+        return 2
+    }
+
+    run update_preferred_user_bin_dir
+    assert_failure
+}
+
+@test "update_default_user_bin_dir: does not fall back to current HOME for different unresolved target" {
+    local current_home
+    current_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    run update_default_user_bin_dir
+    assert_failure
 }
 
 @test "update_binary_path: ignores current-shell-only PATH entries" {
@@ -210,6 +282,104 @@ EOF
     assert_output "$target_home/.local/bin/$tool_name"
 }
 
+@test "update_binary_path: ignores relative ACFS_BIN_DIR shim when target bin exists" {
+    local current_home
+    local target_home
+    local cwd
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    cwd="$(create_temp_dir)"
+
+    mkdir -p "$cwd/relative/bin" "$target_home/.local/bin"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="relative/bin"
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+    export PATH="/usr/bin:/bin"
+
+    cat > "$cwd/relative/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "wrong-relative-gh"
+EOF
+    chmod +x "$cwd/relative/bin/gh"
+
+    cat > "$target_home/.local/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "target-gh"
+EOF
+    chmod +x "$target_home/.local/bin/gh"
+
+    pushd "$cwd" >/dev/null
+    run update_binary_path "gh"
+    popd >/dev/null
+
+    assert_success
+    assert_output "$target_home/.local/bin/gh"
+}
+
+@test "update_binary_path: finds target gcloud in google-cloud-sdk bin" {
+    init_stub_dir
+
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    unset ACFS_BIN_DIR
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+    mkdir -p "$target_home/google-cloud-sdk/bin"
+
+    cat > "$STUB_DIR/gcloud" <<'EOF'
+#!/usr/bin/env bash
+echo "current-shell-gcloud"
+EOF
+    chmod +x "$STUB_DIR/gcloud"
+    export PATH="$STUB_DIR:/usr/bin:/bin"
+
+    cat > "$target_home/google-cloud-sdk/bin/gcloud" <<'EOF'
+#!/usr/bin/env bash
+echo "target-gcloud"
+EOF
+    chmod +x "$target_home/google-cloud-sdk/bin/gcloud"
+
+    run update_binary_path "gcloud"
+    assert_success
+    assert_output "$target_home/google-cloud-sdk/bin/gcloud"
+}
+
+@test "update_binary_path: does not fall back to current HOME for different unresolved target" {
+    local current_home
+    current_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+    unset ACFS_BIN_DIR
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+    mkdir -p "$current_home/.local/bin"
+
+    getent() {
+        return 2
+    }
+
+    cat > "$current_home/.local/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "wrong-home-gh"
+EOF
+    chmod +x "$current_home/.local/bin/gh"
+
+    run update_binary_path "gh"
+    assert_failure
+}
+
 @test "update_tool_binary_path: prefers target atuin over current HOME" {
     local current_home
     local target_home
@@ -239,6 +409,32 @@ EOF
     run update_tool_binary_path "atuin"
     assert_success
     assert_output "$target_home/.atuin/bin/atuin"
+}
+
+@test "update_tool_binary_path: does not fall back to current HOME atuin for different unresolved target" {
+    local current_home
+    current_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+    unset ACFS_BIN_DIR
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+    mkdir -p "$current_home/.atuin/bin"
+
+    getent() {
+        return 2
+    }
+
+    cat > "$current_home/.atuin/bin/atuin" <<'EOF'
+#!/usr/bin/env bash
+echo "wrong-home-atuin"
+EOF
+    chmod +x "$current_home/.atuin/bin/atuin"
+
+    run update_tool_binary_path "atuin"
+    assert_failure
 }
 
 @test "capture_version: tracks changes" {
@@ -552,6 +748,35 @@ EOF
     assert_output "$HOME/.atuin/bin/atuin"
 }
 
+@test "update_repair_atuin_install: does not repair from current HOME for different unresolved target" {
+    local current_home
+    current_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+    export ACFS_BIN_DIR="$current_home/custom-bin"
+    mkdir -p "$current_home/.atuin/bin" "$ACFS_BIN_DIR"
+
+    getent() {
+        return 2
+    }
+
+    cat > "$current_home/.atuin/bin/atuin" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  echo "atuin 18.14.1"
+else
+  echo "wrong-home-atuin"
+fi
+EOF
+    chmod +x "$current_home/.atuin/bin/atuin"
+
+    run update_repair_atuin_install
+    assert_failure
+    [[ ! -e "$ACFS_BIN_DIR/atuin" ]]
+}
+
 @test "update_repair_zoxide_install: normalizes custom shim to target local bin" {
     export ACFS_BIN_DIR="$HOME/custom-bin"
     mkdir -p "$HOME/.local/bin" "$ACFS_BIN_DIR"
@@ -854,10 +1079,89 @@ EOF
     local smoke="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
     local update="$PROJECT_ROOT/scripts/lib/update.sh"
 
+    run grep -F 'local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"' "$doctor"
+    assert_success
+    run grep -F 'local current_path="${PATH:-$system_path_prefix}"' "$doctor"
+    assert_success
+    run grep -F 'local seen_path=":$current_path:"' "$doctor"
+    assert_success
+    run grep -F 'seen_path="${seen_path}${dir}:"' "$doctor"
+    assert_success
     run grep -F 'local primary_bin_dir="${ACFS_BIN_DIR:-$primary_home/.local/bin}"' "$doctor"
     assert_success
-    run grep -F 'target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"' "$doctor"
+    run grep -F 'target_path="$target_path_prefix${PATH:+:$PATH}"' "$doctor"
     assert_success
+    run grep -F 'local -a target_path_entries=()' "$doctor"
+    assert_success
+    run grep -F '"$_acfs_doctor_current_home/google-cloud-sdk/bin"' "$doctor"
+    assert_success
+    run grep -F "Invalid TARGET_USER '\${target_user:-<empty>}' (expected: lowercase user name like 'ubuntu')" "$doctor"
+    assert_success
+    run grep -F 'target_home="/home/$target_user"' "$doctor"
+    assert_failure
+    run grep -F 'sudo -n env TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"' "$doctor"
+    assert_success
+    run grep -F 'export PATH="$prefix${current_path:+:$current_path}"' "$doctor"
+    assert_success
+
+    run grep -F 'update_sanitize_abs_nonroot_path() {' "$update"
+    assert_success
+    run grep -F 'local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"' "$update"
+    assert_success
+    run grep -F 'local current_path="${PATH:-$system_path_prefix}"' "$update"
+    assert_success
+    run grep -F 'local seen_path=":$current_path:"' "$update"
+    assert_success
+    run grep -F 'sanitized_primary_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update"
+    assert_success
+    run grep -F '$HOME/google-cloud-sdk/bin' "$update"
+    assert_success
+    run grep -F '$target_home/google-cloud-sdk/bin/$tool' "$update"
+    assert_success
+    run grep -F 'path_prefix=$(IFS=:; echo "${path_entries[*]}")' "$update"
+    assert_success
+    run grep -F 'local current_state_file=""' "$update"
+    assert_success
+    run grep -F 'local acfs_home_state_file=""' "$update"
+    assert_success
+    run grep -F 'local target_state_file=""' "$update"
+    assert_success
+    run grep -F 'local explicit_bin_dir=""' "$update"
+    assert_success
+    run grep -F 'local explicit_state_file=""' "$update"
+    assert_success
+    run grep -F 'local sanitized_acfs_home=""' "$update"
+    assert_success
+    run grep -F '$current_state_file' "$update"
+    assert_success
+    run grep -F 'explicit_bin_dir="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update"
+    assert_success
+    run grep -F 'explicit_state_file="$(update_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"' "$update"
+    assert_success
+    run grep -F 'sanitized_acfs_home="$(update_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"' "$update"
+    assert_success
+    run grep -F 'user_bin="$(update_default_user_bin_dir 2>/dev/null || true)"' "$update"
+    assert_success
+    run grep -F 'local -a candidates=()' "$update"
+    assert_success
+    run grep -F 'configured_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update"
+    assert_success
+    run grep -F '[[ -n "$target_home" ]] && preferred_src="$target_home/.atuin/bin/atuin"' "$update"
+    assert_success
+    run grep -F "printf '/home/%s\n'" "$update"
+    assert_failure
+    run grep -F '$HOME/.atuin/bin/atuin' "$update"
+    assert_failure
+    run grep -F "printf '%s\n' \"\$HOME/.local/bin\"" "$update"
+    assert_failure
+    run grep -F '"${ACFS_HOME:-}/state.json"' "$update"
+    assert_failure
+    run grep -F 'target_state_file="$target_home/.acfs/state.json"' "$update"
+    assert_success
+    run grep -F 'export PATH="$prefix${current_path:+:$current_path}"' "$update"
+    assert_success
+    run grep -F 'export PATH="${prefix}:$PATH"' "$update"
+    assert_failure
 
     run grep -F 'primary_bin_dir="$(info_preferred_bin_dir "$base_home" 2>/dev/null || true)"' "$info"
     assert_success
@@ -913,6 +1217,10 @@ EOF
     assert_success
     run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$global_wrapper"
     assert_success
+    run grep -F 'state_bin_dir="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"' "$global_wrapper"
+    assert_success
+    run grep -F 'ACFS_BIN_DIR="${state_bin_dir:-${sanitized_bin_dir:-}}"' "$global_wrapper"
+    assert_success
     run grep -F 'current_home="$(resolve_current_home 2>/dev/null || true)"' "$global_wrapper"
     assert_success
     run grep -F '[[ -n "$sanitized_state_file" ]] && env_args+=("ACFS_STATE_FILE=$sanitized_state_file")' "$global_wrapper"
@@ -929,6 +1237,10 @@ EOF
     run grep -F 'ACFS_SYSTEM_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"' "$update_wrapper"
     assert_success
     run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update_wrapper"
+    assert_success
+    run grep -F 'state_bin_dir="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"' "$update_wrapper"
+    assert_success
+    run grep -F 'ACFS_BIN_DIR="${state_bin_dir:-${sanitized_bin_dir:-}}"' "$update_wrapper"
     assert_success
     run grep -F 'current_home="$(resolve_current_home 2>/dev/null || true)"' "$update_wrapper"
     assert_success
@@ -1513,6 +1825,116 @@ EOF
 
     run info_binary_exists "current-shell-only-tool"
     assert_success
+}
+
+@test "update.sh: ensure_path dedupes primary bin and restores system PATH when empty" {
+    local update="$PROJECT_ROOT/scripts/lib/update.sh"
+    local test_home="$BATS_TEST_TMPDIR/update-home"
+    local expected_path=""
+    mkdir -p "$test_home/.local/bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
+
+    run env HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'source "$1"; ACFS_BIN_DIR=""; PATH=""; ensure_path; printf "%s
+" "$PATH"' _ "$update"
+    assert_success
+
+    expected_path="$test_home/.local/bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+    [ "$output" = "$expected_path" ]
+}
+
+@test "update.sh: ensure_path ignores relative ACFS_BIN_DIR when PATH is empty" {
+    local update="$PROJECT_ROOT/scripts/lib/update.sh"
+    local test_home="$BATS_TEST_TMPDIR/update-home-relative"
+    local cwd="$BATS_TEST_TMPDIR/update-relative-cwd"
+    local expected_path=""
+    mkdir -p "$test_home/.local/bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin" "$cwd/relative/bin"
+
+    run env HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'cd "$3"; source "$1"; ACFS_BIN_DIR="relative/bin"; PATH=""; ensure_path; printf "%s
+" "$PATH"' _ "$update" unused "$cwd"
+    assert_success
+
+    expected_path="$test_home/.local/bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+    [ "$output" = "$expected_path" ]
+}
+
+@test "doctor.sh: ensure_path restores system PATH when empty" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local test_home="$BATS_TEST_TMPDIR/doctor-home"
+    local expected_path=""
+    mkdir -p "$test_home/.local/bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^ensure_path()/,/^}$/p' "$doctor_lib")"
+
+    export TARGET_HOME="$test_home"
+    export ACFS_BIN_DIR=""
+    _acfs_doctor_current_home="$test_home"
+    # shellcheck disable=SC2123
+    PATH=""
+    ensure_path
+
+    expected_path="$test_home/.local/bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+    [ "$PATH" = "$expected_path" ]
+}
+
+@test "doctor.sh: runtime path includes hardened system PATH once when PATH is empty" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local test_home="$BATS_TEST_TMPDIR/doctor-runtime-home"
+    local original_path="${PATH-}"
+    mkdir -p "$test_home/.local/bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_sanitize_abs_nonroot_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_runtime_home()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_runtime_path()/,/^}$/p' "$doctor_lib")"
+
+    export TARGET_HOME="$test_home"
+    export ACFS_HOME=""
+    export ACFS_BIN_DIR=""
+    _acfs_doctor_current_home="$test_home"
+    # shellcheck disable=SC2123
+    PATH=""
+
+    run doctor_runtime_path
+    PATH="${original_path:-/usr/bin:/bin}"
+    assert_success
+    [ "$output" = "$test_home/.local/bin:$test_home/.acfs/bin:$test_home/.bun/bin:$test_home/.cargo/bin:$test_home/.atuin/bin:$test_home/go/bin:$test_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin" ]
+}
+
+@test "update.sh: target path includes google cloud sdk bin and hardened system PATH" {
+    local update="$PROJECT_ROOT/scripts/lib/update.sh"
+    local target_home="$BATS_TEST_TMPDIR/update-target-home"
+    mkdir -p "$target_home"
+
+    run env HOME="$target_home" PATH="/usr/bin:/bin" /bin/bash -c 'source "$1"; ACFS_BIN_DIR=""; PATH=""; update_target_path "$2"' _ "$update" "$target_home"
+    assert_success
+    [ "$output" = "$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:$target_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin" ]
+}
+
+@test "update.sh: run_in_target_context rejects unresolved target_home before sudo" {
+    local sudo_log="$BATS_TEST_TMPDIR/update-sudo.log"
+    : > "$sudo_log"
+
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    sudo() {
+        echo "sudo-called=$*" >> "$sudo_log"
+        return 0
+    }
+
+    run update_run_in_target_context "" printf unreachable
+    assert_failure
+    assert_output --partial "Unable to resolve TARGET_HOME for 'missinguser'; export TARGET_HOME explicitly"
+
+    run cat "$sudo_log"
+    assert_success
+    assert_output ""
 }
 
 @test "doctor.sh: binary helper ignores current-shell-only PATH entries" {
