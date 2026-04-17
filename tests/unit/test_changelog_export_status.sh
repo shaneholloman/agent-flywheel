@@ -3746,22 +3746,18 @@ test_cheatsheet_can_be_sourced_without_running_main() {
     setup_mock_env
 
     local output=""
-    output=$(HOME="$TEST_HOME" \
-        TEST_CHEATSHEET_SCRIPT="$CHEATSHEET_SH" \
-        bash -lc '
+    output=$(HOME="$TEST_HOME"         TEST_CHEATSHEET_SCRIPT="$CHEATSHEET_SH"         bash -lc '
             set +e +u
             set +o pipefail
             HOME=relative-home
             set -- --bogus keep
             source "$TEST_CHEATSHEET_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s
-" "$-"
+                printf "bad-shell-flags:%s\n" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail
-"
+                printf "bad-shell-flags:pipefail\n"
                 exit 1
             fi
             acfs_home_set=unset
@@ -3772,8 +3768,7 @@ test_cheatsheet_can_be_sourced_without_running_main() {
             [[ -v SCRIPT_DIR ]] && script_dir_set=set
             [[ -v ACFS_VERSION ]] && acfs_version_set=set
             [[ -v HAS_GUM ]] && has_gum_set=set
-            printf "%s|%s|%s|%s|%s|%s|%s|%s
-" "$HOME" "$#" "$1" "$2" "$acfs_home_set" "$script_dir_set" "$acfs_version_set" "$has_gum_set"
+            printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "$acfs_home_set" "$script_dir_set" "$acfs_version_set" "$has_gum_set"
         ' 2>/dev/null)
 
     if [[ "$output" == "relative-home|2|--bogus|keep|unset|unset|unset|unset" ]]; then
@@ -3997,29 +3992,24 @@ test_status_can_be_sourced_without_running_main() {
     setup_mock_env
 
     local output=""
-    output=$(HOME="$TEST_HOME" \
-        TEST_STATUS_SCRIPT="$STATUS_SH" \
-        bash -lc '
+    output=$(HOME="$TEST_HOME"         TEST_STATUS_SCRIPT="$STATUS_SH"         bash -lc '
             set +e +u
             set +o pipefail
             HOME=relative-home
             set -- --bogus keep
             source "$TEST_STATUS_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s
-" "$-"
+                printf "bad-shell-flags:%s\n" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail
-"
+                printf "bad-shell-flags:pipefail\n"
                 exit 1
             fi
             script_dir_set=unset
             [[ -v SCRIPT_DIR ]] && script_dir_set=set
             declare -F status_main >/dev/null
-            printf "%s|%s|%s|%s|%s
-" "$HOME" "$#" "$1" "$2" "$script_dir_set"
+            printf "%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "$script_dir_set"
         ' 2>/dev/null)
 
     if [[ "$output" == "relative-home|2|--bogus|keep|unset" ]]; then
@@ -4362,9 +4352,7 @@ test_export_config_can_be_sourced_without_mutating_caller_env() {
     setup_mock_env
 
     local output=""
-    output=$(HOME="$TEST_HOME" \
-        TEST_EXPORT_CONFIG_SCRIPT="$EXPORT_CONFIG_SH" \
-        bash -lc '
+    output=$(HOME="$TEST_HOME"         TEST_EXPORT_CONFIG_SCRIPT="$EXPORT_CONFIG_SH"         bash -lc '
             set +e +u
             set +o pipefail
             HOME=relative-home
@@ -4373,13 +4361,11 @@ test_export_config_can_be_sourced_without_mutating_caller_env() {
             set -- --bogus keep
             source "$TEST_EXPORT_CONFIG_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s
-" "$-"
+                printf "bad-shell-flags:%s\n" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail
-"
+                printf "bad-shell-flags:pipefail\n"
                 exit 1
             fi
             target_home_set=unset
@@ -4403,8 +4389,7 @@ test_export_config_can_be_sourced_without_mutating_caller_env() {
             [[ -v INSTALL_HELPERS_FILE ]] && helpers_file_set=set
             [[ -v MANIFEST_INDEX_FILE ]] && manifest_file_set=set
             declare -F export_config_main >/dev/null
-            printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s
-" "$HOME" "$#" "$1" "$2" "$PATH" "$target_home_set" "$target_user_set" "$acfs_home_set" "$script_dir_set" "$output_format_set" "$output_file_set" "$state_file_set" "$version_file_set" "$helpers_file_set" "$manifest_file_set"
+            printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "$PATH" "$target_home_set" "$target_user_set" "$acfs_home_set" "$script_dir_set" "$output_format_set" "$output_file_set" "$state_file_set" "$version_file_set" "$helpers_file_set" "$manifest_file_set"
         ' 2>/dev/null)
 
     if [[ "$output" == "relative-home|2|--bogus|keep|/usr/bin:/bin|unset|unset|unset|unset|unset|unset|unset|unset|unset|unset" ]]; then
@@ -5089,9 +5074,7 @@ test_support_can_be_sourced_without_running_main() {
     setup_mock_env
 
     local output=""
-    output=$(HOME="$TEST_HOME" \
-        TEST_SUPPORT_SCRIPT="$SUPPORT_SH" \
-        bash -lc '
+    output=$(HOME="$TEST_HOME"         TEST_SUPPORT_SCRIPT="$SUPPORT_SH"         bash -lc '
             set +e +u
             set +o pipefail
             log_step() { :; }
@@ -5104,13 +5087,11 @@ test_support_can_be_sourced_without_running_main() {
             set -- --bogus keep
             source "$TEST_SUPPORT_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s
-" "$-"
+                printf "bad-shell-flags:%s\n" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail
-"
+                printf "bad-shell-flags:pipefail\n"
                 exit 1
             fi
             acfs_home_set=unset
@@ -5119,8 +5100,7 @@ test_support_can_be_sourced_without_running_main() {
             [[ -v SCRIPT_DIR ]] && script_dir_set=set
             declare -F redact_file >/dev/null
             declare -F redact_bundle >/dev/null
-            printf "%s|%s|%s|%s|%s|%s
-" "$HOME" "$#" "$1" "$2" "$acfs_home_set" "$script_dir_set"
+            printf "%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "$acfs_home_set" "$script_dir_set"
         ' 2>/dev/null)
 
     if [[ "$output" == "relative-home|2|--bogus|keep|unset|unset" ]]; then
@@ -7377,22 +7357,18 @@ test_onboard_can_be_sourced_without_mutating_caller_env() {
     setup_mock_env
 
     local output=""
-    output=$(HOME="$TEST_HOME" \
-        TEST_ONBOARD_SCRIPT="$ONBOARD_SH" \
-        bash -lc '
+    output=$(HOME="$TEST_HOME"         TEST_ONBOARD_SCRIPT="$ONBOARD_SH"         bash -lc '
             set +e +u
             set +o pipefail
             HOME=relative-home
             set -- --bogus keep
             source "$TEST_ONBOARD_SCRIPT"
             if [[ $- == *e* || $- == *u* ]]; then
-                printf "bad-shell-flags:%s
-" "$-"
+                printf "bad-shell-flags:%s\n" "$-"
                 exit 1
             fi
             if shopt -qo pipefail; then
-                printf "bad-shell-flags:pipefail
-"
+                printf "bad-shell-flags:pipefail\n"
                 exit 1
             fi
             acfs_home_set=unset
@@ -7404,8 +7380,7 @@ test_onboard_can_be_sourced_without_mutating_caller_env() {
             [[ -v SCRIPT_DIR ]] && script_dir_set=set
             [[ -v ONBOARD_RUNTIME_HOME ]] && runtime_home_set=set
             declare -F onboard_main >/dev/null
-            printf "%s|%s|%s|%s|%s|%s|%s|%s
-" "$HOME" "$#" "$1" "$2" "$acfs_home_set" "$script_path_set" "$script_dir_set" "$runtime_home_set"
+            printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "$acfs_home_set" "$script_path_set" "$script_dir_set" "$runtime_home_set"
         ' 2>/dev/null)
 
     if [[ "$output" == "relative-home|2|--bogus|keep|unset|unset|unset|unset" ]]; then
