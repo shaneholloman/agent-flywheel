@@ -21,6 +21,39 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/autofix.sh"
 
+autofix_version_managers_runtime_home() {
+    local runtime_home=""
+
+    runtime_home="$(autofix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
+
+    runtime_home="$(autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
+
+    return 1
+}
+
+# Only trust env-provided directories when they belong to the resolved
+# runtime home, otherwise root/sudo callers can leak their own XDG/NVM/PYENV
+# paths into target-user repairs.
+autofix_version_managers_path_belongs_to_runtime_home() {
+    local candidate_path=""
+    local runtime_home=""
+
+    candidate_path="$(autofix_sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+    runtime_home="$(autofix_sanitize_abs_nonroot_path "${2:-}" 2>/dev/null || true)"
+
+    [[ -n "$candidate_path" ]] || return 1
+    [[ -n "$runtime_home" ]] || return 1
+    [[ "$candidate_path" == "$runtime_home" || "$candidate_path" == "$runtime_home"/* ]]
+}
+
 autofix_version_managers_restore() {
     local restore_command="${1:-}"
 
@@ -39,17 +72,28 @@ autofix_nvm_check() {
     local -a found_nvm_dirs=()
     local nvm_version=""
     local shell_configs=()
+    local runtime_home=""
+    local config_home=""
 
-    # Check for NVM_DIR environment variable
-    if [[ -n "${NVM_DIR:-}" ]]; then
+    runtime_home="$(autofix_version_managers_runtime_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    # Check for NVM_DIR environment variable. Ignore caller-shell values from a
+    # different home when TARGET_HOME is driving the repair.
+    if [[ -n "${NVM_DIR:-}" ]] && { [[ "$runtime_home" == "${HOME%/}" ]] || autofix_version_managers_path_belongs_to_runtime_home "$NVM_DIR" "$runtime_home"; }; then
         found_nvm_dirs+=("$NVM_DIR")
         status="env_set"
     fi
 
+    config_home="$(autofix_sanitize_abs_nonroot_path "${XDG_CONFIG_HOME:-}" 2>/dev/null || true)"
+    if [[ -z "$config_home" ]] || ! { [[ "$runtime_home" == "${HOME%/}" ]] || autofix_version_managers_path_belongs_to_runtime_home "$config_home" "$runtime_home"; }; then
+        config_home="$runtime_home/.config"
+    fi
+
     # Check common locations
     local nvm_locations=(
-        "$HOME/.nvm"
-        "${XDG_CONFIG_HOME:-$HOME/.config}/nvm"
+        "$runtime_home/.nvm"
+        "$config_home/nvm"
     )
 
     for loc in "${nvm_locations[@]}"; do
@@ -73,11 +117,11 @@ autofix_nvm_check() {
 
     # Check shell configs for nvm references
     local configs=(
-        "$HOME/.bashrc"
-        "$HOME/.zshrc"
-        "$HOME/.profile"
-        "$HOME/.bash_profile"
-        "$HOME/.zprofile"
+        "$runtime_home/.bashrc"
+        "$runtime_home/.zshrc"
+        "$runtime_home/.profile"
+        "$runtime_home/.bash_profile"
+        "$runtime_home/.zprofile"
     )
 
     for config in "${configs[@]}"; do
@@ -324,17 +368,28 @@ autofix_pyenv_check() {
     local -a found_pyenv_roots=()
     local pyenv_version=""
     local shell_configs=()
+    local runtime_home=""
+    local data_home=""
 
-    # Check for PYENV_ROOT environment variable
-    if [[ -n "${PYENV_ROOT:-}" ]]; then
+    runtime_home="$(autofix_version_managers_runtime_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    # Check for PYENV_ROOT environment variable. Ignore caller-shell values from a
+    # different home when TARGET_HOME is driving the repair.
+    if [[ -n "${PYENV_ROOT:-}" ]] && { [[ "$runtime_home" == "${HOME%/}" ]] || autofix_version_managers_path_belongs_to_runtime_home "$PYENV_ROOT" "$runtime_home"; }; then
         found_pyenv_roots+=("$PYENV_ROOT")
         status="env_set"
     fi
 
+    data_home="$(autofix_sanitize_abs_nonroot_path "${XDG_DATA_HOME:-}" 2>/dev/null || true)"
+    if [[ -z "$data_home" ]] || ! { [[ "$runtime_home" == "${HOME%/}" ]] || autofix_version_managers_path_belongs_to_runtime_home "$data_home" "$runtime_home"; }; then
+        data_home="$runtime_home/.local/share"
+    fi
+
     # Check common locations
     local pyenv_locations=(
-        "$HOME/.pyenv"
-        "${XDG_DATA_HOME:-$HOME/.local/share}/pyenv"
+        "$runtime_home/.pyenv"
+        "$data_home/pyenv"
     )
 
     for loc in "${pyenv_locations[@]}"; do
@@ -358,11 +413,11 @@ autofix_pyenv_check() {
 
     # Check shell configs for pyenv references
     local configs=(
-        "$HOME/.bashrc"
-        "$HOME/.zshrc"
-        "$HOME/.profile"
-        "$HOME/.bash_profile"
-        "$HOME/.zprofile"
+        "$runtime_home/.bashrc"
+        "$runtime_home/.zshrc"
+        "$runtime_home/.profile"
+        "$runtime_home/.bash_profile"
+        "$runtime_home/.zprofile"
     )
 
     for config in "${configs[@]}"; do

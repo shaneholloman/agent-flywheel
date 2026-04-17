@@ -3639,6 +3639,48 @@ test_status_ignores_current_shell_only_binaries() {
     cleanup_mock_env
 }
 
+test_status_uses_persisted_bin_dir_over_poisoned_env_bin_dir() {
+    setup_installed_layout_env
+
+    local custom_bin="$TEST_HOME/custom-bin"
+    mkdir -p "$custom_bin"
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$custom_bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+
+    rm -f "$TEST_TARGET_HOME/.local/bin/claude"
+    rm -f "$TEST_TARGET_HOME/.local/bin/codex"
+    rm -f "$TEST_TARGET_HOME/.local/bin/gemini"
+    rm -f "$TEST_TARGET_HOME/.local/bin/ntm"
+    write_fake_command "$custom_bin/claude" "claude 1.2.3"
+    write_fake_command "$custom_bin/codex" "codex 1.2.3"
+    write_fake_command "$custom_bin/gemini" "gemini 1.2.3"
+    write_fake_command "$custom_bin/ntm" "ntm 1.2.3"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_BIN_DIR="$TEST_FAKE_BIN" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash "$TEST_INSTALLED_ACFS/scripts/lib/status.sh" --json)
+
+    if printf '%s\n' "$output" | jq -e '
+        .status == "ok" and
+        ((.warnings | index("missing: claude")) == null)
+    ' >/dev/null 2>&1; then
+        harness_pass "status prefers persisted bin_dir over poisoned env bin_dir"
+    else
+        harness_fail "status prefers persisted bin_dir over poisoned env bin_dir" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_status_uses_system_state_when_user_state_missing() {
     setup_system_state_only_env
 
@@ -4215,6 +4257,39 @@ test_info_summary_ignores_current_shell_only_binaries() {
     cleanup_mock_env
 }
 
+test_info_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir() {
+    setup_installed_layout_env
+
+    local custom_bin="$TEST_HOME/custom-bin"
+    mkdir -p "$custom_bin"
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$custom_bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+
+    rm -f "$TEST_TARGET_HOME/.local/bin/claude"
+    write_fake_command "$custom_bin/claude" "claude 1.2.3"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" ACFS_BIN_DIR="$TEST_FAKE_BIN" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" TEST_INFO_SCRIPT="$INFO_SH" bash -lc 'source "$TEST_INFO_SCRIPT"; info_prepare_context; info_binary_path claude' 2>/dev/null)
+
+    if [[ "$output" == "$custom_bin/claude" ]]; then
+        harness_pass "info binary path prefers persisted bin_dir over poisoned env bin_dir"
+    else
+        harness_fail "info binary path prefers persisted bin_dir over poisoned env bin_dir" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_support_bundle_uses_installed_layout_under_root_home() {
     setup_installed_layout_env
 
@@ -4395,6 +4470,81 @@ EOF
     cleanup_mock_env
 }
 
+test_smoke_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir() {
+    setup_installed_layout_env
+
+    local custom_bin="$TEST_HOME/custom-bin"
+    local stale_state_file="$TEST_HOME/stale-smoke-state.json"
+    mkdir -p "$custom_bin"
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$custom_bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+    cat > "$stale_state_file" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_ROOT_HOME",
+  "bin_dir": "$TEST_FAKE_BIN",
+  "started_at": "2026-03-01T00:00:00Z",
+  "last_updated": "2026-03-02T00:00:00Z"
+}
+EOF
+
+    rm -f "$TEST_TARGET_HOME/.local/bin/claude"
+    write_fake_command "$custom_bin/claude" "claude 1.2.3"
+    write_fake_command "$TEST_FAKE_BIN/claude" "claude stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$TEST_TARGET_HOME" TARGET_USER="tester" ACFS_HOME="$TEST_INSTALLED_ACFS" ACFS_STATE_FILE="$stale_state_file" ACFS_BIN_DIR="$TEST_FAKE_BIN" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash -c 'source "$1"; _smoke_binary_path claude' _ "$SMOKE_TEST_SH")
+
+    if [[ "$output" == "$custom_bin/claude" ]]; then
+        harness_pass "smoke binary path prefers persisted bin_dir over poisoned env bin_dir"
+    else
+        harness_fail "smoke binary path prefers persisted bin_dir over poisoned env bin_dir" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_smoke_bootstrap_uses_system_state_target_home_when_getent_unavailable() {
+    setup_system_state_target_home_only_env
+
+    cat > "$TEST_FAKE_BIN/stat" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-c" ]] && [[ "\${2:-}" == "%U" ]] && [[ "\${3:-}" == "$TEST_TARGET_HOME" ]]; then
+    printf 'tester\n'
+    exit 0
+fi
+exec /usr/bin/stat "\$@"
+EOF
+    chmod +x "$TEST_FAKE_BIN/stat"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash -c 'source "$1"; printf "target_user=%s\ntarget_home=%s\nbinary=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "$(_smoke_binary_path claude 2>/dev/null || true)"' \
+        _ "$SMOKE_TEST_SH")
+
+    if [[ "$output" == *"target_user=tester"* ]] \
+        && [[ "$output" == *"target_home=$TEST_TARGET_HOME"* ]] \
+        && [[ "$output" == *"binary=$TEST_TARGET_HOME/.local/bin/claude"* ]]; then
+        harness_pass "smoke bootstrap uses system state target_home when getent is unavailable"
+    else
+        harness_fail "smoke bootstrap uses system state target_home when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_runtime_helpers_resolve_current_home_from_passwd_when_home_invalid() {
     setup_mock_env
 
@@ -4529,6 +4679,41 @@ EOF
         harness_pass "doctor ignores relative HOME state trap"
     else
         harness_fail "doctor ignores relative HOME state trap" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_doctor_prefers_target_home_over_poisoned_acfs_home() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_ROOT_HOME/.acfs"
+    cat > "$TEST_ROOT_HOME/.acfs/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "other",
+  "target_home": "$TEST_ROOT_HOME/.acfs"
+}
+EOF
+
+    local probe_file="$TEST_HOME/doctor-fix-source.env"
+    cat > "$TEST_INSTALLED_ACFS/scripts/lib/doctor_fix.sh" <<EOF
+#!/usr/bin/env bash
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "\$HOME" "\${TARGET_HOME:-}" "\${ACFS_HOME:-}" > "$probe_file"
+return 0 2>/dev/null || exit 0
+EOF
+    chmod +x "$TEST_INSTALLED_ACFS/scripts/lib/doctor_fix.sh"
+
+    HOME="$TEST_ROOT_HOME"         ACFS_HOME="$TEST_ROOT_HOME/.acfs"         TARGET_HOME="$TEST_ROOT_HOME"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --json >/dev/null 2>&1 || true
+
+    local expected="HOME=$TEST_ROOT_HOME TARGET_HOME=$TEST_TARGET_HOME ACFS_HOME=$TEST_INSTALLED_ACFS"
+    local output=""
+    output="$(cat "$probe_file" 2>/dev/null || true)"
+
+    if [[ "$output" == "$expected" ]]; then
+        harness_pass "doctor sources doctor_fix with resolved target install context"
+    else
+        harness_fail "doctor sources doctor_fix with resolved target install context" "$output"
     fi
 
     cleanup_mock_env
@@ -5296,6 +5481,123 @@ EOF
     cleanup_mock_env
 }
 
+test_doctor_deep_gemini_auth_finds_target_google_cloud_sdk_bin_under_root_home() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_TARGET_HOME/.gemini" "$TEST_TARGET_HOME/google-cloud-sdk/bin"
+    cat > "$TEST_TARGET_HOME/.gemini/.env" <<'EOF'
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=test-project
+GOOGLE_CLOUD_LOCATION=us-central1
+EOF
+
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
+    cat > "$TEST_TARGET_HOME/google-cloud-sdk/bin/gcloud" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "application-default" && "${3:-}" == "print-access-token" ]]; then
+    printf '%s\n' 'ya29.test-token'
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_TARGET_HOME/google-cloud-sdk/bin/gcloud"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --deep --json || true)
+
+    if printf '%s\n' "$output" | jq -e '
+        ([.checks[] | select(.id == "deep.agent.gemini_auth") | .status] | first) == "pass"
+    ' >/dev/null 2>&1; then
+        harness_pass "doctor deep gemini auth finds target google-cloud-sdk bin under root home"
+    else
+        harness_fail "doctor deep gemini auth finds target google-cloud-sdk bin under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_doctor_agent_checks_prefer_persisted_bin_dir_over_poisoned_env_bin_dir() {
+    setup_installed_layout_env
+
+    local custom_bin="$TEST_HOME/custom-bin"
+    local stale_state_file="$TEST_HOME/stale-doctor-state.json"
+    mkdir -p "$custom_bin"
+    mkdir -p "$TEST_INSTALLED_ACFS/zsh"
+    mkdir -p "$TEST_TARGET_HOME/.claude"
+    mkdir -p "$TEST_TARGET_HOME/.oh-my-zsh/custom/themes/powerlevel10k"
+    mkdir -p "$TEST_TARGET_HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+    mkdir -p "$TEST_TARGET_HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$custom_bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+    cat > "$stale_state_file" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_ROOT_HOME",
+  "bin_dir": "$TEST_FAKE_BIN",
+  "started_at": "2026-03-01T00:00:00Z",
+  "last_updated": "2026-03-02T00:00:00Z"
+}
+EOF
+    cat > "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" <<'EOF'
+alias cc='claude'
+alias cod='codex'
+gmi() { gemini "$@"; }
+EOF
+    cat > "$TEST_TARGET_HOME/.claude/settings.json" <<'JSON'
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dcg test \"$CLAUDE_TOOL_INPUT\""
+          }
+        ]
+      }
+    ]
+  }
+}
+JSON
+
+    rm -f "$TEST_TARGET_HOME/.local/bin/claude"
+    write_fake_command "$custom_bin/claude" "claude 1.2.3"
+    write_fake_command "$custom_bin/dcg" "dcg 1.2.3"
+    write_fake_command "$custom_bin/rch" "rch 1.2.3"
+    write_fake_command "$TEST_FAKE_BIN/claude" "claude stale"
+    write_fake_command "$TEST_FAKE_BIN/dcg" "dcg stale"
+    write_fake_command "$TEST_FAKE_BIN/rch" "rch stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_STATE_FILE="$stale_state_file" ACFS_BIN_DIR="$TEST_FAKE_BIN" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --json)
+
+    if printf '%s\n' "$output" | jq -e --arg custom_path "$custom_bin/claude" --arg stale_path "$TEST_FAKE_BIN/claude" '
+        ([.checks[] | select(.id == "agent.path.claude") | .details] | first) == $custom_path and
+        ([.checks[] | select(.id == "agent.path.claude") | .details] | first) != $stale_path and
+        ([.checks[] | select(.id == "stack.dcg") | .status] | first) == "pass" and
+        ([.checks[] | select(.id == "stack.rch") | .status] | first) == "pass"
+    ' >/dev/null 2>&1; then
+        harness_pass "doctor agent checks prefer persisted bin_dir over poisoned env bin_dir"
+    else
+        harness_fail "doctor agent checks prefer persisted bin_dir over poisoned env bin_dir" "$output"
+    fi
+
+    cleanup_mock_env
+}
 test_doctor_deep_optional_probes_use_target_home_under_root_home() {
     setup_installed_layout_env
 
@@ -5607,6 +5909,78 @@ EOF2
     cleanup_mock_env
 }
 
+test_onboard_auth_checks_ignore_poisoned_current_path_and_env_bin_dir() {
+    setup_installed_layout_env
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$TEST_TARGET_HOME/.local/bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+
+    cat > "$TEST_FAKE_BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_FAKE_BIN/gh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" ACFS_BIN_DIR="$TEST_FAKE_BIN" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash -lc 'source "'"$ONBOARD_SH"'" help >/dev/null; check_auth_status github && status=0 || status=$?; printf "%s\n" "$status"')
+
+    if [[ "$output" != "0" ]]; then
+        harness_pass "onboard auth checks ignore poisoned current PATH and env bin_dir"
+    else
+        harness_fail "onboard auth checks ignore poisoned current PATH and env bin_dir" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_onboard_gemini_vertex_auth_finds_target_google_cloud_sdk_bin_outside_current_path() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_TARGET_HOME/.gemini" "$TEST_TARGET_HOME/google-cloud-sdk/bin"
+    cat > "$TEST_TARGET_HOME/.gemini/.env" <<'EOF'
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=test-project
+GOOGLE_CLOUD_LOCATION=us-central1
+EOF
+
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/gemini" "gemini 1.2.3"
+    cat > "$TEST_TARGET_HOME/google-cloud-sdk/bin/gcloud" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "application-default" && "${3:-}" == "print-access-token" ]]; then
+    printf '%s\n' 'ya29.test-token'
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_TARGET_HOME/google-cloud-sdk/bin/gcloud"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash -lc 'source "'"$ONBOARD_SH"'" help >/dev/null; check_auth_status gemini && status=0 || status=$?; printf "%s\n" "$status"')
+
+    if [[ "$output" == "0" ]]; then
+        harness_pass "onboard gemini vertex auth finds target google-cloud-sdk bin outside current PATH"
+    else
+        harness_fail "onboard gemini vertex auth finds target google-cloud-sdk bin outside current PATH" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_onboard_gemini_vertex_auth_finds_target_gcloud_outside_current_path() {
     setup_installed_layout_env
 
@@ -5856,6 +6230,7 @@ main() {
     test_status_errors_on_malformed_state_json || true
     test_status_uses_installed_layout_under_root_home || true
     test_status_ignores_current_shell_only_binaries || true
+    test_status_uses_persisted_bin_dir_over_poisoned_env_bin_dir || true
     test_status_uses_system_state_when_user_state_missing || true
     test_status_uses_system_state_target_home_when_getent_unavailable || true
     test_status_ignores_relative_home_state_trap || true
@@ -5888,6 +6263,8 @@ main() {
     harness_section "Cheatsheet"
     test_state_library_ignores_relative_home_target_resolution || true
     test_smoke_test_ignores_relative_home_target_resolution || true
+    test_smoke_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir || true
+    test_smoke_bootstrap_uses_system_state_target_home_when_getent_unavailable || true
     test_cheatsheet_uses_installed_layout_and_target_path_under_root_home || true
     test_cheatsheet_copy_install_uses_target_home_only_system_state || true
     test_cheatsheet_copy_install_ignores_relative_home_trap || true
@@ -5901,6 +6278,7 @@ main() {
     test_info_ignores_relative_home_state_trap || true
     test_info_uses_target_user_path_under_root_home || true
     test_info_summary_ignores_current_shell_only_binaries || true
+    test_info_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir || true
     test_info_zero_lessons_hides_onboard_prompt_and_explains_state || true
     test_info_reads_skipped_tools_without_jq || true
     test_support_bundle_uses_installed_layout_under_root_home || true
@@ -5912,6 +6290,8 @@ main() {
     test_onboard_cheatsheet_uses_installed_layout_under_root_home || true
     test_onboard_auth_checks_use_installed_target_home_under_root_home || true
     test_onboard_auth_checks_find_target_binaries_outside_current_path || true
+    test_onboard_auth_checks_ignore_poisoned_current_path_and_env_bin_dir || true
+    test_onboard_gemini_vertex_auth_finds_target_google_cloud_sdk_bin_outside_current_path || true
     test_onboard_gemini_vertex_auth_finds_target_gcloud_outside_current_path || true
     test_onboard_copy_install_uses_system_state_under_root_home || true
     test_onboard_copy_install_uses_target_home_only_system_state_under_root_home || true
@@ -5921,6 +6301,7 @@ main() {
     test_doctor_entrypoint_dispatches_helper_commands || true
     test_doctor_dispatches_installed_layout_under_root_home || true
     test_doctor_ignores_relative_home_state_trap || true
+    test_doctor_prefers_target_home_over_poisoned_acfs_home || true
     test_acfs_update_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_update_wrapper_repairs_runtime_home_on_direct_exec || true
     test_acfs_update_wrapper_passes_bin_dir_from_state || true
@@ -5938,7 +6319,9 @@ main() {
     test_acfs_global_wrapper_does_not_guess_current_home_when_target_home_is_unresolved || true
     test_acfs_global_wrapper_ignores_stale_home_adjacent_target_user || true
     test_doctor_agent_checks_use_target_context_under_root_home || true
+    test_doctor_agent_checks_prefer_persisted_bin_dir_over_poisoned_env_bin_dir || true
     test_doctor_deep_agent_auth_uses_target_context_under_root_home || true
+    test_doctor_deep_gemini_auth_finds_target_google_cloud_sdk_bin_under_root_home || true
     test_doctor_deep_optional_probes_use_target_home_under_root_home || true
 
     harness_summary

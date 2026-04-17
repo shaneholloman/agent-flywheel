@@ -62,11 +62,14 @@ if [[ -n "$_acfs_doctor_current_home" ]]; then
     HOME="$_acfs_doctor_current_home"
     export HOME
 fi
-TARGET_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+_ACFS_DOCTOR_ENV_TARGET_USER="${TARGET_USER:-}"
+_ACFS_DOCTOR_ENV_TARGET_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+TARGET_HOME="$_ACFS_DOCTOR_ENV_TARGET_HOME"
 ACFS_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 ACFS_STATE_FILE="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
 ACFS_SYSTEM_STATE_FILE="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"
-ACFS_BIN_DIR="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+_ACFS_DOCTOR_ENV_BIN_DIR="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+ACFS_BIN_DIR=""
 export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR
 
 # Ensure the doctor is self-contained and doesn't depend on shell rc files
@@ -86,6 +89,7 @@ ensure_path() {
         "$primary_home/.cargo/bin"
         "$primary_home/.atuin/bin"
         "$primary_home/go/bin"
+        "$primary_home/google-cloud-sdk/bin"
         "/usr/local/bin"
         "/usr/bin"
         "/bin"
@@ -120,16 +124,20 @@ ensure_path() {
         export PATH="${prefix}:$PATH"
     fi
 }
-ensure_path
-
-# Check for gum and source gum_ui if available
 HAS_GUM=false
-if command -v gum &>/dev/null; then
-    HAS_GUM=true
-fi
 
 # Source gum_ui library if available
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_acfs_doctor_script_acfs_home=""
+case "$SCRIPT_DIR" in
+    */.acfs/bin)
+        _acfs_doctor_script_acfs_home="${SCRIPT_DIR%/bin}"
+        ;;
+    */.acfs/scripts/lib)
+        _acfs_doctor_script_acfs_home="${SCRIPT_DIR%/scripts/lib}"
+        ;;
+esac
+_acfs_doctor_script_acfs_home="$(_acfs_doctor_sanitize_abs_nonroot_path "${_acfs_doctor_script_acfs_home:-}" 2>/dev/null || true)"
 
 _acfs_doctor_find_project_path() {
     local rel_path="$1"
@@ -175,8 +183,6 @@ _acfs_doctor_source_first "output.sh" || true
 _DOCTOR_OUTPUT_FORMAT=""
 _DOCTOR_SHOW_STATS=false
 
-# Source doctor_fix library for --fix functionality
-_acfs_doctor_source_first "doctor_fix.sh" || true
 
 # Prefer the installed VERSION file when available.
 _acfs_doctor_version_file="$(_acfs_doctor_find_project_path "VERSION" 2>/dev/null || true)"
@@ -198,25 +204,39 @@ if [[ -z "${ACFS_MODE:-}" ]] && [[ -f "$_acfs_doctor_installed_state" ]]; then
 fi
 unset _acfs_doctor_installed_state
 
-# Prefer the installed state file for target user (for installs where the target user is not ubuntu).
+# Prefer authoritative installed/system state before ambient $HOME/.acfs state.
 _acfs_doctor_state_files=()
-if [[ -n "${ACFS_STATE_FILE:-}" ]]; then
-    _acfs_doctor_state_files+=("$ACFS_STATE_FILE")
-fi
-if [[ -n "${ACFS_HOME:-}" ]]; then
-    _acfs_doctor_state_files+=("$ACFS_HOME/state.json")
-fi
+_acfs_doctor_ambient_state_files=()
 _acfs_doctor_installed_state="$(_acfs_doctor_find_project_path "state.json" 2>/dev/null || true)"
 if [[ -n "$_acfs_doctor_installed_state" ]]; then
     _acfs_doctor_state_files+=("$_acfs_doctor_installed_state")
 fi
+if [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]]; then
+    _acfs_doctor_state_files+=("$ACFS_SYSTEM_STATE_FILE")
+fi
+if [[ -n "${ACFS_HOME:-}" ]] && { [[ -z "${_acfs_doctor_script_acfs_home:-}" ]] || [[ "${ACFS_HOME}" == "$_acfs_doctor_script_acfs_home" ]]; }; then
+    _acfs_doctor_state_files+=("$ACFS_HOME/state.json")
+fi
+if [[ -n "${ACFS_STATE_FILE:-}" ]]; then
+    _acfs_doctor_state_files+=("$ACFS_STATE_FILE")
+fi
 if [[ -n "${_acfs_doctor_current_home:-}" ]]; then
-    _acfs_doctor_state_files+=("$_acfs_doctor_current_home/.acfs/state.json")
+    _acfs_doctor_ambient_state_files+=("$_acfs_doctor_current_home/.acfs/state.json")
 fi
 
-TARGET_USER="${TARGET_USER:-}"
+TARGET_USER=""
+for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
+    [[ -f "$_acfs_doctor_state_file" ]] || continue
+    if command -v jq &>/dev/null; then
+        TARGET_USER="$(jq -r '.target_user // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
+    fi
+    if [[ -z "${TARGET_USER:-}" ]]; then
+        TARGET_USER="$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+    fi
+    [[ -n "${TARGET_USER:-}" ]] && break
+done
 if [[ -z "${TARGET_USER:-}" ]]; then
-    for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
+    for _acfs_doctor_state_file in "${_acfs_doctor_ambient_state_files[@]}"; do
         [[ -f "$_acfs_doctor_state_file" ]] || continue
         if command -v jq &>/dev/null; then
             TARGET_USER="$(jq -r '.target_user // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
@@ -226,6 +246,9 @@ if [[ -z "${TARGET_USER:-}" ]]; then
         fi
         [[ -n "${TARGET_USER:-}" ]] && break
     done
+fi
+if [[ -z "${TARGET_USER:-}" ]] && [[ -n "${_ACFS_DOCTOR_ENV_TARGET_USER:-}" ]]; then
+    TARGET_USER="$_ACFS_DOCTOR_ENV_TARGET_USER"
 fi
 if [[ -z "${TARGET_USER:-}" ]]; then
     _acfs_current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
@@ -239,16 +262,34 @@ if [[ ! "$TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
     TARGET_USER="ubuntu"
 fi
 
-TARGET_HOME="${TARGET_HOME:-}"
-if [[ -n "${TARGET_HOME:-}" ]]; then
-    TARGET_HOME="${TARGET_HOME%/}"
-    if [[ -z "$TARGET_HOME" ]] || [[ "$TARGET_HOME" == "/" ]] || [[ "$TARGET_HOME" != /* ]]; then
-        TARGET_HOME=""
+TARGET_HOME=""
+for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
+    [[ -f "$_acfs_doctor_state_file" ]] || continue
+    if command -v jq &>/dev/null; then
+        TARGET_HOME="$(jq -r '.target_home // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
     fi
-fi
+    if [[ -z "${TARGET_HOME:-}" ]]; then
+        TARGET_HOME="$(sed -n 's/.*"target_home"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+    fi
+    if [[ -n "${TARGET_HOME:-}" ]]; then
+        TARGET_HOME="${TARGET_HOME%/}"
+        if [[ -z "$TARGET_HOME" ]] || [[ "$TARGET_HOME" == "/" ]] || [[ "$TARGET_HOME" != /* ]]; then
+            TARGET_HOME=""
+        fi
+    fi
+    [[ -n "${TARGET_HOME:-}" ]] && break
+done
 if [[ -z "${TARGET_HOME:-}" ]]; then
-    for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
+    _acfs_doctor_ambient_target_user=""
+    for _acfs_doctor_state_file in "${_acfs_doctor_ambient_state_files[@]}"; do
         [[ -f "$_acfs_doctor_state_file" ]] || continue
+        if command -v jq &>/dev/null; then
+            _acfs_doctor_ambient_target_user="$(jq -r '.target_user // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
+        fi
+        if [[ -z "${_acfs_doctor_ambient_target_user:-}" ]]; then
+            _acfs_doctor_ambient_target_user="$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+        fi
+        [[ "${_acfs_doctor_ambient_target_user:-}" == "$TARGET_USER" ]] || continue
         if command -v jq &>/dev/null; then
             TARGET_HOME="$(jq -r '.target_home // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
         fi
@@ -263,11 +304,44 @@ if [[ -z "${TARGET_HOME:-}" ]]; then
         fi
         [[ -n "${TARGET_HOME:-}" ]] && break
     done
+    unset _acfs_doctor_ambient_target_user
 fi
-
-unset _acfs_doctor_state_files
-unset _acfs_doctor_state_file
-unset _acfs_doctor_installed_state
+for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
+    [[ -f "$_acfs_doctor_state_file" ]] || continue
+    if command -v jq &>/dev/null; then
+        ACFS_BIN_DIR="$(jq -r '.bin_dir // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
+    fi
+    if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
+        ACFS_BIN_DIR="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+    fi
+    ACFS_BIN_DIR="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    [[ -n "${ACFS_BIN_DIR:-}" ]] && break
+done
+if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
+    _acfs_doctor_ambient_target_user=""
+    for _acfs_doctor_state_file in "${_acfs_doctor_ambient_state_files[@]}"; do
+        [[ -f "$_acfs_doctor_state_file" ]] || continue
+        if command -v jq &>/dev/null; then
+            _acfs_doctor_ambient_target_user="$(jq -r '.target_user // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
+        fi
+        if [[ -z "${_acfs_doctor_ambient_target_user:-}" ]]; then
+            _acfs_doctor_ambient_target_user="$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+        fi
+        [[ "${_acfs_doctor_ambient_target_user:-}" == "$TARGET_USER" ]] || continue
+        if command -v jq &>/dev/null; then
+            ACFS_BIN_DIR="$(jq -r '.bin_dir // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
+        fi
+        if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
+            ACFS_BIN_DIR="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+        fi
+        ACFS_BIN_DIR="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+        [[ -n "${ACFS_BIN_DIR:-}" ]] && break
+    done
+    unset _acfs_doctor_ambient_target_user
+fi
+if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
+    ACFS_BIN_DIR="$_ACFS_DOCTOR_ENV_BIN_DIR"
+fi
 
 if [[ -z "${TARGET_HOME:-}" ]]; then
     _acfs_passwd_entry="$(getent passwd "$TARGET_USER" 2>/dev/null || true)"
@@ -277,12 +351,13 @@ if [[ -z "${TARGET_HOME:-}" ]]; then
         TARGET_HOME="/root"
     elif [[ "$TARGET_USER" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
         TARGET_HOME="$_acfs_doctor_current_home"
-    else
-        TARGET_HOME="/home/$TARGET_USER"
     fi
     unset _acfs_passwd_entry
 fi
 
+if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "${_ACFS_DOCTOR_ENV_TARGET_HOME:-}" ]]; then
+    TARGET_HOME="$_ACFS_DOCTOR_ENV_TARGET_HOME"
+fi
 if [[ "$TARGET_HOME" != /* ]]; then
     if [[ "$TARGET_USER" == "root" ]]; then
         TARGET_HOME="/root"
@@ -296,9 +371,31 @@ fi
 export TARGET_USER
 export TARGET_HOME
 
+if [[ -n "$_acfs_doctor_script_acfs_home" ]]; then
+    ACFS_HOME="$_acfs_doctor_script_acfs_home"
+elif [[ -z "${ACFS_HOME:-}" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
+    ACFS_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "$TARGET_HOME/.acfs" 2>/dev/null || true)"
+fi
+export ACFS_HOME
+
+unset _acfs_doctor_script_acfs_home
+unset _acfs_doctor_state_files
+unset _acfs_doctor_state_file
+unset _acfs_doctor_installed_state
+unset _ACFS_DOCTOR_ENV_BIN_DIR
+unset _ACFS_DOCTOR_ENV_TARGET_HOME
+unset _ACFS_DOCTOR_ENV_TARGET_USER
+
 ensure_path
+if command -v gum &>/dev/null; then
+    HAS_GUM=true
+fi
 
 _acfs_doctor_source_first "gum_ui.sh" || true
+
+# Source doctor_fix after target-home resolution so its autofix state and
+# helper lookups cannot be steered by a stale caller ACFS_HOME.
+_acfs_doctor_source_first "doctor_fix.sh" || true
 
 # ============================================================
 # Fix Suggestion Builder (bd-31ps.5.2)
@@ -1096,7 +1193,10 @@ doctor_binary_path() {
     local runtime_home=""
     local primary_bin_dir=""
     local candidate=""
+    local path_dir=""
+    local sanitized_dir=""
     local -a candidates=()
+    local -a path_entries=()
 
     [[ -n "$name" ]] || return 1
 
@@ -1115,6 +1215,7 @@ doctor_binary_path() {
         "$runtime_home/.cargo/bin/$name"
         "$runtime_home/.atuin/bin/$name"
         "$runtime_home/go/bin/$name"
+        "$runtime_home/google-cloud-sdk/bin/$name"
         "$runtime_home/bin/$name"
         "/usr/local/bin/$name"
         "/usr/bin/$name"
@@ -1131,6 +1232,20 @@ doctor_binary_path() {
         return 0
     done
 
+    IFS=':' read -r -a path_entries <<< "${PATH:-}"
+    for path_dir in "${path_entries[@]}"; do
+        sanitized_dir="$(_acfs_doctor_sanitize_abs_nonroot_path "$path_dir" 2>/dev/null || true)"
+        [[ -n "$sanitized_dir" ]] || continue
+        case "$sanitized_dir" in
+            "$runtime_home"|"$runtime_home"/*)
+                candidate="$sanitized_dir/$name"
+                [[ -x "$candidate" ]] || continue
+                printf '%s\n' "$candidate"
+                return 0
+                ;;
+        esac
+    done
+
     return 1
 }
 
@@ -1141,29 +1256,7 @@ doctor_binary_exists() {
 }
 
 doctor_agent_mail_cli_path() {
-    local runtime_home=""
-    local primary_bin_dir=""
-    local candidate=""
-
-    runtime_home="$(doctor_runtime_home)"
-    [[ -n "$runtime_home" ]] || return 1
-
-    primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
-    for candidate in \
-        "$primary_bin_dir/am" \
-        "$runtime_home/.local/bin/am" \
-        "$runtime_home/.acfs/bin/am" \
-        "$runtime_home/.bun/bin/am" \
-        "$runtime_home/.cargo/bin/am" \
-        "$runtime_home/.atuin/bin/am" \
-        "$runtime_home/go/bin/am" \
-        "$runtime_home/bin/am"; do
-        [[ -x "$candidate" ]] || continue
-        printf '%s\n' "$candidate"
-        return 0
-    done
-
-    return 1
+    doctor_binary_path "am"
 }
 # Try to retrieve a reasonably informative version line for a command without
 # assuming it supports `--version`.

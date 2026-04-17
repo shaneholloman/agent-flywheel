@@ -72,7 +72,35 @@ _stack_command_exists() {
     command -v "$1" &>/dev/null
 }
 
-_stack_target_has_command() {
+_stack_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+_stack_target_bin_dir() {
+    local target_user="${1:-${TARGET_USER:-ubuntu}}"
+    local target_home=""
+    local configured_bin=""
+
+    target_home="$(_stack_target_home "$target_user" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+
+    configured_bin="$(_stack_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    if [[ -n "$configured_bin" ]]; then
+        printf '%s\n' "$configured_bin"
+        return 0
+    fi
+
+    printf '%s/.local/bin\n' "$target_home"
+}
+
+_stack_target_command_path() {
     local cmd="${1:-}"
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home=""
@@ -83,8 +111,9 @@ _stack_target_has_command() {
 
     target_home="$(_stack_target_home "$target_user" 2>/dev/null || true)"
     [[ -n "$target_home" ]] || return 1
+    primary_bin="$(_stack_target_bin_dir "$target_user" 2>/dev/null || true)"
+    [[ -n "$primary_bin" ]] || return 1
 
-    primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
     for candidate in \
         "$primary_bin/$cmd" \
         "$target_home/.local/bin/$cmd" \
@@ -98,12 +127,27 @@ _stack_target_has_command() {
         "/usr/bin/$cmd" \
         "/bin/$cmd" \
         "/snap/bin/$cmd"; do
-        [[ -x "$candidate" ]] && return 0
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
     done
 
     return 1
 }
 
+_stack_target_has_command() {
+    [[ -n "$(_stack_target_command_path "${1:-}" 2>/dev/null || true)" ]]
+}
+
+_stack_curl() {
+    local curl_bin=""
+
+    curl_bin="$(_stack_target_command_path curl 2>/dev/null || true)"
+    [[ -n "$curl_bin" ]] || return 127
+
+    "$curl_bin" "$@"
+}
 # Check if we're in interactive mode (fallback if security.sh isn't loaded yet).
 _stack_is_interactive() {
     if declare -f _acfs_is_interactive >/dev/null 2>&1; then
@@ -268,8 +312,10 @@ _stack_agent_mail_cli_path() {
     target_home="$(_stack_target_home "${TARGET_USER:-ubuntu}")"
 
     local preferred="$target_home/mcp_agent_mail/am"
-    local primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}/am"
+    local primary_bin=""
     local fallback_bin="$target_home/.local/bin/am"
+    primary_bin="$(_stack_target_bin_dir "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+    primary_bin="${primary_bin}/am"
     local candidate=""
 
     for candidate in \
@@ -297,7 +343,8 @@ _stack_repair_agent_mail_cli_symlink() {
     local am_src="$target_home/mcp_agent_mail/am"
     [[ -x "$am_src" ]] || return 1
 
-    local primary_dir="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    local primary_dir=""
+    primary_dir="$(_stack_target_bin_dir "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
     local fallback_dir="$target_home/.local/bin"
     local -a bin_dirs=("$primary_dir")
 
@@ -316,13 +363,13 @@ _stack_repair_agent_mail_cli_symlink() {
 }
 
 _stack_agent_mail_liveness() {
-    curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
-        curl -fsS --max-time 10 http://127.0.0.1:8765/healthz >/dev/null 2>&1
+    _stack_curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
+        _stack_curl -fsS --max-time 10 http://127.0.0.1:8765/healthz >/dev/null 2>&1
 }
 
 _stack_agent_mail_readiness() {
     local readiness_body=""
-    readiness_body="$(curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null)" || return 1
+    readiness_body="$(_stack_curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null)" || return 1
     printf '%s\n' "$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'
 }
 
@@ -330,17 +377,16 @@ _stack_agent_mail_readiness() {
 _stack_run_as_user() {
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home=""
+    local resolved_bin_dir=""
     _stack_validate_target_user "$target_user" || return 1
     target_home="$(_stack_target_home "$target_user" 2>/dev/null || true)"
     if [[ -z "$target_home" ]] || [[ "$target_home" == "/" ]] || [[ "$target_home" != /* ]]; then
         log_error "Invalid TARGET_HOME for '$target_user': ${target_home:-<empty>} (must be an absolute path and cannot be '/')"
         return 1
     fi
-    if [[ -n "${ACFS_BIN_DIR:-}" ]] && { [[ "${ACFS_BIN_DIR}" == "/" ]] || [[ "${ACFS_BIN_DIR}" != /* ]]; }; then
-        log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
-        return 1
-    fi
-    local target_path_prefix="${ACFS_BIN_DIR:-$target_home/.local/bin}:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
+    resolved_bin_dir="$(_stack_target_bin_dir "$target_user" 2>/dev/null || true)"
+    [[ -n "$resolved_bin_dir" ]] || resolved_bin_dir="$target_home/.local/bin"
+    local target_path_prefix="$resolved_bin_dir:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
     local cmd="$1"
     local target_user_q=""
     local target_home_q=""
@@ -349,14 +395,9 @@ _stack_run_as_user() {
 
     printf -v target_user_q '%q' "$target_user"
     printf -v target_home_q '%q' "$target_home"
-    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
-        printf -v acfs_bin_dir_q '%q' "$ACFS_BIN_DIR"
-    fi
+    printf -v acfs_bin_dir_q '%q' "$resolved_bin_dir"
 
-    wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"
-    if [[ -n "$acfs_bin_dir_q" ]]; then
-        wrapped_cmd+=" export ACFS_BIN_DIR=$acfs_bin_dir_q;"
-    fi
+    wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q ACFS_BIN_DIR=$acfs_bin_dir_q;"
     wrapped_cmd+=" export PATH=\"$target_path_prefix:\$PATH\"; set -o pipefail; $cmd"
 
     if [[ "$(whoami)" == "$target_user" ]]; then
@@ -821,9 +862,9 @@ stop_agent_mail_fallback() {
 
 launch_agent_mail_fallback() {
     if {
-        curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
-        curl -fsS --max-time 5 http://127.0.0.1:8765/healthz >/dev/null 2>&1;
-    } && curl -fsS --max-time 5 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; then
+        _stack_curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
+        _stack_curl -fsS --max-time 5 http://127.0.0.1:8765/healthz >/dev/null 2>&1;
+    } && _stack_curl -fsS --max-time 5 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; then
         return 0
     fi
 

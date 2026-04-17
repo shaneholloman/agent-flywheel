@@ -263,13 +263,44 @@ onboard_resolve_runtime_home() {
 
 ONBOARD_RUNTIME_HOME="$(onboard_resolve_runtime_home)"
 
+onboard_preferred_bin_dir() {
+    local runtime_home="${1:-${ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}}"
+    local candidate=""
+
+    candidate="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$ACFS_HOME/state.json" "bin_dir" 2>/dev/null || true)" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    candidate="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "bin_dir" 2>/dev/null || true)" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    candidate="$(onboard_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    printf '%s\n' "$runtime_home/.local/bin"
+}
+
 onboard_runtime_binary_path() {
     local name="${1:-}"
     local runtime_home="${ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}"
-    local primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    local primary_bin_dir=""
     local candidate=""
+    local path_dir=""
+    local sanitized_dir=""
+    local -a path_entries=()
 
     [[ -n "$name" ]] || return 1
+
+    primary_bin_dir="$(onboard_preferred_bin_dir "$runtime_home" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$runtime_home/.local/bin"
 
     for candidate in \
         "$primary_bin_dir/$name" \
@@ -279,6 +310,7 @@ onboard_runtime_binary_path() {
         "$runtime_home/.bun/bin/$name" \
         "$runtime_home/.atuin/bin/$name" \
         "$runtime_home/go/bin/$name" \
+        "$runtime_home/google-cloud-sdk/bin/$name" \
         "/usr/local/go/bin/$name" \
         "/usr/local/bin/$name" \
         "/usr/bin/$name" \
@@ -290,10 +322,20 @@ onboard_runtime_binary_path() {
         fi
     done
 
-    if command -v "$name" >/dev/null 2>&1; then
-        command -v "$name"
-        return 0
-    fi
+    IFS=':' read -r -a path_entries <<< "${PATH:-}"
+    for path_dir in "${path_entries[@]}"; do
+        sanitized_dir="$(onboard_sanitize_abs_nonroot_path "$path_dir" 2>/dev/null || true)"
+        [[ -n "$sanitized_dir" ]] || continue
+        case "$sanitized_dir" in
+            "$runtime_home"|"$runtime_home"/*)
+                candidate="$sanitized_dir/$name"
+                if [[ -x "$candidate" ]]; then
+                    printf '%s\n' "$candidate"
+                    return 0
+                fi
+                ;;
+        esac
+    done
 
     return 1
 }

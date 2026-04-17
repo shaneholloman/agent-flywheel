@@ -65,6 +65,13 @@ if [[ -n "$_SMOKE_CURRENT_HOME" ]]; then
     HOME="$_SMOKE_CURRENT_HOME"
     export HOME
 fi
+_SMOKE_EXPLICIT_ACFS_HOME="$(_smoke_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+_SMOKE_DEFAULT_ACFS_HOME=""
+[[ -n "$_SMOKE_CURRENT_HOME" ]] && _SMOKE_DEFAULT_ACFS_HOME="${_SMOKE_CURRENT_HOME}/.acfs"
+_SMOKE_SYSTEM_STATE_FILE="$(_smoke_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
+    _SMOKE_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+fi
 
 # ============================================================
 # Configuration
@@ -76,9 +83,102 @@ CRITICAL_FAIL=0
 NONCRITICAL_PASS=0
 WARNING_COUNT=0
 
-# Target user (from install.sh or default)
-TARGET_USER="${TARGET_USER:-ubuntu}"
+_smoke_read_state_string() {
+    local state_file="$1"
+    local key="$2"
+    local value=""
+
+    [[ -f "$state_file" ]] || return 1
+
+    if command -v jq >/dev/null 2>&1; then
+        value="$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)"
+    else
+        value="$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)"
+    fi
+
+    [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+_smoke_resolve_bootstrap_state_file() {
+    local candidate=""
+    local env_state_file=""
+
+    if [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]]; then
+        candidate="$_SMOKE_EXPLICIT_ACFS_HOME/state.json"
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
+    if [[ -f "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
+        printf '%s\n' "$_SMOKE_SYSTEM_STATE_FILE"
+        return 0
+    fi
+
+    if [[ -n "$_SMOKE_DEFAULT_ACFS_HOME" ]]; then
+        candidate="$_SMOKE_DEFAULT_ACFS_HOME/state.json"
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
+    env_state_file="$(_smoke_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
+    if [[ -n "$env_state_file" ]] && [[ -f "$env_state_file" ]]; then
+        printf '%s\n' "$env_state_file"
+        return 0
+    fi
+
+    candidate="${env_state_file:-${_SMOKE_DEFAULT_ACFS_HOME:+$_SMOKE_DEFAULT_ACFS_HOME/state.json}}"
+    printf '%s\n' "$candidate"
+}
+
+_smoke_read_user_for_home() {
+    local user_home="$1"
+    local candidate_user=""
+
+    user_home="$(_smoke_sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
+    [[ -n "$user_home" ]] || return 1
+
+    if command -v getent >/dev/null 2>&1; then
+        candidate_user="$(getent passwd 2>/dev/null | awk -F: -v home="$user_home" '$6 == home { print $1; exit }' || true)"
+        if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    if command -v stat >/dev/null 2>&1; then
+        candidate_user="$(stat -c '%U' "$user_home" 2>/dev/null || stat -f '%Su' "$user_home" 2>/dev/null || true)"
+        if [[ -n "$candidate_user" ]] && [[ "$candidate_user" != "UNKNOWN" ]] && [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+_SMOKE_BOOTSTRAP_STATE_FILE="$(_smoke_resolve_bootstrap_state_file 2>/dev/null || true)"
+_SMOKE_TARGET_USER_DEFAULTED=false
+
+# Target user (from install.sh, persisted state, home ownership, or default)
+TARGET_USER="${TARGET_USER:-}"
+if [[ -z "${TARGET_USER:-}" ]]; then
+    TARGET_USER="$(_smoke_read_state_string "$_SMOKE_BOOTSTRAP_STATE_FILE" "target_user" 2>/dev/null || true)"
+fi
+if [[ -z "${TARGET_USER:-}" ]]; then
+    TARGET_USER="ubuntu"
+    _SMOKE_TARGET_USER_DEFAULTED=true
+fi
+
 TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+if [[ -z "${TARGET_HOME:-}" ]]; then
+    TARGET_HOME="$(_smoke_read_state_string "$_SMOKE_BOOTSTRAP_STATE_FILE" "target_home" 2>/dev/null || true)"
+    TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+fi
 if [[ -z "${TARGET_HOME:-}" ]]; then
     _smoke_target_passwd_entry="$(getent passwd "$TARGET_USER" 2>/dev/null || true)"
     if [[ -n "$_smoke_target_passwd_entry" ]]; then
@@ -103,13 +203,106 @@ if [[ "${TARGET_HOME:-}" != /* ]]; then
         TARGET_HOME=""
     fi
 fi
+if [[ "$_SMOKE_TARGET_USER_DEFAULTED" == true ]] && [[ -n "${TARGET_HOME:-}" ]]; then
+    _smoke_inferred_target_user="$(_smoke_read_user_for_home "$TARGET_HOME" 2>/dev/null || true)"
+    if [[ -n "$_smoke_inferred_target_user" ]]; then
+        TARGET_USER="$_smoke_inferred_target_user"
+        _SMOKE_TARGET_USER_DEFAULTED=false
+    fi
+    unset _smoke_inferred_target_user
+fi
+if [[ ! "$TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+    TARGET_USER="ubuntu"
+fi
+
+_smoke_resolve_state_file() {
+    local candidate=""
+    local explicit_state_file=""
+    local target_state_file=""
+    local current_state_file=""
+    local env_state_file=""
+
+    if [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]]; then
+        explicit_state_file="$_SMOKE_EXPLICIT_ACFS_HOME/state.json"
+        if [[ -f "$explicit_state_file" ]]; then
+            printf '%s\n' "$explicit_state_file"
+            return 0
+        fi
+    fi
+
+    if [[ -n "${TARGET_HOME:-}" ]]; then
+        target_state_file="${TARGET_HOME}/.acfs/state.json"
+        if [[ -f "$target_state_file" ]]; then
+            printf '%s\n' "$target_state_file"
+            return 0
+        fi
+    fi
+
+    if [[ -f "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
+        printf '%s\n' "$_SMOKE_SYSTEM_STATE_FILE"
+        return 0
+    fi
+
+    if [[ -n "$_SMOKE_DEFAULT_ACFS_HOME" ]]; then
+        current_state_file="$_SMOKE_DEFAULT_ACFS_HOME/state.json"
+        if [[ -f "$current_state_file" ]]; then
+            printf '%s\n' "$current_state_file"
+            return 0
+        fi
+    fi
+
+    env_state_file="$(_smoke_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
+    if [[ -n "$env_state_file" ]] && [[ -f "$env_state_file" ]]; then
+        printf '%s\n' "$env_state_file"
+        return 0
+    fi
+
+    candidate="${env_state_file:-${current_state_file:-${target_state_file:-$explicit_state_file}}}"
+    printf '%s\n' "$candidate"
+}
+_smoke_read_bin_dir_from_state() {
+    local state_file="${1:-}"
+    local bin_dir=""
+
+    [[ -n "$state_file" ]] || return 1
+
+    bin_dir="$(_smoke_read_state_string "$state_file" "bin_dir" 2>/dev/null || true)"
+    bin_dir="$(_smoke_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    [[ -n "$bin_dir" ]] || return 1
+    printf '%s\n' "$bin_dir"
+}
+
+_smoke_preferred_bin_dir() {
+    local base_home="${1:-${TARGET_HOME:-}}"
+    local state_file=""
+    local candidate=""
+
+    state_file="$(_smoke_resolve_state_file 2>/dev/null || true)"
+
+    candidate="$(_smoke_read_bin_dir_from_state "$state_file" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    candidate="$(_smoke_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    [[ -n "$base_home" ]] || return 1
+    printf '%s\n' "$base_home/.local/bin"
+}
 
 _smoke_prepend_user_paths() {
     local base_home="$1"
     local dir=""
-    local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+    local primary_bin_dir=""
 
     [[ -n "$base_home" ]] || return 0
+    primary_bin_dir="$(_smoke_preferred_bin_dir "$base_home" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"
 
     for dir in \
         "$primary_bin_dir" \
@@ -118,7 +311,8 @@ _smoke_prepend_user_paths() {
         "$base_home/.bun/bin" \
         "$base_home/.cargo/bin" \
         "$base_home/.atuin/bin" \
-        "$base_home/go/bin"; do
+        "$base_home/go/bin" \
+        "$base_home/google-cloud-sdk/bin"; do
         [[ -d "$dir" ]] || continue
         case ":$PATH:" in
             *":$dir:"*) ;;
@@ -135,11 +329,13 @@ fi
 _smoke_binary_path() {
     local name="${1:-}"
     local base_home="${TARGET_HOME:-}"
-    local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+    local primary_bin_dir=""
     local candidate=""
 
     [[ -n "$name" ]] || return 1
     [[ -n "$base_home" ]] || return 1
+    primary_bin_dir="$(_smoke_preferred_bin_dir "$base_home" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"
 
     for candidate in \
         "$primary_bin_dir/$name" \
@@ -149,6 +345,7 @@ _smoke_binary_path() {
         "$base_home/.cargo/bin/$name" \
         "$base_home/.atuin/bin/$name" \
         "$base_home/go/bin/$name" \
+        "$base_home/google-cloud-sdk/bin/$name" \
         "$base_home/bin/$name" \
         "/usr/local/bin/$name" \
         "/usr/bin/$name" \

@@ -162,6 +162,96 @@ EOF
     test_pass "nvm_check_shell_configs"
 }
 
+# Test: TARGET_HOME beats poisoned caller HOME/NVM_DIR
+
+test_nvm_check_prefers_target_home_over_poisoned_home() {
+    local test_id="nvm_target_home"
+    local test_dir="/tmp/test_autofix_${test_id}_$$"
+    local current_home="$test_dir/current-home"
+    local target_home="$test_dir/target-home"
+    mkdir -p "$current_home/.nvm" "$target_home/.nvm"
+
+    cat > "$current_home/.bashrc" << 'EOF'
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+EOF
+
+    cat > "$target_home/.bashrc" << 'EOF'
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+EOF
+
+    local old_home="$HOME"
+    local old_target_home="${TARGET_HOME:-}"
+    local old_nvm_dir="${NVM_DIR:-}"
+    HOME="$current_home"
+    TARGET_HOME="$target_home"
+    NVM_DIR="$current_home/.nvm"
+
+    local result
+    result=$(autofix_nvm_check)
+
+    HOME="$old_home"
+    [[ -n "$old_target_home" ]] && TARGET_HOME="$old_target_home" || unset TARGET_HOME
+    [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+
+    local first_dir=""
+    local first_config=""
+    first_dir=$(echo "$result" | jq -r '.nvm_dirs[0] // empty')
+    first_config=$(echo "$result" | jq -r '.shell_configs[0] // empty')
+
+    cleanup_test_dir "$test_dir"
+
+    if [[ "$first_dir" != "$target_home/.nvm" ]]; then
+        test_fail "nvm_check_prefers_target_home_over_poisoned_home" "Expected target-home nvm dir, got '$first_dir'"
+        return
+    fi
+
+    if [[ "$first_config" != "$target_home/.bashrc" ]]; then
+        test_fail "nvm_check_prefers_target_home_over_poisoned_home" "Expected target-home bashrc, got '$first_config'"
+        return
+    fi
+
+    test_pass "nvm_check_prefers_target_home_over_poisoned_home"
+}
+
+test_nvm_check_ignores_poisoned_xdg_config_home() {
+    local test_id="nvm_xdg_config_home"
+    local test_dir="/tmp/test_autofix_${test_id}_$$"
+    local current_home="$test_dir/current-home"
+    local target_home="$test_dir/target-home"
+    mkdir -p "$current_home/.config/nvm" "$target_home/.config/nvm"
+
+    local old_home="$HOME"
+    local old_target_home="${TARGET_HOME:-}"
+    local old_xdg_config_home="${XDG_CONFIG_HOME:-}"
+    local old_nvm_dir="${NVM_DIR:-}"
+    HOME="$current_home"
+    TARGET_HOME="$target_home"
+    XDG_CONFIG_HOME="$current_home/.config"
+    unset NVM_DIR
+
+    local result
+    result=$(autofix_nvm_check)
+
+    HOME="$old_home"
+    [[ -n "$old_target_home" ]] && TARGET_HOME="$old_target_home" || unset TARGET_HOME
+    [[ -n "$old_xdg_config_home" ]] && XDG_CONFIG_HOME="$old_xdg_config_home" || unset XDG_CONFIG_HOME
+    [[ -n "$old_nvm_dir" ]] && NVM_DIR="$old_nvm_dir" || unset NVM_DIR
+
+    local first_dir=""
+    first_dir=$(echo "$result" | jq -r '.nvm_dirs[0] // empty')
+
+    cleanup_test_dir "$test_dir"
+
+    if [[ "$first_dir" != "$target_home/.config/nvm" ]]; then
+        test_fail "nvm_check_ignores_poisoned_xdg_config_home" "Expected target-home XDG nvm dir, got '$first_dir'"
+        return
+    fi
+
+    test_pass "nvm_check_ignores_poisoned_xdg_config_home"
+}
+
 # Test: NVM dry-run mode
 test_nvm_fix_dry_run() {
     local test_id="nvm_fix_dry"
@@ -415,6 +505,96 @@ EOF
     fi
 
     test_pass "pyenv_check_shell_configs"
+}
+
+# Test: TARGET_HOME beats poisoned caller HOME/PYENV_ROOT
+
+test_pyenv_check_prefers_target_home_over_poisoned_home() {
+    local test_id="pyenv_target_home"
+    local test_dir="/tmp/test_autofix_${test_id}_$$"
+    local current_home="$test_dir/current-home"
+    local target_home="$test_dir/target-home"
+    mkdir -p "$current_home/.pyenv" "$target_home/.pyenv"
+
+    cat > "$current_home/.bashrc" << 'EOF'
+export PYENV_ROOT="$HOME/.pyenv"
+eval "$(pyenv init -)"
+EOF
+
+    cat > "$target_home/.bashrc" << 'EOF'
+export PYENV_ROOT="$HOME/.pyenv"
+eval "$(pyenv init -)"
+EOF
+
+    local old_home="$HOME"
+    local old_target_home="${TARGET_HOME:-}"
+    local old_pyenv_root="${PYENV_ROOT:-}"
+    HOME="$current_home"
+    TARGET_HOME="$target_home"
+    PYENV_ROOT="$current_home/.pyenv"
+
+    local result
+    result=$(autofix_pyenv_check)
+
+    HOME="$old_home"
+    [[ -n "$old_target_home" ]] && TARGET_HOME="$old_target_home" || unset TARGET_HOME
+    [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+
+    local first_root=""
+    local first_config=""
+    first_root=$(echo "$result" | jq -r '.pyenv_roots[0] // empty')
+    first_config=$(echo "$result" | jq -r '.shell_configs[0] // empty')
+
+    cleanup_test_dir "$test_dir"
+
+    if [[ "$first_root" != "$target_home/.pyenv" ]]; then
+        test_fail "pyenv_check_prefers_target_home_over_poisoned_home" "Expected target-home pyenv root, got '$first_root'"
+        return
+    fi
+
+    if [[ "$first_config" != "$target_home/.bashrc" ]]; then
+        test_fail "pyenv_check_prefers_target_home_over_poisoned_home" "Expected target-home bashrc, got '$first_config'"
+        return
+    fi
+
+    test_pass "pyenv_check_prefers_target_home_over_poisoned_home"
+}
+
+test_pyenv_check_ignores_poisoned_xdg_data_home() {
+    local test_id="pyenv_xdg_data_home"
+    local test_dir="/tmp/test_autofix_${test_id}_$$"
+    local current_home="$test_dir/current-home"
+    local target_home="$test_dir/target-home"
+    mkdir -p "$current_home/.local/share/pyenv" "$target_home/.local/share/pyenv"
+
+    local old_home="$HOME"
+    local old_target_home="${TARGET_HOME:-}"
+    local old_xdg_data_home="${XDG_DATA_HOME:-}"
+    local old_pyenv_root="${PYENV_ROOT:-}"
+    HOME="$current_home"
+    TARGET_HOME="$target_home"
+    XDG_DATA_HOME="$current_home/.local/share"
+    unset PYENV_ROOT
+
+    local result
+    result=$(autofix_pyenv_check)
+
+    HOME="$old_home"
+    [[ -n "$old_target_home" ]] && TARGET_HOME="$old_target_home" || unset TARGET_HOME
+    [[ -n "$old_xdg_data_home" ]] && XDG_DATA_HOME="$old_xdg_data_home" || unset XDG_DATA_HOME
+    [[ -n "$old_pyenv_root" ]] && PYENV_ROOT="$old_pyenv_root" || unset PYENV_ROOT
+
+    local first_root=""
+    first_root=$(echo "$result" | jq -r '.pyenv_roots[0] // empty')
+
+    cleanup_test_dir "$test_dir"
+
+    if [[ "$first_root" != "$target_home/.local/share/pyenv" ]]; then
+        test_fail "pyenv_check_ignores_poisoned_xdg_data_home" "Expected target-home XDG pyenv root, got '$first_root'"
+        return
+    fi
+
+    test_pass "pyenv_check_ignores_poisoned_xdg_data_home"
 }
 
 # Test: Pyenv dry-run mode
@@ -689,6 +869,8 @@ main() {
     test_nvm_check_no_installation
     test_nvm_check_env_set
     test_nvm_check_shell_configs
+    test_nvm_check_prefers_target_home_over_poisoned_home
+    test_nvm_check_ignores_poisoned_xdg_config_home
     test_nvm_fix_dry_run
     test_nvm_fix_manages_session_and_records_changes
     test_nvm_fix_restores_state_when_record_change_fails
@@ -697,6 +879,8 @@ main() {
     test_pyenv_check_no_installation
     test_pyenv_check_env_set
     test_pyenv_check_shell_configs
+    test_pyenv_check_prefers_target_home_over_poisoned_home
+    test_pyenv_check_ignores_poisoned_xdg_data_home
     test_pyenv_fix_dry_run
     test_pyenv_fix_manages_session_and_records_changes
     test_pyenv_fix_restores_state_when_record_change_fails

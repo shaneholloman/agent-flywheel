@@ -126,9 +126,11 @@ done
 _status_prepend_user_paths() {
     local base_home="$1"
     local dir=""
-    local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+    local primary_bin_dir=""
 
     [[ -n "$base_home" ]] || return 0
+    primary_bin_dir="$(_status_preferred_bin_dir "$base_home" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"
 
     for dir in \
         "$primary_bin_dir" \
@@ -137,7 +139,9 @@ _status_prepend_user_paths() {
         "$base_home/.bun/bin" \
         "$base_home/.cargo/bin" \
         "$base_home/go/bin" \
-        "$base_home/.atuin/bin"; do
+        "$base_home/.atuin/bin" \
+        "$base_home/google-cloud-sdk/bin"; do
+        [[ -d "$dir" ]] || continue
         case ":$PATH:" in
             *":$dir:"*) ;;
             *) export PATH="$dir:$PATH" ;;
@@ -156,11 +160,13 @@ _status_ensure_path() {
 _status_binary_path() {
     local name="${1:-}"
     local base_home="${TARGET_HOME:-${_STATUS_CURRENT_HOME:-}}"
-    local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+    local primary_bin_dir=""
     local candidate=""
 
     [[ -n "$name" ]] || return 1
     [[ -n "$base_home" ]] || return 1
+    primary_bin_dir="$(_status_preferred_bin_dir "$base_home" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"
 
     for candidate in \
         "$primary_bin_dir/$name" \
@@ -170,6 +176,7 @@ _status_binary_path() {
         "$base_home/.cargo/bin/$name" \
         "$base_home/.atuin/bin/$name" \
         "$base_home/go/bin/$name" \
+        "$base_home/google-cloud-sdk/bin/$name" \
         "$base_home/bin/$name" \
         "/usr/local/bin/$name" \
         "/usr/bin/$name" \
@@ -253,6 +260,18 @@ _status_read_target_home_from_state() {
     printf '%s\n' "${target_home%/}"
 }
 
+_status_read_bin_dir_from_state() {
+    local state_file="$1"
+    local bin_dir=""
+
+    [[ -n "$state_file" ]] || return 1
+
+    bin_dir="$(_status_read_state_string "$state_file" "bin_dir" 2>/dev/null || true)"
+    bin_dir="$(_status_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    [[ -n "$bin_dir" ]] || return 1
+    printf '%s\n' "$bin_dir"
+}
+
 _status_resolve_target_home() {
     local state_file="${1:-}"
     local target_home=""
@@ -264,6 +283,29 @@ _status_resolve_target_home() {
 
     [[ -n "$target_home" ]] || return 1
     printf '%s\n' "$target_home"
+}
+
+_status_preferred_bin_dir() {
+    local base_home="${1:-${TARGET_HOME:-${_STATUS_CURRENT_HOME:-}}}"
+    local state_file=""
+    local candidate=""
+
+    state_file="$(_status_resolve_state_file 2>/dev/null || true)"
+
+    candidate="$(_status_read_bin_dir_from_state "$state_file" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    candidate="$(_status_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    [[ -n "$base_home" ]] || return 1
+    printf '%s\n' "$base_home/.local/bin"
 }
 
 _status_script_acfs_home() {

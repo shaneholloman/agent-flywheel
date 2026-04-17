@@ -126,6 +126,7 @@ setup_test_env() {
     export HOME="$TEST_HOME"
     unset TARGET_HOME
     unset ACFS_HOME
+    unset ACFS_BIN_DIR
     unset DOCTOR_FIX_SSHD_CONFIG
 }
 
@@ -152,6 +153,7 @@ cleanup_test_env() {
     fi
     unset TARGET_HOME
     unset ACFS_HOME
+    unset ACFS_BIN_DIR
     unset DOCTOR_FIX_SSHD_CONFIG
     rm -rf "/tmp/test_doctor_fix_"* 2>/dev/null || true
 }
@@ -188,6 +190,90 @@ test_doctor_fix_prefers_target_home_for_autofix_state() {
     fi
 
     rm -rf "$temp_root"
+    return 0
+}
+
+test_doctor_fix_prefers_target_home_over_poisoned_acfs_home() {
+    local temp_root=""
+    temp_root="$(mktemp -d)"
+
+    local root_home="$temp_root/root-home"
+    local target_home="$temp_root/target-home"
+    local poisoned_acfs_home="$temp_root/poisoned/.acfs"
+    local installed_lib="$target_home/.acfs/scripts/lib"
+    mkdir -p "$root_home" "$poisoned_acfs_home" "$installed_lib"
+
+    cp "$REPO_ROOT/scripts/lib/doctor_fix.sh" "$installed_lib/doctor_fix.sh"
+    cp "$REPO_ROOT/scripts/lib/autofix.sh" "$installed_lib/autofix.sh"
+
+    local output=""
+    output=$(env -u SCRIPT_DIR         -u ACFS_STATE_DIR         -u ACFS_CHANGES_FILE         -u ACFS_UNDOS_FILE         -u ACFS_BACKUPS_DIR         -u ACFS_LOCK_FILE         -u ACFS_INTEGRITY_FILE         HOME="$root_home"         TARGET_HOME="$target_home"         ACFS_HOME="$poisoned_acfs_home"         bash -lc 'source "$1"; printf "%s\n%s\n" "${ACFS_STATE_DIR:-unset}" "$(doctor_fix_runtime_acfs_home)"' _         "$installed_lib/doctor_fix.sh")
+
+    local expected_state_dir="$target_home/.acfs/autofix"
+    local expected_acfs_home="$target_home/.acfs"
+    local actual_state_dir=""
+    local actual_acfs_home=""
+    actual_state_dir="$(printf '%s\n' "$output" | sed -n '1p')"
+    actual_acfs_home="$(printf '%s\n' "$output" | sed -n '2p')"
+
+    if [[ "$actual_state_dir" != "$expected_state_dir" ]]; then
+        echo "  Expected ACFS_STATE_DIR=$expected_state_dir, got $actual_state_dir"
+        rm -rf "$temp_root"
+        return 1
+    fi
+
+    if [[ "$actual_acfs_home" != "$expected_acfs_home" ]]; then
+        echo "  Expected doctor_fix_runtime_acfs_home=$expected_acfs_home, got $actual_acfs_home"
+        rm -rf "$temp_root"
+        return 1
+    fi
+
+    rm -rf "$temp_root"
+    return 0
+}
+
+test_doctor_fix_binary_path_ignores_relative_bin_dir() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin"
+    cat > "$TARGET_HOME/.local/bin/example-tool" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$TARGET_HOME/.local/bin/example-tool"
+    export ACFS_BIN_DIR="relative/bin"
+
+    local resolved=""
+    resolved="$(doctor_fix_binary_path example-tool)"
+
+    if [[ "$resolved" != "$TARGET_HOME/.local/bin/example-tool" ]]; then
+        echo "  Expected sanitized fallback bin path, got $resolved"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+test_doctor_fix_runtime_path_ignores_relative_bin_dir() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$TARGET_HOME/.local/bin"
+    export ACFS_BIN_DIR="relative/bin"
+
+    local runtime_path=""
+    runtime_path="$(doctor_fix_runtime_path)"
+
+    if [[ "$runtime_path" != "$TARGET_HOME/.local/bin:"* ]]; then
+        echo "  Expected runtime PATH to start with sanitized target bin dir, got $runtime_path"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
     return 0
 }
 
@@ -2245,6 +2331,7 @@ test_fix_mcp_agent_mail_repairs_missing_symlink_without_using_current_shell_am()
     export TARGET_HOME="$ACFS_STATE_DIR/target-home"
     mkdir -p "$TARGET_HOME/.local/bin" "$TARGET_HOME/mcp_agent_mail" "$HOME/current-shell-bin"
     export PATH="$HOME/current-shell-bin:$TARGET_HOME/.local/bin:$PATH"
+    export ACFS_BIN_DIR="relative/bin"
 
     start_autofix_session >/dev/null || {
         echo "  Failed to start autofix session"
@@ -2273,6 +2360,13 @@ fi
 exit 0
 EOF
     chmod +x "$HOME/current-shell-bin/am"
+
+    cat > "$HOME/current-shell-bin/curl" <<'EOF'
+#!/usr/bin/env bash
+: > "$HOME/global-curl-used"
+exit 1
+EOF
+    chmod +x "$HOME/current-shell-bin/curl"
 
     cat > "$TARGET_HOME/mcp_agent_mail/am" <<'EOF'
 #!/usr/bin/env bash
@@ -2352,6 +2446,12 @@ EOF
         return 1
     fi
 
+    if [[ -f "$HOME/global-curl-used" ]]; then
+        echo "  fix_mcp_agent_mail should not invoke the current-shell curl"
+        cleanup_test_env
+        return 1
+    fi
+
     cleanup_test_env
     return 0
 }
@@ -2360,8 +2460,9 @@ test_fix_mcp_agent_mail_uses_target_home_for_systemctl_env() {
     setup_test_env
 
     export TARGET_HOME="$ACFS_STATE_DIR/target-home"
-    mkdir -p "$TARGET_HOME/.local/bin" "$TARGET_HOME/mcp_agent_mail"
-    export PATH="$TARGET_HOME/.local/bin:$PATH"
+    mkdir -p "$TARGET_HOME/.local/bin" "$TARGET_HOME/mcp_agent_mail" "$HOME/current-shell-bin"
+    export PATH="$HOME/current-shell-bin:$TARGET_HOME/.local/bin:$PATH"
+    export ACFS_BIN_DIR="relative/bin"
 
     start_autofix_session >/dev/null || {
         echo "  Failed to start autofix session"
@@ -2394,6 +2495,13 @@ case "${1:-}" in
 esac
 EOF
     chmod +x "$TARGET_HOME/.local/bin/am"
+
+    cat > "$HOME/current-shell-bin/curl" <<'EOF'
+#!/usr/bin/env bash
+: > "$HOME/global-curl-used"
+exit 1
+EOF
+    chmod +x "$HOME/current-shell-bin/curl"
 
     cat > "$TARGET_HOME/.local/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -2455,6 +2563,12 @@ EOF
 
     if ! grep -Fxq "$TARGET_HOME" "$TARGET_HOME/systemctl-home.log"; then
         echo "  systemctl did not receive TARGET_HOME"
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ -f "$HOME/global-curl-used" ]]; then
+        echo "  fix_mcp_agent_mail should not invoke the current-shell curl"
         cleanup_test_env
         return 1
     fi
@@ -2805,6 +2919,9 @@ main() {
     # Helper tests
     run_test test_file_contains_line
     run_test test_doctor_fix_prefers_target_home_for_autofix_state
+    run_test test_doctor_fix_prefers_target_home_over_poisoned_acfs_home
+    run_test test_doctor_fix_binary_path_ignores_relative_bin_dir
+    run_test test_doctor_fix_runtime_path_ignores_relative_bin_dir
     run_test test_doctor_fix_runtime_home_ignores_relative_home
 
     # fix_path_ordering tests

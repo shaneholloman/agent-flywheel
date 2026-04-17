@@ -552,6 +552,39 @@ EOF
     assert_output "$HOME/.atuin/bin/atuin"
 }
 
+@test "update_repair_zoxide_install: normalizes custom shim to target local bin" {
+    export ACFS_BIN_DIR="$HOME/custom-bin"
+    mkdir -p "$HOME/.local/bin" "$ACFS_BIN_DIR"
+
+    cat > "$HOME/.local/bin/zoxide" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  echo "zoxide 0.9.9"
+else
+  echo "zoxide 0.9.9"
+fi
+EOF
+    chmod +x "$HOME/.local/bin/zoxide"
+
+    cat > "$ACFS_BIN_DIR/zoxide" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  echo "zoxide 0.9.8"
+else
+  echo "stale-custom-copy"
+fi
+EOF
+    chmod +x "$ACFS_BIN_DIR/zoxide"
+
+    run update_repair_zoxide_install
+    assert_success
+
+    [[ -L "$ACFS_BIN_DIR/zoxide" ]]
+
+    run readlink "$ACFS_BIN_DIR/zoxide"
+    assert_output "$HOME/.local/bin/zoxide"
+}
+
 @test "install_atuin: does not skip target install because of a global atuin or partial target dir" {
     source_lib "cli_tools"
     init_stub_dir
@@ -826,12 +859,16 @@ EOF
     run grep -F 'target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"' "$doctor"
     assert_success
 
-    run grep -F 'local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"' "$info"
+    run grep -F 'primary_bin_dir="$(info_preferred_bin_dir "$base_home" 2>/dev/null || true)"' "$info"
+    assert_success
+    run grep -F '[[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"' "$info"
     assert_success
     run grep -F '"$base_home/.acfs/bin"' "$info"
     assert_success
 
-    run grep -F 'local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"' "$status_lib"
+    run grep -F 'primary_bin_dir="$(_status_preferred_bin_dir "$base_home" 2>/dev/null || true)"' "$status_lib"
+    assert_success
+    run grep -F '[[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"' "$status_lib"
     assert_success
     run grep -F '"$base_home/.acfs/bin"' "$status_lib"
     assert_success
@@ -843,7 +880,9 @@ EOF
 
     run grep -F '_smoke_prepend_user_paths "$TARGET_HOME"' "$smoke"
     assert_success
-    run grep -F 'local primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"' "$smoke"
+    run grep -F 'primary_bin_dir="$(_smoke_preferred_bin_dir "$base_home" 2>/dev/null || true)"' "$smoke"
+    assert_success
+    run grep -F '[[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"' "$smoke"
     assert_success
 
     run grep -F '"$HOME/.acfs/bin"' "$update"
@@ -1583,6 +1622,8 @@ EOF
     init_stub_dir
 
     # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_binary_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
     eval "$(sed -n '/^doctor_agent_mail_cli_path()/,/^}$/p' "$doctor_lib")"
 
     doctor_runtime_home() {
@@ -1625,6 +1666,8 @@ EOF
 
     init_stub_dir
 
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^doctor_binary_path()/,/^}$/p' "$doctor_lib")"
     # shellcheck disable=SC1090
     eval "$(sed -n '/^doctor_agent_mail_cli_path()/,/^}$/p' "$doctor_lib")"
     # shellcheck disable=SC1090

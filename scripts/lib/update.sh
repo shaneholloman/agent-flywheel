@@ -779,6 +779,25 @@ update_repair_atuin_install() {
 }
 
 update_repair_zoxide_install() {
+    local primary_dir=""
+    local user_bin=""
+
+    primary_dir="$(update_preferred_user_bin_dir)"
+    user_bin="$(update_default_user_bin_dir)"
+
+    # The upstream zoxide installer writes to ~/.local/bin by default. When ACFS
+    # uses a custom bin_dir that comes earlier in PATH, keep that shim pointed at
+    # the freshly reinstalled binary so shells don't continue resolving a stale
+    # copy from the custom directory.
+    if [[ -n "$primary_dir" && -n "$user_bin" && "$primary_dir" != "$user_bin" ]]; then
+        local preferred_src="$user_bin/zoxide"
+        [[ -x "$preferred_src" ]] || return 1
+        mkdir -p "$primary_dir" 2>/dev/null || true
+        if ln -sf "$preferred_src" "$primary_dir/zoxide" 2>/dev/null; then
+            log_to_file "Zoxide symlink normalized: $primary_dir/zoxide -> $preferred_src"
+        fi
+    fi
+
     hash -r 2>/dev/null || true
 
     local resolved_bin=""

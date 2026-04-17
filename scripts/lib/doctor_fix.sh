@@ -74,14 +74,23 @@ doctor_fix_runtime_home() {
 }
 
 doctor_fix_runtime_acfs_home() {
-    local resolved_acfs_home="${ACFS_HOME:-}"
+    local runtime_home=""
+    local resolved_acfs_home=""
 
-    if [[ -n "$resolved_acfs_home" ]] && [[ "$resolved_acfs_home" == /* ]] && [[ "$resolved_acfs_home" != "/" ]]; then
-        printf '%s\n' "${resolved_acfs_home%/}"
+    runtime_home="$(doctor_fix_runtime_home)"
+    resolved_acfs_home="$(doctor_fix_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+
+    if [[ -n "${TARGET_HOME:-}" ]]; then
+        printf '%s/.acfs\n' "$runtime_home"
         return 0
     fi
 
-    printf '%s/.acfs\n' "$(doctor_fix_runtime_home)"
+    if [[ -n "$resolved_acfs_home" ]]; then
+        printf '%s\n' "$resolved_acfs_home"
+        return 0
+    fi
+
+    printf '%s/.acfs\n' "$runtime_home"
 }
 
 doctor_fix_runtime_user() {
@@ -91,6 +100,22 @@ doctor_fix_runtime_user() {
     fi
 
     id -un 2>/dev/null || whoami 2>/dev/null || printf 'ubuntu\n'
+}
+
+doctor_fix_runtime_bin_dir() {
+    local runtime_home=""
+    local configured_bin=""
+
+    runtime_home="$(doctor_fix_runtime_home)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    configured_bin="$(doctor_fix_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    if [[ -n "$configured_bin" ]]; then
+        printf '%s\n' "$configured_bin"
+        return 0
+    fi
+
+    printf '%s/.local/bin\n' "$runtime_home"
 }
 
 doctor_fix_binary_path() {
@@ -104,7 +129,7 @@ doctor_fix_binary_path() {
     runtime_home="$(doctor_fix_runtime_home)"
     [[ -n "$runtime_home" ]] || return 1
 
-    primary_bin="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    primary_bin="$(doctor_fix_runtime_bin_dir)"
     for candidate in \
         "$primary_bin/$tool" \
         "$runtime_home/.local/bin/$tool" \
@@ -139,10 +164,19 @@ doctor_fix_runtime_path() {
     runtime_home="$(doctor_fix_runtime_home)"
     [[ -n "$runtime_home" ]] || return 1
 
-    primary_bin="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    primary_bin="$(doctor_fix_runtime_bin_dir)"
     current_path="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 
     printf '%s\n' "$primary_bin:$runtime_home/.local/bin:$runtime_home/.acfs/bin:$runtime_home/.cargo/bin:$runtime_home/.bun/bin:$runtime_home/.atuin/bin:$runtime_home/go/bin:$current_path"
+}
+
+doctor_fix_curl() {
+    local curl_bin=""
+
+    curl_bin="$(doctor_fix_binary_path curl 2>/dev/null || true)"
+    [[ -n "$curl_bin" ]] || return 127
+
+    "$curl_bin" "$@"
 }
 
 doctor_fix_source_stack_lib() {
@@ -1302,7 +1336,7 @@ doctor_fix_agent_mail_cli_path() {
     runtime_home="$(doctor_fix_runtime_home)"
     [[ -n "$runtime_home" ]] || return 1
 
-    primary_bin="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    primary_bin="$(doctor_fix_runtime_bin_dir)"
     for candidate in \
         "$primary_bin/am" \
         "$runtime_home/.local/bin/am" \
@@ -1363,7 +1397,7 @@ doctor_fix_agent_mail_bin() {
         fi
     fi
 
-    primary_bin="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    primary_bin="$(doctor_fix_runtime_bin_dir)"
     for candidate in \
         "$runtime_home/mcp_agent_mail/am" \
         "$primary_bin/am" \
@@ -1488,7 +1522,7 @@ agent_mail_fix_launch_fallback() {
     am_mcp_path="$(doctor_fix_agent_mail_mcp_path "$am_bin" 2>/dev/null || true)"
     [[ -n "$am_mcp_path" ]] || return 1
 
-    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+    if doctor_fix_curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
         return 0
     fi
 
@@ -1722,8 +1756,8 @@ fix_mcp_agent_mail() {
         doctor_fix_log WARN "MCP Agent Mail doctor fix did not complete cleanly"
     fi
 
-    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
-       curl -fsS --max-time 5 http://127.0.0.1:8765/health >/dev/null 2>&1; then
+    if doctor_fix_curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
+       doctor_fix_curl -fsS --max-time 5 http://127.0.0.1:8765/health >/dev/null 2>&1; then
         service_healthy=true
     fi
 
