@@ -6,8 +6,14 @@
 
 set -euo pipefail
 
-# Prevent interactive prompts during apt operations
+# Prevent interactive prompts during apt operations.
+# NEEDRESTART_* suppress the post-upgrade "which services to restart?" TUI on
+# Ubuntu 22.04+. Exporting alone is insufficient because `sudo` strips env by
+# default — the apt calls below pass these vars inline via `env`, and
+# update_disable_needrestart_apt_hook() also chmod-x's the apt hook itself.
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
 
 ACFS_VERSION="${ACFS_VERSION:-0.1.0}"
 ACFS_REPO_OWNER="${ACFS_REPO_OWNER:-Dicklesworthstone}"
@@ -436,10 +442,15 @@ update_ensure_jq_available() {
     fi
 
     echo -e "${YELLOW}Installing jq (required for update operations)...${NC}" >&2
+    # Pass noninteractive env inline: sudo strips DEBIAN_FRONTEND/NEEDRESTART_*
+    # from the caller's environment by default, so exports alone won't reach apt.
+    local _apt_env=(env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1)
     if [[ $EUID -eq 0 ]]; then
-        apt-get update -qq 2>/dev/null && apt-get install -y -qq jq 2>/dev/null || true
+        "${_apt_env[@]}" apt-get update -qq 2>/dev/null \
+            && "${_apt_env[@]}" apt-get install -y -qq jq 2>/dev/null || true
     elif cmd_exists sudo; then
-        sudo apt-get update -qq 2>/dev/null && sudo apt-get install -y -qq jq 2>/dev/null || true
+        sudo "${_apt_env[@]}" apt-get update -qq 2>/dev/null \
+            && sudo "${_apt_env[@]}" apt-get install -y -qq jq 2>/dev/null || true
     fi
 
     if ! cmd_exists jq; then
@@ -2448,12 +2459,46 @@ update_acfs_self() {
     return 0
 }
 
+# Prevent needrestart from hanging apt on Ubuntu 22.04+. The apt hook
+# /usr/lib/needrestart/apt-pinvoke prompts interactively even when
+# NEEDRESTART_SUSPEND=1 is exported, because sudo strips the env var before
+# reaching the hook. Disabling the hook executable is the bulletproof fix —
+# matches the pattern already used in install.sh::disable_needrestart_apt_hook.
+update_disable_needrestart_apt_hook() {
+    local apt_hook="/usr/lib/needrestart/apt-pinvoke"
+    local nr_conf_dir="/etc/needrestart/conf.d"
+    local nr_conf_file="$nr_conf_dir/50-acfs-noninteractive.conf"
+
+    [[ "${DRY_RUN:-false}" == "true" ]] && return 0
+    command -v apt-get &>/dev/null || return 0
+
+    local sudo_cmd
+    sudo_cmd=$(get_sudo)
+
+    if [[ -f "$apt_hook" && -x "$apt_hook" ]]; then
+        log_to_file "Disabling needrestart apt hook to prevent interactive hangs"
+        $sudo_cmd chmod -x "$apt_hook" 2>/dev/null || true
+    fi
+
+    if [[ ! -f "$nr_conf_file" ]]; then
+        $sudo_cmd mkdir -p "$nr_conf_dir" 2>/dev/null || true
+        if [[ -d "$nr_conf_dir" ]]; then
+            printf '$nrconf{restart} = %s;\n' "'a'" \
+                | $sudo_cmd tee "$nr_conf_file" >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
 update_apt() {
     if [[ "$UPDATE_APT" != "true" ]]; then
         return 0
     fi
 
     log_section "System Packages (apt)"
+
+    # Neutralise needrestart before any apt-get call — must happen first so
+    # even `apt update` (which can trigger the hook on some configs) is safe.
+    update_disable_needrestart_apt_hook
 
     # Check if apt/dpkg is available (Linux only)
     if ! command -v apt-get &>/dev/null; then
@@ -2470,7 +2515,7 @@ update_apt() {
     fix_apt_issues
 
     # Run apt update
-    run_cmd_sudo "apt update" apt-get update -y
+    run_cmd_sudo "apt update" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 apt-get update -y
 
     # Get list of upgradable packages before upgrade
     local upgradable_list=""
@@ -2487,10 +2532,10 @@ update_apt() {
         log_item "ok" "apt upgrade" "all packages up to date"
     else
         log_to_file "Upgrading $upgrade_count packages..."
-        run_cmd_sudo "apt upgrade ($upgrade_count packages)" env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+        run_cmd_sudo "apt upgrade ($upgrade_count packages)" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 apt-get upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold
     fi
 
-    run_cmd_sudo "apt autoremove" env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
+    run_cmd_sudo "apt autoremove" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 apt-get autoremove -y
 
     # Check if reboot is required (kernel updates, etc.)
     check_reboot_required
@@ -2597,7 +2642,7 @@ fix_apt_issues() {
         log_item "fix" "dpkg" "configuring interrupted packages"
         log_to_file "Running: $sudo_cmd dpkg --configure -a"
         local dpkg_output
-        dpkg_output=$($sudo_cmd env DEBIAN_FRONTEND=noninteractive dpkg --configure -a 2>&1) || true
+        dpkg_output=$($sudo_cmd env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 dpkg --configure -a 2>&1) || true
         [[ -n "$dpkg_output" ]] && log_to_file "dpkg output: $dpkg_output"
     fi
 
@@ -2623,7 +2668,7 @@ fix_apt_issues() {
         sudo_cmd=$(get_sudo)
         log_to_file "Running: $sudo_cmd apt-get -f install -y"
         local apt_output
-        apt_output=$($sudo_cmd env DEBIAN_FRONTEND=noninteractive apt-get -f install -y 2>&1) || true
+        apt_output=$($sudo_cmd env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 apt-get -f install -y 2>&1) || true
         [[ -n "$apt_output" ]] && log_to_file "apt-get -f output: $apt_output"
     fi
 }

@@ -287,12 +287,6 @@ info_get_data_home() {
         return 0
     fi
 
-    if [[ -n "$ACFS_HOME" ]] && [[ "$ACFS_HOME" != "$_INFO_DEFAULT_ACFS_HOME" ]]; then
-        _INFO_RESOLVED_ACFS_HOME="$ACFS_HOME"
-        echo "$_INFO_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(info_home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs"

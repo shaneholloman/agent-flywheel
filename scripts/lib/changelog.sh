@@ -251,12 +251,6 @@ resolve_changelog_acfs_home() {
         return 0
     fi
 
-    if [[ -n "$_CHANGELOG_EXPLICIT_ACFS_HOME" ]]; then
-        _CHANGELOG_RESOLVED_ACFS_HOME="$_CHANGELOG_EXPLICIT_ACFS_HOME"
-        printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(changelog_home_for_user "$SUDO_USER" 2>/dev/null || true)
         candidate="${target_home}/.acfs"

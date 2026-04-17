@@ -267,11 +267,6 @@ support_resolve_acfs_home() {
         return 0
     fi
 
-    if [[ -n "$ACFS_HOME" ]]; then
-        printf '%s\n' "$ACFS_HOME"
-        return 0
-    fi
-
     if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
         target_home=$(support_home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs"
@@ -298,6 +293,11 @@ support_resolve_acfs_home() {
             printf '%s\n' "$candidate"
             return 0
         fi
+    fi
+
+    if [[ -n "$ACFS_HOME" ]] && support_candidate_has_acfs_data "$ACFS_HOME"; then
+        printf '%s\n' "$ACFS_HOME"
+        return 0
     fi
 
     printf '%s\n' "${_SUPPORT_CURRENT_HOME:+${_SUPPORT_CURRENT_HOME}/.acfs}"

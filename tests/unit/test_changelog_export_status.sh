@@ -3590,6 +3590,33 @@ EOF
     cleanup_mock_env
 }
 
+test_dashboard_repo_local_ignores_poisoned_explicit_acfs_home() {
+    setup_system_state_target_home_env
+    setup_poisoned_acfs_home
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TEST_DASHBOARD_SCRIPT="$DASHBOARD_SH" \
+        bash -lc '
+            source "$TEST_DASHBOARD_SCRIPT"
+            dashboard_prepare_context
+            printf "home=%s\nstate=%s\ntarget=%s\n" "$ACFS_HOME" "$(dashboard_resolve_state_file)" "${TARGET_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"home=$TEST_INSTALLED_ACFS"* ]] \
+        && [[ "$output" == *"state=$TEST_INSTALLED_ACFS/state.json"* ]] \
+        && [[ "$output" == *"target=$TEST_TARGET_HOME"* ]]; then
+        harness_pass "dashboard repo-local script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "dashboard repo-local script ignores poisoned explicit ACFS_HOME" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_cheatsheet_uses_installed_layout_and_target_path_under_root_home() {
     setup_installed_layout_env
     setup_poisoned_acfs_home
@@ -3641,6 +3668,34 @@ EOF
         harness_pass "copied cheatsheet uses target_home-only system state"
     else
         harness_fail "copied cheatsheet uses target_home-only system state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_cheatsheet_repo_local_ignores_poisoned_explicit_acfs_home() {
+    setup_system_state_target_home_env
+    setup_poisoned_acfs_home
+
+    mkdir -p "$TEST_INSTALLED_ACFS/zsh"
+    cat > "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" <<'EOF'
+alias cod='codex'
+EOF
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/codex" "codex 1.2.3"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$CHEATSHEET_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e --arg zshrc "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" \
+        '.source == $zshrc and ([.entries[].name] | index("cod")) != null and ([.entries[].name] | index("poisoned")) == null' \
+        >/dev/null 2>&1; then
+        harness_pass "cheatsheet repo-local script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "cheatsheet repo-local script ignores poisoned explicit ACFS_HOME" "$output"
     fi
 
     cleanup_mock_env
@@ -3792,6 +3847,26 @@ test_status_uses_system_state_target_home_when_getent_unavailable() {
     cleanup_mock_env
 }
 
+test_status_repo_local_ignores_poisoned_explicit_acfs_home() {
+    setup_system_state_target_home_env
+    setup_poisoned_acfs_home
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$STATUS_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '.status == "ok" and .last_update == "2026-03-10T12:34:56Z" and (.errors | length == 0)' >/dev/null 2>&1; then
+        harness_pass "status repo-local script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "status repo-local script ignores poisoned explicit ACFS_HOME" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_status_ignores_relative_home_state_trap() {
     setup_system_state_target_home_only_env
     setup_relative_home_trap
@@ -3866,6 +3941,26 @@ test_changelog_uses_system_state_target_home_when_getent_unavailable() {
         harness_pass "changelog uses target_home from system state when getent is unavailable"
     else
         harness_fail "changelog uses target_home from system state when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_changelog_repo_local_ignores_poisoned_explicit_acfs_home() {
+    setup_system_state_target_home_env
+    setup_poisoned_acfs_home
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$CHANGELOG_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '.changes | (length == 1 and .[0].version == "2.0.0")' >/dev/null 2>&1; then
+        harness_pass "changelog repo-local script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "changelog repo-local script ignores poisoned explicit ACFS_HOME" "$output"
     fi
 
     cleanup_mock_env
@@ -3986,6 +4081,35 @@ test_export_config_uses_system_state_target_home_when_getent_unavailable() {
         harness_pass "export-config uses target_home from system state when getent is unavailable"
     else
         harness_fail "export-config uses target_home from system state when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_export_config_repo_local_ignores_poisoned_explicit_acfs_home() {
+    setup_system_state_target_home_env
+    setup_poisoned_acfs_home
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        ACFS_INSTALL_HELPERS_SH="$TEST_INSTALLED_HELPERS" \
+        ACFS_MANIFEST_INDEX_SH="$TEST_INSTALLED_MANIFEST_INDEX" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$EXPORT_CONFIG_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '
+        .metadata.acfs_version == "2.0.0" and
+        .settings.mode == "safe" and
+        (.modules | length) == 2 and
+        .modules == ["alpha", "module \"beta\" \\\\ path"] and
+        .tools.bun.version == "1.2.3" and
+        .agents.claude.version == "1.2.3"
+    ' >/dev/null 2>&1; then
+        harness_pass "export-config repo-local script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "export-config repo-local script ignores poisoned explicit ACFS_HOME" "$output"
     fi
 
     cleanup_mock_env
@@ -4318,6 +4442,28 @@ test_info_uses_system_state_target_home_when_getent_unavailable() {
     cleanup_mock_env
 }
 
+test_info_repo_local_ignores_poisoned_explicit_acfs_home() {
+    setup_system_state_target_home_env
+    setup_poisoned_acfs_home
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_TARGET_HOME/.local/bin:$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$INFO_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e \
+        '.installation.date == "2026-03-09" and .onboard.total_lessons == 1 and .onboard.next_lesson == "Lesson 1 - Installed Lesson"' \
+        >/dev/null 2>&1; then
+        harness_pass "info repo-local script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "info repo-local script ignores poisoned explicit ACFS_HOME" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_info_ignores_relative_home_state_trap() {
     setup_system_state_target_home_only_env
     setup_relative_home_trap
@@ -4500,6 +4646,39 @@ test_support_bundle_uses_system_state_target_home_when_getent_unavailable() {
         harness_pass "support bundle uses target_home from system state when getent is unavailable"
     else
         harness_fail "support bundle uses target_home from system state when getent is unavailable" "$archive_path"
+    fi
+
+    cleanup_mock_env
+}
+
+test_support_bundle_repo_local_ignores_poisoned_explicit_acfs_home() {
+    setup_system_state_target_home_env
+    setup_poisoned_acfs_home
+
+    local output_dir="$TEST_HOME/support-out"
+    mkdir -p "$output_dir"
+
+    local archive_path=""
+    archive_path=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        SUPPORT_BUNDLE_DOCTOR_TIMEOUT=1 \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$SUPPORT_SH" --output "$output_dir")
+
+    local bundle_dir="$archive_path"
+    if [[ "$bundle_dir" == *.tar.gz ]]; then
+        bundle_dir="${bundle_dir%.tar.gz}"
+    fi
+
+    if [[ -f "$bundle_dir/environment.json" ]] \
+        && [[ -f "$bundle_dir/state.json" ]] \
+        && jq -e --arg acfs_home "$TEST_INSTALLED_ACFS" --arg target_home "$TEST_TARGET_HOME" \
+            ".acfs_home == $acfs_home and .home == $target_home and .user == "tester"" \
+            "$bundle_dir/environment.json" >/dev/null 2>&1; then
+        harness_pass "support bundle repo-local script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "support bundle repo-local script ignores poisoned explicit ACFS_HOME" "$archive_path"
     fi
 
     cleanup_mock_env
@@ -6730,6 +6909,7 @@ main() {
     test_export_config_installed_script_ignores_poisoned_explicit_acfs_home || true
     test_export_config_uses_system_state_when_user_state_missing || true
     test_export_config_uses_system_state_target_home_when_getent_unavailable || true
+    test_export_config_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_export_config_ignores_relative_home_state_trap || true
     test_export_config_does_not_infer_target_home_from_markerless_acfs_home || true
 
@@ -6743,12 +6923,14 @@ main() {
     test_status_uses_persisted_bin_dir_over_poisoned_env_bin_dir || true
     test_status_uses_system_state_when_user_state_missing || true
     test_status_uses_system_state_target_home_when_getent_unavailable || true
+    test_status_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_status_ignores_relative_home_state_trap || true
 
     harness_section "Changelog Root Context"
     test_changelog_uses_installed_layout_under_root_home || true
     test_changelog_uses_system_state_when_user_state_missing || true
     test_changelog_uses_system_state_target_home_when_getent_unavailable || true
+    test_changelog_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_changelog_ignores_relative_home_trap || true
 
     harness_section "Continue"
@@ -6768,6 +6950,7 @@ main() {
     test_dashboard_uses_installed_layout_under_root_home || true
     test_dashboard_serve_uses_target_user_in_ssh_hint || true
     test_dashboard_copy_install_uses_target_home_only_system_state || true
+    test_dashboard_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_dashboard_copy_install_ignores_relative_home_trap || true
 
     harness_section "Cheatsheet"
@@ -6779,6 +6962,7 @@ main() {
     test_smoke_bootstrap_uses_system_state_target_home_when_getent_unavailable || true
     test_cheatsheet_uses_installed_layout_and_target_path_under_root_home || true
     test_cheatsheet_copy_install_uses_target_home_only_system_state || true
+    test_cheatsheet_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_cheatsheet_copy_install_ignores_relative_home_trap || true
 
     harness_section "Info / Support / Onboard"
@@ -6789,6 +6973,7 @@ main() {
     test_runtime_helpers_fail_closed_on_invalid_passwd_home_for_target_user || true
     test_info_uses_installed_layout_under_root_home || true
     test_info_uses_system_state_target_home_when_getent_unavailable || true
+    test_info_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_info_ignores_relative_home_state_trap || true
     test_info_uses_target_user_path_under_root_home || true
     test_info_summary_ignores_current_shell_only_binaries || true
@@ -6797,6 +6982,7 @@ main() {
     test_info_reads_skipped_tools_without_jq || true
     test_support_bundle_uses_installed_layout_under_root_home || true
     test_support_bundle_uses_system_state_target_home_when_getent_unavailable || true
+    test_support_bundle_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_onboard_cli_aliases_work_in_zero_lessons_mode || true
     test_onboard_repairs_malformed_progress_before_showing_lesson || true
     test_onboard_accepts_sparse_lesson_numbers || true
