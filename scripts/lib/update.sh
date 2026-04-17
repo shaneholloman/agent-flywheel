@@ -2475,17 +2475,19 @@ update_disable_needrestart_apt_hook() {
     local sudo_cmd
     sudo_cmd=$(get_sudo)
 
+    # Method 1: disable the apt hook executable. Bulletproof — the hook can't
+    # run at all once the exec bit is cleared.
     if [[ -f "$apt_hook" && -x "$apt_hook" ]]; then
         log_to_file "Disabling needrestart apt hook to prevent interactive hangs"
         $sudo_cmd chmod -x "$apt_hook" 2>/dev/null || true
     fi
 
-    if [[ ! -f "$nr_conf_file" ]]; then
-        $sudo_cmd mkdir -p "$nr_conf_dir" 2>/dev/null || true
-        if [[ -d "$nr_conf_dir" ]]; then
-            printf '$nrconf{restart} = %s;\n' "'a'" \
-                | $sudo_cmd tee "$nr_conf_file" >/dev/null 2>&1 || true
-        fi
+    # Method 2: drop a conf file that forces auto-restart if needrestart runs
+    # via some other path (e.g. user re-enables the hook). Idempotent — always
+    # (re)write so a stale/corrupted prior conf is corrected.
+    if [[ -d "$nr_conf_dir" ]] || $sudo_cmd mkdir -p "$nr_conf_dir" 2>/dev/null; then
+        printf '$nrconf{restart} = %s;\n' "'a'" \
+            | $sudo_cmd tee "$nr_conf_file" >/dev/null 2>&1 || true
     fi
 }
 
