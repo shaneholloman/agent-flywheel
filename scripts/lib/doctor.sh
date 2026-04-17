@@ -77,6 +77,9 @@ export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR
 ensure_path() {
     local dir
     local to_add=()
+    local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+    local current_path="${PATH:-$system_path_prefix}"
+    local seen_path=":$current_path:"
     local primary_home="${TARGET_HOME:-${_acfs_doctor_current_home:-/root}}"
     local primary_bin_dir="${ACFS_BIN_DIR:-$primary_home/.local/bin}"
 
@@ -90,9 +93,13 @@ ensure_path() {
         "$primary_home/.atuin/bin"
         "$primary_home/go/bin"
         "$primary_home/google-cloud-sdk/bin"
+        "/usr/local/sbin"
         "/usr/local/bin"
+        "/usr/sbin"
         "/usr/bin"
+        "/sbin"
         "/bin"
+        "/snap/bin"
     )
 
     if [[ -n "${ACFS_HOME:-}" ]]; then
@@ -107,21 +114,25 @@ ensure_path() {
             "$_acfs_doctor_current_home/.cargo/bin"
             "$_acfs_doctor_current_home/.atuin/bin"
             "$_acfs_doctor_current_home/go/bin"
+            "$_acfs_doctor_current_home/google-cloud-sdk/bin"
         )
     fi
 
     for dir in "${candidate_dirs[@]}"; do
         [[ -d "$dir" ]] || continue
-        # Robust PATH check using exact matching to avoid partial substring hits
-        if [[ ":$PATH:" != *":$dir:"* ]]; then
+        # Robust PATH check using exact matching to avoid partial substring hits.
+        # Track pending additions too so duplicate candidate entries do not get
+        # prepended twice when ACFS_BIN_DIR resolves to ~/.local/bin.
+        if [[ "$seen_path" != *":$dir:"* ]]; then
             to_add+=("$dir")
+            seen_path="${seen_path}${dir}:"
         fi
     done
 
     if [[ ${#to_add[@]} -gt 0 ]]; then
         local prefix
         prefix=$(IFS=:; echo "${to_add[*]}")
-        export PATH="${prefix}:$PATH"
+        export PATH="$prefix${current_path:+:$current_path}"
     fi
 }
 HAS_GUM=false
@@ -178,6 +189,15 @@ _acfs_doctor_source_first() {
 
 # Source output formatting library (for TOON support)
 _acfs_doctor_source_first "output.sh" || true
+
+if ! type -t log_error >/dev/null 2>&1; then
+    log_step() { echo "[*] $*" >&2; }
+    log_section() { echo "" >&2; echo "=== $* ===" >&2; }
+    log_success() { echo "[OK] $*" >&2; }
+    log_error() { echo "[ERROR] $*" >&2; }
+    log_warn() { echo "[WARN] $*" >&2; }
+    log_info() { echo "    $*" >&2; }
+fi
 
 # Global format options (set by argument parsing)
 _DOCTOR_OUTPUT_FORMAT=""
@@ -358,13 +378,14 @@ fi
 if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "${_ACFS_DOCTOR_ENV_TARGET_HOME:-}" ]]; then
     TARGET_HOME="$_ACFS_DOCTOR_ENV_TARGET_HOME"
 fi
-if [[ "$TARGET_HOME" != /* ]]; then
+if [[ -n "${TARGET_HOME:-}" ]] && { [[ "$TARGET_HOME" != /* ]] || [[ "$TARGET_HOME" == "/" ]]; }; then
+    TARGET_HOME=""
+fi
+if [[ -z "${TARGET_HOME:-}" ]]; then
     if [[ "$TARGET_USER" == "root" ]]; then
         TARGET_HOME="/root"
     elif [[ -n "${_acfs_doctor_current_home:-}" ]] && [[ "$TARGET_USER" == "$(id -un 2>/dev/null || true)" ]]; then
         TARGET_HOME="$_acfs_doctor_current_home"
-    else
-        TARGET_HOME="/home/$TARGET_USER"
     fi
 fi
 
@@ -1253,22 +1274,49 @@ doctor_binary_path() {
 doctor_runtime_path() {
     local runtime_home=""
     local primary_bin_dir=""
-    local current_path=""
-    local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+    local current_path="${PATH:-}"
+    local dir=""
+    local seen_path=":"
     local path_prefix=""
+    local -a path_entries=()
 
     runtime_home="$(doctor_runtime_home)"
     [[ -n "$runtime_home" ]] || return 1
 
     primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
-    current_path="${PATH:-$system_path_prefix}"
-    path_prefix="$primary_bin_dir:$runtime_home/.local/bin:$runtime_home/.acfs/bin:$runtime_home/.bun/bin:$runtime_home/.cargo/bin:$runtime_home/.atuin/bin:$runtime_home/go/bin:$runtime_home/google-cloud-sdk/bin:$system_path_prefix"
 
     if [[ -n "${ACFS_HOME:-}" ]]; then
-        path_prefix="$ACFS_HOME/bin:$path_prefix"
+        path_entries+=("$ACFS_HOME/bin")
+        seen_path="${seen_path}${ACFS_HOME}/bin:"
     fi
 
-    printf '%s\n' "$path_prefix:$current_path"
+    for dir in \
+        "$primary_bin_dir" \
+        "$runtime_home/.local/bin" \
+        "$runtime_home/.acfs/bin" \
+        "$runtime_home/.bun/bin" \
+        "$runtime_home/.cargo/bin" \
+        "$runtime_home/.atuin/bin" \
+        "$runtime_home/go/bin" \
+        "$runtime_home/google-cloud-sdk/bin" \
+        "/usr/local/sbin" \
+        "/usr/local/bin" \
+        "/usr/sbin" \
+        "/usr/bin" \
+        "/sbin" \
+        "/bin" \
+        "/snap/bin"; do
+        case "$seen_path" in
+            *":$dir:"*) ;;
+            *)
+                path_entries+=("$dir")
+                seen_path="${seen_path}${dir}:"
+                ;;
+        esac
+    done
+
+    path_prefix=$(IFS=:; echo "${path_entries[*]}")
+    printf '%s\n' "$path_prefix${current_path:+:$current_path}"
 }
 
 doctor_binary_exists() {
@@ -2177,6 +2225,13 @@ _doctor_run_manifest_check() {
     local target_home="${TARGET_HOME:-}"
     local target_path=""
 
+    if declare -f _acfs_validate_target_user >/dev/null 2>&1; then
+        _acfs_validate_target_user "$target_user" "TARGET_USER" || return 1
+    elif [[ -z "$target_user" ]] || [[ ! "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        log_error "Invalid TARGET_USER '${target_user:-<empty>}' (expected: lowercase user name like 'ubuntu')"
+        return 1
+    fi
+
     if [[ -z "$target_home" ]]; then
         local passwd_entry=""
         passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
@@ -2186,17 +2241,52 @@ _doctor_run_manifest_check() {
             target_home="/root"
         elif [[ "$target_user" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
             target_home="$_acfs_doctor_current_home"
-        elif [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            target_home="/home/$target_user"
         fi
     fi
 
-    local target_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
     local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
-    target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:$target_home/google-cloud-sdk/bin:$system_path_prefix:${PATH:-$system_path_prefix}"
 
     case "$run_as" in
         target_user)
+            if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then
+                log_error "Invalid TARGET_HOME for '$target_user': ${target_home:-<empty>} (must be an absolute path and cannot be '/')"
+                return 1
+            fi
+            local target_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+            if [[ -z "$target_bin" ]] || [[ "$target_bin" != /* ]] || [[ "$target_bin" == "/" ]]; then
+                log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${target_bin:-<empty>})"
+                return 1
+            fi
+            local dir=""
+            local seen_path=":"
+            local target_path_prefix=""
+            local -a target_path_entries=()
+            for dir in \
+                "$target_bin" \
+                "$target_home/.local/bin" \
+                "$target_home/.acfs/bin" \
+                "$target_home/.bun/bin" \
+                "$target_home/.cargo/bin" \
+                "$target_home/.atuin/bin" \
+                "$target_home/go/bin" \
+                "$target_home/google-cloud-sdk/bin" \
+                "/usr/local/sbin" \
+                "/usr/local/bin" \
+                "/usr/sbin" \
+                "/usr/bin" \
+                "/sbin" \
+                "/bin" \
+                "/snap/bin"; do
+                case "$seen_path" in
+                    *":$dir:"*) ;;
+                    *)
+                        target_path_entries+=("$dir")
+                        seen_path="${seen_path}${dir}:"
+                        ;;
+                esac
+            done
+            target_path_prefix=$(IFS=:; echo "${target_path_entries[*]}")
+            target_path="$target_path_prefix${PATH:+:$PATH}"
             if [[ "$(id -un 2>/dev/null || true)" == "$target_user" ]]; then
                 TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
                 return $?
@@ -2218,21 +2308,29 @@ _doctor_run_manifest_check() {
             ;;
         root)
             if [[ $EUID -eq 0 ]]; then
-                bash -o pipefail -c "$cmd"
+                if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+                    TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                else
+                    TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                fi
                 return $?
             fi
             if command -v sudo >/dev/null 2>&1; then
-                sudo -n env \
-                    TARGET_USER="$target_user" \
-                    TARGET_HOME="$target_home" \
-                    PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}" \
-                    bash -o pipefail -c "$cmd"
+                if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+                    sudo -n env TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                else
+                    sudo -n env TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                fi
                 return $?
             fi
             return 1
             ;;
         current|*)
-            bash -o pipefail -c "$cmd"
+            if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+                TARGET_USER="$target_user" TARGET_HOME="$target_home" bash -o pipefail -c "$cmd"
+            else
+                TARGET_USER="$target_user" bash -o pipefail -c "$cmd"
+            fi
             ;;
     esac
 }

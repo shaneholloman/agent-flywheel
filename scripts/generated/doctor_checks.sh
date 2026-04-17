@@ -286,7 +286,36 @@ run_manifest_check_command() {
                 log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${target_bin:-<empty>})"
                 return 1
             fi
-            target_path="$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:$target_home/google-cloud-sdk/bin:$system_path_prefix:${PATH:-$system_path_prefix}"
+            local dir=""
+            local seen_path=":"
+            local target_path_prefix=""
+            local -a target_path_entries=()
+            for dir in \
+                "$target_bin" \
+                "$target_home/.local/bin" \
+                "$target_home/.acfs/bin" \
+                "$target_home/.bun/bin" \
+                "$target_home/.cargo/bin" \
+                "$target_home/.atuin/bin" \
+                "$target_home/go/bin" \
+                "$target_home/google-cloud-sdk/bin" \
+                "/usr/local/sbin" \
+                "/usr/local/bin" \
+                "/usr/sbin" \
+                "/usr/bin" \
+                "/sbin" \
+                "/bin" \
+                "/snap/bin"; do
+                case "$seen_path" in
+                    *":$dir:"*) ;;
+                    *)
+                        target_path_entries+=("$dir")
+                        seen_path="${seen_path}${dir}:"
+                        ;;
+                esac
+            done
+            target_path_prefix=$(IFS=:; echo "${target_path_entries[*]}")
+            target_path="$target_path_prefix${PATH:+:$PATH}"
             if [[ "$(id -un 2>/dev/null || true)" == "$target_user" ]]; then
                 TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
                 return $?

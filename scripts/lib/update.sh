@@ -122,6 +122,17 @@ update_is_read_only_mode() {
     [[ "${DRY_RUN:-false}" == "true" ]]
 }
 
+update_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
 # ============================================================
 # Path Setup
 # ============================================================
@@ -129,7 +140,14 @@ update_is_read_only_mode() {
 ensure_path() {
     local dir
     local to_add=()
-    local _primary_bin="${ACFS_BIN_DIR:-$HOME/.local/bin}"
+    local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+    local current_path="${PATH:-$system_path_prefix}"
+    local seen_path=":$current_path:"
+    local sanitized_primary_bin=""
+    local _primary_bin=""
+
+    sanitized_primary_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    _primary_bin="${sanitized_primary_bin:-$HOME/.local/bin}"
 
     for dir in \
         "$_primary_bin" \
@@ -137,19 +155,30 @@ ensure_path() {
         "$HOME/.acfs/bin" \
         "$HOME/.bun/bin" \
         "$HOME/.cargo/bin" \
+        "$HOME/.atuin/bin" \
         "$HOME/go/bin" \
-        "$HOME/.atuin/bin"; do
+        "$HOME/google-cloud-sdk/bin" \
+        "/usr/local/sbin" \
+        "/usr/local/bin" \
+        "/usr/sbin" \
+        "/usr/bin" \
+        "/sbin" \
+        "/bin" \
+        "/snap/bin"; do
         [[ -d "$dir" ]] || continue
-        case ":$PATH:" in
+        case "$seen_path" in
             *":$dir:"*) ;;
-            *) to_add+=("$dir") ;;
+            *)
+                to_add+=("$dir")
+                seen_path="${seen_path}${dir}:"
+                ;;
         esac
     done
 
     if [[ ${#to_add[@]} -gt 0 ]]; then
         local prefix
         prefix=$(IFS=:; echo "${to_add[*]}")
-        export PATH="${prefix}:$PATH"
+        export PATH="$prefix${current_path:+:$current_path}"
     fi
 }
 
@@ -173,27 +202,43 @@ update_preferred_user_bin_dir() {
     local bin_dir=""
     local target_user=""
     local target_home=""
+    local current_user=""
+    local current_state_file=""
+    local acfs_home_state_file=""
+    local target_state_file=""
+    local explicit_bin_dir=""
+    local explicit_state_file=""
+    local sanitized_acfs_home=""
 
-    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
-        printf '%s\n' "${ACFS_BIN_DIR%/}"
+    explicit_bin_dir="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    if [[ -n "$explicit_bin_dir" ]]; then
+        printf '%s\n' "$explicit_bin_dir"
         return 0
     fi
 
     target_user="$(update_target_user)"
     target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    current_user="$(update_current_user)"
+    explicit_state_file="$(update_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
+    sanitized_acfs_home="$(update_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+    [[ -n "$sanitized_acfs_home" ]] && acfs_home_state_file="$sanitized_acfs_home/state.json"
+    [[ -n "$target_home" ]] && target_state_file="$target_home/.acfs/state.json"
+    if [[ "$target_user" == "$current_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        current_state_file="$HOME/.acfs/state.json"
+    fi
 
     for state_file in \
-        "${ACFS_STATE_FILE:-}" \
-        "${ACFS_HOME:-}/state.json" \
-        "$target_home/.acfs/state.json" \
-        "$HOME/.acfs/state.json" \
+        "$explicit_state_file" \
+        "$acfs_home_state_file" \
+        "$target_state_file" \
+        "$current_state_file" \
         "/var/lib/acfs/state.json"; do
         [[ -n "$state_file" && -f "$state_file" ]] || continue
 
         if command -v jq &>/dev/null; then
             bin_dir="$(jq -r '.bin_dir // empty' "$state_file" 2>/dev/null || true)"
         else
-            bin_dir="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
+            bin_dir="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\(^["]*\)".*/\1/p' "$state_file" | head -n 1)"
         fi
 
         if [[ -n "$bin_dir" ]] && [[ "$bin_dir" == /* ]] && [[ "$bin_dir" != "/" ]]; then
@@ -207,7 +252,7 @@ update_preferred_user_bin_dir() {
         return 0
     fi
 
-    printf '%s\n' "$HOME/.local/bin"
+    return 1
 }
 
 update_default_user_bin_dir() {
@@ -220,52 +265,6 @@ update_default_user_bin_dir() {
         printf '%s\n' "$target_home/.local/bin"
         return 0
     fi
-
-    printf '%s\n' "$HOME/.local/bin"
-}
-
-update_binary_path() {
-    local tool="$1"
-    local target_user=""
-    local target_home=""
-    local primary_bin=""
-    local candidate=""
-
-    [[ -n "$tool" ]] || return 1
-
-    target_user="$(update_target_user)"
-    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
-    if [[ -z "$target_home" ]] && [[ -n "${HOME:-}" ]] && [[ "$HOME" == /* ]] && [[ "$HOME" != "/" ]]; then
-        target_home="${HOME%/}"
-    fi
-    [[ -n "$target_home" ]] || return 1
-
-    primary_bin="$(update_preferred_user_bin_dir 2>/dev/null || true)"
-    if [[ -z "$primary_bin" ]] || [[ "$primary_bin" != /* ]] || [[ "$primary_bin" == "/" ]]; then
-        primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
-    fi
-
-    for candidate in \
-        "$primary_bin/$tool" \
-        "$target_home/.local/bin/$tool" \
-        "$target_home/.acfs/bin/$tool" \
-        "$target_home/.bun/bin/$tool" \
-        "$target_home/.cargo/bin/$tool" \
-        "$target_home/.atuin/bin/$tool" \
-        "$target_home/go/bin/$tool" \
-        "$target_home/bin/$tool" \
-        "/usr/local/go/bin/$tool" \
-        "/usr/local/bin/$tool" \
-        "/usr/bin/$tool" \
-        "/bin/$tool" \
-        "/usr/local/sbin/$tool" \
-        "/usr/sbin/$tool" \
-        "/sbin/$tool" \
-        "/snap/bin/$tool"; do
-        [[ -x "$candidate" ]] || continue
-        printf '%s\n' "$candidate"
-        return 0
-    done
 
     return 1
 }
@@ -282,36 +281,33 @@ update_tool_binary_path() {
     local user_bin=""
     local target_user=""
     local target_home=""
+    local candidate=""
+    local -a candidates=()
 
     target_user="$(update_target_user)"
     target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
-    user_bin="$(update_default_user_bin_dir)"
-    primary_bin="$(update_preferred_user_bin_dir)"
+    user_bin="$(update_default_user_bin_dir 2>/dev/null || true)"
+    primary_bin="$(update_preferred_user_bin_dir 2>/dev/null || true)"
 
     case "$tool" in
         atuin)
-            for candidate in \
-                "$primary_bin/atuin" \
-                "$user_bin/atuin" \
-                "$target_home/.atuin/bin/atuin" \
-                "$HOME/.atuin/bin/atuin"; do
-                [[ -x "$candidate" ]] || continue
-                printf '%s\n' "$candidate"
-                return 0
-            done
+            [[ -n "$primary_bin" ]] && candidates+=("$primary_bin/atuin")
+            [[ -n "$user_bin" ]] && candidates+=("$user_bin/atuin")
+            [[ -n "$target_home" ]] && candidates+=("$target_home/.atuin/bin/atuin")
             ;;
         zoxide)
-            for candidate in \
-                "$primary_bin/zoxide" \
-                "$user_bin/zoxide"; do
-                [[ -x "$candidate" ]] || continue
-                printf '%s\n' "$candidate"
-                return 0
-            done
+            [[ -n "$primary_bin" ]] && candidates+=("$primary_bin/zoxide")
+            [[ -n "$user_bin" ]] && candidates+=("$user_bin/zoxide")
             ;;
         *)
             ;;
     esac
+
+    for candidate in "${candidates[@]}"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
 
     update_binary_path "$tool"
 }
@@ -750,13 +746,14 @@ update_repair_atuin_install() {
 
     target_user="$(update_target_user)"
     target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
-    preferred_src="${target_home:-$HOME}/.atuin/bin/atuin"
-    primary_dir="$(update_preferred_user_bin_dir)"
-    user_bin="$(update_default_user_bin_dir)"
-    local -a bin_dirs=("$primary_dir")
+    [[ -n "$target_home" ]] && preferred_src="$target_home/.atuin/bin/atuin"
+    primary_dir="$(update_preferred_user_bin_dir 2>/dev/null || true)"
+    user_bin="$(update_default_user_bin_dir 2>/dev/null || true)"
+    local -a bin_dirs=()
     local dir=""
 
-    if [[ "$user_bin" != "$primary_dir" ]]; then
+    [[ -n "$primary_dir" ]] && bin_dirs+=("$primary_dir")
+    if [[ -n "$user_bin" && "$user_bin" != "$primary_dir" ]]; then
         bin_dirs+=("$user_bin")
     fi
 
@@ -782,8 +779,8 @@ update_repair_zoxide_install() {
     local primary_dir=""
     local user_bin=""
 
-    primary_dir="$(update_preferred_user_bin_dir)"
-    user_bin="$(update_default_user_bin_dir)"
+    primary_dir="$(update_preferred_user_bin_dir 2>/dev/null || true)"
+    user_bin="$(update_default_user_bin_dir 2>/dev/null || true)"
 
     # The upstream zoxide installer writes to ~/.local/bin by default. When ACFS
     # uses a custom bin_dir that comes earlier in PATH, keep that shim pointed at
@@ -1215,26 +1212,37 @@ update_current_user() {
     id -un 2>/dev/null || whoami 2>/dev/null || true
 }
 
+update_validate_target_user() {
+    local target_user="${1:-}"
+
+    if [[ -z "$target_user" ]] || [[ ! "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        echo "Invalid TARGET_USER '${target_user:-<empty>}' (expected: lowercase user name like 'ubuntu')" >&2
+        return 1
+    fi
+}
+
 update_target_user() {
-    if [[ -n "${TARGET_USER:-}" ]]; then
-        printf '%s\n' "$TARGET_USER"
-        return 0
-    fi
-
+    local target_user="${TARGET_USER:-}"
     local current_user=""
-    current_user="$(update_current_user)"
-    if [[ -n "$current_user" ]]; then
-        printf '%s\n' "$current_user"
+
+    if [[ -n "$target_user" ]]; then
+        update_validate_target_user "$target_user" || return 1
+        printf '%s\n' "$target_user"
         return 0
     fi
 
-    printf '%s\n' "ubuntu"
+    current_user="$(update_current_user)"
+    target_user="${current_user:-ubuntu}"
+    update_validate_target_user "$target_user" || return 1
+    printf '%s\n' "$target_user"
 }
 
 update_target_home() {
     local target_user="${1:-}"
     local passwd_entry=""
     local current_user=""
+
+    update_validate_target_user "$target_user" || return 1
 
     if [[ -n "${TARGET_HOME:-}" ]] && [[ "${TARGET_HOME}" == /* ]] && [[ "${TARGET_HOME}" != "/" ]]; then
         printf '%s\n' "${TARGET_HOME%/}"
@@ -1261,20 +1269,109 @@ update_target_home() {
         return 0
     fi
 
-    if [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        printf '/home/%s\n' "$target_user"
-        return 0
-    fi
-
     return 1
 }
 
 update_target_path() {
     local target_home="$1"
-    local target_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
-    local current_path="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+    local configured_bin=""
+    local target_bin=""
+    local current_path="${PATH:-}"
+    local dir=""
+    local seen_path=":"
+    local path_prefix=""
+    local -a path_entries=()
 
-    printf '%s\n' "$target_bin:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.bun/bin:$target_home/.cargo/bin:$target_home/.atuin/bin:$target_home/go/bin:$current_path"
+    configured_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    target_bin="${configured_bin:-$target_home/.local/bin}"
+
+    [[ -n "$target_home" ]] || return 1
+    [[ "$target_home" == /* ]] || return 1
+    [[ "$target_home" != "/" ]] || return 1
+    [[ -n "$target_bin" ]] || return 1
+    [[ "$target_bin" == /* ]] || return 1
+    [[ "$target_bin" != "/" ]] || return 1
+
+    for dir in \
+        "$target_bin" \
+        "$target_home/.local/bin" \
+        "$target_home/.acfs/bin" \
+        "$target_home/.bun/bin" \
+        "$target_home/.cargo/bin" \
+        "$target_home/.atuin/bin" \
+        "$target_home/go/bin" \
+        "$target_home/google-cloud-sdk/bin" \
+        "/usr/local/sbin" \
+        "/usr/local/bin" \
+        "/usr/sbin" \
+        "/usr/bin" \
+        "/sbin" \
+        "/bin" \
+        "/snap/bin"; do
+        case "$seen_path" in
+            *":$dir:"*) ;;
+            *)
+                path_entries+=("$dir")
+                seen_path="${seen_path}${dir}:"
+                ;;
+        esac
+    done
+
+    path_prefix=$(IFS=:; echo "${path_entries[*]}")
+    printf '%s\n' "$path_prefix${current_path:+:$current_path}"
+}
+
+update_binary_path() {
+    local tool="$1"
+    local target_user=""
+    local target_home=""
+    local primary_bin=""
+    local configured_bin=""
+    local current_user=""
+    local candidate=""
+
+    [[ -n "$tool" ]] || return 1
+
+    target_user="$(update_target_user 2>/dev/null || true)"
+    update_validate_target_user "$target_user" >/dev/null 2>&1 || return 1
+
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    current_user="$(update_current_user)"
+    if [[ -z "$target_home" ]] && [[ "$target_user" == "$current_user" ]] && [[ -n "${HOME:-}" ]] && [[ "$HOME" == /* ]] && [[ "$HOME" != "/" ]]; then
+        target_home="${HOME%/}"
+    fi
+    [[ -n "$target_home" ]] || return 1
+
+    primary_bin="$(update_preferred_user_bin_dir 2>/dev/null || true)"
+    configured_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    if [[ -z "$primary_bin" ]] || [[ "$primary_bin" != /* ]] || [[ "$primary_bin" == "/" ]]; then
+        primary_bin="${configured_bin:-$target_home/.local/bin}"
+    fi
+
+    for candidate in \
+        "$primary_bin/$tool" \
+        "$target_home/.local/bin/$tool" \
+        "$target_home/.acfs/bin/$tool" \
+        "$target_home/.bun/bin/$tool" \
+        "$target_home/.cargo/bin/$tool" \
+        "$target_home/.atuin/bin/$tool" \
+        "$target_home/go/bin/$tool" \
+        "$target_home/google-cloud-sdk/bin/$tool" \
+        "$target_home/bin/$tool" \
+        "/usr/local/go/bin/$tool" \
+        "/usr/local/bin/$tool" \
+        "/usr/bin/$tool" \
+        "/bin/$tool" \
+        "/usr/local/sbin/$tool" \
+        "/usr/sbin/$tool" \
+        "/sbin/$tool" \
+        "/snap/bin/$tool"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
 }
 
 update_run_in_target_context() {
@@ -1285,15 +1382,26 @@ update_run_in_target_context() {
     local current_user=""
     local target_home=""
     local target_path=""
-    target_user="$(update_target_user)"
+    target_user="$(update_target_user 2>/dev/null || true)"
+    update_validate_target_user "$target_user" || return 1
     current_user="$(update_current_user)"
-    target_home="$(update_target_home "$target_user")"
-    target_path="$(update_target_path "$target_home")"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then
+        echo "Unable to resolve TARGET_HOME for '$target_user'; export TARGET_HOME explicitly" >&2
+        return 1
+    fi
+    target_path="$(update_target_path "$target_home" 2>/dev/null || true)"
+    [[ -n "$target_path" ]] || {
+        echo "Unable to build target PATH for '$target_user'" >&2
+        return 1
+    }
 
+    local sanitized_acfs_home=""
     local -a env_args=("UV_NO_CONFIG=1" "HOME=$target_home" "PATH=$target_path")
     [[ -n "$target_user" ]] && env_args+=("TARGET_USER=$target_user")
     [[ -n "$target_home" ]] && env_args+=("TARGET_HOME=$target_home")
-    [[ -n "${ACFS_HOME:-}" ]] && env_args+=("ACFS_HOME=$ACFS_HOME")
+    sanitized_acfs_home="$(update_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+    [[ -n "$sanitized_acfs_home" ]] && env_args+=("ACFS_HOME=$sanitized_acfs_home")
     [[ -n "$bash_env_assignment" ]] && env_args+=("$bash_env_assignment")
 
     if [[ "$current_user" == "$target_user" ]]; then

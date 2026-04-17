@@ -218,7 +218,7 @@ describe('Generated verified installer args', () => {
     expect(stackContent).toContain('if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then');
     expect(stackContent).toContain('TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"');
     expect(stackContent).toContain(
-      'log_error "Unable to resolve TARGET_HOME for \'${TARGET_USER}\'; export TARGET_HOME explicitly"'
+      'log_error "Invalid TARGET_HOME for \'${TARGET_USER}\': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be \'/\')"'
     );
     expect(stackContent).not.toContain('TARGET_HOME="/home/${TARGET_USER}"');
     expect(stackContent).not.toContain('TARGET_HOME="/home/${TARGET_USER:-ubuntu}"');
@@ -399,11 +399,18 @@ describe('doctor_checks.sh content', () => {
     expect(doctorContent).toMatch(/base\.system\.1[^\n]*\troot"/);
   });
 
+  test('generated manifest-check helper uses hardened target PATH ordering', () => {
+    expect(doctorContent).toContain('local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"');
+    expect(doctorContent).toContain('local -a target_path_entries=()');
+    expect(doctorContent).toContain('target_path_prefix=$(IFS=:; echo "${target_path_entries[*]}")');
+    expect(doctorContent).toContain('target_path="$target_path_prefix${PATH:+:$PATH}"');
+  });
+
   test('run_manifest_check_command resolves target homes without /home guesses', () => {
     expect(doctorContent).toContain('target_home="$(_acfs_resolve_target_home "$target_user" || true)"');
     expect(doctorContent).not.toContain('target_home="/home/$target_user"');
     expect(doctorContent).toContain(
-      'log_error "Unable to resolve TARGET_HOME for \'$target_user\'; export TARGET_HOME explicitly"'
+      'log_error "Invalid TARGET_HOME for \'$target_user\': ${target_home:-<empty>} (must be an absolute path and cannot be \'/\')"'
     );
   });
 
@@ -415,7 +422,7 @@ describe('doctor_checks.sh content', () => {
 
   test('root doctor checks still run when TARGET_HOME is unresolved', () => {
     expect(doctorContent).toContain(
-      'sudo -n env TARGET_USER="$target_user" PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}" bash -o pipefail -c "$cmd"'
+      'sudo -n env TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"'
     );
     expect(doctorContent).not.toContain(
       'root)\n            if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then'
