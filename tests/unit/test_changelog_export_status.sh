@@ -4862,6 +4862,44 @@ EOF
     cleanup_mock_env
 }
 
+test_acfs_update_wrapper_prefers_state_bin_dir_over_poisoned_env() {
+    setup_system_state_target_home_only_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.acfs/scripts/lib"
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    local persisted_bin="$TEST_TARGET_HOME/.local/bin"
+    local poisoned_bin="$TEST_HOME/poisoned-bin"
+    cat > "$TEST_TARGET_HOME/.acfs/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$persisted_bin"
+}
+EOF
+
+    cat > "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'ACFS_BIN_DIR=%s TARGET_HOME=%s\n' "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_ROOT_HOME/.acfs" TARGET_HOME="$TEST_ROOT_HOME" \
+        ACFS_STATE_FILE="$TEST_ROOT_HOME/.acfs/state.json" ACFS_BIN_DIR="$poisoned_bin" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs-update" --dry-run 2>&1)
+
+    if [[ "$output" == "ACFS_BIN_DIR=$persisted_bin TARGET_HOME=$TEST_TARGET_HOME" ]]; then
+        harness_pass "acfs-update wrapper prefers persisted bin_dir over poisoned env"
+    else
+        harness_fail "acfs-update wrapper prefers persisted bin_dir over poisoned env" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_acfs_update_wrapper_discards_invalid_env_bin_dir_on_direct_exec() {
     setup_system_state_target_home_only_env
 
@@ -5166,6 +5204,44 @@ EOF
         harness_pass "global acfs wrapper passes persisted bin_dir from state"
     else
         harness_fail "global acfs wrapper passes persisted bin_dir from state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_global_wrapper_prefers_state_bin_dir_over_poisoned_env() {
+    setup_system_state_target_home_only_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.acfs/bin"
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    local persisted_bin="$TEST_TARGET_HOME/.local/bin"
+    local poisoned_bin="$TEST_HOME/poisoned-bin"
+    cat > "$TEST_TARGET_HOME/.acfs/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$persisted_bin"
+}
+EOF
+
+    cat > "$TEST_TARGET_HOME/.acfs/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'ACFS_BIN_DIR=%s TARGET_HOME=%s\n' "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}"
+EOF
+    chmod +x "$TEST_TARGET_HOME/.acfs/bin/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_ROOT_HOME/.acfs" TARGET_HOME="$TEST_ROOT_HOME" \
+        ACFS_STATE_FILE="$TEST_ROOT_HOME/.acfs/state.json" ACFS_BIN_DIR="$poisoned_bin" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "ACFS_BIN_DIR=$persisted_bin TARGET_HOME=$TEST_TARGET_HOME" ]]; then
+        harness_pass "global acfs wrapper prefers persisted bin_dir over poisoned env"
+    else
+        harness_fail "global acfs wrapper prefers persisted bin_dir over poisoned env" "$output"
     fi
 
     cleanup_mock_env
@@ -6400,6 +6476,7 @@ main() {
     test_acfs_update_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_update_wrapper_repairs_runtime_home_on_direct_exec || true
     test_acfs_update_wrapper_passes_bin_dir_from_state || true
+    test_acfs_update_wrapper_prefers_state_bin_dir_over_poisoned_env || true
     test_acfs_update_wrapper_discards_invalid_env_bin_dir_on_direct_exec || true
     test_acfs_update_wrapper_discards_invalid_env_state_file_on_direct_exec || true
     test_acfs_update_wrapper_ignores_relative_home_state_trap || true
@@ -6408,6 +6485,7 @@ main() {
     test_acfs_global_wrapper_repairs_runtime_home_on_direct_exec || true
     test_acfs_global_wrapper_runs_direct_when_owner_unknown_but_target_home_known || true
     test_acfs_global_wrapper_passes_bin_dir_from_state || true
+    test_acfs_global_wrapper_prefers_state_bin_dir_over_poisoned_env || true
     test_acfs_global_wrapper_discards_invalid_env_bin_dir_on_direct_exec || true
     test_acfs_global_wrapper_discards_invalid_env_state_file_on_direct_exec || true
     test_acfs_global_wrapper_ignores_relative_home_state_trap || true
