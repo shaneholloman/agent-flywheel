@@ -16,11 +16,22 @@
 #   acfs status --check-updates  # Include network-based update check
 # ============================================================
 
+_STATUS_WAS_SOURCED=false
+_STATUS_ORIGINAL_HOME=""
+_STATUS_ORIGINAL_HOME_WAS_SET=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    _STATUS_WAS_SOURCED=true
+    if [[ -v HOME ]]; then
+        _STATUS_ORIGINAL_HOME="$HOME"
+        _STATUS_ORIGINAL_HOME_WAS_SET=true
+    fi
+fi
+
 # --- Defaults ---
 _STATUS_JSON=false
 _STATUS_SHORT=false
 _STATUS_CHECK_UPDATES=false
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_STATUS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _status_sanitize_abs_nonroot_path() {
     local path_value="${1:-}"
 
@@ -79,44 +90,57 @@ if [[ -z "$_STATUS_SYSTEM_STATE_FILE" ]]; then
 fi
 _STATUS_RESOLVED_ACFS_HOME=""
 
-# --- Parse args ---
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --json)           _STATUS_JSON=true; shift ;;
-        --short)          _STATUS_SHORT=true; shift ;;
-        --check-updates)  _STATUS_CHECK_UPDATES=true; shift ;;
-        --help|-h)
-            echo "Usage: acfs status [--json] [--short] [--check-updates]"
-            echo ""
-            echo "Quick one-line health summary."
-            echo ""
-            echo "Options:"
-            echo "  --json            Machine-readable JSON output"
-            echo "  --short           Minimal output for shell prompt integration"
-            echo "  --check-updates   Include network-based update checks (slower)"
-            echo ""
-            echo "Exit codes:"
-            echo "  0  Healthy"
-            echo "  1  Warnings (outdated, minor issues)"
-            echo "  2  Errors (broken state, missing critical tools)"
-            echo ""
-            echo "Examples:"
-            echo "  acfs status                     # Quick health check"
-            echo "  acfs status --json              # JSON for scripts"
-            echo "  acfs status --short             # For shell prompts"
-            echo "  acfs status --check-updates     # Check for ACFS updates"
-            echo ""
-            echo "Shell prompt integration:"
-            echo "  PROMPT='\$(acfs status --short 2>/dev/null) \w \$ '"
-            exit 0
-            ;;
-        *)
-            echo "Error: Unknown option: $1" >&2
-            echo "Try 'acfs status --help' for usage." >&2
-            exit 1
-            ;;
-    esac
-done
+_status_reset_options() {
+    _STATUS_JSON=false
+    _STATUS_SHORT=false
+    _STATUS_CHECK_UPDATES=false
+}
+
+_status_print_help() {
+    echo "Usage: acfs status [--json] [--short] [--check-updates]"
+    echo ""
+    echo "Quick one-line health summary."
+    echo ""
+    echo "Options:"
+    echo "  --json            Machine-readable JSON output"
+    echo "  --short           Minimal output for shell prompt integration"
+    echo "  --check-updates   Include network-based update checks (slower)"
+    echo ""
+    echo "Exit codes:"
+    echo "  0  Healthy"
+    echo "  1  Warnings (outdated, minor issues)"
+    echo "  2  Errors (broken state, missing critical tools)"
+    echo ""
+    echo "Examples:"
+    echo "  acfs status                     # Quick health check"
+    echo "  acfs status --json              # JSON for scripts"
+    echo "  acfs status --short             # For shell prompts"
+    echo "  acfs status --check-updates     # Check for ACFS updates"
+    echo ""
+    echo "Shell prompt integration:"
+    echo "  PROMPT='\$(acfs status --short 2>/dev/null) \w \$ '"
+}
+
+_status_parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json)           _STATUS_JSON=true; shift ;;
+            --short)          _STATUS_SHORT=true; shift ;;
+            --check-updates)  _STATUS_CHECK_UPDATES=true; shift ;;
+            --help|-h)
+                _status_print_help
+                return 2
+                ;;
+            *)
+                echo "Error: Unknown option: $1" >&2
+                echo "Try 'acfs status --help' for usage." >&2
+                return 1
+                ;;
+        esac
+    done
+
+    return 0
+}
 
 _status_prepend_user_paths() {
     local base_home="$1"
@@ -217,7 +241,10 @@ _status_home_for_user() {
 
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
-        home_candidate="$(_status_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        home_candidate="${_STATUS_CURRENT_HOME:-}"
+        if [[ -z "$home_candidate" ]]; then
+            home_candidate="$(_status_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        fi
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -310,7 +337,7 @@ _status_preferred_bin_dir() {
 
 _status_script_acfs_home() {
     local candidate=""
-    candidate=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
+    candidate=$(cd "$_STATUS_SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
     [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
     printf '%s\n' "$candidate"
 }
@@ -399,8 +426,8 @@ _status_prepare_context() {
     state_file="$(_status_resolve_state_file)"
 
     if [[ -z "${TARGET_USER:-}" ]]; then
-        TARGET_USER=$(_status_read_target_user_from_state "$state_file" 2>/dev/null || \
-            _status_read_target_user_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)
+        TARGET_USER=$(_status_read_target_user_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || \
+            _status_read_target_user_from_state "$state_file" 2>/dev/null || true)
         [[ -n "${TARGET_USER:-}" ]] && export TARGET_USER
     fi
 
@@ -417,10 +444,6 @@ _status_prepare_context() {
 
     _status_ensure_path
 }
-
-_status_prepare_context
-
-_state_file="$(_status_resolve_state_file)"
 
 _status_read_last_update_ts() {
     local state_file="$1"
@@ -455,95 +478,6 @@ _status_read_last_update_ts() {
     printf '%s\n' "$ts"
 }
 
-# --- Collect checks ---
-_warnings=()
-_errors=()
-_tool_count=0
-
-# Core tools: missing any of these is a warning
-_CORE_TOOLS=(zsh git tmux bun cargo go rg claude)
-# Optional tools: counted but not warned about
-_OPTIONAL_TOOLS=(codex gemini gh uv fzf zoxide atuin bat lsd ntm bv br cass cm slb ubs dcg)
-
-# 1. ACFS_HOME check
-if [[ ! -d "$_ACFS_HOME" ]]; then
-    _errors+=("ACFS_HOME missing")
-fi
-
-# 2. State file check
-if [[ ! -f "$_state_file" ]]; then
-    _errors+=("state file missing")
-elif [[ ! -s "$_state_file" ]]; then
-    _errors+=("state file empty")
-elif command -v jq &>/dev/null && ! jq -e . "$_state_file" >/dev/null 2>&1; then
-    _errors+=("state file invalid JSON")
-fi
-
-# 3. Count tools in PATH
-for cmd in "${_CORE_TOOLS[@]}"; do
-    if _status_binary_exists "$cmd"; then
-        ((_tool_count++)) || true
-    else
-        _warnings+=("missing: $cmd")
-    fi
-done
-
-for cmd in "${_OPTIONAL_TOOLS[@]}"; do
-    if _status_binary_exists "$cmd"; then
-        ((_tool_count++)) || true
-    fi
-done
-
-# 4. Last update timestamp
-_last_update_ts=""
-_last_update_human=""
-if [[ -f "$_state_file" ]]; then
-    _last_update_ts=$(_status_read_last_update_ts "$_state_file" 2>/dev/null || true)
-fi
-
-if [[ -n "$_last_update_ts" ]]; then
-    _last_epoch=$(date -d "$_last_update_ts" +%s 2>/dev/null) || _last_epoch=0
-    _now_epoch=$(date +%s)
-    if [[ "$_last_epoch" -gt 0 ]]; then
-        _age_secs=$((_now_epoch - _last_epoch))
-        if [[ $_age_secs -lt 3600 ]]; then
-            _last_update_human="$((_age_secs / 60))m ago"
-        elif [[ $_age_secs -lt 86400 ]]; then
-            _last_update_human="$((_age_secs / 3600))h ago"
-        else
-            _last_update_human="$((_age_secs / 86400))d ago"
-        fi
-    fi
-fi
-
-# 5. Optional: network-based update check
-_update_available=""
-if [[ "$_STATUS_CHECK_UPDATES" == "true" ]]; then
-    if [[ -n "$_ACFS_HOME" ]] && [[ -f "$_ACFS_HOME/VERSION" ]]; then
-        _local_version=$(cat "$_ACFS_HOME/VERSION" 2>/dev/null) || _local_version=""
-        _remote_version=$(timeout 5 curl -fsSL \
-            "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/VERSION" \
-            2>/dev/null) || _remote_version=""
-        if [[ -n "$_remote_version" ]] && [[ -n "$_local_version" ]] \
-           && [[ "$_remote_version" != "$_local_version" ]]; then
-            _update_available="${_local_version} -> ${_remote_version}"
-            _warnings+=("update available: $_update_available")
-        fi
-    fi
-fi
-
-# --- Determine overall status ---
-_exit_code=0
-_status_word="OK"
-
-if [[ ${#_errors[@]} -gt 0 ]]; then
-    _exit_code=2
-    _status_word="ERROR"
-elif [[ ${#_warnings[@]} -gt 0 ]]; then
-    _exit_code=1
-    _status_word="WARN"
-fi
-
 # --- JSON escape helper (no jq dependency) ---
 _json_escape() {
     local s="$1"
@@ -554,6 +488,7 @@ _json_escape() {
     s=${s//$'\t'/\\t}
     printf '%s' "$s"
 }
+
 
 _status_print() {
     local color="$1"
@@ -566,68 +501,182 @@ _status_print() {
     fi
 }
 
-# --- Output ---
-if [[ "$_STATUS_JSON" == "true" ]]; then
-    # Build JSON arrays without requiring jq
-    _warn_items=""
-    for w in "${_warnings[@]+"${_warnings[@]}"}"; do
-        [[ -z "$w" ]] && continue
-        [[ -n "$_warn_items" ]] && _warn_items+=","
-        _warn_items+="\"$(_json_escape "$w")\""
-    done
+status_main() {
+    local parse_status=0
+    local _state_file=""
+    local -a _warnings=()
+    local -a _errors=()
+    local -a _CORE_TOOLS=(zsh git tmux bun cargo go rg claude)
+    local -a _OPTIONAL_TOOLS=(codex gemini gh uv fzf zoxide atuin bat lsd ntm bv br cass cm slb ubs dcg)
+    local _tool_count=0
+    local _last_update_ts=""
+    local _last_update_human=""
+    local _update_available=""
+    local _local_version=""
+    local _remote_version=""
+    local _last_epoch=0
+    local _now_epoch=0
+    local _age_secs=0
+    local _exit_code=0
+    local _status_word="OK"
+    local _warn_items=""
+    local _err_items=""
+    local _last_update_json="null"
+    local _update_json=""
+    local _msg=""
+    local _missing_count=0
+    local w=""
+    local e=""
+    local cmd=""
 
-    _err_items=""
-    for e in "${_errors[@]+"${_errors[@]}"}"; do
-        [[ -z "$e" ]] && continue
-        [[ -n "$_err_items" ]] && _err_items+=","
-        _err_items+="\"$(_json_escape "$e")\""
-    done
-
-    _last_update_json="null"
-    if [[ -n "$_last_update_ts" ]]; then
-        _last_update_json="\"$(_json_escape "$_last_update_ts")\""
-    fi
-
-    _update_json=""
-    if [[ -n "$_update_available" ]]; then
-        _update_json=",\"update_available\":\"$(_json_escape "$_update_available")\""
-    fi
-
-    printf '{"status":"%s","tools":%d,"last_update":%s,"warnings":[%s],"errors":[%s]%s}\n' \
-        "${_status_word,,}" "$_tool_count" "$_last_update_json" \
-        "$_warn_items" "$_err_items" "$_update_json"
-
-elif [[ "$_STATUS_SHORT" == "true" ]]; then
-    # Minimal output for shell prompts
-    case $_exit_code in
-        0) echo "OK" ;;
-        1) echo "WARN" ;;
-        2) echo "ERR" ;;
+    _status_reset_options
+    _status_parse_args "$@" || parse_status=$?
+    case "$parse_status" in
+        0) ;;
+        2) return 0 ;;
+        *) return "$parse_status" ;;
     esac
 
-else
-    # Human-readable one-liner
-    _msg="ACFS $_status_word: $_tool_count tools"
-    [[ -n "$_last_update_human" ]] && _msg="$_msg, last update $_last_update_human"
+    _status_prepare_context
+    _state_file="$(_status_resolve_state_file)"
+
+    if [[ ! -d "$_ACFS_HOME" ]]; then
+        _errors+=("ACFS_HOME missing")
+    fi
+
+    if [[ ! -f "$_state_file" ]]; then
+        _errors+=("state file missing")
+    elif [[ ! -s "$_state_file" ]]; then
+        _errors+=("state file empty")
+    elif command -v jq &>/dev/null && ! jq -e . "$_state_file" >/dev/null 2>&1; then
+        _errors+=("state file invalid JSON")
+    fi
+
+    for cmd in "${_CORE_TOOLS[@]}"; do
+        if _status_binary_exists "$cmd"; then
+            ((_tool_count++)) || true
+        else
+            _warnings+=("missing: $cmd")
+        fi
+    done
+
+    for cmd in "${_OPTIONAL_TOOLS[@]}"; do
+        if _status_binary_exists "$cmd"; then
+            ((_tool_count++)) || true
+        fi
+    done
+
+    if [[ -f "$_state_file" ]]; then
+        _last_update_ts="$(_status_read_last_update_ts "$_state_file" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$_last_update_ts" ]]; then
+        _last_epoch=$(date -d "$_last_update_ts" +%s 2>/dev/null) || _last_epoch=0
+        _now_epoch=$(date +%s)
+        if [[ "$_last_epoch" -gt 0 ]]; then
+            _age_secs=$((_now_epoch - _last_epoch))
+            if [[ $_age_secs -lt 3600 ]]; then
+                _last_update_human="$((_age_secs / 60))m ago"
+            elif [[ $_age_secs -lt 86400 ]]; then
+                _last_update_human="$((_age_secs / 3600))h ago"
+            else
+                _last_update_human="$((_age_secs / 86400))d ago"
+            fi
+        fi
+    fi
+
+    if [[ "$_STATUS_CHECK_UPDATES" == "true" ]]; then
+        if [[ -n "$_ACFS_HOME" ]] && [[ -f "$_ACFS_HOME/VERSION" ]]; then
+            _local_version=$(cat "$_ACFS_HOME/VERSION" 2>/dev/null) || _local_version=""
+            _remote_version=$(timeout 5 curl -fsSL \
+                "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/VERSION" \
+                2>/dev/null) || _remote_version=""
+            if [[ -n "$_remote_version" ]] && [[ -n "$_local_version" ]] \
+               && [[ "$_remote_version" != "$_local_version" ]]; then
+                _update_available="${_local_version} -> ${_remote_version}"
+                _warnings+=("update available: $_update_available")
+            fi
+        fi
+    fi
 
     if [[ ${#_errors[@]} -gt 0 ]]; then
-        _msg="$_msg, ${#_errors[@]} error(s)"
+        _exit_code=2
+        _status_word="ERROR"
+    elif [[ ${#_warnings[@]} -gt 0 ]]; then
+        _exit_code=1
+        _status_word="WARN"
     fi
 
-    if [[ ${#_warnings[@]} -gt 0 ]]; then
-        _missing_count=0
-        for w in "${_warnings[@]}"; do
-            [[ "$w" == missing:* ]] && ((_missing_count++)) || true
+    if [[ "$_STATUS_JSON" == "true" ]]; then
+        for w in "${_warnings[@]+${_warnings[@]}}"; do
+            [[ -z "$w" ]] && continue
+            [[ -n "$_warn_items" ]] && _warn_items+=","
+            _warn_items+="\"$(_json_escape "$w")\""
         done
-        [[ $_missing_count -gt 0 ]] && _msg="$_msg, $_missing_count missing tool(s)"
-        [[ -n "$_update_available" ]] && _msg="$_msg, update available"
+
+        for e in "${_errors[@]+${_errors[@]}}"; do
+            [[ -z "$e" ]] && continue
+            [[ -n "$_err_items" ]] && _err_items+=","
+            _err_items+="\"$(_json_escape "$e")\""
+        done
+
+        if [[ -n "$_last_update_ts" ]]; then
+            _last_update_json="\"$(_json_escape "$_last_update_ts")\""
+        fi
+
+        if [[ -n "$_update_available" ]]; then
+            _update_json=",\"update_available\":\"$(_json_escape "$_update_available")\""
+        fi
+
+        printf '{"status":"%s","tools":%d,"last_update":%s,"warnings":[%s],"errors":[%s]%s}\n' \
+            "${_status_word,,}" "$_tool_count" "$_last_update_json" \
+            "$_warn_items" "$_err_items" "$_update_json"
+    elif [[ "$_STATUS_SHORT" == "true" ]]; then
+        case $_exit_code in
+            0) echo "OK" ;;
+            1) echo "WARN" ;;
+            2) echo "ERR" ;;
+        esac
+    else
+        _msg="ACFS $_status_word: $_tool_count tools"
+        [[ -n "$_last_update_human" ]] && _msg="$_msg, last update $_last_update_human"
+
+        if [[ ${#_errors[@]} -gt 0 ]]; then
+            _msg="$_msg, ${#_errors[@]} error(s)"
+        fi
+
+        if [[ ${#_warnings[@]} -gt 0 ]]; then
+            for w in "${_warnings[@]}"; do
+                [[ "$w" == missing:* ]] && ((_missing_count++)) || true
+            done
+            [[ $_missing_count -gt 0 ]] && _msg="$_msg, $_missing_count missing tool(s)"
+            [[ -n "$_update_available" ]] && _msg="$_msg, update available"
+        fi
+
+        case $_exit_code in
+            0) _status_print '\033[0;32m' "$_msg" ;;
+            1) _status_print '\033[0;33m' "$_msg" ;;
+            2) _status_print '\033[0;31m' "$_msg" ;;
+        esac
     fi
 
-    case $_exit_code in
-        0) _status_print '\033[0;32m' "$_msg" ;;
-        1) _status_print '\033[0;33m' "$_msg" ;;
-        2) _status_print '\033[0;31m' "$_msg" ;;
-    esac
-fi
+    return "$_exit_code"
+}
 
-exit $_exit_code
+_status_restore_home_if_sourced() {
+    [[ "$_STATUS_WAS_SOURCED" == "true" ]] || return 0
+
+    if [[ "$_STATUS_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+        HOME="$_STATUS_ORIGINAL_HOME"
+        export HOME
+    else
+        unset HOME
+    fi
+}
+
+_status_restore_home_if_sourced
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    status_main "$@"
+    exit $?
+fi

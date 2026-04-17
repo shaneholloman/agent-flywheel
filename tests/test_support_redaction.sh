@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2317
-# SC2034: YELLOW/VERBOSE/REDACT are used by eval'd functions (indirect use)
-# SC2317: log_* stubs appear unreachable but are called by eval'd functions
+# SC2034: YELLOW is intentionally kept alongside the shared color palette pattern.
+# SC2317: log_* stubs are fallback definitions when support.sh is sourced without logging helpers.
 # ============================================================
 # Tests for support-bundle redaction rules (bd-31ps.2.2)
 #
@@ -59,11 +59,6 @@ trap 'rm -rf "$TEST_DIR"' EXIT
 # ============================================================
 # Load redact_file and redact_bundle from support.sh
 # ============================================================
-# We source support.sh in a controlled way:
-# 1. Pre-define stubs so top-level code and main() become no-ops
-# 2. Source the file to get all function definitions
-# 3. Override any side effects
-
 # Minimal logging stubs (must be defined BEFORE sourcing)
 log_step()    { :; }
 log_section() { :; }
@@ -72,29 +67,8 @@ log_success() { :; }
 log_warn()    { :; }
 log_error()   { :; }
 
-# Source support.sh with --help to make it exit early from arg parsing,
-# but capture its functions. We use a subshell-free approach: define
-# main as a no-op, then source the file with no args.
-# Actually, support.sh runs main "$@" at the end, so we need to
-# prevent that. We'll extract just the function definitions via awk
-# which handles nested braces correctly.
-_extract_functions() {
-    awk '
-    /^[a-zA-Z_][a-zA-Z_0-9]*\(\)/ { inside=1; brace=0; fname=$0 }
-    inside {
-        n = split($0, chars, "")
-        for (i=1; i<=n; i++) {
-            if (chars[i] == "{") brace++
-            if (chars[i] == "}") brace--
-        }
-        print
-        if (brace == 0 && inside) inside=0
-    }
-    ' "$1"
-}
-
-# Extract and eval all function definitions from support.sh
-eval "$(_extract_functions "$SUPPORT_SH")"
+# shellcheck source=../scripts/lib/support.sh
+source "$SUPPORT_SH"
 
 REDACT=true
 REDACTION_COUNT=0
@@ -139,6 +113,17 @@ assert_not_contains() {
     fi
 }
 
+assert_equals() {
+    local test_name="$1"
+    local actual="$2"
+    local expected="$3"
+    if [[ "$actual" == "$expected" ]]; then
+        pass "$test_name"
+    else
+        fail "$test_name" "Expected '$expected', got '$actual'"
+    fi
+}
+
 # Assert REDACTION_COUNT equals expected value
 assert_redaction_count() {
     local test_name="$1"
@@ -149,6 +134,42 @@ assert_redaction_count() {
         fail "$test_name" "Expected count=$expected, got count=$REDACTION_COUNT"
     fi
 }
+
+# ============================================================
+# Tests: support.sh source safety
+# ============================================================
+echo ""
+echo "=== Source Safety ==="
+
+source_output=""
+if source_output=$(SUPPORT_SH="$SUPPORT_SH" bash -lc '
+    set +e +u
+    set +o pipefail
+    log_step() { :; }
+    log_section() { :; }
+    log_detail() { :; }
+    log_success() { :; }
+    log_warn() { :; }
+    log_error() { :; }
+    HOME=relative-home
+    set -- --bogus keep
+    source "$SUPPORT_SH"
+    if [[ $- == *e* || $- == *u* ]]; then
+        printf "bad-shell-flags:%s\n" "$-"
+        exit 1
+    fi
+    if shopt -qo pipefail; then
+        printf "bad-shell-flags:pipefail\n"
+        exit 1
+    fi
+    declare -F redact_file >/dev/null
+    declare -F redact_bundle >/dev/null
+    printf "%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2"
+' 2>&1); then
+    assert_equals "support.sh sourcing preserves caller env and shell flags" "$source_output" "relative-home|2|--bogus|keep"
+else
+    fail "support.sh sourcing preserves caller env and shell flags" "$source_output"
+fi
 
 # ============================================================
 # Tests: API key patterns

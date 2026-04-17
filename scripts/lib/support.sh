@@ -5,6 +5,25 @@
 # Usage: acfs support-bundle [--verbose] [--output DIR]
 # Output: ~/.acfs/support/<timestamp>/ + .tar.gz archive
 # ============================================================
+_SUPPORT_WAS_SOURCED=false
+_SUPPORT_ORIGINAL_HOME=""
+_SUPPORT_ORIGINAL_HOME_WAS_SET=false
+_SUPPORT_RESTORE_ERREXIT=false
+_SUPPORT_RESTORE_NOUNSET=false
+_SUPPORT_RESTORE_PIPEFAIL=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    _SUPPORT_WAS_SOURCED=true
+    if [[ -v HOME ]]; then
+        _SUPPORT_ORIGINAL_HOME="$HOME"
+        _SUPPORT_ORIGINAL_HOME_WAS_SET=true
+    fi
+    [[ $- == *e* ]] && _SUPPORT_RESTORE_ERREXIT=true
+    [[ $- == *u* ]] && _SUPPORT_RESTORE_NOUNSET=true
+    if shopt -qo pipefail 2>/dev/null; then
+        _SUPPORT_RESTORE_PIPEFAIL=true
+    fi
+fi
+
 set -euo pipefail
 
 support_sanitize_abs_nonroot_path() {
@@ -55,12 +74,12 @@ if [[ -n "$_SUPPORT_CURRENT_HOME" ]]; then
     export HOME
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ACFS_HOME="$(support_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+_SUPPORT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_SUPPORT_ACFS_HOME="$(support_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 
 # Source logging utilities
-if [[ -f "$SCRIPT_DIR/logging.sh" ]]; then
-    source "$SCRIPT_DIR/logging.sh"
+if [[ -f "$_SUPPORT_SCRIPT_DIR/logging.sh" ]]; then
+    source "$_SUPPORT_SCRIPT_DIR/logging.sh"
 fi
 
 # Fallback log functions if logging.sh not available
@@ -90,56 +109,61 @@ SUPPORT_TARGET_USER=""
 SUPPORT_TARGET_HOME=""
 
 # ============================================================
-# Parse arguments
-# ============================================================
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --verbose|-v)
-            VERBOSE=true
-            shift
-            ;;
-        --output|-o)
-            if [[ -z "${2:-}" || "$2" == -* ]]; then
-                log_error "--output requires a directory path"
-                exit 1
-            fi
-            OUTPUT_BASE="$2"
-            OUTPUT_BASE_EXPLICIT=true
-            shift 2
-            ;;
-        --no-redact)
-            REDACT=false
-            shift
-            ;;
-        --help|-h)
-            echo "Usage: acfs support-bundle [options]"
-            echo ""
-            echo "Collect diagnostic data into a tarball for troubleshooting."
-            echo "Sensitive data (API keys, tokens, secrets) is redacted by default."
-            echo ""
-            echo "Options:"
-            echo "  --verbose, -v    Show detailed output during collection"
-            echo "  --output, -o DIR Output directory (default: ~/.acfs/support)"
-            echo "  --no-redact      Disable secret redaction (WARNING: bundle may contain secrets)"
-            echo "  --help, -h       Show this help"
-            echo ""
-            echo "Output:"
-            echo "  ~/.acfs/support/<timestamp>/          Unpacked bundle directory"
-            echo "  ~/.acfs/support/<timestamp>.tar.gz    Compressed archive"
-            echo "  ~/.acfs/support/<timestamp>/manifest.json  Bundle manifest"
-            exit 0
-            ;;
-        *)
-            log_error "Unknown option: $1"
-            echo "Try 'acfs support-bundle --help' for usage." >&2
-            exit 1
-            ;;
-    esac
-done
-
-# ============================================================
 # Bundle collection functions
 # ============================================================
+
+support_print_help() {
+    echo "Usage: acfs support-bundle [options]"
+    echo ""
+    echo "Collect diagnostic data into a tarball for troubleshooting."
+    echo "Sensitive data (API keys, tokens, secrets) is redacted by default."
+    echo ""
+    echo "Options:"
+    echo "  --verbose, -v    Show detailed output during collection"
+    echo "  --output, -o DIR Output directory (default: ~/.acfs/support)"
+    echo "  --no-redact      Disable secret redaction (WARNING: bundle may contain secrets)"
+    echo "  --help, -h       Show this help"
+    echo ""
+    echo "Output:"
+    echo "  ~/.acfs/support/<timestamp>/          Unpacked bundle directory"
+    echo "  ~/.acfs/support/<timestamp>.tar.gz    Compressed archive"
+    echo "  ~/.acfs/support/<timestamp>/manifest.json  Bundle manifest"
+}
+
+support_parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --verbose|-v)
+                VERBOSE=true
+                shift
+                ;;
+            --output|-o)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    log_error "--output requires a directory path"
+                    return 1
+                fi
+                OUTPUT_BASE="$2"
+                OUTPUT_BASE_EXPLICIT=true
+                shift 2
+                ;;
+            --no-redact)
+                REDACT=false
+                shift
+                ;;
+            --help|-h)
+                support_print_help
+                return 2
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                echo "Try 'acfs support-bundle --help' for usage." >&2
+                return 1
+                ;;
+        esac
+    done
+
+    return 0
+}
 
 support_home_for_user() {
     local user="$1"
@@ -167,7 +191,10 @@ support_home_for_user() {
 
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
-        home_candidate="$(support_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        home_candidate="${_SUPPORT_CURRENT_HOME:-}"
+        if [[ -z "$home_candidate" ]]; then
+            home_candidate="$(support_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        fi
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -185,7 +212,7 @@ support_candidate_has_acfs_data() {
 
 support_script_acfs_home() {
     local candidate=""
-    candidate=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
+    candidate=$(cd "$_SUPPORT_SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
     [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
     printf '%s\n' "$candidate"
 }
@@ -239,8 +266,8 @@ support_resolve_target_home() {
 support_get_install_state_file() {
     local candidate=""
 
-    if [[ -n "$ACFS_HOME" ]]; then
-        candidate="${ACFS_HOME}/state.json"
+    if [[ -n "$_SUPPORT_ACFS_HOME" ]]; then
+        candidate="${_SUPPORT_ACFS_HOME}/state.json"
     fi
 
     if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
@@ -295,8 +322,8 @@ support_resolve_acfs_home() {
         fi
     fi
 
-    if [[ -n "$ACFS_HOME" ]] && support_candidate_has_acfs_data "$ACFS_HOME"; then
-        printf '%s\n' "$ACFS_HOME"
+    if [[ -n "$_SUPPORT_ACFS_HOME" ]] && support_candidate_has_acfs_data "$_SUPPORT_ACFS_HOME"; then
+        printf '%s\n' "$_SUPPORT_ACFS_HOME"
         return 0
     fi
 
@@ -306,14 +333,14 @@ support_resolve_acfs_home() {
 support_initialize_context() {
     local state_file=""
 
-    ACFS_HOME=$(support_resolve_acfs_home)
+    _SUPPORT_ACFS_HOME=$(support_resolve_acfs_home)
     state_file=$(support_get_install_state_file)
 
     if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
         SUPPORT_TARGET_USER="$SUDO_USER"
     else
-        SUPPORT_TARGET_USER=$(support_read_target_user_from_state "$state_file" || \
-            support_read_target_user_from_state || \
+        SUPPORT_TARGET_USER=$(support_read_target_user_from_state || \
+            support_read_target_user_from_state "$state_file" || \
             whoami 2>/dev/null || echo unknown)
     fi
 
@@ -321,15 +348,15 @@ support_initialize_context() {
     if [[ -z "$SUPPORT_TARGET_HOME" ]]; then
         SUPPORT_TARGET_HOME=$(support_home_for_user "$SUPPORT_TARGET_USER" || true)
     fi
-    if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ "$ACFS_HOME" == */.acfs ]]; then
-        SUPPORT_TARGET_HOME="${ACFS_HOME%/.acfs}"
+    if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ "$_SUPPORT_ACFS_HOME" == */.acfs ]]; then
+        SUPPORT_TARGET_HOME="${_SUPPORT_ACFS_HOME%/.acfs}"
     fi
 
     [[ -n "$SUPPORT_TARGET_HOME" ]] || SUPPORT_TARGET_HOME="${_SUPPORT_CURRENT_HOME:-}"
 
     if [[ "$OUTPUT_BASE_EXPLICIT" != "true" ]]; then
-        if [[ -n "$ACFS_HOME" ]]; then
-            OUTPUT_BASE="${ACFS_HOME}/support"
+        if [[ -n "$_SUPPORT_ACFS_HOME" ]]; then
+            OUTPUT_BASE="${_SUPPORT_ACFS_HOME}/support"
         else
             OUTPUT_BASE="${SUPPORT_TARGET_HOME:+${SUPPORT_TARGET_HOME}/.acfs/support}"
         fi
@@ -394,10 +421,10 @@ capture_doctor_json() {
     local bundle_dir="$1"
 
     local doctor_script=""
-    if [[ -f "$ACFS_HOME/scripts/lib/doctor.sh" ]]; then
-        doctor_script="$ACFS_HOME/scripts/lib/doctor.sh"
-    elif [[ -f "$SCRIPT_DIR/doctor.sh" ]]; then
-        doctor_script="$SCRIPT_DIR/doctor.sh"
+    if [[ -f "$_SUPPORT_ACFS_HOME/scripts/lib/doctor.sh" ]]; then
+        doctor_script="$_SUPPORT_ACFS_HOME/scripts/lib/doctor.sh"
+    elif [[ -f "$_SUPPORT_SCRIPT_DIR/doctor.sh" ]]; then
+        doctor_script="$_SUPPORT_SCRIPT_DIR/doctor.sh"
     fi
 
     if [[ -n "$doctor_script" ]]; then
@@ -501,8 +528,8 @@ capture_env_summary() {
     fi
 
     local acfs_version="unknown"
-    if [[ -f "$ACFS_HOME/VERSION" ]]; then
-        acfs_version=$(cat "$ACFS_HOME/VERSION" 2>/dev/null) || acfs_version="unknown"
+    if [[ -f "$_SUPPORT_ACFS_HOME/VERSION" ]]; then
+        acfs_version=$(cat "$_SUPPORT_ACFS_HOME/VERSION" 2>/dev/null) || acfs_version="unknown"
     fi
 
     jq -n \
@@ -514,7 +541,7 @@ capture_env_summary() {
         --arg os_codename "$os_codename" \
         --arg user "$support_user" \
         --arg home "$support_home" \
-        --arg acfs_home "$ACFS_HOME" \
+        --arg acfs_home "$_SUPPORT_ACFS_HOME" \
         --arg acfs_version "$acfs_version" \
         --arg shell "$SHELL" \
         --argjson uptime_seconds "$(cat /proc/uptime 2>/dev/null | awk '{printf "%d", $1}' || echo 0)" \
@@ -559,8 +586,8 @@ write_manifest() {
     record_bundle_file "manifest.json"
 
     local acfs_version="unknown"
-    if [[ -f "$ACFS_HOME/VERSION" ]]; then
-        acfs_version=$(cat "$ACFS_HOME/VERSION" 2>/dev/null) || acfs_version="unknown"
+    if [[ -f "$_SUPPORT_ACFS_HOME/VERSION" ]]; then
+        acfs_version=$(cat "$_SUPPORT_ACFS_HOME/VERSION" 2>/dev/null) || acfs_version="unknown"
     fi
 
     # Build files array from BUNDLE_FILES
@@ -680,6 +707,15 @@ redact_bundle() {
 # Main bundle collection
 # ============================================================
 main() {
+    local parse_status=0
+
+    support_parse_args "$@" || parse_status=$?
+    case "$parse_status" in
+        0) ;;
+        2) return 0 ;;
+        *) return "$parse_status" ;;
+    esac
+
     support_initialize_context
 
     local bundle_name
@@ -702,15 +738,15 @@ main() {
 
     # --- Collect ACFS state files ---
     log_detail "Collecting ACFS state files..."
-    if [[ -n "$ACFS_HOME" ]]; then
-        collect_file "$ACFS_HOME/state.json" "$bundle_dir" "state.json" || true
+    if [[ -n "$_SUPPORT_ACFS_HOME" ]]; then
+        collect_file "$_SUPPORT_ACFS_HOME/state.json" "$bundle_dir" "state.json" || true
     fi
-    collect_file "$ACFS_HOME/VERSION" "$bundle_dir" "VERSION" || true
-    collect_file "$ACFS_HOME/checksums.yaml" "$bundle_dir" "checksums.yaml" || true
+    collect_file "$_SUPPORT_ACFS_HOME/VERSION" "$bundle_dir" "VERSION" || true
+    collect_file "$_SUPPORT_ACFS_HOME/checksums.yaml" "$bundle_dir" "checksums.yaml" || true
 
     # --- Collect install logs ---
     log_detail "Collecting install logs..."
-    local logs_dir="$ACFS_HOME/logs"
+    local logs_dir="$_SUPPORT_ACFS_HOME/logs"
     if [[ -d "$logs_dir" ]]; then
         mkdir -p "$bundle_dir/logs"
         # Collect recent install logs
@@ -770,7 +806,7 @@ main() {
     # --- Collect configuration ---
     log_detail "Collecting configuration..."
     collect_file "${SUPPORT_TARGET_HOME}/.zshrc" "$bundle_dir" "config/.zshrc" ".zshrc" || true
-    collect_file "$ACFS_HOME/acfs.manifest.yaml" "$bundle_dir" "config/acfs.manifest.yaml" "acfs.manifest.yaml" || true
+    collect_file "$_SUPPORT_ACFS_HOME/acfs.manifest.yaml" "$bundle_dir" "config/acfs.manifest.yaml" "acfs.manifest.yaml" || true
 
     # --- Redact sensitive data ---
     redact_bundle "$bundle_dir"
@@ -790,4 +826,23 @@ main() {
     fi
 }
 
-main "$@"
+support_restore_shell_options_if_sourced() {
+    [[ "$_SUPPORT_WAS_SOURCED" == "true" ]] || return 0
+
+    if [[ "$_SUPPORT_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+        HOME="$_SUPPORT_ORIGINAL_HOME"
+        export HOME
+    else
+        unset HOME
+    fi
+
+    [[ "$_SUPPORT_RESTORE_ERREXIT" == "true" ]] || set +e
+    [[ "$_SUPPORT_RESTORE_NOUNSET" == "true" ]] || set +u
+    [[ "$_SUPPORT_RESTORE_PIPEFAIL" == "true" ]] || set +o pipefail
+}
+
+support_restore_shell_options_if_sourced
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

@@ -5,6 +5,25 @@
 # Exports tool versions, settings, and module list for backup/migration
 # ============================================================
 
+_EXPORT_WAS_SOURCED=false
+_EXPORT_ORIGINAL_HOME=""
+_EXPORT_ORIGINAL_HOME_WAS_SET=false
+_EXPORT_RESTORE_ERREXIT=false
+_EXPORT_RESTORE_NOUNSET=false
+_EXPORT_RESTORE_PIPEFAIL=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    _EXPORT_WAS_SOURCED=true
+    if [[ -v HOME ]]; then
+        _EXPORT_ORIGINAL_HOME="$HOME"
+        _EXPORT_ORIGINAL_HOME_WAS_SET=true
+    fi
+    [[ $- == *e* ]] && _EXPORT_RESTORE_ERREXIT=true
+    [[ $- == *u* ]] && _EXPORT_RESTORE_NOUNSET=true
+    if shopt -qo pipefail 2>/dev/null; then
+        _EXPORT_RESTORE_PIPEFAIL=true
+    fi
+fi
+
 set -euo pipefail
 
 export_sanitize_abs_nonroot_path() {
@@ -56,11 +75,11 @@ if [[ -n "$_EXPORT_CURRENT_HOME" ]]; then
 fi
 
 # Script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_EXPORT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _EXPORT_EXPLICIT_ACFS_HOME="$(export_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 _EXPORT_DEFAULT_ACFS_HOME=""
 [[ -n "$_EXPORT_CURRENT_HOME" ]] && _EXPORT_DEFAULT_ACFS_HOME="${_EXPORT_CURRENT_HOME}/.acfs"
-ACFS_HOME="${_EXPORT_EXPLICIT_ACFS_HOME:-$_EXPORT_DEFAULT_ACFS_HOME}"
+_EXPORT_ACFS_HOME="${_EXPORT_EXPLICIT_ACFS_HOME:-$_EXPORT_DEFAULT_ACFS_HOME}"
 _EXPORT_SYSTEM_STATE_FILE="$(export_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_EXPORT_SYSTEM_STATE_FILE" ]]; then
     _EXPORT_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
@@ -68,8 +87,8 @@ fi
 _EXPORT_RESOLVED_ACFS_HOME=""
 
 # Source logging if available
-if [[ -f "$SCRIPT_DIR/logging.sh" ]]; then
-    source "$SCRIPT_DIR/logging.sh"
+if [[ -f "$_EXPORT_SCRIPT_DIR/logging.sh" ]]; then
+    source "$_EXPORT_SCRIPT_DIR/logging.sh"
 else
     log_error() { echo "[ERROR] $*" >&2; }
     log_warn() { echo "[WARN] $*" >&2; }
@@ -78,11 +97,11 @@ fi
 # ============================================================
 # Configuration
 # ============================================================
-OUTPUT_FORMAT="yaml"  # yaml, json, or minimal
-STATE_FILE=""
-VERSION_FILE=""
-INSTALL_HELPERS_FILE="${ACFS_INSTALL_HELPERS_SH:-$SCRIPT_DIR/install_helpers.sh}"
-MANIFEST_INDEX_FILE="${ACFS_MANIFEST_INDEX_SH:-$SCRIPT_DIR/../generated/manifest_index.sh}"
+_EXPORT_OUTPUT_FORMAT="yaml"  # yaml, json, or minimal
+_EXPORT_STATE_FILE=""
+_EXPORT_VERSION_FILE=""
+_EXPORT_INSTALL_HELPERS_FILE="${ACFS_INSTALL_HELPERS_SH:-$_EXPORT_SCRIPT_DIR/install_helpers.sh}"
+_EXPORT_MANIFEST_INDEX_FILE="${ACFS_MANIFEST_INDEX_SH:-$_EXPORT_SCRIPT_DIR/../generated/manifest_index.sh}"
 
 # ============================================================
 # Parse Arguments
@@ -115,36 +134,46 @@ SENSITIVE DATA:
 EOF
 }
 
-OUTPUT_FILE=""
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --json)
-            OUTPUT_FORMAT="json"
-            shift
-            ;;
-        --minimal)
-            OUTPUT_FORMAT="minimal"
-            shift
-            ;;
-        --output)
-            if [[ -z "${2:-}" || "$2" == -* ]]; then
-                log_error "--output requires a file path"
-                exit 1
-            fi
-            OUTPUT_FILE="$2"
-            shift 2
-            ;;
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        *)
-            log_error "Unknown option: $1"
-            show_help
-            exit 1
-            ;;
-    esac
-done
+_EXPORT_OUTPUT_FILE=""
+
+export_config_reset_options() {
+    _EXPORT_OUTPUT_FORMAT="yaml"
+    _EXPORT_OUTPUT_FILE=""
+}
+
+export_config_parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json)
+                _EXPORT_OUTPUT_FORMAT="json"
+                shift
+                ;;
+            --minimal)
+                _EXPORT_OUTPUT_FORMAT="minimal"
+                shift
+                ;;
+            --output)
+                if [[ -z "${2:-}" || "$2" == -* ]]; then
+                    log_error "--output requires a file path"
+                    return 1
+                fi
+                _EXPORT_OUTPUT_FILE="$2"
+                shift 2
+                ;;
+            -h|--help)
+                show_help
+                return 2
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                show_help
+                return 1
+                ;;
+        esac
+    done
+
+    return 0
+}
 
 # ============================================================
 # Utility Functions
@@ -200,7 +229,7 @@ PY
 
 get_state_string() {
     local key="$1"
-    read_state_string_from_file "$STATE_FILE" "$key"
+    read_state_string_from_file "$_EXPORT_STATE_FILE" "$key"
 }
 
 read_target_user_from_state() {
@@ -234,7 +263,7 @@ resolve_target_home() {
 
 script_acfs_home() {
     local candidate=""
-    candidate=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
+    candidate=$(cd "$_EXPORT_SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
     [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
     printf '%s\n' "$candidate"
 }
@@ -287,21 +316,21 @@ resolve_acfs_home() {
         fi
     fi
 
-    if [[ -n "$ACFS_HOME" ]] && [[ -f "$ACFS_HOME/state.json" || -f "$ACFS_HOME/VERSION" || -d "$ACFS_HOME/onboard" ]]; then
-        _EXPORT_RESOLVED_ACFS_HOME="$ACFS_HOME"
+    if [[ -n "$_EXPORT_ACFS_HOME" ]] && [[ -f "$_EXPORT_ACFS_HOME/state.json" || -f "$_EXPORT_ACFS_HOME/VERSION" || -d "$_EXPORT_ACFS_HOME/onboard" ]]; then
+        _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_ACFS_HOME"
         printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
         return 0
     fi
 
-    _EXPORT_RESOLVED_ACFS_HOME="$ACFS_HOME"
+    _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_ACFS_HOME"
     printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
 }
 
 resolve_state_file() {
     local candidate=""
 
-    if [[ -n "$ACFS_HOME" ]]; then
-        candidate="${ACFS_HOME}/state.json"
+    if [[ -n "$_EXPORT_ACFS_HOME" ]]; then
+        candidate="${_EXPORT_ACFS_HOME}/state.json"
     fi
 
     if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
@@ -318,10 +347,9 @@ resolve_state_file() {
 }
 
 refresh_acfs_paths() {
-    ACFS_HOME="$(resolve_acfs_home)"
-    export ACFS_HOME
-    STATE_FILE="$(resolve_state_file)"
-    VERSION_FILE="${ACFS_HOME:+$ACFS_HOME/VERSION}"
+    _EXPORT_ACFS_HOME="$(resolve_acfs_home)"
+    _EXPORT_STATE_FILE="$(resolve_state_file)"
+    _EXPORT_VERSION_FILE="${_EXPORT_ACFS_HOME:+$_EXPORT_ACFS_HOME/VERSION}"
 }
 
 get_target_user() {
@@ -330,8 +358,8 @@ get_target_user() {
         return 0
     fi
 
-    read_target_user_from_state "$STATE_FILE" 2>/dev/null || \
-        read_target_user_from_state "$_EXPORT_SYSTEM_STATE_FILE" 2>/dev/null
+    read_target_user_from_state "$_EXPORT_SYSTEM_STATE_FILE" 2>/dev/null || \
+        read_target_user_from_state "$_EXPORT_STATE_FILE" 2>/dev/null
 }
 
 home_for_user() {
@@ -360,7 +388,10 @@ home_for_user() {
 
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
-        home_candidate="$(export_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        home_candidate="${_EXPORT_CURRENT_HOME:-}"
+        if [[ -z "$home_candidate" ]]; then
+            home_candidate="$(export_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        fi
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -374,7 +405,7 @@ infer_target_home_from_acfs_home() {
     local acfs_home_candidate=""
     local inferred_home=""
 
-    acfs_home_candidate="$(export_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+    acfs_home_candidate="$(export_sanitize_abs_nonroot_path "${_EXPORT_ACFS_HOME:-}" 2>/dev/null || true)"
     [[ -n "$acfs_home_candidate" ]] || return 1
     [[ "$(basename "$acfs_home_candidate")" == ".acfs" ]] || return 1
     [[ -f "$acfs_home_candidate/state.json" || -f "$acfs_home_candidate/VERSION" || -d "$acfs_home_candidate/onboard" ]] || return 1
@@ -399,7 +430,7 @@ prepare_target_context() {
     fi
 
     if [[ -z "${TARGET_HOME:-}" ]]; then
-        detected_home=$(resolve_target_home "$STATE_FILE" 2>/dev/null || true)
+        detected_home=$(resolve_target_home "$_EXPORT_STATE_FILE" 2>/dev/null || true)
         if [[ -n "$detected_home" ]]; then
             export TARGET_HOME="$detected_home"
         fi
@@ -447,7 +478,7 @@ load_module_detection_support() {
         return 0
     fi
 
-    if [[ ! -f "$INSTALL_HELPERS_FILE" ]] || [[ ! -f "$MANIFEST_INDEX_FILE" ]]; then
+    if [[ ! -f "$_EXPORT_INSTALL_HELPERS_FILE" ]] || [[ ! -f "$_EXPORT_MANIFEST_INDEX_FILE" ]]; then
         return 1
     fi
 
@@ -455,19 +486,16 @@ load_module_detection_support() {
     augment_path_for_target_user
 
     # shellcheck source=/dev/null
-    source "$INSTALL_HELPERS_FILE"
+    source "$_EXPORT_INSTALL_HELPERS_FILE"
     # shellcheck source=/dev/null
-    source "$MANIFEST_INDEX_FILE"
+    source "$_EXPORT_MANIFEST_INDEX_FILE"
     _ACFS_EXPORT_MODULE_SUPPORT_LOADED=true
 }
 
-prepare_target_context
-augment_path_for_target_user
-
 # Get ACFS version
 get_acfs_version() {
-    if [[ -f "$VERSION_FILE" ]]; then
-        cat "$VERSION_FILE"
+    if [[ -f "$_EXPORT_VERSION_FILE" ]]; then
+        cat "$_EXPORT_VERSION_FILE"
     else
         echo "unknown"
     fi
@@ -586,11 +614,11 @@ get_tool_version() {
 
 # Get mode from state.json
 get_mode() {
-    if [[ -f "$STATE_FILE" ]]; then
+    if [[ -f "$_EXPORT_STATE_FILE" ]]; then
         if command -v jq &>/dev/null; then
-            jq -r '.mode // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown"
+            jq -r '.mode // "unknown"' "$_EXPORT_STATE_FILE" 2>/dev/null || echo "unknown"
         elif command -v python3 &>/dev/null; then
-            python3 - "$STATE_FILE" <<'PY'
+            python3 - "$_EXPORT_STATE_FILE" <<'PY'
 import json
 import sys
 
@@ -604,7 +632,7 @@ except Exception:
 PY
         else
             # Use sed instead of grep -oP for portability (works on macOS/BSD)
-            sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$STATE_FILE" 2>/dev/null | head -1 || echo "unknown"
+            sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_EXPORT_STATE_FILE" 2>/dev/null | head -1 || echo "unknown"
         fi
     else
         echo "unknown"
@@ -613,11 +641,11 @@ PY
 
 # Get installed modules from state.json
 get_modules_from_state_file() {
-    if [[ -f "$STATE_FILE" ]]; then
+    if [[ -f "$_EXPORT_STATE_FILE" ]]; then
         if command -v jq &>/dev/null; then
-            jq -r '.installed_modules // [] | .[]' "$STATE_FILE" 2>/dev/null || true
+            jq -r '.installed_modules // [] | .[]' "$_EXPORT_STATE_FILE" 2>/dev/null || true
         elif command -v python3 &>/dev/null; then
-            python3 - "$STATE_FILE" <<'PY'
+            python3 - "$_EXPORT_STATE_FILE" <<'PY'
 import json
 import sys
 
@@ -862,10 +890,22 @@ EOF
 # Main
 # ============================================================
 
-main() {
+export_config_main() {
     local output
+    local parse_status=0
 
-    case "$OUTPUT_FORMAT" in
+    export_config_reset_options
+    export_config_parse_args "$@" || parse_status=$?
+    case "$parse_status" in
+        0) ;;
+        2) return 0 ;;
+        *) return "$parse_status" ;;
+    esac
+
+    prepare_target_context
+    augment_path_for_target_user
+
+    case "$_EXPORT_OUTPUT_FORMAT" in
         minimal)
             output=$(generate_minimal)
             ;;
@@ -877,12 +917,32 @@ main() {
             ;;
     esac
 
-    if [[ -n "$OUTPUT_FILE" ]]; then
-        echo "$output" > "$OUTPUT_FILE"
-        echo "Configuration exported to: $OUTPUT_FILE" >&2
+    if [[ -n "$_EXPORT_OUTPUT_FILE" ]]; then
+        echo "$output" > "$_EXPORT_OUTPUT_FILE"
+        echo "Configuration exported to: $_EXPORT_OUTPUT_FILE" >&2
     else
         echo "$output"
     fi
 }
 
-main "$@"
+export_config_restore_shell_options_if_sourced() {
+    [[ "$_EXPORT_WAS_SOURCED" == "true" ]] || return 0
+
+    if [[ "$_EXPORT_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+        HOME="$_EXPORT_ORIGINAL_HOME"
+        export HOME
+    else
+        unset HOME
+    fi
+
+    [[ "$_EXPORT_RESTORE_ERREXIT" == "true" ]] || set +e
+    [[ "$_EXPORT_RESTORE_NOUNSET" == "true" ]] || set +u
+    [[ "$_EXPORT_RESTORE_PIPEFAIL" == "true" ]] || set +o pipefail
+}
+
+export_config_restore_shell_options_if_sourced
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    export_config_main "$@"
+    exit $?
+fi

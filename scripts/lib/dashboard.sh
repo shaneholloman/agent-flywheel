@@ -10,6 +10,25 @@
 #   acfs dashboard serve [--port PORT]
 # ============================================================
 
+_DASHBOARD_WAS_SOURCED=false
+_DASHBOARD_ORIGINAL_HOME=""
+_DASHBOARD_ORIGINAL_HOME_WAS_SET=false
+_DASHBOARD_RESTORE_ERREXIT=false
+_DASHBOARD_RESTORE_NOUNSET=false
+_DASHBOARD_RESTORE_PIPEFAIL=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    _DASHBOARD_WAS_SOURCED=true
+    if [[ -v HOME ]]; then
+        _DASHBOARD_ORIGINAL_HOME="$HOME"
+        _DASHBOARD_ORIGINAL_HOME_WAS_SET=true
+    fi
+    [[ $- == *e* ]] && _DASHBOARD_RESTORE_ERREXIT=true
+    [[ $- == *u* ]] && _DASHBOARD_RESTORE_NOUNSET=true
+    if shopt -qo pipefail 2>/dev/null; then
+        _DASHBOARD_RESTORE_PIPEFAIL=true
+    fi
+fi
+
 set -euo pipefail
 
 dashboard_sanitize_abs_nonroot_path() {
@@ -63,7 +82,7 @@ fi
 _DASHBOARD_EXPLICIT_ACFS_HOME="$(dashboard_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 _DASHBOARD_DEFAULT_ACFS_HOME=""
 [[ -n "$_DASHBOARD_CURRENT_HOME" ]] && _DASHBOARD_DEFAULT_ACFS_HOME="${_DASHBOARD_CURRENT_HOME}/.acfs"
-ACFS_HOME="${_DASHBOARD_EXPLICIT_ACFS_HOME:-$_DASHBOARD_DEFAULT_ACFS_HOME}"
+_DASHBOARD_ACFS_HOME="${_DASHBOARD_EXPLICIT_ACFS_HOME:-$_DASHBOARD_DEFAULT_ACFS_HOME}"
 _DASHBOARD_SYSTEM_STATE_FILE="$(dashboard_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_DASHBOARD_SYSTEM_STATE_FILE" ]]; then
     _DASHBOARD_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
@@ -107,7 +126,10 @@ dashboard_home_for_user() {
 
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
-        home_candidate="$(dashboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        home_candidate="${_DASHBOARD_CURRENT_HOME:-}"
+        if [[ -z "$home_candidate" ]]; then
+            home_candidate="$(dashboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        fi
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -206,21 +228,21 @@ dashboard_resolve_acfs_home() {
         fi
     fi
 
-    if [[ -n "$ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$ACFS_HOME"; then
-        _DASHBOARD_RESOLVED_ACFS_HOME="$ACFS_HOME"
+    if [[ -n "$_DASHBOARD_ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$_DASHBOARD_ACFS_HOME"; then
+        _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_ACFS_HOME"
         printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
         return 0
     fi
 
-    _DASHBOARD_RESOLVED_ACFS_HOME="$ACFS_HOME"
+    _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_ACFS_HOME"
     printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
 }
 
 dashboard_resolve_state_file() {
     local candidate=""
 
-    if [[ -n "$ACFS_HOME" ]]; then
-        candidate="${ACFS_HOME}/state.json"
+    if [[ -n "$_DASHBOARD_ACFS_HOME" ]]; then
+        candidate="${_DASHBOARD_ACFS_HOME}/state.json"
     fi
 
     if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
@@ -239,12 +261,12 @@ dashboard_resolve_state_file() {
 dashboard_prepare_context() {
     local state_file=""
 
-    ACFS_HOME="$(dashboard_resolve_acfs_home)"
+    _DASHBOARD_ACFS_HOME="$(dashboard_resolve_acfs_home)"
     state_file="$(dashboard_resolve_state_file)"
 
     if [[ -z "$_DASHBOARD_RESOLVED_TARGET_USER" ]]; then
-        _DASHBOARD_RESOLVED_TARGET_USER="$(dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || \
-            dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
+        _DASHBOARD_RESOLVED_TARGET_USER="$(dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || \
+            dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
     fi
 
     if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
@@ -253,8 +275,8 @@ dashboard_prepare_context() {
         if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$_DASHBOARD_RESOLVED_TARGET_USER" ]]; then
             _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_home_for_user "$_DASHBOARD_RESOLVED_TARGET_USER" 2>/dev/null || true)"
         fi
-        if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ "$ACFS_HOME" == */.acfs ]]; then
-            _DASHBOARD_RESOLVED_TARGET_HOME="${ACFS_HOME%/.acfs}"
+        if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ "$_DASHBOARD_ACFS_HOME" == */.acfs ]]; then
+            _DASHBOARD_RESOLVED_TARGET_HOME="${_DASHBOARD_ACFS_HOME%/.acfs}"
         fi
     fi
 }
@@ -270,8 +292,8 @@ find_info_script() {
         return 0
     fi
 
-    if [[ -n "$ACFS_HOME" ]] && [[ -f "$ACFS_HOME/scripts/lib/info.sh" ]]; then
-        echo "$ACFS_HOME/scripts/lib/info.sh"
+    if [[ -n "$_DASHBOARD_ACFS_HOME" ]] && [[ -f "$_DASHBOARD_ACFS_HOME/scripts/lib/info.sh" ]]; then
+        echo "$_DASHBOARD_ACFS_HOME/scripts/lib/info.sh"
         return 0
     fi
 
@@ -309,13 +331,13 @@ dashboard_generate() {
         shift
     done
 
-    if [[ -z "$ACFS_HOME" ]]; then
+    if [[ -z "$_DASHBOARD_ACFS_HOME" ]]; then
         echo "Error: ACFS home not found" >&2
         echo "Provide ACFS_SYSTEM_STATE_FILE with target_home, or re-run the installer." >&2
         return 1
     fi
 
-    local dashboard_dir="${ACFS_HOME}/dashboard"
+    local dashboard_dir="${_DASHBOARD_ACFS_HOME}/dashboard"
     local html_file="${dashboard_dir}/index.html"
     local timestamp_file="${dashboard_dir}/.last_generated"
 
@@ -440,13 +462,13 @@ dashboard_serve() {
         return 1
     fi
 
-    if [[ -z "$ACFS_HOME" ]]; then
+    if [[ -z "$_DASHBOARD_ACFS_HOME" ]]; then
         echo "Error: ACFS home not found" >&2
         echo "Provide ACFS_SYSTEM_STATE_FILE with target_home, or re-run the installer." >&2
         return 1
     fi
 
-    local dashboard_dir="${ACFS_HOME}/dashboard"
+    local dashboard_dir="${_DASHBOARD_ACFS_HOME}/dashboard"
     local html_file="${dashboard_dir}/index.html"
 
     # Auto-generate dashboard if missing
@@ -558,6 +580,23 @@ dashboard_main() {
             ;;
     esac
 }
+
+dashboard_restore_shell_options_if_sourced() {
+    [[ "$_DASHBOARD_WAS_SOURCED" == "true" ]] || return 0
+
+    if [[ "$_DASHBOARD_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+        HOME="$_DASHBOARD_ORIGINAL_HOME"
+        export HOME
+    else
+        unset HOME
+    fi
+
+    [[ "$_DASHBOARD_RESTORE_ERREXIT" == "true" ]] || set +e
+    [[ "$_DASHBOARD_RESTORE_NOUNSET" == "true" ]] || set +u
+    [[ "$_DASHBOARD_RESTORE_PIPEFAIL" == "true" ]] || set +o pipefail
+}
+
+dashboard_restore_shell_options_if_sourced
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     dashboard_main "$@"

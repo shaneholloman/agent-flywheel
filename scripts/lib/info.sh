@@ -32,6 +32,17 @@ if [[ -n "${_ACFS_INFO_SH_LOADED:-}" ]]; then
 fi
 _ACFS_INFO_SH_LOADED=1
 
+_INFO_WAS_SOURCED=false
+_INFO_ORIGINAL_HOME=""
+_INFO_ORIGINAL_HOME_WAS_SET=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    _INFO_WAS_SOURCED=true
+    if [[ -v HOME ]]; then
+        _INFO_ORIGINAL_HOME="$HOME"
+        _INFO_ORIGINAL_HOME_WAS_SET=true
+    fi
+fi
+
 info_sanitize_abs_nonroot_path() {
     local path_value="${1:-}"
 
@@ -84,7 +95,7 @@ fi
 _INFO_EXPLICIT_ACFS_HOME="$(info_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 _INFO_DEFAULT_ACFS_HOME=""
 [[ -n "$_INFO_CURRENT_HOME" ]] && _INFO_DEFAULT_ACFS_HOME="${_INFO_CURRENT_HOME}/.acfs"
-ACFS_HOME="${_INFO_EXPLICIT_ACFS_HOME:-$_INFO_DEFAULT_ACFS_HOME}"
+_INFO_ACFS_HOME="${_INFO_EXPLICIT_ACFS_HOME:-$_INFO_DEFAULT_ACFS_HOME}"
 _INFO_SYSTEM_STATE_FILE="$(info_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_INFO_SYSTEM_STATE_FILE" ]]; then
     _INFO_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
@@ -166,7 +177,10 @@ info_home_for_user() {
 
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
-        home_candidate="$(info_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        home_candidate="${_INFO_CURRENT_HOME:-}"
+        if [[ -z "$home_candidate" ]]; then
+            home_candidate="$(info_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        fi
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -318,13 +332,13 @@ info_get_data_home() {
         fi
     fi
 
-    if [[ -n "$ACFS_HOME" ]] && info_candidate_has_acfs_data "$ACFS_HOME"; then
-        _INFO_RESOLVED_ACFS_HOME="$ACFS_HOME"
+    if [[ -n "$_INFO_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_ACFS_HOME"; then
+        _INFO_RESOLVED_ACFS_HOME="$_INFO_ACFS_HOME"
         echo "$_INFO_RESOLVED_ACFS_HOME"
         return 0
     fi
 
-    _INFO_RESOLVED_ACFS_HOME="$ACFS_HOME"
+    _INFO_RESOLVED_ACFS_HOME="$_INFO_ACFS_HOME"
     echo "$_INFO_RESOLVED_ACFS_HOME"
 }
 
@@ -424,8 +438,8 @@ info_prepare_context() {
     state_file=$(info_get_install_state_file)
 
     if [[ -z "${TARGET_USER:-}" ]]; then
-        TARGET_USER=$(info_read_target_user_from_state "$state_file" 2>/dev/null || \
-            info_read_target_user_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || true)
+        TARGET_USER=$(info_read_target_user_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || \
+            info_read_target_user_from_state "$state_file" 2>/dev/null || true)
         [[ -n "${TARGET_USER:-}" ]] && export TARGET_USER
     fi
 
@@ -1353,6 +1367,19 @@ info_main() {
             ;;
     esac
 }
+
+info_restore_home_if_sourced() {
+    [[ "$_INFO_WAS_SOURCED" == "true" ]] || return 0
+
+    if [[ "$_INFO_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+        HOME="$_INFO_ORIGINAL_HOME"
+        export HOME
+    else
+        unset HOME
+    fi
+}
+
+info_restore_home_if_sourced
 
 # Run if executed directly (not sourced)
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

@@ -4,6 +4,25 @@
 # Source of truth: ~/.acfs/zsh/acfs.zshrc
 # ============================================================
 
+_CHEATSHEET_WAS_SOURCED=false
+_CHEATSHEET_ORIGINAL_HOME=""
+_CHEATSHEET_ORIGINAL_HOME_WAS_SET=false
+_CHEATSHEET_RESTORE_ERREXIT=false
+_CHEATSHEET_RESTORE_NOUNSET=false
+_CHEATSHEET_RESTORE_PIPEFAIL=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  _CHEATSHEET_WAS_SOURCED=true
+  if [[ -v HOME ]]; then
+    _CHEATSHEET_ORIGINAL_HOME="$HOME"
+    _CHEATSHEET_ORIGINAL_HOME_WAS_SET=true
+  fi
+  [[ $- == *e* ]] && _CHEATSHEET_RESTORE_ERREXIT=true
+  [[ $- == *u* ]] && _CHEATSHEET_RESTORE_NOUNSET=true
+  if shopt -qo pipefail 2>/dev/null; then
+    _CHEATSHEET_RESTORE_PIPEFAIL=true
+  fi
+fi
+
 set -euo pipefail
 
 cheatsheet_sanitize_abs_nonroot_path() {
@@ -57,8 +76,8 @@ fi
 _CHEATSHEET_EXPLICIT_ACFS_HOME="$(cheatsheet_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 _CHEATSHEET_DEFAULT_ACFS_HOME=""
 [[ -n "$_CHEATSHEET_CURRENT_HOME" ]] && _CHEATSHEET_DEFAULT_ACFS_HOME="${_CHEATSHEET_CURRENT_HOME}/.acfs"
-ACFS_HOME="${_CHEATSHEET_EXPLICIT_ACFS_HOME:-$_CHEATSHEET_DEFAULT_ACFS_HOME}"
-ACFS_VERSION="${ACFS_VERSION:-0.1.0}"
+_CHEATSHEET_ACFS_HOME="${_CHEATSHEET_EXPLICIT_ACFS_HOME:-$_CHEATSHEET_DEFAULT_ACFS_HOME}"
+_CHEATSHEET_VERSION="${ACFS_VERSION:-0.1.0}"
 CHEATSHEET_DELIM=$'\t'
 _CHEATSHEET_SYSTEM_STATE_FILE="$(cheatsheet_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_CHEATSHEET_SYSTEM_STATE_FILE" ]]; then
@@ -68,26 +87,26 @@ _CHEATSHEET_RESOLVED_ACFS_HOME=""
 _CHEATSHEET_RESOLVED_TARGET_USER=""
 _CHEATSHEET_RESOLVED_TARGET_HOME=""
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_CHEATSHEET_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source output formatting library (for TOON support)
-if [[ -f "$SCRIPT_DIR/output.sh" ]]; then
+if [[ -f "$_CHEATSHEET_SCRIPT_DIR/output.sh" ]]; then
     # shellcheck source=output.sh
-    source "$SCRIPT_DIR/output.sh"
+    source "$_CHEATSHEET_SCRIPT_DIR/output.sh"
 fi
 
 # Global format options (set by argument parsing)
 _CHEATSHEET_OUTPUT_FORMAT=""
 _CHEATSHEET_SHOW_STATS=false
 
-if [[ -f "$SCRIPT_DIR/../../VERSION" ]]; then
-  ACFS_VERSION="$(cat "$SCRIPT_DIR/../../VERSION" 2>/dev/null || echo "$ACFS_VERSION")"
-elif [[ -f "$ACFS_HOME/VERSION" ]]; then
-  ACFS_VERSION="$(cat "$ACFS_HOME/VERSION" 2>/dev/null || echo "$ACFS_VERSION")"
+if [[ -f "$_CHEATSHEET_SCRIPT_DIR/../../VERSION" ]]; then
+  _CHEATSHEET_VERSION="$(cat "$_CHEATSHEET_SCRIPT_DIR/../../VERSION" 2>/dev/null || echo "$_CHEATSHEET_VERSION")"
+elif [[ -f "$_CHEATSHEET_ACFS_HOME/VERSION" ]]; then
+  _CHEATSHEET_VERSION="$(cat "$_CHEATSHEET_ACFS_HOME/VERSION" 2>/dev/null || echo "$_CHEATSHEET_VERSION")"
 fi
 
-HAS_GUM=false
-command -v gum &>/dev/null && HAS_GUM=true
+_CHEATSHEET_HAS_GUM=false
+command -v gum &>/dev/null && _CHEATSHEET_HAS_GUM=true
 
 print_help() {
   cat <<'EOF'
@@ -144,7 +163,10 @@ cheatsheet_home_for_user() {
 
   current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
   if [[ "$user" == "$current_user" ]]; then
-    home_candidate="$(cheatsheet_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    home_candidate="${_CHEATSHEET_CURRENT_HOME:-}"
+    if [[ -z "$home_candidate" ]]; then
+      home_candidate="$(cheatsheet_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    fi
     if [[ -n "$home_candidate" ]]; then
       printf '%s\n' "$home_candidate"
       return 0
@@ -189,7 +211,7 @@ cheatsheet_candidate_has_acfs_data() {
 
 cheatsheet_script_acfs_home() {
   local candidate=""
-  candidate=$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
+  candidate=$(cd "$_CHEATSHEET_SCRIPT_DIR/../.." 2>/dev/null && pwd) || return 1
   [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
   printf '%s\n' "$candidate"
 }
@@ -242,21 +264,21 @@ cheatsheet_resolve_acfs_home() {
     fi
   fi
 
-  if [[ -n "$ACFS_HOME" ]] && cheatsheet_candidate_has_acfs_data "$ACFS_HOME"; then
-    _CHEATSHEET_RESOLVED_ACFS_HOME="$ACFS_HOME"
+  if [[ -n "$_CHEATSHEET_ACFS_HOME" ]] && cheatsheet_candidate_has_acfs_data "$_CHEATSHEET_ACFS_HOME"; then
+    _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_ACFS_HOME"
     printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
     return 0
   fi
 
-  _CHEATSHEET_RESOLVED_ACFS_HOME="$ACFS_HOME"
+  _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_ACFS_HOME"
   printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
 }
 
 cheatsheet_resolve_state_file() {
   local candidate=""
 
-  if [[ -n "$ACFS_HOME" ]]; then
-    candidate="${ACFS_HOME}/state.json"
+  if [[ -n "$_CHEATSHEET_ACFS_HOME" ]]; then
+    candidate="${_CHEATSHEET_ACFS_HOME}/state.json"
   fi
 
   if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
@@ -294,12 +316,12 @@ cheatsheet_prepend_user_paths() {
 cheatsheet_prepare_context() {
   local state_file=""
 
-  ACFS_HOME="$(cheatsheet_resolve_acfs_home)"
+  _CHEATSHEET_ACFS_HOME="$(cheatsheet_resolve_acfs_home)"
   state_file="$(cheatsheet_resolve_state_file)"
 
   if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_USER" ]]; then
-    _CHEATSHEET_RESOLVED_TARGET_USER="$(cheatsheet_read_state_string "$state_file" "target_user" 2>/dev/null || \
-      cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
+    _CHEATSHEET_RESOLVED_TARGET_USER="$(cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || \
+      cheatsheet_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
   fi
 
   if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]]; then
@@ -308,8 +330,8 @@ cheatsheet_prepare_context() {
     if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ -n "$_CHEATSHEET_RESOLVED_TARGET_USER" ]]; then
       _CHEATSHEET_RESOLVED_TARGET_HOME="$(cheatsheet_home_for_user "$_CHEATSHEET_RESOLVED_TARGET_USER" 2>/dev/null || true)"
     fi
-    if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ "$ACFS_HOME" == */.acfs ]]; then
-      _CHEATSHEET_RESOLVED_TARGET_HOME="${ACFS_HOME%/.acfs}"
+    if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ "$_CHEATSHEET_ACFS_HOME" == */.acfs ]]; then
+      _CHEATSHEET_RESOLVED_TARGET_HOME="${_CHEATSHEET_ACFS_HOME%/.acfs}"
     fi
   fi
 
@@ -366,7 +388,7 @@ infer_category() {
 }
 
 cheatsheet_parse_zshrc() {
-  local zshrc="${1:-$ACFS_HOME/zsh/acfs.zshrc}"
+  local zshrc="${1:-$_CHEATSHEET_ACFS_HOME/zsh/acfs.zshrc}"
   [[ -f "$zshrc" ]] || return 1
 
   local current_category="Misc"
@@ -521,7 +543,7 @@ cheatsheet_parse_zshrc() {
 }
 
 cheatsheet_collect_entries() {
-  local zshrc="${1:-$ACFS_HOME/zsh/acfs.zshrc}"
+  local zshrc="${1:-$_CHEATSHEET_ACFS_HOME/zsh/acfs.zshrc}"
   local -a entries=()
   local line
 
@@ -551,7 +573,7 @@ cheatsheet_collect_entries() {
 cheatsheet_filter_entries() {
   local category_filter="${1:-}"
   local search_filter="${2:-}"
-  local zshrc="${3:-$ACFS_HOME/zsh/acfs.zshrc}"
+  local zshrc="${3:-$_CHEATSHEET_ACFS_HOME/zsh/acfs.zshrc}"
 
   local line cat name cmd kind
   while IFS= read -r line; do
@@ -577,9 +599,9 @@ cheatsheet_filter_entries() {
 cheatsheet_render_plain() {
   local category_filter="${1:-}"
   local search_filter="${2:-}"
-  local zshrc="${3:-$ACFS_HOME/zsh/acfs.zshrc}"
+  local zshrc="${3:-$_CHEATSHEET_ACFS_HOME/zsh/acfs.zshrc}"
 
-  echo "ACFS Cheatsheet v$ACFS_VERSION"
+  echo "ACFS Cheatsheet v$_CHEATSHEET_VERSION"
   echo "Source: $zshrc"
   echo ""
 
@@ -598,9 +620,9 @@ cheatsheet_render_plain() {
 cheatsheet_render_gum() {
   local category_filter="${1:-}"
   local search_filter="${2:-}"
-  local zshrc="${3:-$ACFS_HOME/zsh/acfs.zshrc}"
+  local zshrc="${3:-$_CHEATSHEET_ACFS_HOME/zsh/acfs.zshrc}"
 
-  gum style --bold --foreground "#89b4fa" "ACFS Cheatsheet v$ACFS_VERSION"
+  gum style --bold --foreground "#89b4fa" "ACFS Cheatsheet v$_CHEATSHEET_VERSION"
   gum style --foreground "#6c7086" "Source: $zshrc"
   echo ""
 
@@ -620,13 +642,13 @@ cheatsheet_render_gum() {
 cheatsheet_render_json() {
   local category_filter="${1:-}"
   local search_filter="${2:-}"
-  local zshrc="${3:-$ACFS_HOME/zsh/acfs.zshrc}"
+  local zshrc="${3:-$_CHEATSHEET_ACFS_HOME/zsh/acfs.zshrc}"
 
   local json_output
   json_output=$(
     local first=true
     printf '{'
-    printf '"version":"%s",' "$(json_escape "$ACFS_VERSION")"
+    printf '"version":"%s",' "$(json_escape "$_CHEATSHEET_VERSION")"
     printf '"source":"%s",' "$(json_escape "$zshrc")"
     printf '"entries":['
 
@@ -747,7 +769,7 @@ main() {
   cheatsheet_prepare_context
 
   if [[ -z "$zshrc" ]]; then
-    zshrc="$ACFS_HOME/zsh/acfs.zshrc"
+    zshrc="$_CHEATSHEET_ACFS_HOME/zsh/acfs.zshrc"
   fi
 
   if [[ ! -f "$zshrc" ]]; then
@@ -758,11 +780,30 @@ main() {
 
   if [[ "$json_mode" == "true" ]]; then
     cheatsheet_render_json "$category_filter" "$search_filter" "$zshrc"
-  elif [[ "$HAS_GUM" == "true" ]]; then
+  elif [[ "$_CHEATSHEET_HAS_GUM" == "true" ]]; then
     cheatsheet_render_gum "$category_filter" "$search_filter" "$zshrc"
   else
     cheatsheet_render_plain "$category_filter" "$search_filter" "$zshrc"
   fi
 }
 
-main "$@"
+cheatsheet_restore_shell_options_if_sourced() {
+  [[ "$_CHEATSHEET_WAS_SOURCED" == "true" ]] || return 0
+
+  if [[ "$_CHEATSHEET_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+    HOME="$_CHEATSHEET_ORIGINAL_HOME"
+    export HOME
+  else
+    unset HOME
+  fi
+
+  [[ "$_CHEATSHEET_RESTORE_ERREXIT" == "true" ]] || set +e
+  [[ "$_CHEATSHEET_RESTORE_NOUNSET" == "true" ]] || set +u
+  [[ "$_CHEATSHEET_RESTORE_PIPEFAIL" == "true" ]] || set +o pipefail
+}
+
+cheatsheet_restore_shell_options_if_sourced
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

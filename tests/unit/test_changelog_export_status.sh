@@ -423,6 +423,22 @@ setup_system_state_target_home_only_env() {
 EOF
 }
 
+poison_installed_target_user() {
+    local stale_user="${1:-stale-user}"
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "$stale_user",
+  "target_home": "/placeholder/overridden/by/system/state",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+}
+
 setup_relative_home_trap() {
     RELATIVE_HOME="relative-home"
     STALE_HOME="$TEST_HOME/$RELATIVE_HOME"
@@ -850,8 +866,7 @@ printf 'statuses=%s,%s
 ' "${SERVICE_STATUS[vercel]:-missing}" "${SERVICE_STATUS[wrangler]:-missing}"
 
 run_as_user() {
-    printf '%s
-' "$1" >> "$target_home/run.log"
+    printf '%s\n' "$1" >> "$target_home/run.log"
     return 0
 }
 
@@ -3603,7 +3618,7 @@ test_dashboard_repo_local_ignores_poisoned_explicit_acfs_home() {
         bash -lc '
             source "$TEST_DASHBOARD_SCRIPT"
             dashboard_prepare_context
-            printf "home=%s\nstate=%s\ntarget=%s\n" "$ACFS_HOME" "$(dashboard_resolve_state_file)" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}"
+            printf "home=%s\nstate=%s\ntarget=%s\n" "${_DASHBOARD_ACFS_HOME:-}" "$(dashboard_resolve_state_file)" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}"
         ' 2>/dev/null)
 
     if [[ "$output" == *"home=$TEST_INSTALLED_ACFS"* ]] \
@@ -3698,6 +3713,62 @@ EOF
         harness_pass "cheatsheet repo-local script ignores poisoned explicit ACFS_HOME"
     else
         harness_fail "cheatsheet repo-local script ignores poisoned explicit ACFS_HOME" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_cheatsheet_repo_local_prefers_system_state_target_user_over_stale_installed_state() {
+    setup_system_state_target_home_env
+    poison_installed_target_user
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        TEST_CHEATSHEET_SCRIPT="$CHEATSHEET_SH" \
+        bash -lc '
+            source "$TEST_CHEATSHEET_SCRIPT"
+            cheatsheet_prepare_context
+            printf "user=%s\nhome=%s\n" "${_CHEATSHEET_RESOLVED_TARGET_USER:-}" "${_CHEATSHEET_RESOLVED_TARGET_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"user=tester"* ]] \
+        && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]; then
+        harness_pass "cheatsheet repo-local prefers system-state target_user over stale installed state"
+    else
+        harness_fail "cheatsheet repo-local prefers system-state target_user over stale installed state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_cheatsheet_can_be_sourced_without_running_main() {
+    setup_mock_env
+
+    local output=""
+    output=$(HOME="$TEST_HOME" \
+        TEST_CHEATSHEET_SCRIPT="$CHEATSHEET_SH" \
+        bash -lc '
+            set +e +u
+            set +o pipefail
+            HOME=relative-home
+            set -- --bogus keep
+            source "$TEST_CHEATSHEET_SCRIPT"
+            if [[ $- == *e* || $- == *u* ]]; then
+                printf "bad-shell-flags:%s\n" "$-"
+                exit 1
+            fi
+            if shopt -qo pipefail; then
+                printf "bad-shell-flags:pipefail\n"
+                exit 1
+            fi
+            printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "${ACFS_HOME:-}" "${SCRIPT_DIR:-}" "${ACFS_VERSION:-}" "${HAS_GUM:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|2|--bogus|keep||||" ]]; then
+        harness_pass "cheatsheet can be sourced without leaking install context"
+    else
+        harness_fail "cheatsheet can be sourced without leaking install context" "$output"
     fi
 
     cleanup_mock_env
@@ -3869,6 +3940,80 @@ test_status_repo_local_ignores_poisoned_explicit_acfs_home() {
     cleanup_mock_env
 }
 
+test_status_repo_local_prefers_system_state_target_user_over_stale_installed_state() {
+    setup_system_state_target_home_env
+    poison_installed_target_user
+
+    cat > "$TEST_SYSTEM_STATE_FILE" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+
+    cat > "$TEST_FAKE_BIN/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "passwd" ]] && [[ "\$2" == "tester" ]]; then
+    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$STATUS_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '
+        .status == "warn" and
+        .tools == 12 and
+        (.warnings | sort) == ["missing: bun", "missing: cargo", "missing: claude"] and
+        (.errors | length == 0)
+    ' >/dev/null 2>&1; then
+        harness_pass "status repo-local prefers system-state target_user over stale installed state"
+    else
+        harness_fail "status repo-local prefers system-state target_user over stale installed state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+test_status_can_be_sourced_without_running_main() {
+    setup_mock_env
+
+    local output=""
+    output=$(HOME="$TEST_HOME" \
+        TEST_STATUS_SCRIPT="$STATUS_SH" \
+        bash -lc '
+            set +e +u
+            set +o pipefail
+            HOME=relative-home
+            set -- --bogus keep
+            source "$TEST_STATUS_SCRIPT"
+            if [[ $- == *e* || $- == *u* ]]; then
+                printf "bad-shell-flags:%s\n" "$-"
+                exit 1
+            fi
+            if shopt -qo pipefail; then
+                printf "bad-shell-flags:pipefail\n"
+                exit 1
+            fi
+            declare -F status_main >/dev/null
+            printf "%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "${SCRIPT_DIR:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|2|--bogus|keep|" ]]; then
+        harness_pass "status can be sourced without leaking script path state"
+    else
+        harness_fail "status can be sourced without leaking script path state" "$output"
+    fi
+
+    cleanup_mock_env
+}
 test_status_ignores_relative_home_state_trap() {
     setup_system_state_target_home_only_env
     setup_relative_home_trap
@@ -4117,7 +4262,67 @@ test_export_config_repo_local_ignores_poisoned_explicit_acfs_home() {
     cleanup_mock_env
 }
 
+test_export_config_repo_local_prefers_system_state_target_user_over_stale_installed_state() {
+    setup_system_state_target_home_env
+    poison_installed_target_user
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        ACFS_INSTALL_HELPERS_SH="$TEST_INSTALLED_HELPERS" \
+        ACFS_MANIFEST_INDEX_SH="$TEST_INSTALLED_MANIFEST_INDEX" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$EXPORT_CONFIG_SH" --json)
+
+    if printf '%s\n' "$output" | jq -e '
+        (.modules | length) == 2 and
+        .modules == ["alpha", "module \"beta\" \\\\ path"] and
+        .settings.mode == "safe"
+    ' >/dev/null 2>&1; then
+        harness_pass "export-config repo-local prefers system-state target_user over stale installed state"
+    else
+        harness_fail "export-config repo-local prefers system-state target_user over stale installed state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_export_config_can_be_sourced_without_mutating_caller_env() {
+    setup_mock_env
+
+    local output=""
+    output=$(HOME="$TEST_HOME" \
+        TEST_EXPORT_CONFIG_SCRIPT="$EXPORT_CONFIG_SH" \
+        bash -lc '
+            set +e +u
+            set +o pipefail
+            HOME=relative-home
+            PATH=/usr/bin:/bin
+            unset TARGET_HOME TARGET_USER
+            set -- --bogus keep
+            source "$TEST_EXPORT_CONFIG_SCRIPT"
+            if [[ $- == *e* || $- == *u* ]]; then
+                printf "bad-shell-flags:%s\n" "$-"
+                exit 1
+            fi
+            if shopt -qo pipefail; then
+                printf "bad-shell-flags:pipefail\n"
+                exit 1
+            fi
+            declare -F export_config_main >/dev/null
+            printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "$PATH" "${TARGET_HOME:-}" "${TARGET_USER:-}" "${ACFS_HOME:-}" "${SCRIPT_DIR:-}" "${OUTPUT_FORMAT:-}" "${OUTPUT_FILE:-}" "${STATE_FILE:-}" "${VERSION_FILE:-}" "${INSTALL_HELPERS_FILE:-}" "${MANIFEST_INDEX_FILE:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|2|--bogus|keep|/usr/bin:/bin||||||||||" ]]; then
+        harness_pass "export-config can be sourced without leaking install context"
+    else
+        harness_fail "export-config can be sourced without leaking install context" "$output"
+    fi
+
+    cleanup_mock_env
+}
 test_export_config_ignores_relative_home_state_trap() {
+
     setup_system_state_target_home_only_env
     setup_relative_home_trap
 
@@ -4466,6 +4671,53 @@ test_info_repo_local_ignores_poisoned_explicit_acfs_home() {
     cleanup_mock_env
 }
 
+test_info_repo_local_prefers_system_state_target_user_over_stale_installed_state() {
+    setup_system_state_target_home_env
+    poison_installed_target_user
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        TEST_INFO_SCRIPT="$INFO_SH" \
+        bash -lc '
+            source "$TEST_INFO_SCRIPT"
+            info_prepare_context
+            printf "user=%s\nhome=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"user=tester"* ]] \
+        && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]; then
+        harness_pass "info repo-local prefers system-state target_user over stale installed state"
+    else
+        harness_fail "info repo-local prefers system-state target_user over stale installed state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+
+test_info_can_be_sourced_without_mutating_caller_home() {
+    setup_mock_env
+
+    local output=""
+    output=$(HOME="$TEST_HOME" \
+        TEST_INFO_SCRIPT="$INFO_SH" \
+        bash -lc '
+            HOME=relative-home
+            source "$TEST_INFO_SCRIPT"
+            declare -F info_prepare_context >/dev/null
+            printf "%s|%s\n" "$HOME" "${ACFS_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|" ]]; then
+        harness_pass "info can be sourced without leaking ACFS_HOME"
+    else
+        harness_fail "info can be sourced without leaking ACFS_HOME" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_info_ignores_relative_home_state_trap() {
     setup_system_state_target_home_only_env
     setup_relative_home_trap
@@ -4653,6 +4905,77 @@ test_support_bundle_uses_system_state_target_home_when_getent_unavailable() {
     cleanup_mock_env
 }
 
+test_support_bundle_repo_local_prefers_system_state_target_user_over_stale_installed_state() {
+    setup_system_state_target_home_env
+    poison_installed_target_user
+
+    local output_dir="$TEST_HOME/support-out"
+    mkdir -p "$output_dir"
+
+    local archive_path=""
+    archive_path=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        SUPPORT_BUNDLE_DOCTOR_TIMEOUT=1 \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$SUPPORT_SH" --output "$output_dir")
+
+    local bundle_dir="$archive_path"
+    if [[ "$bundle_dir" == *.tar.gz ]]; then
+        bundle_dir="${bundle_dir%.tar.gz}"
+    fi
+
+    if [[ -f "$bundle_dir/environment.json" ]] \
+        && jq -e --arg target_home "$TEST_TARGET_HOME" \
+            '.user == "tester" and .home == $target_home' \
+            "$bundle_dir/environment.json" >/dev/null 2>&1; then
+        harness_pass "support bundle repo-local prefers system-state target_user over stale installed state"
+    else
+        harness_fail "support bundle repo-local prefers system-state target_user over stale installed state" "$archive_path"
+    fi
+
+    cleanup_mock_env
+}
+
+test_support_can_be_sourced_without_running_main() {
+    setup_mock_env
+
+    local output=""
+    output=$(HOME="$TEST_HOME" \
+        TEST_SUPPORT_SCRIPT="$SUPPORT_SH" \
+        bash -lc '
+            set +e +u
+            set +o pipefail
+            log_step() { :; }
+            log_section() { :; }
+            log_detail() { :; }
+            log_success() { :; }
+            log_warn() { :; }
+            log_error() { :; }
+            HOME=relative-home
+            set -- --bogus keep
+            source "$TEST_SUPPORT_SCRIPT"
+            if [[ $- == *e* || $- == *u* ]]; then
+                printf "bad-shell-flags:%s\n" "$-"
+                exit 1
+            fi
+            if shopt -qo pipefail; then
+                printf "bad-shell-flags:pipefail\n"
+                exit 1
+            fi
+            declare -F redact_file >/dev/null
+            declare -F redact_bundle >/dev/null
+            printf "%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "${ACFS_HOME:-}" "${SCRIPT_DIR:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|2|--bogus|keep||" ]]; then
+        harness_pass "support can be sourced without leaking install context"
+    else
+        harness_fail "support can be sourced without leaking install context" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_support_bundle_repo_local_ignores_poisoned_explicit_acfs_home() {
     setup_system_state_target_home_env
     setup_poisoned_acfs_home
@@ -4681,6 +5004,63 @@ test_support_bundle_repo_local_ignores_poisoned_explicit_acfs_home() {
         harness_pass "support bundle repo-local script ignores poisoned explicit ACFS_HOME"
     else
         harness_fail "support bundle repo-local script ignores poisoned explicit ACFS_HOME" "$archive_path"
+    fi
+
+    cleanup_mock_env
+}
+
+test_dashboard_repo_local_prefers_system_state_target_user_over_stale_installed_state() {
+    setup_system_state_target_home_env
+    poison_installed_target_user
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        TEST_DASHBOARD_SCRIPT="$DASHBOARD_SH" \
+        bash -lc '
+            source "$TEST_DASHBOARD_SCRIPT"
+            dashboard_prepare_context
+            printf "user=%s\nhome=%s\n" "${_DASHBOARD_RESOLVED_TARGET_USER:-}" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"user=tester"* ]] \
+        && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]; then
+        harness_pass "dashboard repo-local prefers system-state target_user over stale installed state"
+    else
+        harness_fail "dashboard repo-local prefers system-state target_user over stale installed state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_dashboard_can_be_sourced_without_mutating_caller_env() {
+    setup_mock_env
+
+    local output=""
+    output=$(HOME="$TEST_HOME" \
+        TEST_DASHBOARD_SCRIPT="$DASHBOARD_SH" \
+        bash -lc '
+            set +e +u
+            set +o pipefail
+            HOME=relative-home
+            set -- --bogus keep
+            source "$TEST_DASHBOARD_SCRIPT"
+            if [[ $- == *e* || $- == *u* ]]; then
+                printf "bad-shell-flags:%s\n" "$-"
+                exit 1
+            fi
+            if shopt -qo pipefail; then
+                printf "bad-shell-flags:pipefail\n"
+                exit 1
+            fi
+            declare -F dashboard_prepare_context >/dev/null
+            printf "%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "${ACFS_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|2|--bogus|keep|" ]]; then
+        harness_pass "dashboard can be sourced without leaking ACFS_HOME"
+    else
+        harness_fail "dashboard can be sourced without leaking ACFS_HOME" "$output"
     fi
 
     cleanup_mock_env
@@ -6755,6 +7135,81 @@ EOF
     cleanup_mock_env
 }
 
+test_onboard_repo_local_prefers_system_state_target_user_over_stale_installed_state() {
+    setup_system_state_target_home_env
+    poison_installed_target_user
+
+    cat > "$TEST_SYSTEM_STATE_FILE" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+
+    cat > "$TEST_FAKE_BIN/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "passwd" ]] && [[ "\$2" == "tester" ]]; then
+    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash -lc 'source "'"$ONBOARD_SH"'"; printf "acfs=%s\nhome=%s\n" "${_ONBOARD_ACFS_HOME:-}" "${_ONBOARD_RUNTIME_HOME:-}"' \
+        2>/dev/null)
+
+    if [[ "$output" == *"acfs=$TEST_INSTALLED_ACFS"* ]] \
+        && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]; then
+        harness_pass "onboard repo-local prefers system-state target_user over stale installed state"
+    else
+        harness_fail "onboard repo-local prefers system-state target_user over stale installed state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_onboard_can_be_sourced_without_mutating_caller_env() {
+    setup_mock_env
+
+    local output=""
+    output=$(HOME="$TEST_HOME" \
+        TEST_ONBOARD_SCRIPT="$ONBOARD_SH" \
+        bash -lc '
+            set +e +u
+            set +o pipefail
+            HOME=relative-home
+            set -- --bogus keep
+            source "$TEST_ONBOARD_SCRIPT"
+            if [[ $- == *e* || $- == *u* ]]; then
+                printf "bad-shell-flags:%s\n" "$-"
+                exit 1
+            fi
+            if shopt -qo pipefail; then
+                printf "bad-shell-flags:pipefail\n"
+                exit 1
+            fi
+            declare -F onboard_main >/dev/null
+            printf "%s|%s|%s|%s|%s|%s|%s|%s\n" "$HOME" "$#" "$1" "$2" "${ACFS_HOME:-}" "${SCRIPT_PATH:-}" "${SCRIPT_DIR:-}" "${ONBOARD_RUNTIME_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == "relative-home|2|--bogus|keep||||" ]]; then
+        harness_pass "onboard can be sourced without leaking install context"
+    else
+        harness_fail "onboard can be sourced without leaking install context" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_onboard_copy_install_ignores_relative_home_trap() {
     setup_system_state_target_home_only_env
     setup_relative_home_trap
@@ -6912,6 +7367,8 @@ main() {
     test_export_config_uses_system_state_when_user_state_missing || true
     test_export_config_uses_system_state_target_home_when_getent_unavailable || true
     test_export_config_repo_local_ignores_poisoned_explicit_acfs_home || true
+    test_export_config_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_export_config_can_be_sourced_without_mutating_caller_env || true
     test_export_config_ignores_relative_home_state_trap || true
     test_export_config_does_not_infer_target_home_from_markerless_acfs_home || true
 
@@ -6926,6 +7383,8 @@ main() {
     test_status_uses_system_state_when_user_state_missing || true
     test_status_uses_system_state_target_home_when_getent_unavailable || true
     test_status_repo_local_ignores_poisoned_explicit_acfs_home || true
+    test_status_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_status_can_be_sourced_without_running_main || true
     test_status_ignores_relative_home_state_trap || true
 
     harness_section "Changelog Root Context"
@@ -6953,6 +7412,8 @@ main() {
     test_dashboard_serve_uses_target_user_in_ssh_hint || true
     test_dashboard_copy_install_uses_target_home_only_system_state || true
     test_dashboard_repo_local_ignores_poisoned_explicit_acfs_home || true
+    test_dashboard_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_dashboard_can_be_sourced_without_mutating_caller_env || true
     test_dashboard_copy_install_ignores_relative_home_trap || true
 
     harness_section "Cheatsheet"
@@ -6965,6 +7426,8 @@ main() {
     test_cheatsheet_uses_installed_layout_and_target_path_under_root_home || true
     test_cheatsheet_copy_install_uses_target_home_only_system_state || true
     test_cheatsheet_repo_local_ignores_poisoned_explicit_acfs_home || true
+    test_cheatsheet_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_cheatsheet_can_be_sourced_without_running_main || true
     test_cheatsheet_copy_install_ignores_relative_home_trap || true
 
     harness_section "Info / Support / Onboard"
@@ -6976,6 +7439,8 @@ main() {
     test_info_uses_installed_layout_under_root_home || true
     test_info_uses_system_state_target_home_when_getent_unavailable || true
     test_info_repo_local_ignores_poisoned_explicit_acfs_home || true
+    test_info_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_info_can_be_sourced_without_mutating_caller_home || true
     test_info_ignores_relative_home_state_trap || true
     test_info_uses_target_user_path_under_root_home || true
     test_info_summary_ignores_current_shell_only_binaries || true
@@ -6985,6 +7450,8 @@ main() {
     test_support_bundle_uses_installed_layout_under_root_home || true
     test_support_bundle_uses_system_state_target_home_when_getent_unavailable || true
     test_support_bundle_repo_local_ignores_poisoned_explicit_acfs_home || true
+    test_support_bundle_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_support_can_be_sourced_without_running_main || true
     test_onboard_cli_aliases_work_in_zero_lessons_mode || true
     test_onboard_repairs_malformed_progress_before_showing_lesson || true
     test_onboard_accepts_sparse_lesson_numbers || true
@@ -6997,6 +7464,8 @@ main() {
     test_onboard_gemini_vertex_auth_finds_target_gcloud_outside_current_path || true
     test_onboard_copy_install_uses_system_state_under_root_home || true
     test_onboard_copy_install_uses_target_home_only_system_state_under_root_home || true
+    test_onboard_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_onboard_can_be_sourced_without_mutating_caller_env || true
     test_onboard_copy_install_ignores_relative_home_trap || true
 
     harness_section "Entrypoint Dispatch"

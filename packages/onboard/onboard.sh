@@ -14,6 +14,25 @@
 #   onboard version|--version              # Show version
 #
 
+_ONBOARD_WAS_SOURCED=false
+_ONBOARD_ORIGINAL_HOME=""
+_ONBOARD_ORIGINAL_HOME_WAS_SET=false
+_ONBOARD_RESTORE_ERREXIT=false
+_ONBOARD_RESTORE_NOUNSET=false
+_ONBOARD_RESTORE_PIPEFAIL=false
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+    _ONBOARD_WAS_SOURCED=true
+    if [[ -v HOME ]]; then
+        _ONBOARD_ORIGINAL_HOME="$HOME"
+        _ONBOARD_ORIGINAL_HOME_WAS_SET=true
+    fi
+    [[ $- == *e* ]] && _ONBOARD_RESTORE_ERREXIT=true
+    [[ $- == *u* ]] && _ONBOARD_RESTORE_NOUNSET=true
+    if shopt -qo pipefail 2>/dev/null; then
+        _ONBOARD_RESTORE_PIPEFAIL=true
+    fi
+fi
+
 set -euo pipefail
 
 # Resolve the physical script path so installed symlinks (e.g. ~/.local/bin/onboard)
@@ -38,8 +57,8 @@ resolve_onboard_script_path() {
     printf '%s/%s\n' "$dir" "$(basename "$source_path")"
 }
 
-SCRIPT_PATH="$(resolve_onboard_script_path)"
-SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+_ONBOARD_SCRIPT_PATH="$(resolve_onboard_script_path)"
+_ONBOARD_SCRIPT_DIR="$(dirname "$_ONBOARD_SCRIPT_PATH")"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -162,7 +181,7 @@ onboard_candidate_has_acfs_data() {
 onboard_script_acfs_home() {
     local candidate=""
 
-    candidate="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)" || return 1
+    candidate="$(cd "$_ONBOARD_SCRIPT_DIR/.." 2>/dev/null && pwd)" || return 1
     [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
     [[ -d "$candidate/onboard" ]] || return 1
     printf '%s\n' "$candidate"
@@ -221,7 +240,7 @@ onboard_resolve_acfs_home() {
     printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
 }
 
-ACFS_HOME="$(onboard_resolve_acfs_home)"
+_ONBOARD_ACFS_HOME="$(onboard_resolve_acfs_home)"
 
 onboard_resolve_runtime_home() {
     local target_home=""
@@ -232,15 +251,13 @@ onboard_resolve_runtime_home() {
         return 0
     fi
 
-    target_home="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || \
-        onboard_read_state_string "$ACFS_HOME/state.json" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
+    target_home="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
     if [[ -n "$target_home" ]]; then
         printf '%s\n' "${target_home%/}"
         return 0
     fi
 
-    target_user="$(onboard_read_state_string "$ACFS_HOME/state.json" "target_user" 2>/dev/null || \
-        onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
+    target_user="$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
     if [[ -n "$target_user" ]]; then
         target_home="$(onboard_home_for_user "$target_user" 2>/dev/null || true)"
         if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
@@ -249,8 +266,22 @@ onboard_resolve_runtime_home() {
         fi
     fi
 
-    if [[ "$ACFS_HOME" == */.acfs ]]; then
-        target_home="${ACFS_HOME%/.acfs}"
+    target_home="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "${target_home%/}"
+        return 0
+    fi
+
+    target_user="$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_user" 2>/dev/null || true)"
+    if [[ -n "$target_user" ]]; then
+        target_home="$(onboard_home_for_user "$target_user" 2>/dev/null || true)"
+        if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+            printf '%s\n' "${target_home%/}"
+            return 0
+        fi
+    fi
+    if [[ "$_ONBOARD_ACFS_HOME" == */.acfs ]]; then
+        target_home="${_ONBOARD_ACFS_HOME%/.acfs}"
         target_home="$(onboard_sanitize_abs_nonroot_path "$target_home" 2>/dev/null || true)"
         if [[ -n "$target_home" ]]; then
             printf '%s\n' "${target_home%/}"
@@ -261,13 +292,13 @@ onboard_resolve_runtime_home() {
     printf '%s\n' "${_ONBOARD_CURRENT_HOME:-/root}"
 }
 
-ONBOARD_RUNTIME_HOME="$(onboard_resolve_runtime_home)"
+_ONBOARD_RUNTIME_HOME="$(onboard_resolve_runtime_home)"
 
 onboard_preferred_bin_dir() {
-    local runtime_home="${1:-${ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}}"
+    local runtime_home="${1:-${_ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}}"
     local candidate=""
 
-    candidate="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$ACFS_HOME/state.json" "bin_dir" 2>/dev/null || true)" 2>/dev/null || true)"
+    candidate="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "bin_dir" 2>/dev/null || true)" 2>/dev/null || true)"
     if [[ -n "$candidate" ]]; then
         printf '%s\n' "$candidate"
         return 0
@@ -290,7 +321,7 @@ onboard_preferred_bin_dir() {
 
 onboard_runtime_binary_path() {
     local name="${1:-}"
-    local runtime_home="${ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}"
+    local runtime_home="${_ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}"
     local primary_bin_dir=""
     local candidate=""
     local path_dir=""
@@ -339,8 +370,8 @@ onboard_runtime_binary_path() {
 
     return 1
 }
-LESSONS_DIR="${ACFS_LESSONS_DIR:-$ACFS_HOME/onboard/lessons}"
-PROGRESS_FILE="${ACFS_PROGRESS_FILE:-$ACFS_HOME/onboard_progress.json}"
+LESSONS_DIR="${ACFS_LESSONS_DIR:-$_ONBOARD_ACFS_HOME/onboard/lessons}"
+PROGRESS_FILE="${ACFS_PROGRESS_FILE:-$_ONBOARD_ACFS_HOME/onboard_progress.json}"
 PROGRESS_LOCK_FILE="${PROGRESS_FILE}.lock"
 VERSION="0.1.0"
 MENU_SEPARATOR="─────────────────────────────────"
@@ -358,9 +389,9 @@ trap _onboard_cleanup INT TERM HUP
 
 # Source gum_ui library if available for consistent theming
 for candidate in \
-    "$SCRIPT_DIR/../scripts/lib/gum_ui.sh" \
-    "$SCRIPT_DIR/../../scripts/lib/gum_ui.sh" \
-    "$ACFS_HOME/scripts/lib/gum_ui.sh"; do
+    "$_ONBOARD_SCRIPT_DIR/../scripts/lib/gum_ui.sh" \
+    "$_ONBOARD_SCRIPT_DIR/../../scripts/lib/gum_ui.sh" \
+    "$_ONBOARD_ACFS_HOME/scripts/lib/gum_ui.sh"; do
     if [[ -f "$candidate" ]]; then
         # shellcheck disable=SC1090,SC1091
         source "$candidate"
@@ -1231,7 +1262,7 @@ EOF
 # Returns: 0 = authenticated, 1 = not authenticated, 2 = not installed
 check_auth_status() {
     local service=$1
-    local runtime_home="${ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}"
+    local runtime_home="${_ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}"
     local shell_config_files=(
         "$runtime_home/.zshrc.local"
         "$runtime_home/.zshrc"
@@ -2433,62 +2464,69 @@ main_menu() {
 }
 
 # Handle command line arguments
-arg="${1:-}"
+onboard_main() {
+    local arg="${1:-}"
+    local idx=""
+    local cheatsheet_script=""
+    local candidate=""
 
-if [[ "$arg" =~ ^[0-9]+$ ]]; then
-    idx="$(get_lesson_index_by_number "$((10#$arg))" || true)"
-    if [[ -n "$idx" ]]; then
-        init_progress
-        if ! set_current "$idx"; then
-            exit 1
-        fi
-        show_lesson "$idx"
-        exit 0
-    fi
-
-    if (( NUM_LESSONS == 0 )); then
-        echo "No lessons are available in $LESSONS_DIR"
-    else
-        echo "Lesson $arg was not found. Run 'onboard status' to see the available lesson numbers."
-    fi
-    exit 1
-fi
-
-case "$arg" in
-    --cheatsheet|cheatsheet)
-        shift || true
-        cheatsheet_script=""
-        for candidate in \
-            "$ACFS_HOME/scripts/lib/cheatsheet.sh" \
-            "$SCRIPT_DIR/../../scripts/lib/cheatsheet.sh" \
-            "$SCRIPT_DIR/../scripts/lib/cheatsheet.sh"; do
-            if [[ -f "$candidate" ]]; then
-                cheatsheet_script="$candidate"
-                break
+    if [[ "$arg" =~ ^[0-9]+$ ]]; then
+        idx="$(get_lesson_index_by_number "$((10#$arg))" || true)"
+        if [[ -n "$idx" ]]; then
+            init_progress
+            if ! set_current "$idx"; then
+                return 1
             fi
-        done
-
-        if [[ -z "${cheatsheet_script:-}" ]]; then
-            echo "Error: cheatsheet.sh not found" >&2
-            echo "Re-run the ACFS installer or update to get the latest scripts." >&2
-            exit 1
+            show_lesson "$idx"
+            return 0
         fi
 
-        exec bash "$cheatsheet_script" "$@"
-        ;;
-    reset|--reset)
-        init_progress
-        reset_progress
-        ;;
-    status|list|--status|--list)
-        init_progress
-        show_status
-        ;;
-    version|--version|-v)
-        echo "onboard v$VERSION"
-        ;;
-    help|--help|-h)
-        cat <<EOF
+        if (( NUM_LESSONS == 0 )); then
+            echo "No lessons are available in $LESSONS_DIR"
+        else
+            echo "Lesson $arg was not found. Run 'onboard status' to see the available lesson numbers."
+        fi
+        return 1
+    fi
+
+    case "$arg" in
+        --cheatsheet|cheatsheet)
+            shift || true
+            for candidate in \
+                "$_ONBOARD_ACFS_HOME/scripts/lib/cheatsheet.sh" \
+                "$_ONBOARD_SCRIPT_DIR/../../scripts/lib/cheatsheet.sh" \
+                "$_ONBOARD_SCRIPT_DIR/../scripts/lib/cheatsheet.sh"; do
+                if [[ -f "$candidate" ]]; then
+                    cheatsheet_script="$candidate"
+                    break
+                fi
+            done
+
+            if [[ -z "$cheatsheet_script" ]]; then
+                echo "Error: cheatsheet.sh not found" >&2
+                echo "Re-run the ACFS installer or update to get the latest scripts." >&2
+                return 1
+            fi
+
+            bash "$cheatsheet_script" "$@"
+            return $?
+            ;;
+        reset|--reset)
+            init_progress
+            reset_progress
+            return $?
+            ;;
+        status|list|--status|--list)
+            init_progress
+            show_status
+            return $?
+            ;;
+        version|--version|-v)
+            echo "onboard v$VERSION"
+            return 0
+            ;;
+        help|--help|-h)
+            cat <<EOF
 ACFS Onboarding Tutorial
 
 Usage:
@@ -2518,14 +2556,38 @@ Environment:
   ACFS_LESSONS_DIR   Path to lesson files (default: $LESSONS_DIR)
   ACFS_PROGRESS_FILE Path to progress file (default: $PROGRESS_FILE)
 EOF
-        ;;
-    "")
-        init_progress
-        main_menu
-        ;;
-    *)
-        echo "Unknown command: $arg"
-        echo "Run 'onboard --help' for usage."
-        exit 1
-        ;;
- esac
+            return 0
+            ;;
+        "")
+            init_progress
+            main_menu
+            return 0
+            ;;
+        *)
+            echo "Unknown command: $arg"
+            echo "Run 'onboard --help' for usage."
+            return 1
+            ;;
+    esac
+}
+
+onboard_restore_shell_options_if_sourced() {
+    [[ "$_ONBOARD_WAS_SOURCED" == "true" ]] || return 0
+
+    if [[ "$_ONBOARD_ORIGINAL_HOME_WAS_SET" == "true" ]]; then
+        HOME="$_ONBOARD_ORIGINAL_HOME"
+        export HOME
+    else
+        unset HOME
+    fi
+
+    [[ "$_ONBOARD_RESTORE_ERREXIT" == "true" ]] || set +e
+    [[ "$_ONBOARD_RESTORE_NOUNSET" == "true" ]] || set +u
+    [[ "$_ONBOARD_RESTORE_PIPEFAIL" == "true" ]] || set +o pipefail
+}
+
+onboard_restore_shell_options_if_sourced
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    onboard_main "$@"
+fi
