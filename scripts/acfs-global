@@ -302,7 +302,6 @@ home_from_acfs_bin() {
 prepare_runtime_context_from_home() {
     local user_home="$1"
     local state_bin_dir=""
-    local sanitized_bin_dir=""
 
     user_home="$(sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
     [[ -n "$user_home" ]] || return 1
@@ -311,8 +310,7 @@ prepare_runtime_context_from_home() {
     ACFS_HOME="$user_home/.acfs"
     ACFS_STATE_FILE="$ACFS_HOME/state.json"
     state_bin_dir="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"
-    sanitized_bin_dir="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
-    ACFS_BIN_DIR="${state_bin_dir:-${sanitized_bin_dir:-}}"
+    ACFS_BIN_DIR="${state_bin_dir:-}"
 
     export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_BIN_DIR
 }
@@ -653,7 +651,9 @@ main() {
             "${ACFS_STATE_FILE:-}"
             "${ACFS_SYSTEM_STATE_FILE:-}"
         )
-        [[ -n "$current_home" ]] && state_candidates+=("$current_home/.acfs/state.json")
+        if [[ -n "$current_home" ]] && [[ -z "${TARGET_HOME:-}" || "$current_home" == "${TARGET_HOME:-}" ]]; then
+            state_candidates+=("$current_home/.acfs/state.json")
+        fi
         for state_candidate in "${state_candidates[@]}"; do
             [[ -n "$state_candidate" && -f "$state_candidate" ]] || continue
             ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$state_candidate" 2>/dev/null || true)"

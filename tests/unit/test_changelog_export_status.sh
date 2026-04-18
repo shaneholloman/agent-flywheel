@@ -6220,6 +6220,68 @@ EOF
     cleanup_mock_env
 }
 
+test_acfs_update_wrapper_ignores_poisoned_bin_dir_after_runtime_resolution() {
+    setup_mock_env
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    local current_home="$TEST_HOME/current-home"
+    local live_home="$TEST_HOME/live-home"
+    local stale_bin="$TEST_HOME/stale-bin"
+    local current_user=""
+    local system_state="$TEST_HOME/system-state.json"
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p \
+        "$TEST_FAKE_BIN" \
+        "$current_home/.acfs" \
+        "$live_home/.acfs/scripts/lib" \
+        "$stale_bin" \
+        "$TEST_HOME/probe"
+
+    cat > "$current_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$current_home",
+  "bin_dir": "$stale_bin"
+}
+EOF
+    cat > "$live_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$live_home"
+}
+EOF
+    cat > "$live_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s ACFS_BIN_DIR=%s ARG1=%s\n' "${TARGET_HOME:-}" "${ACFS_BIN_DIR:-}" "${1:-}"
+EOF
+    chmod +x "$live_home/.acfs/scripts/lib/update.sh"
+    cat > "$system_state" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$live_home"
+}
+EOF
+
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    local output=""
+    output=$(HOME="$current_home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_BIN_DIR="$stale_bin" \
+        ACFS_SYSTEM_STATE_FILE="$system_state" \
+        /bin/bash "$TEST_HOME/probe/acfs-update" --help 2>&1)
+
+    if [[ "$output" == "TARGET_HOME=$live_home ACFS_BIN_DIR= ARG1=--help" ]]; then
+        harness_pass "acfs-update wrapper ignores poisoned bin_dir after runtime resolution"
+    else
+        harness_fail "acfs-update wrapper ignores poisoned bin_dir after runtime resolution" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user() {
     setup_mock_env
 
@@ -6709,6 +6771,69 @@ EOF
         harness_pass "global acfs wrapper prefers explicit ACFS_HOME over current home when system state is missing"
     else
         harness_fail "global acfs wrapper prefers explicit ACFS_HOME over current home when system state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_global_wrapper_ignores_poisoned_bin_dir_after_runtime_resolution() {
+    setup_mock_env
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    local current_home="$TEST_HOME/current-home"
+    local live_home="$TEST_HOME/live-home"
+    local stale_bin="$TEST_HOME/stale-bin"
+    local current_user=""
+    local system_state="$TEST_HOME/system-state.json"
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p \
+        "$TEST_FAKE_BIN" \
+        "$current_home/.acfs" \
+        "$live_home/.local/bin" \
+        "$live_home/.acfs" \
+        "$stale_bin" \
+        "$TEST_HOME/probe"
+
+    cat > "$current_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$current_home",
+  "bin_dir": "$stale_bin"
+}
+EOF
+    cat > "$live_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$live_home"
+}
+EOF
+    cat > "$live_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s ACFS_BIN_DIR=%s ARG1=%s\n' "${TARGET_HOME:-}" "${ACFS_BIN_DIR:-}" "${1:-}"
+EOF
+    chmod +x "$live_home/.local/bin/acfs"
+    cat > "$system_state" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$live_home"
+}
+EOF
+
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    local output=""
+    output=$(HOME="$current_home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_BIN_DIR="$stale_bin" \
+        ACFS_SYSTEM_STATE_FILE="$system_state" \
+        /bin/bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "TARGET_HOME=$live_home ACFS_BIN_DIR= ARG1=version" ]]; then
+        harness_pass "global acfs wrapper ignores poisoned bin_dir after runtime resolution"
+    else
+        harness_fail "global acfs wrapper ignores poisoned bin_dir after runtime resolution" "$output"
     fi
 
     cleanup_mock_env
@@ -8053,6 +8178,7 @@ main() {
     test_acfs_update_wrapper_does_not_guess_current_home_when_target_home_is_unresolved || true
     test_acfs_update_wrapper_ignores_stale_explicit_acfs_home_when_system_state_points_to_live_install || true
     test_acfs_update_wrapper_prefers_explicit_acfs_home_over_current_home_when_system_state_is_missing || true
+    test_acfs_update_wrapper_ignores_poisoned_bin_dir_after_runtime_resolution || true
     test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user || true
     test_acfs_global_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_global_wrapper_repairs_runtime_home_on_direct_exec || true
@@ -8065,6 +8191,7 @@ main() {
     test_acfs_global_wrapper_does_not_guess_current_home_when_target_home_is_unresolved || true
     test_acfs_global_wrapper_ignores_stale_explicit_acfs_home_when_system_state_points_to_live_install || true
     test_acfs_global_wrapper_prefers_explicit_acfs_home_over_current_home_when_system_state_is_missing || true
+    test_acfs_global_wrapper_ignores_poisoned_bin_dir_after_runtime_resolution || true
     test_acfs_global_wrapper_ignores_stale_home_adjacent_target_user || true
     test_doctor_agent_checks_use_target_context_under_root_home || true
     test_doctor_agent_checks_prefer_persisted_bin_dir_over_poisoned_env_bin_dir || true
