@@ -11,7 +11,7 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/security.sh]="8cf951dc46233bfbacb84fb49cef41e9897f814c4f23f119b1adf48c25974c5b"
   [scripts/lib/agents.sh]="bb112837afc799fbd7341fcc899e941f1c1e178fd1a3b5812f7bed494afd48ef"
   [scripts/lib/update.sh]="a8d3d81e0fa69e71c29924559553ffadceb4eb8a1d9ede6fb8c2daefc44952cf"
-  [scripts/lib/doctor.sh]="9947ad9d73d0313ef5096953309d61a735b77b1b563d553e62edc91c1eb23a63"
+  [scripts/lib/doctor.sh]="abd0f42997ac0d3de9ae76efda5adf34ae112a5d84ba0856011965b4a22cf90e"
   [scripts/lib/install_helpers.sh]="7a8c410fb77050c7bee0dd33f866b5e16766bc4ea616d51d3c0ac66967e5cf38"
   [scripts/lib/logging.sh]="ff0c7d452bf66ade53d9e0bc57598fb4137031ca9af6e051334282255334f1df"
   [scripts/lib/state.sh]="4e2727c0dc6332cc3eb68bd6b736d59ad90af13a957479b5555d589b0c0ba2b5"
@@ -20,9 +20,9 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/errors.sh]="d5aa13b5449170c2b57f704425bc5316a8358e19a7869d5c8f4310859707e1d4"
   [scripts/lib/user.sh]="57fe3806aeeeb576daebe161b3ae827b8a5f14dc998bffa22ff4cce8b6029f7f"
   [scripts/lib/tools.sh]="e2d48e800888b759245e66cc9d86d097d83bf10f6d3bd2fcd17ec4bddfec94e0"
-  [scripts/lib/export-config.sh]="a028409ae3280ed42a2f57d007a45c5555a3cfc130626683a6a969ca4bd5d991"
-  [scripts/acfs-global]="b165fadea19ad61f3e77cc4c25ed76e9fdd8bae4cf3441c2ea1916888c653b8d"
-  [scripts/acfs-update]="c166d10cc360eb8d9cd6de6d4f6c3d1d37e357d001074fc8dcd53cf4676f24e9"
+  [scripts/lib/export-config.sh]="530a0c1892fd6d07d1902d7d1f6562c50c339f9e9388fef9f9d025e043866c01"
+  [scripts/acfs-global]="82208e0a4836b95b9c81cfb8d2ca7617337f20af8a596fee842f8f9c03a3bb00"
+  [scripts/acfs-update]="f64a0f6c68e5a4ee0000dbf10107015601fa3302ee4a280f93b80022ef7875a5"
 )
 
 ACFS_INTERNAL_CHECKSUMS_COUNT=15
