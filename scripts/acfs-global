@@ -376,6 +376,112 @@ acfs_home_path_target_home() {
     printf '%s\n' "$candidate_home"
 }
 
+existing_abs_nonroot_dir() {
+    local path_value=""
+
+    path_value="$(sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+    [[ -d "$path_value" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+resolve_target_home_from_state_hint() {
+    local state_file="$1"
+    local candidate_home=""
+    local candidate_user=""
+
+    state_file="$(sanitize_abs_nonroot_path "$state_file" 2>/dev/null || true)"
+    [[ -n "$state_file" && -f "$state_file" ]] || return 1
+
+    candidate_home="$(state_file_path_user_home "$state_file" 2>/dev/null || true)"
+    if [[ -n "$candidate_home" ]]; then
+        printf '%s\n' "$candidate_home"
+        return 0
+    fi
+
+    candidate_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
+    candidate_home="$(existing_abs_nonroot_dir "$candidate_home" 2>/dev/null || true)"
+    if [[ -n "$candidate_home" ]]; then
+      printf '%s\n' "$candidate_home"
+      return 0
+    fi
+
+    candidate_user="$(read_target_user_from_state_file "$state_file" 2>/dev/null || true)"
+    [[ -n "$candidate_user" ]] || return 1
+    candidate_home="$(resolve_home_for_user "$candidate_user" 2>/dev/null || true)"
+    candidate_home="$(existing_abs_nonroot_dir "$candidate_home" 2>/dev/null || true)"
+    [[ -n "$candidate_home" ]] || return 1
+    printf '%s\n' "$candidate_home"
+}
+
+resolve_direct_exec_target_home() {
+    local preferred_acfs_home="${1:-}"
+    local candidate_home=""
+    local state_candidate=""
+
+    preferred_acfs_home="$(sanitize_abs_nonroot_path "$preferred_acfs_home" 2>/dev/null || true)"
+    if [[ -n "$preferred_acfs_home" ]]; then
+      candidate_home="$(resolve_target_home_from_state_hint "$preferred_acfs_home/state.json" 2>/dev/null || true)"
+      if [[ -n "$candidate_home" ]]; then
+        printf '%s\n' "$candidate_home"
+        return 0
+      fi
+    fi
+
+    for state_candidate in "${ACFS_STATE_FILE:-}" "${ACFS_SYSTEM_STATE_FILE:-}"; do
+      candidate_home="$(resolve_target_home_from_state_hint "$state_candidate" 2>/dev/null || true)"
+      [[ -n "$candidate_home" ]] || continue
+      printf '%s\n' "$candidate_home"
+      return 0
+    done
+
+    candidate_home="$(resolve_target_home_from_state_hint "${ACFS_HOME:-}/state.json" 2>/dev/null || true)"
+    if [[ -n "$candidate_home" ]]; then
+      printf '%s\n' "$candidate_home"
+      return 0
+    fi
+
+    candidate_home="$(existing_abs_nonroot_dir "${TARGET_HOME:-}" 2>/dev/null || true)"
+    [[ -n "$candidate_home" ]] || return 1
+    printf '%s\n' "$candidate_home"
+}
+
+resolve_direct_exec_acfs_home() {
+    local target_home="$1"
+    local preferred_acfs_home="${2:-}"
+    local candidate_acfs_home=""
+    local candidate_home=""
+
+    target_home="$(existing_abs_nonroot_dir "$target_home" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+
+    preferred_acfs_home="$(sanitize_abs_nonroot_path "$preferred_acfs_home" 2>/dev/null || true)"
+    if [[ -n "$preferred_acfs_home" ]] && [[ "$preferred_acfs_home" == */.acfs ]] && [[ -d "$preferred_acfs_home" ]]; then
+      candidate_home="$(resolve_target_home_from_state_hint "$preferred_acfs_home/state.json" 2>/dev/null || true)"
+      if [[ "$candidate_home" == "$target_home" ]]; then
+        printf '%s\n' "$preferred_acfs_home"
+        return 0
+      fi
+    fi
+
+    candidate_acfs_home="$(existing_abs_nonroot_dir "$target_home/.acfs" 2>/dev/null || true)"
+    if [[ -n "$candidate_acfs_home" ]]; then
+      printf '%s\n' "$candidate_acfs_home"
+      return 0
+    fi
+
+    candidate_acfs_home="$(sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$candidate_acfs_home" ]] && [[ "$candidate_acfs_home" == */.acfs ]] && [[ -d "$candidate_acfs_home" ]]; then
+      candidate_home="$(resolve_target_home_from_state_hint "$candidate_acfs_home/state.json" 2>/dev/null || true)"
+      if [[ "$candidate_home" == "$target_home" ]]; then
+        printf '%s\n' "$candidate_acfs_home"
+        return 0
+      fi
+    fi
+
+    return 1
+}
+
 prepare_runtime_context_from_acfs_home() {
     local acfs_home="$1"
     local state_file=""
@@ -390,17 +496,8 @@ prepare_runtime_context_from_acfs_home() {
     [[ -n "$acfs_home" ]] || return 1
     state_file="$acfs_home/state.json"
 
-    runtime_target_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
+    runtime_target_home="$(resolve_target_home_from_state_hint "$state_file" 2>/dev/null || true)"
     runtime_target_user="$(read_target_user_from_state_file "$state_file" 2>/dev/null || true)"
-
-    runtime_target_home="$(sanitize_abs_nonroot_path "$runtime_target_home" 2>/dev/null || true)"
-    if [[ -n "$runtime_target_home" ]] && [[ ! -d "$runtime_target_home" ]]; then
-        runtime_target_home=""
-    fi
-
-    if [[ -z "$runtime_target_home" ]]; then
-        runtime_target_home="$(acfs_home_path_target_home "$acfs_home" 2>/dev/null || true)"
-    fi
 
     if [[ -z "$runtime_target_user" ]] && [[ -n "$runtime_target_home" ]]; then
         runtime_target_user="$(read_user_for_home "$runtime_target_home" 2>/dev/null || true)"
@@ -630,6 +727,7 @@ main() {
     local runtime_user=""
     local candidate_bin=""
     local direct_acfs_home=""
+    local direct_target_home=""
     local current_home=""
     local -a state_candidates=()
     local env_bin=""
@@ -837,18 +935,20 @@ main() {
 
     # If owner detection failed or we're already the target user, run directly
     if [[ -z "$target_user" || "$current_user" == "$target_user" ]]; then
-        if [[ -n "${TARGET_HOME:-}" ]]; then
-            direct_acfs_home="$(sanitize_abs_nonroot_path "${ACFS_HOME:-$TARGET_HOME/.acfs}" 2>/dev/null || true)"
+        direct_target_home="$(resolve_direct_exec_target_home "$runtime_acfs_home" 2>/dev/null || true)"
+        if [[ -n "$direct_target_home" ]]; then
+            direct_acfs_home="$(resolve_direct_exec_acfs_home "$direct_target_home" "$runtime_acfs_home" 2>/dev/null || true)"
             if [[ -n "$env_bin" ]]; then
                 exec "$env_bin" \
-                    HOME="$TARGET_HOME" \
-                    TARGET_HOME="$TARGET_HOME" \
-                    ACFS_HOME="${direct_acfs_home:-$TARGET_HOME/.acfs}" \
+                    HOME="$direct_target_home" \
+                    TARGET_HOME="$direct_target_home" \
+                    ACFS_HOME="${direct_acfs_home:-}" \
                     ACFS_BIN_DIR="${ACFS_BIN_DIR:-}" \
                     "$bash_bin" "$acfs_bin" "$@"
             fi
-            HOME="$TARGET_HOME"
-            ACFS_HOME="${direct_acfs_home:-$TARGET_HOME/.acfs}"
+            HOME="$direct_target_home"
+            TARGET_HOME="$direct_target_home"
+            ACFS_HOME="${direct_acfs_home:-}"
             ACFS_BIN_DIR="${ACFS_BIN_DIR:-}"
             export HOME TARGET_HOME ACFS_HOME ACFS_BIN_DIR
             exec "$bash_bin" "$acfs_bin" "$@"

@@ -526,17 +526,18 @@ _smoke_repair_target_context_from_resolved_state() {
     system_home="$(_smoke_sanitize_abs_nonroot_path "$system_home" 2>/dev/null || true)"
     system_user="$(_smoke_read_state_string "$_SMOKE_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
 
-    if [[ -n "$system_user" ]] && [[ -n "$system_home" ]]; then
-        if [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]] || [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; then
-            candidate_user="$system_user"
-            resolved_home="$system_home"
-        fi
-    fi
-
-    if [[ -z "$candidate_user" ]] && [[ -n "$path_home" ]]; then
+    if [[ -n "$path_home" ]]; then
         candidate_user="$(_smoke_read_user_for_home "$path_home" 2>/dev/null || true)"
         if [[ -n "$candidate_user" ]]; then
             resolved_home="$path_home"
+        fi
+    fi
+
+    if [[ -z "$candidate_user" ]] && [[ -n "$system_user" ]] && [[ -n "$system_home" ]]; then
+        if { [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]]; } \
+            && { [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; }; then
+            candidate_user="$system_user"
+            resolved_home="$system_home"
         fi
     fi
 
@@ -556,15 +557,13 @@ _smoke_repair_target_context_from_resolved_state() {
             if [[ -n "$path_home" ]] && [[ "$candidate_home" == "$path_home" ]]; then
                 candidate_user="$state_candidate_user"
                 resolved_home="$path_home"
-            elif [[ -n "$state_home" ]] && [[ "$candidate_home" == "$state_home" ]]; then
+            elif [[ -n "$state_home" ]] && [[ -z "$path_home" || "$state_home" == "$path_home" ]] && [[ "$candidate_home" == "$state_home" ]]; then
                 candidate_user="$state_candidate_user"
                 resolved_home="$state_home"
-            elif [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_SMOKE_EXPLICIT_ACFS_HOME/state.json" ]]; then
+            elif [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_SMOKE_EXPLICIT_ACFS_HOME/state.json" ]] && [[ -z "$path_home" ]]; then
                 candidate_user="$state_candidate_user"
                 if [[ -n "$state_home" ]]; then
                     resolved_home="$state_home"
-                elif [[ -n "$path_home" ]]; then
-                    resolved_home="$path_home"
                 fi
             fi
         fi
@@ -574,7 +573,10 @@ _smoke_repair_target_context_from_resolved_state() {
         candidate_user="$system_user"
     fi
 
-    if [[ -z "$resolved_home" ]] && [[ -n "$system_home" ]] && { [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]] || [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; }; then
+    if [[ -z "$resolved_home" ]] && [[ -n "$path_home" ]]; then
+        resolved_home="$path_home"
+    fi
+    if [[ -z "$resolved_home" ]] && [[ -n "$system_home" ]] && { [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; }; then
         resolved_home="$system_home"
     fi
     if [[ -z "$resolved_home" ]] && [[ -n "$state_home" ]]; then

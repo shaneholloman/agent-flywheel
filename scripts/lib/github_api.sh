@@ -96,14 +96,30 @@ _get_reset_wait_time() {
     echo "$GITHUB_BACKOFF_MAX"
 }
 
+_github_api_existing_abs_home() {
+    local home_candidate="${1:-}"
+
+    [[ -n "$home_candidate" ]] || return 1
+    home_candidate="${home_candidate%/}"
+    [[ -n "$home_candidate" ]] || return 1
+    [[ "$home_candidate" == /* ]] || return 1
+    [[ "$home_candidate" != "/" ]] || return 1
+    [[ -d "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
+}
+
 _github_api_runtime_home() {
-    if [[ -n "${TARGET_HOME:-}" ]] && [[ "$TARGET_HOME" == /* ]] && [[ "$TARGET_HOME" != "/" ]]; then
-        printf '%s\n' "${TARGET_HOME%/}"
+    local runtime_home=""
+
+    runtime_home="$(_github_api_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
         return 0
     fi
 
-    if [[ -n "${HOME:-}" ]] && [[ "$HOME" == /* ]] && [[ "$HOME" != "/" ]]; then
-        printf '%s\n' "${HOME%/}"
+    runtime_home="$(_github_api_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
         return 0
     fi
 

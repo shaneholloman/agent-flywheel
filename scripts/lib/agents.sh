@@ -50,13 +50,28 @@ _agent_get_sudo() {
     fi
 }
 
+_agent_existing_abs_home() {
+    local home_candidate="${1:-}"
+
+    [[ -n "$home_candidate" ]] || return 1
+    home_candidate="${home_candidate%/}"
+    [[ -n "$home_candidate" ]] || return 1
+    [[ "$home_candidate" == /* ]] || return 1
+    [[ "$home_candidate" != "/" ]] || return 1
+    [[ -d "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
+}
+
 _agent_target_home() {
     local target_user="${1:-${TARGET_USER:-ubuntu}}"
+    local explicit_home=""
     local passwd_entry=""
     local current_user=""
+    local current_home=""
 
-    if [[ -n "${TARGET_HOME:-}" ]] && [[ "${TARGET_HOME}" == /* ]] && [[ "${TARGET_HOME}" != "/" ]]; then
-        printf '%s\n' "${TARGET_HOME%/}"
+    explicit_home="$(_agent_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$explicit_home" ]]; then
+        printf '%s\n' "$explicit_home"
         return 0
     fi
 
@@ -68,16 +83,20 @@ _agent_target_home() {
     passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
         passwd_entry="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-        if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]] && [[ "$passwd_entry" != "/" ]]; then
+        passwd_entry="$(_agent_existing_abs_home "$passwd_entry" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
             printf '%s\n' "${passwd_entry%/}"
             return 0
         fi
     fi
 
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
-    if [[ "$current_user" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-        printf '%s\n' "${HOME%/}"
-        return 0
+    if [[ "$current_user" == "$target_user" ]]; then
+        current_home="$(_agent_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$current_home" ]]; then
+            printf '%s\n' "$current_home"
+            return 0
+        fi
     fi
 
     return 1

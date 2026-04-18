@@ -142,6 +142,28 @@ EOF
     assert_output "$resolved_home"
 }
 
+@test "update_target_home: ignores stale TARGET_HOME and uses passwd resolution" {
+    local resolved_home
+    local stale_home
+    resolved_home="$(create_temp_dir)"
+    stale_home="$BATS_TEST_TMPDIR/stale-target-home"
+
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+
+    getent() {
+        if [[ "$1" == "passwd" && "$2" == "tester" ]]; then
+            printf 'tester:x:1000:1000::%s:/bin/bash\n' "$resolved_home"
+            return 0
+        fi
+        command getent "$@"
+    }
+
+    run update_target_home "tester"
+    assert_success
+    assert_output "$resolved_home"
+}
+
 @test "update_target_home: rejects invalid fallback usernames" {
     export TARGET_HOME="/"
     export HOME="/"
@@ -1480,6 +1502,50 @@ EOF
     [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_stack_run_as_user should not invoke sudo for invalid TARGET_USER"
 }
 
+@test "helper home resolvers ignore stale explicit TARGET_HOME" {
+    local resolved_home
+    local stale_home
+    resolved_home="$(create_temp_dir)"
+    stale_home="$BATS_TEST_TMPDIR/stale-target-home"
+
+    export TARGET_USER="tester"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+
+    getent() {
+        if [[ "$1" == "passwd" && "$2" == "tester" ]]; then
+            printf 'tester:x:1000:1000::%s:/bin/bash\n' "$resolved_home"
+            return 0
+        fi
+        command getent "$@"
+    }
+
+    source_lib "cli_tools"
+    run _cli_target_home "tester"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "agents"
+    run _agent_target_home "tester"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "languages"
+    run _lang_target_home "tester"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "cloud_db"
+    run _cloud_target_home "tester"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "stack"
+    run _stack_target_home "tester"
+    assert_success
+    assert_output "$resolved_home"
+}
+
 @test "run-as-user helper libs reject unresolved TARGET_HOME before sudo" {
     export TARGET_USER="missinguser"
     export TARGET_HOME=""
@@ -1530,6 +1596,22 @@ EOF
 
     run _cloud_validate_username "john.doe"
     assert_success
+}
+
+@test "github_api runtime home ignores stale TARGET_HOME and falls back to existing HOME" {
+    source_lib "github_api"
+
+    local runtime_home
+    local stale_home
+    runtime_home="$(create_temp_dir)"
+    stale_home="$BATS_TEST_TMPDIR/stale-runtime-home"
+
+    export TARGET_HOME="$stale_home"
+    export HOME="$runtime_home"
+
+    run _github_api_runtime_home
+    assert_success
+    assert_output "$runtime_home"
 }
 
 @test "agent mail MCP path detection prefers target install over current-shell am" {

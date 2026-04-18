@@ -75,6 +75,15 @@ onboard_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+onboard_existing_abs_home() {
+    local path_value=""
+
+    path_value="$(onboard_sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+    [[ -d "$path_value" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
 onboard_resolve_current_home() {
     local current_user=""
     local home_candidate=""
@@ -187,12 +196,18 @@ onboard_script_acfs_home() {
     printf '%s\n' "$candidate"
 }
 
-onboard_resolve_acfs_home() {
-    if [[ -n "$_ONBOARD_EXPLICIT_ACFS_HOME" ]]; then
-        printf '%s\n' "$_ONBOARD_EXPLICIT_ACFS_HOME"
-        return 0
-    fi
+onboard_acfs_home_target_home() {
+    local acfs_home="$1"
+    local target_home=""
 
+    [[ "$acfs_home" == */.acfs ]] || return 1
+    target_home="$(onboard_existing_abs_home "${acfs_home%/.acfs}" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+    printf '%s\n' "${target_home%/}"
+}
+
+
+onboard_resolve_acfs_home() {
     local installed_home=""
     local target_home=""
     local target_user=""
@@ -205,7 +220,7 @@ onboard_resolve_acfs_home() {
     fi
 
     if [[ -n "${SUDO_USER:-}" ]]; then
-        target_home="$(onboard_home_for_user "$SUDO_USER" 2>/dev/null || true)"
+        target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$SUDO_USER" 2>/dev/null || true)" 2>/dev/null || true)"
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
             printf '%s\n' "$candidate"
@@ -213,7 +228,7 @@ onboard_resolve_acfs_home() {
         fi
     fi
 
-    target_home="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
+    target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
     candidate="${target_home}/.acfs"
     if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
         printf '%s\n' "$candidate"
@@ -223,13 +238,18 @@ onboard_resolve_acfs_home() {
     target_user="$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
     if [[ -n "$target_user" ]]; then
         if [[ -z "$target_home" ]]; then
-            target_home="$(onboard_home_for_user "$target_user" 2>/dev/null || true)"
+            target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$target_user" 2>/dev/null || true)" 2>/dev/null || true)"
         fi
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
             printf '%s\n' "$candidate"
             return 0
         fi
+    fi
+
+    if onboard_candidate_has_acfs_data "$_ONBOARD_EXPLICIT_ACFS_HOME"; then
+        printf '%s\n' "$_ONBOARD_EXPLICIT_ACFS_HOME"
+        return 0
     fi
 
     if onboard_candidate_has_acfs_data "$_ONBOARD_DEFAULT_ACFS_HOME"; then
@@ -246,12 +266,7 @@ onboard_resolve_runtime_home() {
     local target_home=""
     local target_user=""
 
-    if [[ -n "${TARGET_HOME:-}" ]] && [[ "${TARGET_HOME}" == /* ]] && [[ "${TARGET_HOME}" != "/" ]]; then
-        printf '%s\n' "${TARGET_HOME%/}"
-        return 0
-    fi
-
-    target_home="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
+    target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
     if [[ -n "$target_home" ]]; then
         printf '%s\n' "${target_home%/}"
         return 0
@@ -259,14 +274,22 @@ onboard_resolve_runtime_home() {
 
     target_user="$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
     if [[ -n "$target_user" ]]; then
-        target_home="$(onboard_home_for_user "$target_user" 2>/dev/null || true)"
-        if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+        target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$target_user" 2>/dev/null || true)" 2>/dev/null || true)"
+        if [[ -n "$target_home" ]]; then
             printf '%s\n' "${target_home%/}"
             return 0
         fi
     fi
 
-    target_home="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
+    # Once we have a concrete ACFS home, its parent path is a stronger signal
+    # than any embedded target_home copied from another install.
+    target_home="$(onboard_acfs_home_target_home "$_ONBOARD_ACFS_HOME" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "${target_home%/}"
+        return 0
+    fi
+
+    target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
     if [[ -n "$target_home" ]]; then
         printf '%s\n' "${target_home%/}"
         return 0
@@ -274,19 +297,17 @@ onboard_resolve_runtime_home() {
 
     target_user="$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_user" 2>/dev/null || true)"
     if [[ -n "$target_user" ]]; then
-        target_home="$(onboard_home_for_user "$target_user" 2>/dev/null || true)"
-        if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-            printf '%s\n' "${target_home%/}"
-            return 0
-        fi
-    fi
-    if [[ "$_ONBOARD_ACFS_HOME" == */.acfs ]]; then
-        target_home="${_ONBOARD_ACFS_HOME%/.acfs}"
-        target_home="$(onboard_sanitize_abs_nonroot_path "$target_home" 2>/dev/null || true)"
+        target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$target_user" 2>/dev/null || true)" 2>/dev/null || true)"
         if [[ -n "$target_home" ]]; then
             printf '%s\n' "${target_home%/}"
             return 0
         fi
+    fi
+
+    target_home="$(onboard_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "${target_home%/}"
+        return 0
     fi
 
     printf '%s\n' "${_ONBOARD_CURRENT_HOME:-/root}"
