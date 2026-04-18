@@ -84,10 +84,31 @@ onboard_existing_abs_home() {
     printf '%s\n' "$path_value"
 }
 
+onboard_lookup_passwd_home() {
+    local user="$1"
+    local passwd_entry=""
+    local home_candidate=""
+
+    [[ -n "$user" ]] || return 1
+
+    if command -v getent >/dev/null 2>&1; then
+        passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
+    elif [[ -r /etc/passwd ]]; then
+        passwd_entry="$(awk -F: -v u="$user" '$1==u{print $0; exit}' /etc/passwd 2>/dev/null || true)"
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+
+    home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+    home_candidate="$(onboard_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+    [[ -n "$home_candidate" ]] || return 1
+
+    printf '%s\n' "$home_candidate"
+}
+
 onboard_resolve_current_home() {
     local current_user=""
     local home_candidate=""
-    local passwd_entry=""
 
     home_candidate="$(onboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
     if [[ -n "$home_candidate" ]]; then
@@ -102,18 +123,9 @@ onboard_resolve_current_home() {
     fi
 
     if [[ -n "$current_user" ]]; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
-        if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            home_candidate="$(onboard_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
-                return 0
-            fi
-        fi
-
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '/home/%s\n' "$current_user"
+        home_candidate="$(onboard_lookup_passwd_home "$current_user" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
             return 0
         fi
     fi
@@ -128,36 +140,33 @@ if [[ -n "$_ONBOARD_CURRENT_HOME" ]]; then
 fi
 
 _ONBOARD_EXPLICIT_ACFS_HOME="$(onboard_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
-_ONBOARD_DEFAULT_ACFS_HOME="${_ONBOARD_CURRENT_HOME:-/root}/.acfs"
+_ONBOARD_DEFAULT_ACFS_HOME=""
+if [[ -n "$_ONBOARD_CURRENT_HOME" ]]; then
+    _ONBOARD_DEFAULT_ACFS_HOME="${_ONBOARD_CURRENT_HOME}/.acfs"
+fi
 _ONBOARD_SYSTEM_STATE_FILE="$(onboard_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_ONBOARD_SYSTEM_STATE_FILE" ]]; then
     _ONBOARD_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
 fi
+_ONBOARD_FALLBACK_TMPDIR="$(onboard_sanitize_abs_nonroot_path "${TMPDIR:-/tmp}" 2>/dev/null || true)"
+if [[ -z "$_ONBOARD_FALLBACK_TMPDIR" ]]; then
+    _ONBOARD_FALLBACK_TMPDIR="/tmp"
+fi
 
 onboard_home_for_user() {
     local user="$1"
-    local passwd_entry=""
+    local home_candidate=""
 
     [[ -n "$user" ]] || return 1
-
-    if command -v getent >/dev/null 2>&1; then
-        passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
-        if [[ -n "$passwd_entry" ]]; then
-            passwd_entry="$(onboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$passwd_entry" ]]; then
-                printf '%s\n' "$passwd_entry"
-                return 0
-            fi
-        fi
-    fi
 
     if [[ "$user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
-    if [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        printf '/home/%s\n' "$user"
+    home_candidate="$(onboard_lookup_passwd_home "$user" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
         return 0
     fi
 
@@ -204,6 +213,61 @@ onboard_acfs_home_target_home() {
     target_home="$(onboard_existing_abs_home "${acfs_home%/.acfs}" 2>/dev/null || true)"
     [[ -n "$target_home" ]] || return 1
     printf '%s\n' "${target_home%/}"
+}
+
+onboard_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="$(onboard_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    [[ -n "$bin_dir" ]] || return 1
+    base_home="$(onboard_sanitize_abs_nonroot_path "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="$(onboard_sanitize_abs_nonroot_path "$hinted_home" 2>/dev/null || true)"
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    if command -v getent >/dev/null 2>&1; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(onboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+    fi
+
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(onboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < /etc/passwd
+    fi
+
+    printf '%s\n' "$bin_dir"
 }
 
 
@@ -257,10 +321,15 @@ onboard_resolve_acfs_home() {
         return 0
     fi
 
-    printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
+    if [[ -n "$_ONBOARD_DEFAULT_ACFS_HOME" ]]; then
+        printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
+        return 0
+    fi
+
+    return 1
 }
 
-_ONBOARD_ACFS_HOME="$(onboard_resolve_acfs_home)"
+_ONBOARD_ACFS_HOME="$(onboard_resolve_acfs_home 2>/dev/null || true)"
 
 onboard_resolve_runtime_home() {
     local target_home=""
@@ -281,8 +350,17 @@ onboard_resolve_runtime_home() {
         fi
     fi
 
-    # Once we have a concrete ACFS home, its parent path is a stronger signal
-    # than any embedded target_home copied from another install.
+    target_user="$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_user" 2>/dev/null || true)"
+    if [[ -n "$target_user" ]]; then
+        target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$target_user" 2>/dev/null || true)" 2>/dev/null || true)"
+        if [[ -n "$target_home" ]]; then
+            printf '%s\n' "${target_home%/}"
+            return 0
+        fi
+    fi
+
+    # When state-based user/home hints are absent or stale, fall back to the
+    # concrete ACFS location that was selected for this session.
     target_home="$(onboard_acfs_home_target_home "$_ONBOARD_ACFS_HOME" 2>/dev/null || true)"
     if [[ -n "$target_home" ]]; then
         printf '%s\n' "${target_home%/}"
@@ -293,15 +371,6 @@ onboard_resolve_runtime_home() {
     if [[ -n "$target_home" ]]; then
         printf '%s\n' "${target_home%/}"
         return 0
-    fi
-
-    target_user="$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_user" 2>/dev/null || true)"
-    if [[ -n "$target_user" ]]; then
-        target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$target_user" 2>/dev/null || true)" 2>/dev/null || true)"
-        if [[ -n "$target_home" ]]; then
-            printf '%s\n' "${target_home%/}"
-            return 0
-        fi
     fi
 
     target_home="$(onboard_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
@@ -320,18 +389,21 @@ onboard_preferred_bin_dir() {
     local candidate=""
 
     candidate="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "bin_dir" 2>/dev/null || true)" 2>/dev/null || true)"
+    candidate="$(onboard_validate_bin_dir_for_home "$candidate" "$runtime_home" 2>/dev/null || true)"
     if [[ -n "$candidate" ]]; then
         printf '%s\n' "$candidate"
         return 0
     fi
 
     candidate="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "bin_dir" 2>/dev/null || true)" 2>/dev/null || true)"
+    candidate="$(onboard_validate_bin_dir_for_home "$candidate" "$runtime_home" 2>/dev/null || true)"
     if [[ -n "$candidate" ]]; then
         printf '%s\n' "$candidate"
         return 0
     fi
 
     candidate="$(onboard_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    candidate="$(onboard_validate_bin_dir_for_home "$candidate" "$runtime_home" 2>/dev/null || true)"
     if [[ -n "$candidate" ]]; then
         printf '%s\n' "$candidate"
         return 0
@@ -391,8 +463,14 @@ onboard_runtime_binary_path() {
 
     return 1
 }
-LESSONS_DIR="${ACFS_LESSONS_DIR:-$_ONBOARD_ACFS_HOME/onboard/lessons}"
-PROGRESS_FILE="${ACFS_PROGRESS_FILE:-$_ONBOARD_ACFS_HOME/onboard_progress.json}"
+LESSONS_DIR="${ACFS_LESSONS_DIR:-${_ONBOARD_ACFS_HOME:+$_ONBOARD_ACFS_HOME/onboard/lessons}}"
+PROGRESS_FILE="${ACFS_PROGRESS_FILE:-${_ONBOARD_ACFS_HOME:+$_ONBOARD_ACFS_HOME/onboard_progress.json}}"
+if [[ -z "$LESSONS_DIR" ]]; then
+    LESSONS_DIR="$_ONBOARD_FALLBACK_TMPDIR/acfs-onboard-empty-lessons"
+fi
+if [[ -z "$PROGRESS_FILE" ]]; then
+    PROGRESS_FILE="$_ONBOARD_FALLBACK_TMPDIR/acfs-onboard-progress.${UID:-$(id -u 2>/dev/null || printf 0)}.$$.json"
+fi
 PROGRESS_LOCK_FILE="${PROGRESS_FILE}.lock"
 VERSION="0.1.0"
 MENU_SEPARATOR="─────────────────────────────────"

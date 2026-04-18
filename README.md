@@ -4325,7 +4325,7 @@ ACFS supports various configuration mechanisms for advanced users.
 | `ACFS_CHECKSUMS_REF` | `main` (when pinned) / `ACFS_REF` (when branch) | Ref used to fetch `checksums.yaml` |
 | `ACFS_LOG_DIR` | `/var/log/acfs` | Log directory |
 | `TARGET_USER` | `ubuntu` | User to configure |
-| `TARGET_HOME` | `/home/$TARGET_USER` | User home directory |
+| `TARGET_HOME` | Resolved from `TARGET_USER` | User home directory (or explicit override) |
 
 **Examples:**
 ```bash

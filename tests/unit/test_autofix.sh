@@ -897,6 +897,39 @@ test_autofix_globals_are_initialized_under_set_u() {
     return 0
 }
 
+
+test_autofix_refresh_state_paths_falls_back_to_tmp_when_runtime_home_unresolved() {
+    local fake_bin=""
+    local output=""
+    local expected=""
+
+    fake_bin="$(mktemp -d)"
+    cat > "$fake_bin/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    chmod +x "$fake_bin/getent"
+
+    if ! output="$(env -u ACFS_STATE_DIR -u ACFS_CHANGES_FILE -u ACFS_UNDOS_FILE -u ACFS_BACKUPS_DIR -u ACFS_LOCK_FILE -u ACFS_INTEGRITY_FILE -u TARGET_HOME HOME="relative-home" TARGET_USER="tester" SUDO_USER="" PATH="$fake_bin:/usr/bin:/bin" bash -c '
+        source "$1"
+        printf "%s\n" "${ACFS_STATE_DIR:-unset}"
+    ' _ "$REPO_ROOT/scripts/lib/autofix.sh" 2>&1)"; then
+        echo "  Sourcing autofix.sh with unresolved runtime home failed: $output"
+        rm -rf "$fake_bin"
+        return 1
+    fi
+
+    expected="/tmp/acfs-autofix.$(id -u 2>/dev/null || echo unknown)"
+    if [[ "$output" != "$expected" ]]; then
+        echo "  Expected ACFS_STATE_DIR fallback '$expected', got: $output"
+        rm -rf "$fake_bin"
+        return 1
+    fi
+
+    rm -rf "$fake_bin"
+    return 0
+}
+
 # Test: Init fails closed if integrity repair fails
 test_init_autofix_state_fails_when_repair_fails() {
     setup_test_env
@@ -1922,6 +1955,7 @@ main() {
     run_test test_state_repair
     run_test test_state_repair_fails_when_changes_rewrite_cannot_replace_file
     run_test test_autofix_globals_are_initialized_under_set_u
+    run_test test_autofix_refresh_state_paths_falls_back_to_tmp_when_runtime_home_unresolved
     run_test test_init_autofix_state
     run_test test_init_autofix_state_fails_when_repair_fails
     run_test test_session_management

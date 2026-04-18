@@ -44,6 +44,30 @@ user_require_valid_target_user() {
     log_fatal "Invalid TARGET_USER '$display' (expected: lowercase user name like 'ubuntu')"
 }
 
+user_lookup_passwd_home() {
+    local user="${1:-}"
+    local passwd_entry=""
+    local home_candidate=""
+
+    [[ -n "$user" ]] || return 1
+
+    if command -v getent >/dev/null 2>&1; then
+        passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
+    elif [[ -r /etc/passwd ]]; then
+        passwd_entry="$(awk -F: -v u="$user" '$1 == u { print $0; exit }' /etc/passwd 2>/dev/null || true)"
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+
+    home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+    if [[ -n "$home_candidate" ]] && [[ "$home_candidate" == /* ]] && [[ "$home_candidate" != "/" ]]; then
+        printf '%s\n' "${home_candidate%/}"
+        return 0
+    fi
+
+    return 1
+}
+
 # Ensure SUDO is set (empty string for root, "sudo" otherwise)
 if [[ $EUID -eq 0 ]]; then
     SUDO=""
@@ -53,7 +77,8 @@ fi
 
 user_home_for_user() {
     local user="${1:-}"
-    local passwd_entry=""
+    local current_user=""
+    local home_candidate=""
 
     [[ -n "$user" ]] || return 1
 
@@ -62,22 +87,15 @@ user_home_for_user() {
         return 0
     fi
 
-    passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
-    if [[ -n "$passwd_entry" ]]; then
-        passwd_entry="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-        if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]] && [[ "$passwd_entry" != "/" ]]; then
-            printf '%s\n' "${passwd_entry%/}"
-            return 0
-        fi
-    fi
-
-    if [[ "$(whoami 2>/dev/null || true)" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-        printf '%s\n' "${HOME%/}"
+    home_candidate="$(user_lookup_passwd_home "$user" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
         return 0
     fi
 
-    if [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        printf '/home/%s\n' "$user"
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        printf '%s\n' "${HOME%/}"
         return 0
     fi
 
@@ -88,7 +106,7 @@ user_home_for_user() {
 TARGET_USER="${TARGET_USER:-ubuntu}"
 user_require_valid_target_user "$TARGET_USER"
 if [[ -z "${TARGET_HOME:-}" ]]; then
-    TARGET_HOME="$(user_home_for_user "$TARGET_USER")"
+    TARGET_HOME="$(user_home_for_user "$TARGET_USER" || true)"
 fi
 
 # Generate a random password robustly
@@ -192,6 +210,7 @@ migrate_ssh_keys() {
     local current_user
     current_user=$(whoami)
     local target="$TARGET_USER"
+    local target_home="${TARGET_HOME:-}"
 
     user_require_valid_target_user "$target"
 
@@ -200,6 +219,15 @@ migrate_ssh_keys() {
         log_detail "Already running as $target, no key migration needed"
         return 0
     fi
+
+    if [[ -z "$target_home" ]]; then
+        target_home="$(user_home_for_user "$target" || true)"
+    fi
+    if [[ -z "$target_home" ]]; then
+        log_error "Unable to resolve TARGET_HOME for '$target'; cannot migrate SSH keys safely"
+        return 1
+    fi
+    TARGET_HOME="$target_home"
 
     local source_keys=""
 
@@ -233,13 +261,13 @@ migrate_ssh_keys() {
             echo ""
             echo "  Or manually: SSH in as root and run these commands:"
             echo ""
-            echo "    mkdir -p ${TARGET_HOME}/.ssh"
-            echo "    cat >> ${TARGET_HOME}/.ssh/authorized_keys << 'EOF'"
+            echo "    mkdir -p ${target_home}/.ssh"
+            echo "    cat >> ${target_home}/.ssh/authorized_keys << 'EOF'"
             echo "    YOUR_PUBLIC_KEY_HERE"
             echo "    EOF"
-            echo "    chown -R ${target}:${target} ${TARGET_HOME}/.ssh"
-            echo "    chmod 700 ${TARGET_HOME}/.ssh"
-            echo "    chmod 600 ${TARGET_HOME}/.ssh/authorized_keys"
+            echo "    chown -R ${target}:${target} ${target_home}/.ssh"
+            echo "    chmod 700 ${target_home}/.ssh"
+            echo "    chmod 600 ${target_home}/.ssh/authorized_keys"
             echo ""
             echo "════════════════════════════════════════════════════════════"
             echo ""
@@ -251,7 +279,7 @@ migrate_ssh_keys() {
 
     log_detail "Migrating SSH keys from $source_keys"
 
-    local ssh_dir="$TARGET_HOME/.ssh"
+    local ssh_dir="$target_home/.ssh"
 
     # Basic hardening: refuse to follow symlinks when writing keys.
     if [[ -e "$ssh_dir" ]] && [[ -L "$ssh_dir" ]]; then
@@ -297,8 +325,8 @@ migrate_ssh_keys() {
     done < "$source_keys"
 
     # Fix permissions
-    $SUDO chown -hR "$target:$target" "$TARGET_HOME/.ssh"
-    $SUDO chmod 700 "$TARGET_HOME/.ssh"
+    $SUDO chown -hR "$target:$target" "$target_home/.ssh"
+    $SUDO chmod 700 "$target_home/.ssh"
     $SUDO chmod 600 "$target_keys"
 
     log_success "SSH keys migrated to $target"

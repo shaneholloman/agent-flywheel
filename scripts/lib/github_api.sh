@@ -126,6 +126,66 @@ _github_api_runtime_home() {
     return 1
 }
 
+_github_api_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="${bin_dir%/}"
+    [[ -n "$bin_dir" ]] || return 1
+    [[ "$bin_dir" == /* ]] || return 1
+    [[ "$bin_dir" != "/" ]] || return 1
+    base_home="$(_github_api_existing_abs_home "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="${hinted_home%/}"
+    if [[ "$hinted_home" != /* ]] || [[ "$hinted_home" == "/" ]]; then
+        hinted_home=""
+    fi
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_github_api_existing_abs_home "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+    fi
+
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_github_api_existing_abs_home "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < /etc/passwd
+    fi
+
+    printf '%s\n' "$bin_dir"
+}
+
 _github_api_binary_path() {
     local name="${1:-}"
     local runtime_home=""
@@ -137,6 +197,8 @@ _github_api_binary_path() {
     runtime_home="$(_github_api_runtime_home 2>/dev/null || true)"
     if [[ -n "$runtime_home" ]]; then
         primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+        primary_bin_dir="$(_github_api_validate_bin_dir_for_home "$primary_bin_dir" "$runtime_home" 2>/dev/null || true)"
+        [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$runtime_home/.local/bin"
         for candidate in \
             "$primary_bin_dir/$name" \
             "$runtime_home/.local/bin/$name" \

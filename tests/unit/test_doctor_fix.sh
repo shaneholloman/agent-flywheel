@@ -66,6 +66,9 @@ setup_test_env() {
     unset -f cp 2>/dev/null || true
     unset -f ln 2>/dev/null || true
     unset -f uname 2>/dev/null || true
+    unset -f getent 2>/dev/null || true
+    unset -f id 2>/dev/null || true
+    unset -f whoami 2>/dev/null || true
     unset -f doctor_fix_run_verified_installer 2>/dev/null || true
     unset _ACFS_AUTOFIX_SOURCED
     unset _ACFS_DOCTOR_FIX_LOADED
@@ -124,6 +127,7 @@ setup_test_env() {
     export ORIGINAL_HOME="$HOME"
     export ORIGINAL_PATH="$PATH"
     export HOME="$TEST_HOME"
+    unset TARGET_USER
     unset TARGET_HOME
     unset ACFS_HOME
     unset ACFS_BIN_DIR
@@ -142,6 +146,9 @@ cleanup_test_env() {
     unset -f cp 2>/dev/null || true
     unset -f ln 2>/dev/null || true
     unset -f uname 2>/dev/null || true
+    unset -f getent 2>/dev/null || true
+    unset -f id 2>/dev/null || true
+    unset -f whoami 2>/dev/null || true
     unset -f doctor_fix_run_verified_installer 2>/dev/null || true
 
     # Restore HOME
@@ -151,6 +158,7 @@ cleanup_test_env() {
     if [[ -n "${ORIGINAL_PATH:-}" ]]; then
         export PATH="$ORIGINAL_PATH"
     fi
+    unset TARGET_USER
     unset TARGET_HOME
     unset ACFS_HOME
     unset ACFS_BIN_DIR
@@ -317,6 +325,103 @@ test_doctor_fix_runtime_home_ignores_relative_home() {
     return 1
 }
 
+test_doctor_fix_runtime_home_fails_closed_for_different_unresolved_target() {
+    setup_test_env
+
+    local current_home="$ACFS_STATE_DIR/current-home"
+    mkdir -p "$current_home"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    id() {
+        if [[ "$1" == "-un" ]]; then
+            printf 'tester\n'
+            return 0
+        fi
+        command id "$@"
+    }
+
+    whoami() {
+        printf 'tester\n'
+    }
+
+    local resolved_home=""
+    resolved_home="$(doctor_fix_runtime_home 2>/dev/null || true)"
+
+    if [[ -z "$resolved_home" ]]; then
+        cleanup_test_env
+        return 0
+    fi
+
+    echo "  Expected runtime home resolution to fail closed, got $resolved_home"
+    cleanup_test_env
+    return 1
+}
+
+test_doctor_fix_runtime_bin_dir_ignores_other_user_bin_dir() {
+    setup_test_env
+
+    local current_home="$ACFS_STATE_DIR/current-home"
+    local target_home="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$current_home/.local/bin" "$target_home/.local/bin"
+
+    export HOME="$current_home"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$current_home/.local/bin"
+
+    local resolved_bin=""
+    resolved_bin="$(doctor_fix_runtime_bin_dir)"
+
+    if [[ "$resolved_bin" == "$target_home/.local/bin" ]]; then
+        cleanup_test_env
+        return 0
+    fi
+
+    echo "  Expected runtime bin dir to ignore stale other-user ACFS_BIN_DIR, got $resolved_bin"
+    cleanup_test_env
+    return 1
+}
+
+test_doctor_fix_binary_path_ignores_other_user_bin_dir() {
+    setup_test_env
+
+    local current_home="$ACFS_STATE_DIR/current-home"
+    local target_home="$ACFS_STATE_DIR/target-home"
+    local tool_name="example-tool"
+    mkdir -p "$current_home/.local/bin" "$target_home/.local/bin"
+
+    cat > "$current_home/.local/bin/$tool_name" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    cat > "$target_home/.local/bin/$tool_name" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$current_home/.local/bin/$tool_name" "$target_home/.local/bin/$tool_name"
+
+    export HOME="$current_home"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$current_home/.local/bin"
+
+    local resolved=""
+    resolved="$(doctor_fix_binary_path "$tool_name")"
+
+    if [[ "$resolved" == "$target_home/.local/bin/$tool_name" ]]; then
+        cleanup_test_env
+        return 0
+    fi
+
+    echo "  Expected binary lookup to ignore stale other-user ACFS_BIN_DIR, got $resolved"
+    cleanup_test_env
+    return 1
+}
 # ============================================================
 # Test: file_contains_line helper
 # ============================================================
@@ -2945,6 +3050,9 @@ main() {
     run_test test_doctor_fix_runtime_path_ignores_relative_bin_dir
     run_test test_doctor_fix_runtime_path_prefers_system_bins_over_current_shell_path
     run_test test_doctor_fix_runtime_home_ignores_relative_home
+    run_test test_doctor_fix_runtime_home_fails_closed_for_different_unresolved_target
+    run_test test_doctor_fix_runtime_bin_dir_ignores_other_user_bin_dir
+    run_test test_doctor_fix_binary_path_ignores_other_user_bin_dir
 
     # fix_path_ordering tests
     run_test test_fix_path_ordering_applies

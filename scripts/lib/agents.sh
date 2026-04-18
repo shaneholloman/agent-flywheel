@@ -114,11 +114,87 @@ _agent_validate_target_user() {
     return 1
 }
 
+_agent_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="${bin_dir%/}"
+    [[ -n "$bin_dir" ]] || return 1
+    [[ "$bin_dir" == /* ]] || return 1
+    [[ "$bin_dir" != "/" ]] || return 1
+    base_home="$(_agent_existing_abs_home "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="${hinted_home%/}"
+    if [[ "$hinted_home" != /* ]] || [[ "$hinted_home" == "/" ]]; then
+        hinted_home=""
+    fi
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_agent_existing_abs_home "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+    fi
+
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_agent_existing_abs_home "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < /etc/passwd
+    fi
+
+    printf '%s\n' "$bin_dir"
+}
+
+_agent_preferred_bin_dir() {
+    local target_home="${1:-}"
+    local candidate=""
+
+    [[ -n "$target_home" ]] || return 1
+
+    candidate="$(_agent_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    printf '%s\n' "$target_home/.local/bin"
+}
+
 # Run a command as target user
 _agent_run_as_user() {
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home=""
     local target_path_prefix=""
+    local preferred_bin_dir=""
     local cmd="$1"
     local target_user_q=""
     local target_home_q=""
@@ -140,7 +216,9 @@ _agent_run_as_user() {
         return 1
     fi
 
-    target_path_prefix="${ACFS_BIN_DIR:-$target_home/.local/bin}:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
+    preferred_bin_dir="$(_agent_preferred_bin_dir "$target_home" 2>/dev/null || true)"
+    [[ -n "$preferred_bin_dir" ]] || preferred_bin_dir="$target_home/.local/bin"
+    target_path_prefix="$preferred_bin_dir:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
 
     printf -v target_user_q '%q' "$target_user"
     printf -v target_home_q '%q' "$target_home"
@@ -148,8 +226,8 @@ _agent_run_as_user() {
     if [[ -n "${ACFS_HOME:-}" ]]; then
         printf -v acfs_home_q '%q' "$ACFS_HOME"
     fi
-    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
-        printf -v acfs_bin_dir_q '%q' "$ACFS_BIN_DIR"
+    if [[ -n "$preferred_bin_dir" ]]; then
+        printf -v acfs_bin_dir_q '%q' "$preferred_bin_dir"
     fi
 
     wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"
@@ -211,7 +289,8 @@ _agent_find_am_bin() {
     fi
     [[ -n "$target_home" ]] || return 1
 
-    primary_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    primary_bin="$(_agent_preferred_bin_dir "$target_home" 2>/dev/null || true)"
+    [[ -n "$primary_bin" ]] || primary_bin="$target_home/.local/bin"
     for candidate in \
         "$target_home/mcp_agent_mail/am" \
         "$primary_bin/am" \

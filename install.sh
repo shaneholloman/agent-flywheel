@@ -151,9 +151,8 @@ unset _ACFS_DETECTED_USER
 # Export TARGET_USER early so subprocesses (e.g. preflight.sh) can use it
 # to determine the correct installation partition for disk-space checks (#243).
 export TARGET_USER
-# Leave TARGET_HOME unset by default; init_target_paths will derive it from
-# the real passwd entry when possible and only fall back to /home/$TARGET_USER
-# as a last resort.
+# Leave TARGET_HOME unset by default; init_target_paths derives it from the
+# real passwd entry when possible and otherwise fails closed.
 TARGET_HOME="${TARGET_HOME:-}"
 export TARGET_HOME
 

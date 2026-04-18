@@ -67,6 +67,71 @@ preflight_is_valid_username() {
     [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
 }
 
+resolve_current_user() {
+    local current_user=""
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+preflight_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="$(preflight_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    [[ -n "$bin_dir" ]] || return 1
+    base_home="$(preflight_sanitize_abs_nonroot_path "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="$(preflight_sanitize_abs_nonroot_path "$hinted_home" 2>/dev/null || true)"
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(printf '%s\n' "$passwd_line" | cut -d: -f6)"
+            passwd_home="$(preflight_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+    fi
+
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(printf '%s\n' "$passwd_line" | cut -d: -f6)"
+            passwd_home="$(preflight_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < /etc/passwd
+    fi
+
+    printf '%s\n' "$bin_dir"
+}
+
 resolve_home_dir() {
     local user="$1"
     local home=""
@@ -105,7 +170,7 @@ resolve_current_home() {
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(resolve_current_user 2>/dev/null || true)"
     [[ -n "$current_user" ]] || return 1
 
     home_candidate="$(resolve_home_dir "$current_user" 2>/dev/null || true)"
@@ -114,17 +179,14 @@ resolve_current_home() {
         return 0
     fi
 
-    if preflight_is_valid_username "$current_user"; then
-        printf '/home/%s\n' "$current_user"
-        return 0
-    fi
-
     return 1
 }
 
 resolve_install_target_home() {
     local target_home=""
+    local target_user_raw="${TARGET_USER:-}"
     local target_user="${TARGET_USER:-ubuntu}"
+    local current_user=""
 
     target_home="$(preflight_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
     if [[ -n "$target_home" ]]; then
@@ -132,15 +194,26 @@ resolve_install_target_home() {
         return 0
     fi
 
+    if [[ -n "$target_user_raw" ]] && ! preflight_is_valid_username "$target_user"; then
+        return 1
+    fi
+
     if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        preflight_is_valid_username "$target_user" || return 1
         target_home="$(resolve_home_dir "$target_user" 2>/dev/null || true)"
         if [[ -n "$target_home" ]]; then
             printf '%s\n' "$target_home"
             return 0
         fi
 
-        if preflight_is_valid_username "$target_user"; then
-            printf '/home/%s\n' "$target_user"
+        return 1
+    fi
+
+    current_user="$(resolve_current_user 2>/dev/null || true)"
+    if [[ -n "$target_user_raw" ]] && [[ -n "$current_user" ]] && [[ "$target_user" != "$current_user" ]]; then
+        target_home="$(resolve_home_dir "$target_user" 2>/dev/null || true)"
+        if [[ -n "$target_home" ]]; then
+            printf '%s\n' "$target_home"
             return 0
         fi
 
@@ -155,7 +228,6 @@ resolve_install_target_home() {
 
     return 1
 }
-
 preflight_binary_path() {
     local name="${1:-}"
     local base_home=""
@@ -165,12 +237,10 @@ preflight_binary_path() {
     [[ -n "$name" ]] || return 1
 
     base_home="$(resolve_install_target_home 2>/dev/null || true)"
-    if [[ -z "$base_home" ]]; then
-        base_home="$(resolve_current_home 2>/dev/null || true)"
-    fi
 
     if [[ -n "$base_home" ]]; then
-        primary_bin_dir="${ACFS_BIN_DIR:-$base_home/.local/bin}"
+        primary_bin_dir="$(preflight_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$base_home" 2>/dev/null || true)"
+        [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"
         for candidate in \
             "$primary_bin_dir/$name" \
             "$base_home/.local/bin/$name" \
@@ -198,7 +268,6 @@ preflight_binary_path() {
 
     return 1
 }
-
 preflight_binary_exists() {
     local resolved=""
     resolved="$(preflight_binary_path "$1" 2>/dev/null || true)"

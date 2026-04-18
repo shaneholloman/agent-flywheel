@@ -139,6 +139,64 @@ update_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+update_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="$(update_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    [[ -n "$bin_dir" ]] || return 1
+    base_home="$(update_existing_home "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="${hinted_home%/}"
+    if [[ "$hinted_home" != /* ]] || [[ "$hinted_home" == "/" ]]; then
+        hinted_home=""
+    fi
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(update_existing_home "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+    fi
+
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(update_existing_home "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < /etc/passwd
+    fi
+
+    printf '%s\n' "$bin_dir"
+}
+
 # ============================================================
 # Path Setup
 # ============================================================
@@ -152,7 +210,7 @@ ensure_path() {
     local sanitized_primary_bin=""
     local _primary_bin=""
 
-    sanitized_primary_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    sanitized_primary_bin="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "${HOME:-}" 2>/dev/null || true)"
     _primary_bin="${sanitized_primary_bin:-$HOME/.local/bin}"
 
     for dir in \
@@ -216,14 +274,14 @@ update_preferred_user_bin_dir() {
     local explicit_state_file=""
     local sanitized_acfs_home=""
 
-    explicit_bin_dir="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    target_user="$(update_target_user)"
+    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    explicit_bin_dir="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"
     if [[ -n "$explicit_bin_dir" ]]; then
         printf '%s\n' "$explicit_bin_dir"
         return 0
     fi
 
-    target_user="$(update_target_user)"
-    target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
     current_user="$(update_current_user)"
     explicit_state_file="$(update_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
     sanitized_acfs_home="$(update_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
@@ -247,8 +305,9 @@ update_preferred_user_bin_dir() {
             bin_dir="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
         fi
 
-        if [[ -n "$bin_dir" ]] && [[ "$bin_dir" == /* ]] && [[ "$bin_dir" != "/" ]]; then
-            printf '%s\n' "${bin_dir%/}"
+        bin_dir="$(update_validate_bin_dir_for_home "$bin_dir" "$target_home" 2>/dev/null || true)"
+        if [[ -n "$bin_dir" ]]; then
+            printf '%s\n' "$bin_dir"
             return 0
         fi
     done
@@ -273,6 +332,90 @@ update_default_user_bin_dir() {
     fi
 
     return 1
+}
+
+update_runtime_primary_bin_dir() {
+    local primary_bin=""
+    local target_user_raw="${TARGET_USER:-}"
+    local target_user=""
+    local current_user=""
+    local target_home=""
+    local runtime_home=""
+
+    target_user="$(update_target_user 2>/dev/null || true)"
+    current_user="$(update_current_user)"
+    if [[ -n "$target_user" ]]; then
+        target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$target_user_raw" && -z "$target_user" ]]; then
+        return 1
+    fi
+    if [[ -n "$target_user" ]] && [[ -n "$current_user" ]] && [[ "$target_user" != "$current_user" ]] && [[ -z "$target_home" ]]; then
+        return 1
+    fi
+
+    primary_bin="$(update_preferred_user_bin_dir 2>/dev/null || true)"
+    if [[ -z "$primary_bin" ]]; then
+        primary_bin="$(update_default_user_bin_dir 2>/dev/null || true)"
+    fi
+    if [[ -z "$primary_bin" ]]; then
+        runtime_home="$(update_existing_home "${HOME:-}" 2>/dev/null || true)"
+        primary_bin="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$runtime_home" 2>/dev/null || true)"
+    fi
+    if [[ -z "$primary_bin" ]]; then
+        runtime_home="$(update_existing_home "${HOME:-}" 2>/dev/null || true)"
+        [[ -n "$runtime_home" ]] || return 1
+        primary_bin="$runtime_home/.local/bin"
+    fi
+
+    primary_bin="$(update_sanitize_abs_nonroot_path "$primary_bin" 2>/dev/null || true)"
+    [[ -n "$primary_bin" ]] || return 1
+    printf '%s\n' "$primary_bin"
+}
+
+
+update_runtime_acfs_home() {
+    local target_user_raw="${TARGET_USER:-}"
+    local target_user=""
+    local current_user=""
+    local target_home=""
+    local runtime_home=""
+    local explicit_acfs_home=""
+
+    target_user="$(update_target_user 2>/dev/null || true)"
+    current_user="$(update_current_user)"
+    if [[ -n "$target_user" ]]; then
+        target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$target_home" ]]; then
+        explicit_acfs_home="$(update_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+        if [[ "$explicit_acfs_home" == "$target_home/.acfs" ]]; then
+            printf '%s\n' "$explicit_acfs_home"
+            return 0
+        fi
+        printf '%s\n' "$target_home/.acfs"
+        return 0
+    fi
+
+    if [[ -n "$target_user_raw" && -z "$target_user" ]]; then
+        return 1
+    fi
+    if [[ -n "$target_user" ]] && [[ -n "$current_user" ]] && [[ "$target_user" != "$current_user" ]]; then
+        return 1
+    fi
+
+    runtime_home="$(update_existing_home "${HOME:-}" 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    explicit_acfs_home="$(update_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+    if [[ "$explicit_acfs_home" == "$runtime_home/.acfs" ]]; then
+        printf '%s\n' "$explicit_acfs_home"
+        return 0
+    fi
+
+    printf '%s\n' "$runtime_home/.acfs"
 }
 
 update_binary_exists() {
@@ -1312,7 +1455,7 @@ update_target_path() {
     local path_prefix=""
     local -a path_entries=()
 
-    configured_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    configured_bin="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"
     target_bin="${configured_bin:-$target_home/.local/bin}"
 
     [[ -n "$target_home" ]] || return 1
@@ -1373,7 +1516,7 @@ update_binary_path() {
     [[ -n "$target_home" ]] || return 1
 
     primary_bin="$(update_preferred_user_bin_dir 2>/dev/null || true)"
-    configured_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    configured_bin="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"
     if [[ -z "$primary_bin" ]] || [[ "$primary_bin" != /* ]] || [[ "$primary_bin" == "/" ]]; then
         primary_bin="${configured_bin:-$target_home/.local/bin}"
     fi
@@ -1683,7 +1826,7 @@ sync_acfs_profile_paths() {
         return 0
     fi
 
-    sed -i "s|$(printf '%s' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$current_path_line|" "$user_profile"
+    sed -i "s|$(printf '%s\n' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$current_path_line|" "$user_profile"
     log_item "ok" "acfs.profile" "updated login PATH to include ~/.atuin/bin"
     log_to_file "Updated ACFS-managed PATH line in $user_profile"
 }
@@ -1704,7 +1847,7 @@ sync_acfs_zprofile_paths() {
         return 0
     fi
 
-    sed -i "s|$(printf '%s' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$current_path_line|" "$user_zprofile"
+    sed -i "s|$(printf '%s\n' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$current_path_line|" "$user_zprofile"
     log_item "ok" "acfs.zprofile" "updated login PATH to include ~/.atuin/bin"
     log_to_file "Updated ACFS-managed PATH line in $user_zprofile"
 }
@@ -1716,12 +1859,14 @@ sync_acfs_zprofile_paths() {
 # or checksums.yaml — the self-update pulls into the git repo but the
 # deployed copies at ~/.acfs/ remain stale.
 sync_acfs_deployed() {
-    local acfs_home="${ACFS_HOME:-$HOME/.acfs}"
+    local acfs_home=""
+    acfs_home="$(update_runtime_acfs_home 2>/dev/null || true)"
+    [[ -n "$acfs_home" ]] || return 0
 
     # Only sync when the repo is a different directory from ~/.acfs
     local resolved_repo resolved_home
-    resolved_repo="$(realpath "$ACFS_REPO_ROOT" 2>/dev/null || printf '%s' "$ACFS_REPO_ROOT")"
-    resolved_home="$(realpath "$acfs_home" 2>/dev/null || printf '%s' "$acfs_home")"
+    resolved_repo="$(realpath "$ACFS_REPO_ROOT" 2>/dev/null || printf '%s\n' "$ACFS_REPO_ROOT")"
+    resolved_home="$(realpath "$acfs_home" 2>/dev/null || printf '%s\n' "$acfs_home")"
     [[ "$resolved_repo" != "$resolved_home" ]] || return 0
 
     local -a file_pairs=(
@@ -1847,9 +1992,11 @@ CHECKSUMS_URL="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_
 CHECKSUMS_LOCAL="${ACFS_HOME:-$HOME/.acfs}/checksums.yaml"
 
 update_resolve_checksums_file() {
-    local installed_checksums="$CHECKSUMS_LOCAL"
+    local installed_checksums=""
     local repo_checksums=""
-    local default_acfs_home="${ACFS_HOME:-$HOME/.acfs}"
+    local default_acfs_home=""
+    default_acfs_home="$(update_runtime_acfs_home 2>/dev/null || true)"
+    [[ -n "$default_acfs_home" ]] && installed_checksums="$default_acfs_home/checksums.yaml"
 
     if [[ -n "${ACFS_REPO_ROOT:-}" ]] && [[ -r "${ACFS_REPO_ROOT}/checksums.yaml" ]]; then
         repo_checksums="${ACFS_REPO_ROOT}/checksums.yaml"
@@ -1881,9 +2028,17 @@ update_resolve_checksums_file() {
 # a full ACFS re-install.
 refresh_checksums() {
     local quiet="${1:-false}"
+    local checksums_local=""
+
+    checksums_local="$(update_runtime_acfs_home 2>/dev/null || true)"
+    if [[ -z "$checksums_local" ]]; then
+        log_to_file "Checksums refresh skipped: unable to resolve runtime ACFS home"
+        return 1
+    fi
+    checksums_local="$checksums_local/checksums.yaml"
 
     # Create directory if needed
-    mkdir -p "$(dirname "$CHECKSUMS_LOCAL")"
+    mkdir -p "$(dirname "$checksums_local")"
 
     # Download with timeout and retry
     local tmp_checksums
@@ -1902,8 +2057,8 @@ refresh_checksums() {
     if curl "${_refresh_curl_args[@]}" -o "$tmp_checksums" "$CHECKSUMS_URL" 2>/dev/null; then
         # Validate it looks like a checksums file
         if grep -q "^installers:" "$tmp_checksums" 2>/dev/null; then
-            if mv "$tmp_checksums" "$CHECKSUMS_LOCAL" 2>/dev/null; then
-                chmod 644 "$CHECKSUMS_LOCAL" 2>/dev/null || true  # Ensure readable permissions
+            if mv "$tmp_checksums" "$checksums_local" 2>/dev/null; then
+                chmod 644 "$checksums_local" 2>/dev/null || true  # Ensure readable permissions
                 if [[ "$quiet" != "true" ]]; then
                     log_item "ok" "checksums refresh" "synced from GitHub"
                 fi
@@ -1946,10 +2101,13 @@ update_require_security() {
     # Check for security.sh in expected locations
     local security_script=""
     local candidate=""
-    local -a security_candidates=(
-        "${ACFS_BIN_DIR:-$HOME/.local/bin}/security.sh"
-        "${ACFS_HOME:-$HOME/.acfs}/scripts/lib/security.sh"
-    )
+    local primary_bin=""
+    local runtime_acfs_home=""
+    primary_bin="$(update_runtime_primary_bin_dir 2>/dev/null || true)"
+    runtime_acfs_home="$(update_runtime_acfs_home 2>/dev/null || true)"
+    local -a security_candidates=()
+    [[ -n "$primary_bin" ]] && security_candidates+=("$primary_bin/security.sh")
+    [[ -n "$runtime_acfs_home" ]] && security_candidates+=("$runtime_acfs_home/scripts/lib/security.sh")
     if [[ -n "${ACFS_REPO_ROOT:-}" ]]; then
         security_candidates+=("${ACFS_REPO_ROOT}/scripts/lib/security.sh")
     fi
@@ -2136,7 +2294,11 @@ update_run_verified_installer() {
 # that works even before sync_acfs_deployed was introduced.
 # ------------------------------------------------------------
 update_refresh_installed_security() {
-    local installed_security="${ACFS_HOME:-$HOME/.acfs}/scripts/lib/security.sh"
+    local installed_security=""
+    local runtime_acfs_home=""
+    runtime_acfs_home="$(update_runtime_acfs_home 2>/dev/null || true)"
+    [[ -n "$runtime_acfs_home" ]] || return 0
+    installed_security="$runtime_acfs_home/scripts/lib/security.sh"
     [[ -f "$installed_security" ]] || return 0
 
     # Find the authoritative repo checkout (may differ from ACFS_REPO_ROOT
@@ -3186,16 +3348,16 @@ if [[ -z "$extracted_bin" ]] || [[ ! -f "$extracted_bin" ]]; then
   exit 1
 fi
 
-mkdir -p "${ACFS_BIN_DIR:-$HOME/.local/bin}"
-install -m 0755 "$extracted_bin" "${ACFS_BIN_DIR:-$HOME/.local/bin}/supabase"
+mkdir -p "${ACFS_PRIMARY_BIN_DIR:-${ACFS_BIN_DIR:-$HOME/.local/bin}}"
+install -m 0755 "$extracted_bin" "${ACFS_PRIMARY_BIN_DIR:-${ACFS_BIN_DIR:-$HOME/.local/bin}}/supabase"
 
 if command -v timeout &>/dev/null; then
-  timeout 5 "${ACFS_BIN_DIR:-$HOME/.local/bin}/supabase" --version >/dev/null 2>&1 || {
+  timeout 5 "${ACFS_PRIMARY_BIN_DIR:-${ACFS_BIN_DIR:-$HOME/.local/bin}}/supabase" --version >/dev/null 2>&1 || {
     echo "Supabase CLI: installed but failed to run" >&2
     exit 1
   }
 else
-  "${ACFS_BIN_DIR:-$HOME/.local/bin}/supabase" --version >/dev/null 2>&1 || {
+  "${ACFS_PRIMARY_BIN_DIR:-${ACFS_BIN_DIR:-$HOME/.local/bin}}/supabase" --version >/dev/null 2>&1 || {
     echo "Supabase CLI: installed but failed to run" >&2
     exit 1
   }
@@ -3228,12 +3390,18 @@ update_cloud() {
 
     # Supabase (verified GitHub release binary; installed to ~/.local/bin)
     if update_binary_exists supabase || [[ "$FORCE_MODE" == "true" ]]; then
+        local supabase_primary_bin=""
         capture_version_before "supabase"
-        run_cmd "Supabase CLI" bash -c "$(supabase_release_update_script)"
-        # Refresh PATH in case ~/.local/bin was created during install.
-        ensure_path
-        if capture_version_after "supabase"; then
-            [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[supabase]}" "${VERSION_AFTER[supabase]}"
+        supabase_primary_bin="$(update_runtime_primary_bin_dir 2>/dev/null || true)"
+        if [[ -z "$supabase_primary_bin" ]]; then
+            log_item "fail" "Supabase CLI" "unable to resolve target install bin"
+        else
+            run_cmd "Supabase CLI" env "ACFS_PRIMARY_BIN_DIR=$supabase_primary_bin" bash -c "$(supabase_release_update_script)"
+            # Refresh PATH in case the target bin was created during install.
+            ensure_path
+            if capture_version_after "supabase"; then
+                [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[supabase]}" "${VERSION_AFTER[supabase]}"
+            fi
         fi
     else
         log_item "skip" "Supabase CLI" "not installed"
@@ -3645,9 +3813,13 @@ update_stack() {
     fi
 
     # Post-Compact Reminder (pcr) - only update when Claude Code is installed
-    local pcr_hook_script="${ACFS_BIN_DIR:-$HOME/.local/bin}/claude-post-compact-reminder"
+    local pcr_hook_script=""
+    pcr_hook_script="$(update_runtime_primary_bin_dir 2>/dev/null || true)"
+    [[ -n "$pcr_hook_script" ]] && pcr_hook_script="$pcr_hook_script/claude-post-compact-reminder"
     if ! update_binary_exists claude; then
         log_item "skip" "PCR" "Claude Code not installed"
+    elif [[ -z "$pcr_hook_script" ]]; then
+        log_item "fail" "PCR" "unable to resolve target hook path"
     elif [[ -x "$pcr_hook_script" || "$FORCE_MODE" == "true" ]]; then
         local pcr_mtime_before=""
         local pcr_mtime_after=""
@@ -3692,10 +3864,13 @@ update_root_agents_md() {
     if [[ -z "$root_agents_generator" ]]; then
         local generator=""
         local candidate=""
-        local -a security_candidates=(
-            "${ACFS_BIN_DIR:-$HOME/.local/bin}/flywheel-update-agents-md"
-            "${ACFS_HOME:-$HOME/.acfs}/bin/flywheel-update-agents-md"
-        )
+        local primary_bin=""
+        local runtime_acfs_home=""
+        primary_bin="$(update_runtime_primary_bin_dir 2>/dev/null || true)"
+        runtime_acfs_home="$(update_runtime_acfs_home 2>/dev/null || true)"
+        local -a security_candidates=()
+        [[ -n "$primary_bin" ]] && security_candidates+=("$primary_bin/flywheel-update-agents-md")
+        [[ -n "$runtime_acfs_home" ]] && security_candidates+=("$runtime_acfs_home/bin/flywheel-update-agents-md")
         if [[ -n "${ACFS_REPO_ROOT:-}" ]]; then
             security_candidates+=("${ACFS_REPO_ROOT}/scripts/generate-root-agents-md.sh")
         fi

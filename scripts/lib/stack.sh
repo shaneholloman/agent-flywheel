@@ -87,14 +87,32 @@ _stack_target_bin_dir() {
     local target_user="${1:-${TARGET_USER:-ubuntu}}"
     local target_home=""
     local configured_bin=""
+    local candidate_home=""
 
     target_home="$(_stack_target_home "$target_user" 2>/dev/null || true)"
     [[ -n "$target_home" ]] || return 1
 
     configured_bin="$(_stack_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
     if [[ -n "$configured_bin" ]]; then
-        printf '%s\n' "$configured_bin"
-        return 0
+        if [[ "$configured_bin" == "$target_home" || "$configured_bin" == "$target_home/"* ]]; then
+            printf '%s\n' "$configured_bin"
+            return 0
+        fi
+
+        while IFS=: read -r _ _ _ _ _ candidate_home _; do
+            candidate_home="$(_stack_existing_abs_home "$candidate_home" 2>/dev/null || true)"
+            [[ -n "$candidate_home" ]] || continue
+            [[ "$candidate_home" == "$target_home" ]] && continue
+            if [[ "$configured_bin" == "$candidate_home" || "$configured_bin" == "$candidate_home/"* ]]; then
+                configured_bin=""
+                break
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+
+        if [[ -n "$configured_bin" ]]; then
+            printf '%s\n' "$configured_bin"
+            return 0
+        fi
     fi
 
     printf '%s/.local/bin\n' "$target_home"
@@ -203,6 +221,15 @@ _stack_target_home() {
         return 0
     fi
 
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "$target_user" ]]; then
+        current_home="$(_stack_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$current_home" ]]; then
+            printf '%s\n' "$current_home"
+            return 0
+        fi
+    fi
+
     passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
         passwd_entry="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
@@ -213,18 +240,8 @@ _stack_target_home() {
         fi
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
-    if [[ "$current_user" == "$target_user" ]]; then
-        current_home="$(_stack_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
-        if [[ -n "$current_home" ]]; then
-            printf '%s\n' "$current_home"
-            return 0
-        fi
-    fi
-
     return 1
 }
-
 _stack_validate_target_user() {
     local username="${1:-${TARGET_USER:-}}"
     local display="${username:-<empty>}"

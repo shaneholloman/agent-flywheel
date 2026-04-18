@@ -21,12 +21,20 @@ STATE_SH="$REPO_ROOT/scripts/lib/state.sh"
 SMOKE_TEST_SH="$REPO_ROOT/scripts/lib/smoke_test.sh"
 ONBOARD_SH="$REPO_ROOT/packages/onboard/onboard.sh"
 SERVICES_SETUP_SH="$REPO_ROOT/scripts/services-setup.sh"
+PREFLIGHT_SH="$REPO_ROOT/scripts/preflight.sh"
 NOTIFY_SH="$REPO_ROOT/scripts/lib/notify.sh"
 WEBHOOK_SH="$REPO_ROOT/scripts/lib/webhook.sh"
 NOTIFICATIONS_SH="$REPO_ROOT/scripts/lib/notifications.sh"
 AUTOFIX_SH="$REPO_ROOT/scripts/lib/autofix.sh"
 AUTOFIX_EXISTING_SH="$REPO_ROOT/scripts/lib/autofix_existing.sh"
+UBUNTU_UPGRADE_SH="$REPO_ROOT/scripts/lib/ubuntu_upgrade.sh"
 STACK_SH="$REPO_ROOT/scripts/lib/stack.sh"
+CLI_TOOLS_SH="$REPO_ROOT/scripts/lib/cli_tools.sh"
+AGENTS_SH="$REPO_ROOT/scripts/lib/agents.sh"
+GITHUB_API_SH="$REPO_ROOT/scripts/lib/github_api.sh"
+NIGHTLY_UPDATE_SH="$REPO_ROOT/scripts/lib/nightly_update.sh"
+OS_DETECT_SH="$REPO_ROOT/scripts/lib/os_detect.sh"
+TEST_INSTALL_ARTIFACTS_SH="$REPO_ROOT/tests/vm/test_install_artifacts.sh"
 
 source "$REPO_ROOT/tests/vm/lib/test_harness.sh"
 
@@ -237,6 +245,32 @@ EOF
     write_fake_command "$TEST_TARGET_HOME/.bun/bin/bun" "1.2.3"
     write_fake_command "$TEST_TARGET_HOME/.cargo/bin/cargo" "cargo 1.85.0"
     write_fake_command "$TEST_TARGET_HOME/go/bin/go" "go version go1.24.0 linux/amd64"
+}
+
+setup_cross_home_bin_dir_env() {
+    setup_installed_layout_env
+
+    STALE_HOME="$TEST_HOME/users/staleuser"
+    mkdir -p "$STALE_HOME/.local/bin"
+
+    cat > "$TEST_FAKE_BIN/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "${1:-}" == "passwd" ]] && [[ "$#" -eq 1 ]]; then
+    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
+    echo "staleuser:x:1001:1001::${STALE_HOME}:/bin/bash"
+    exit 0
+fi
+if [[ "${1:-}" == "passwd" ]] && [[ "${2:-}" == "tester" ]]; then
+    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
+    exit 0
+fi
+if [[ "${1:-}" == "passwd" ]] && [[ "${2:-}" == "staleuser" ]]; then
+    echo "staleuser:x:1001:1001::${STALE_HOME}:/bin/bash"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
 }
 
 setup_poisoned_acfs_home() {
@@ -761,11 +795,9 @@ mkdir -p "$TARGET_HOME"
 source "$SERVICES_SETUP_SH"
 
 if out="$(find_user_bin bash 2>/dev/null)"; then
-    printf 'path=%s
-' "$out"
+    printf 'path=%s\n' "$out"
 else
-    printf 'rc=%s
-' "$?"
+    printf 'rc=%s\n' "$?"
 fi
 EOF
     ); then
@@ -802,17 +834,14 @@ export BUN_BIN="$target_home/.bun/bin/bun"
 source "$SERVICES_SETUP_SH"
 
 if ! init_target_context; then
-    printf 'init-failed
-'
+    printf 'init-failed\n'
     exit 1
 fi
 
 if [[ "$BUN_BIN" == "$target_home/.local/bin/bun" ]]; then
-    printf 'resolved
-'
+    printf 'resolved\n'
 else
-    printf 'bun=%s
-' "$BUN_BIN"
+    printf 'bun=%s\n' "$BUN_BIN"
 fi
 EOF
     ); then
@@ -853,8 +882,7 @@ HAS_GUM=false
 gum_confirm() { return 0; }
 gum_box() { :; }
 gum_detail() { :; }
-gum_error() { printf 'error:%s
-' "$*"; }
+gum_error() { printf 'error:%s\n' "$*"; }
 gum_warn() { :; }
 gum_success() { :; }
 read() { return 0; }
@@ -862,8 +890,7 @@ run_as_user() { return 1; }
 
 check_vercel_status
 check_wrangler_status
-printf 'statuses=%s,%s
-' "${SERVICE_STATUS[vercel]:-missing}" "${SERVICE_STATUS[wrangler]:-missing}"
+printf 'statuses=%s,%s\n' "${SERVICE_STATUS[vercel]:-missing}" "${SERVICE_STATUS[wrangler]:-missing}"
 
 run_as_user() {
     printf '%s\n' "$1" >> "$target_home/run.log"
@@ -993,6 +1020,157 @@ EOF
     fi
 }
 
+test_stack_target_home_ignores_invalid_explicit_target_home_before_passwd_fallback() {
+    local output=""
+
+    if output=$(STACK_SH="$STACK_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+stale_home="$tmp_dir/missing-target-home"
+resolved_home="$tmp_dir/resolved-target-home"
+mkdir -p "$resolved_home"
+export PATH="/usr/bin:/bin"
+export TARGET_USER="tester"
+export TARGET_HOME="$stale_home"
+getent() {
+    if [[ "$1" == "passwd" && "$2" == "tester" ]]; then
+        printf 'tester:x:1000:1000::%s:/bin/bash
+' "$resolved_home"
+        return 0
+    fi
+    command getent "$@"
+}
+# shellcheck source=/dev/null
+source "$STACK_SH"
+
+if resolved="$(_stack_target_home 2>/dev/null)"; then
+    printf 'rc=0 path=%s
+' "$resolved"
+else
+    printf 'rc=%s
+' "$?"
+fi
+EOF
+    ); then
+        if [[ "$output" == "rc=0 path="*"/resolved-target-home" ]]; then
+            harness_pass "stack target_home ignores invalid explicit TARGET_HOME before passwd fallback"
+        else
+            harness_fail "stack target_home ignores invalid explicit TARGET_HOME before passwd fallback" "$output"
+        fi
+    else
+        harness_fail "stack target_home ignores invalid explicit TARGET_HOME before passwd fallback"
+    fi
+}
+
+test_stack_target_command_path_ignores_other_user_home_bin_dir_override() {
+    local output=""
+
+    if output=$(STACK_SH="$STACK_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+target_home="$tmp_dir/target-home"
+stale_home="$tmp_dir/stale-home"
+fake_bin="$tmp_dir/fake-bin"
+mkdir -p "$target_home/.local/bin" "$stale_home/.local/bin" "$fake_bin"
+cat > "$fake_bin/getent" <<GETENT
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\$#" -eq 1 ]]; then
+    printf '%s\n' "tester:x:1000:1000::${target_home}:/bin/bash"
+    printf '%s\n' "staleuser:x:1001:1001::${stale_home}:/bin/bash"
+    exit 0
+fi
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "tester" ]]; then
+    printf '%s\n' "tester:x:1000:1000::${target_home}:/bin/bash"
+    exit 0
+fi
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "staleuser" ]]; then
+    printf '%s\n' "staleuser:x:1001:1001::${stale_home}:/bin/bash"
+    exit 0
+fi
+exit 2
+GETENT
+cat > "$target_home/.local/bin/claude" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+cat > "$stale_home/.local/bin/claude" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+chmod +x "$fake_bin/getent" "$target_home/.local/bin/claude" "$stale_home/.local/bin/claude"
+export PATH="$fake_bin:/usr/bin:/bin"
+export TARGET_USER="tester"
+export TARGET_HOME="$target_home"
+export ACFS_BIN_DIR="$stale_home/.local/bin"
+# shellcheck source=/dev/null
+source "$STACK_SH"
+
+resolved="$(_stack_target_command_path claude 2>/dev/null || true)"
+if [[ "$resolved" == "$target_home/.local/bin/claude" ]]; then
+    printf 'source=live\n'
+else
+    printf 'path=%s\n' "$resolved"
+fi
+EOF
+    ); then
+        if [[ "$output" == "source=live" ]]; then
+            harness_pass "stack target command path ignores other-user home bin-dir override"
+        else
+            harness_fail "stack target command path ignores other-user home bin-dir override" "$output"
+        fi
+    else
+        harness_fail "stack target command path ignores other-user home bin-dir override"
+    fi
+}
+
+test_stack_target_home_prefers_current_home_over_current_shell_only_getent() {
+    local output=""
+
+    if output=$(STACK_SH="$STACK_SH" bash <<'EOF'
+set -u
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+current_home="$tmp_dir/current-home"
+stale_home="$tmp_dir/stale-home"
+fake_bin="$tmp_dir/fake-bin"
+mkdir -p "$current_home" "$stale_home" "$fake_bin"
+cat > "$fake_bin/getent" <<GETENT
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s\n' "$current_user:x:1000:1000::${stale_home}:/bin/bash"
+    exit 0
+fi
+exit 2
+GETENT
+chmod +x "$fake_bin/getent"
+export PATH="$fake_bin:/usr/bin:/bin"
+export TARGET_USER="$current_user"
+unset TARGET_HOME || true
+export HOME="$current_home"
+# shellcheck source=/dev/null
+source "$STACK_SH"
+
+resolved="$(_stack_target_home "$current_user" 2>/dev/null || true)"
+if [[ "$resolved" == "$current_home" ]]; then
+    printf 'source=current-home\n'
+else
+    printf 'path=%s\n' "$resolved"
+fi
+EOF
+    ); then
+        if [[ "$output" == "source=current-home" ]]; then
+            harness_pass "stack target_home prefers current HOME over current-shell-only getent"
+        else
+            harness_fail "stack target_home prefers current HOME over current-shell-only getent" "$output"
+        fi
+    else
+        harness_fail "stack target_home prefers current HOME over current-shell-only getent"
+    fi
+}
+
 test_stack_agent_mail_cli_path_ignores_current_shell_only_am() {
     local output=""
 
@@ -1002,7 +1180,7 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 target_home="$tmp_dir/target-home"
 global_bin="$tmp_dir/global-bin"
-mkdir -p "$global_bin"
+mkdir -p "$target_home/.local/bin" "$global_bin"
 cat > "$global_bin/am" <<'SCRIPT'
 #!/usr/bin/env bash
 echo am
@@ -1120,9 +1298,7 @@ export ACFS_BIN_DIR="$target_home/.local/bin"
 source "$STACK_SH"
 resolved_curl="$(_stack_run_as_user 'command -v curl' 2>/dev/null || true)"
 curl_banner="$(_stack_run_as_user 'curl --version 2>&1 | head -n1' 2>/dev/null || true)"
-printf 'curl=%s
-banner=%s
-' "$resolved_curl" "$curl_banner"
+printf 'curl=%s\nbanner=%s\n' "$resolved_curl" "$curl_banner"
 EOF
     ); then
         if [[ "$output" == *$'curl='* ]] && [[ "$output" != *"banner=POISONED_CURL"* ]] && [[ "$output" != *"/global-bin/curl"* ]]; then
@@ -3690,6 +3866,49 @@ EOF
     cleanup_mock_env
 }
 
+
+test_cheatsheet_ignores_other_user_home_bin_dir_from_state() {
+    setup_cross_home_bin_dir_env
+    cp "$CHEATSHEET_SH" "$TEST_INSTALLED_ACFS/scripts/lib/cheatsheet.sh"
+
+    mkdir -p "$TEST_INSTALLED_ACFS/zsh"
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$STALE_HOME/.local/bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z"
+}
+EOF
+    cat > "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" <<'EOF'
+if command -v claude >/dev/null 2>&1; then
+  alias cc='claude'
+fi
+alias cod='codex'
+EOF
+
+    rm -f "$TEST_TARGET_HOME/.local/bin/claude"
+    write_fake_command "$STALE_HOME/.local/bin/claude" "claude stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/cheatsheet.sh" --json)
+
+    if printf '%s\n' "$output" | jq -e --arg zshrc "$TEST_INSTALLED_ACFS/zsh/acfs.zshrc" '
+        .source == $zshrc and
+        ([.entries[].name] | index("cod")) != null and
+        ([.entries[].name] | index("cc")) == null
+    ' >/dev/null 2>&1; then
+        harness_pass "cheatsheet ignores other-user home bin_dir from state"
+    else
+        harness_fail "cheatsheet ignores other-user home bin_dir from state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_cheatsheet_repo_local_ignores_poisoned_explicit_acfs_home() {
     setup_system_state_target_home_env
     setup_poisoned_acfs_home
@@ -3737,6 +3956,279 @@ test_cheatsheet_repo_local_prefers_system_state_target_user_over_stale_installed
         harness_pass "cheatsheet repo-local prefers system-state target_user over stale installed state"
     else
         harness_fail "cheatsheet repo-local prefers system-state target_user over stale installed state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_services_setup_find_user_bin_ignores_other_user_home_bin_dir_override() {
+    setup_cross_home_bin_dir_env
+
+    local tool_name="services-cross-home-tool"
+    write_fake_command "$TEST_TARGET_HOME/.local/bin/$tool_name" "target"
+    write_fake_command "$STALE_HOME/.local/bin/$tool_name" "stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$TEST_TARGET_HOME" TARGET_USER="$(id -un 2>/dev/null || whoami 2>/dev/null)" \
+        ACFS_BIN_DIR="$STALE_HOME/.local/bin" TEST_SERVICES_SCRIPT="$SERVICES_SETUP_SH" TEST_TOOL_NAME="$tool_name" \
+        bash <<'EOF'
+set -u
+source "$TEST_SERVICES_SCRIPT"
+if out="$(find_user_bin "$TEST_TOOL_NAME" 2>/dev/null)"; then
+    printf '%s\n' "$out"
+else
+    printf 'rc=%s\n' "$?"
+fi
+EOF
+)
+
+    if [[ "$output" == "$TEST_TARGET_HOME/.local/bin/$tool_name" ]]; then
+        harness_pass "services-setup find_user_bin ignores other-user home bin_dir override"
+    else
+        harness_fail "services-setup find_user_bin ignores other-user home bin_dir override" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_services_setup_init_target_context_repairs_stale_other_user_bun_bin() {
+    setup_cross_home_bin_dir_env
+
+    write_fake_command "$STALE_HOME/.local/bin/bun" "stale bun"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$TEST_TARGET_HOME" TARGET_USER="$(id -un 2>/dev/null || whoami 2>/dev/null)" \
+        ACFS_BIN_DIR="$STALE_HOME/.local/bin" BUN_BIN="$STALE_HOME/.local/bin/bun" TEST_SERVICES_SCRIPT="$SERVICES_SETUP_SH" \
+        bash <<'EOF'
+set -u
+source "$TEST_SERVICES_SCRIPT"
+if ! init_target_context; then
+    printf 'init-failed\n'
+    exit 1
+fi
+printf 'bun=%s\n' "$BUN_BIN"
+EOF
+)
+
+    if [[ "$output" == "bun=$TEST_TARGET_HOME/.bun/bin/bun" ]]; then
+        harness_pass "services-setup init_target_context repairs stale other-user BUN_BIN"
+    else
+        harness_fail "services-setup init_target_context repairs stale other-user BUN_BIN" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_cli_tools_ignore_other_user_home_bin_dir_override() {
+    setup_cross_home_bin_dir_env
+
+    local tool_name="cli-cross-home-tool"
+    write_fake_command "$STALE_HOME/.local/bin/$tool_name" "stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$TEST_TARGET_HOME" TARGET_USER="$(id -un 2>/dev/null || whoami 2>/dev/null)" \
+        ACFS_BIN_DIR="$STALE_HOME/.local/bin" TEST_CLI_TOOLS_SCRIPT="$CLI_TOOLS_SH" TEST_TOOL_NAME="$tool_name" \
+        bash <<'EOF'
+set -u
+source "$TEST_CLI_TOOLS_SCRIPT"
+if _cli_target_has_command "$TEST_TOOL_NAME"; then
+    printf 'has=0\n'
+else
+    printf 'has=%s\n' "$?"
+fi
+_cli_run_as_user 'printf "%s\n" "${ACFS_BIN_DIR:-}"'
+EOF
+)
+
+    if [[ "$output" == $'has=1\n'"$TEST_TARGET_HOME/.local/bin" ]]; then
+        harness_pass "cli_tools ignore other-user home bin_dir override"
+    else
+        harness_fail "cli_tools ignore other-user home bin_dir override" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_agents_ignore_other_user_home_bin_dir_override() {
+    setup_cross_home_bin_dir_env
+
+    cat > "$STALE_HOME/.local/bin/am" <<'EOF'
+#!/usr/bin/env bash
+printf 'stale am\n'
+EOF
+    chmod +x "$STALE_HOME/.local/bin/am"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$TEST_TARGET_HOME" TARGET_USER="$(id -un 2>/dev/null || whoami 2>/dev/null)" \
+        ACFS_BIN_DIR="$STALE_HOME/.local/bin" TEST_AGENTS_SCRIPT="$AGENTS_SH" \
+        bash <<'EOF'
+set -u
+source "$TEST_AGENTS_SCRIPT"
+if out="$(_agent_find_am_bin "$TARGET_HOME" 2>/dev/null)"; then
+    printf 'find=%s\n' "$out"
+else
+    printf 'find=rc%s\n' "$?"
+fi
+_agent_run_as_user 'printf "%s\n" "${ACFS_BIN_DIR:-}"'
+EOF
+)
+
+    if [[ "$output" == $'find=rc1\n'"$TEST_TARGET_HOME/.local/bin" ]]; then
+        harness_pass "agents ignore other-user home bin_dir override"
+    else
+        harness_fail "agents ignore other-user home bin_dir override" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_github_api_binary_path_ignores_other_user_home_bin_dir_override() {
+    setup_cross_home_bin_dir_env
+
+    local tool_name="github-api-cross-home-tool"
+    write_fake_command "$STALE_HOME/.local/bin/$tool_name" "stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$TEST_TARGET_HOME" ACFS_BIN_DIR="$STALE_HOME/.local/bin" \
+        TEST_GITHUB_API_SCRIPT="$GITHUB_API_SH" TEST_TOOL_NAME="$tool_name" \
+        bash <<'EOF'
+set -u
+source "$TEST_GITHUB_API_SCRIPT"
+if out="$(_github_api_binary_path "$TEST_TOOL_NAME" 2>/dev/null)"; then
+    printf 'path=%s\n' "$out"
+else
+    printf 'rc=%s\n' "$?"
+fi
+EOF
+)
+
+    if [[ "$output" == "rc=1" ]]; then
+        harness_pass "github_api binary path ignores other-user home bin_dir override"
+    else
+        harness_fail "github_api binary path ignores other-user home bin_dir override" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_export_config_augment_path_ignores_other_user_home_bin_dir() {
+    setup_cross_home_bin_dir_env
+
+    local tool_name="export-cross-home-tool"
+    write_fake_command "$STALE_HOME/.local/bin/$tool_name" "stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$TEST_TARGET_HOME" TARGET_USER="tester" ACFS_BIN_DIR="$STALE_HOME/.local/bin" \
+        TEST_EXPORT_SCRIPT="$EXPORT_CONFIG_SH" TEST_TOOL_NAME="$tool_name" \
+        bash <<'EOF'
+set -u
+PATH=/usr/bin:/bin
+source "$TEST_EXPORT_SCRIPT"
+augment_path_for_target_user
+if out="$(command -v "$TEST_TOOL_NAME" 2>/dev/null)"; then
+    printf 'path=%s\n' "$out"
+else
+    printf 'rc=%s\n' "$?"
+fi
+EOF
+)
+
+    if [[ "$output" == "rc=1" ]]; then
+        harness_pass "export-config augment_path ignores other-user home bin_dir"
+    else
+        harness_fail "export-config augment_path ignores other-user home bin_dir" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_nightly_update_ignores_other_user_home_bin_dir_before_preflight_path() {
+    setup_cross_home_bin_dir_env
+
+    local system_state="$TEST_ROOT_HOME/system-state.json"
+    mkdir -p \
+        "$TEST_ROOT_HOME/.acfs/scripts/lib" \
+        "$TEST_TARGET_HOME/.acfs/bin" \
+        "$TEST_TARGET_HOME/.acfs/scripts/lib" \
+        "$TEST_TARGET_HOME/.acfs/logs/updates"
+
+    cat > "$TEST_ROOT_HOME/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$TEST_TARGET_HOME/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$STALE_HOME/.local/bin"
+}
+EOF
+    cat > "$TEST_TARGET_HOME/.acfs/bin/acfs-update" <<'EOF'
+#!/usr/bin/env bash
+printf 'LIVE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    cat > "$STALE_HOME/.local/bin/df" <<'EOF'
+#!/usr/bin/env bash
+echo 'STALE_DF_USED' >&2
+exit 99
+EOF
+    chmod +x \
+        "$TEST_TARGET_HOME/.acfs/bin/acfs-update" \
+        "$STALE_HOME/.local/bin/df"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$system_state" PATH="/usr/bin:/bin" \
+        bash "$NIGHTLY_UPDATE_SH" 2>&1 || true)
+
+    if [[ "$output" == *"Running: $TEST_TARGET_HOME/.acfs/bin/acfs-update --yes --quiet --no-self-update"* ]] \
+        && [[ "$output" == *"LIVE_HOME=$TEST_TARGET_HOME TARGET_HOME=$TEST_TARGET_HOME ACFS_HOME=$TEST_TARGET_HOME/.acfs"* ]] \
+        && [[ "$output" != *"STALE_DF_USED"* ]]; then
+        harness_pass "nightly update ignores other-user home bin_dir before preflight PATH"
+    else
+        harness_fail "nightly update ignores other-user home bin_dir before preflight PATH" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_nightly_update_ignores_stale_explicit_target_home_before_preflight_path() {
+    setup_cross_home_bin_dir_env
+
+    mkdir -p \
+        "$TEST_TARGET_HOME/.acfs/bin" \
+        "$TEST_TARGET_HOME/.acfs/scripts/lib" \
+        "$TEST_TARGET_HOME/.acfs/logs/updates"
+
+    cat > "$TEST_TARGET_HOME/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$TEST_TARGET_HOME/.acfs/bin/acfs-update" <<'EOF'
+#!/usr/bin/env bash
+printf 'LIVE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    cat > "$STALE_HOME/.local/bin/df" <<'EOF'
+#!/usr/bin/env bash
+echo 'STALE_DF_USED' >&2
+exit 99
+EOF
+    chmod +x \
+        "$TEST_TARGET_HOME/.acfs/bin/acfs-update" \
+        "$STALE_HOME/.local/bin/df"
+
+    local output=""
+    output=$(HOME="$TEST_TARGET_HOME" TARGET_HOME="$STALE_HOME" ACFS_BIN_DIR="$STALE_HOME/.local/bin" PATH="/usr/bin:/bin" \
+        bash "$NIGHTLY_UPDATE_SH" 2>&1 || true)
+
+    if [[ "$output" == *"Running: $TEST_TARGET_HOME/.acfs/bin/acfs-update --yes --quiet --no-self-update"* ]] \
+        && [[ "$output" == *"LIVE_HOME=$TEST_TARGET_HOME TARGET_HOME=$STALE_HOME"* ]] \
+        && [[ "$output" != *"STALE_DF_USED"* ]]; then
+        harness_pass "nightly update ignores stale explicit TARGET_HOME before preflight PATH"
+    else
+        harness_fail "nightly update ignores stale explicit TARGET_HOME before preflight PATH" "$output"
     fi
 
     cleanup_mock_env
@@ -3846,6 +4338,33 @@ test_status_ignores_current_shell_only_binaries() {
         harness_pass "status ignores current-shell-only binaries"
     else
         harness_fail "status ignores current-shell-only binaries" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_status_binary_path_ignores_other_user_home_bin_dir_from_state() {
+    setup_cross_home_bin_dir_env
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$STALE_HOME/.local/bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z"
+}
+EOF
+    write_fake_command "$STALE_HOME/.local/bin/claude" "claude stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" TEST_STATUS_SCRIPT="$STATUS_SH" bash -lc 'source "$TEST_STATUS_SCRIPT"; _status_prepare_context; _status_binary_path claude' 2>/dev/null)
+
+    if [[ "$output" == "$TEST_TARGET_HOME/.local/bin/claude" ]]; then
+        harness_pass "status binary path ignores other-user home bin_dir from state"
+    else
+        harness_fail "status binary path ignores other-user home bin_dir from state" "$output"
     fi
 
     cleanup_mock_env
@@ -5166,6 +5685,33 @@ test_info_summary_ignores_current_shell_only_binaries() {
     cleanup_mock_env
 }
 
+test_info_binary_path_ignores_other_user_home_bin_dir_from_state() {
+    setup_cross_home_bin_dir_env
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$STALE_HOME/.local/bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z"
+}
+EOF
+    write_fake_command "$STALE_HOME/.local/bin/claude" "claude stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" TEST_INFO_SCRIPT="$INFO_SH" bash -lc 'source "$TEST_INFO_SCRIPT"; info_prepare_context; info_binary_path claude' 2>/dev/null)
+
+    if [[ "$output" == "$TEST_TARGET_HOME/.local/bin/claude" ]]; then
+        harness_pass "info binary path ignores other-user home bin_dir from state"
+    else
+        harness_fail "info binary path ignores other-user home bin_dir from state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_info_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir() {
     setup_installed_layout_env
 
@@ -5611,6 +6157,33 @@ test_smoke_test_run_preserves_caller_path_when_sourced() {
     cleanup_mock_env
 }
 
+test_smoke_binary_path_ignores_other_user_home_bin_dir_from_state() {
+    setup_cross_home_bin_dir_env
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$STALE_HOME/.local/bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z"
+}
+EOF
+    write_fake_command "$STALE_HOME/.local/bin/claude" "claude stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$TEST_TARGET_HOME" TARGET_USER="tester" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" bash -c 'source "$1"; _smoke_binary_path claude' _ "$SMOKE_TEST_SH")
+
+    if [[ "$output" == "$TEST_TARGET_HOME/.local/bin/claude" ]]; then
+        harness_pass "smoke binary path ignores other-user home bin_dir from state"
+    else
+        harness_fail "smoke binary path ignores other-user home bin_dir from state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_smoke_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir() {
     setup_installed_layout_env
 
@@ -5964,6 +6537,7 @@ continue|$CONTINUE_SH|continue_resolve_current_home
 dashboard|$DASHBOARD_SH|dashboard_resolve_current_home
 info|$INFO_SH|info_resolve_current_home
 changelog|$CHANGELOG_SH|changelog_resolve_current_home
+onboard|$ONBOARD_SH|onboard_resolve_current_home
 EOF
 
     if [[ -z "$failures" ]]; then
@@ -6007,6 +6581,7 @@ continue|$CONTINUE_SH|continue_resolve_current_home
 dashboard|$DASHBOARD_SH|dashboard_resolve_current_home
 info|$INFO_SH|info_resolve_current_home
 changelog|$CHANGELOG_SH|changelog_resolve_current_home
+onboard|$ONBOARD_SH|onboard_resolve_current_home
 EOF
 
     if [[ -z "$failures" ]]; then
@@ -6026,7 +6601,7 @@ test_runtime_helpers_fail_closed_on_invalid_passwd_home_for_target_user() {
 
     cat > "$TEST_FAKE_BIN/getent" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$1" == "passwd" ]] && [[ "$2" == "tester" ]]; then
+if [[ "${1:-}" == "passwd" ]] && [[ "${2:-}" == "tester" ]]; then
     echo 'tester:x:1000:1000::relative-home:/bin/bash'
     exit 0
 fi
@@ -6052,6 +6627,7 @@ continue|$CONTINUE_SH|home_for_user
 dashboard|$DASHBOARD_SH|dashboard_home_for_user
 info|$INFO_SH|info_home_for_user
 changelog|$CHANGELOG_SH|changelog_home_for_user
+onboard|$ONBOARD_SH|onboard_home_for_user
 EOF
 
     if [[ -z "$failures" ]]; then
@@ -6104,6 +6680,29 @@ EOF
         harness_pass "doctor ignores relative HOME state trap"
     else
         harness_fail "doctor ignores relative HOME state trap" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_doctor_uses_system_state_target_home_when_installed_state_is_stale() {
+    setup_system_state_target_home_env
+
+    mkdir -p "$TEST_INSTALLED_ACFS/bin"
+    cp "$DOCTOR_SH" "$TEST_INSTALLED_ACFS/bin/acfs"
+    chmod +x "$TEST_INSTALLED_ACFS/bin/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE"         bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --json)
+
+    if printf '%s
+' "$output" | jq -e --arg live_path "$TEST_TARGET_HOME/.local/bin/claude" '
+        ([.checks[] | select(.id == "agent.path.claude") | .details] | first) == ("native (" + $live_path + ")") and
+        ([.checks[] | select(.id == "agent.claude") | .status] | first) == "pass"
+    ' >/dev/null 2>&1; then
+        harness_pass "doctor prefers system-state target_home over stale installed state"
+    else
+        harness_fail "doctor prefers system-state target_home over stale installed state" "$output"
     fi
 
     cleanup_mock_env
@@ -6815,8 +7414,7 @@ test_acfs_update_wrapper_uses_installed_layout_state_context() {
 EOF
     cat > "$TEST_INSTALLED_ACFS/scripts/lib/update.sh" <<'EOF'
 #!/usr/bin/env bash
-printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s STATE=%s BIN=%s ARG1=%s
-' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${ACFS_STATE_FILE:-}" "${ACFS_BIN_DIR:-}" "${1:-}"
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s STATE=%s BIN=%s ARG1=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${ACFS_STATE_FILE:-}" "${ACFS_BIN_DIR:-}" "${1:-}"
 EOF
     chmod +x "$TEST_INSTALLED_ACFS/scripts/lib/update.sh"
 
@@ -7518,8 +8116,7 @@ test_acfs_global_wrapper_uses_installed_layout_state_context() {
 EOF
     cat > "$TEST_INSTALLED_ACFS/bin/acfs" <<'EOF'
 #!/usr/bin/env bash
-printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s STATE=%s BIN=%s ARG1=%s
-' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${ACFS_STATE_FILE:-}" "${ACFS_BIN_DIR:-}" "${1:-}"
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s STATE=%s BIN=%s ARG1=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${ACFS_STATE_FILE:-}" "${ACFS_BIN_DIR:-}" "${1:-}"
 EOF
     chmod +x "$TEST_INSTALLED_ACFS/bin/acfs"
 
@@ -7957,6 +8554,40 @@ JSON
 
     cleanup_mock_env
 }
+
+
+test_doctor_agent_checks_ignore_other_user_home_bin_dir_from_state() {
+    setup_cross_home_bin_dir_env
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$STALE_HOME/.local/bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+    write_fake_command "$STALE_HOME/.local/bin/claude" "claude stale"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --json)
+
+    if printf '%s\n' "$output" | jq -e --arg target_path "$TEST_TARGET_HOME/.local/bin/claude" --arg stale_path "$STALE_HOME/.local/bin/claude" '
+        (([.checks[] | select(.id == "agent.path.claude") | .details] | first) | contains($target_path)) and
+        ((([.checks[] | select(.id == "agent.path.claude") | .details] | first) | contains($stale_path)) | not)
+    ' >/dev/null 2>&1; then
+        harness_pass "doctor agent checks ignore other-user home bin_dir from state"
+    else
+        harness_fail "doctor agent checks ignore other-user home bin_dir from state" "$output"
+    fi
+
+    cleanup_mock_env
+}
 test_doctor_deep_optional_probes_use_target_home_under_root_home() {
     setup_installed_layout_env
 
@@ -8306,6 +8937,44 @@ EOF
     cleanup_mock_env
 }
 
+
+test_onboard_auth_checks_ignore_other_user_home_bin_dir_from_state() {
+    setup_cross_home_bin_dir_env
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$STALE_HOME/.local/bin",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "current_phase": { "id": "bootstrap" },
+  "current_step": "Installing tools"
+}
+EOF
+    cat > "$STALE_HOME/.local/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$STALE_HOME/.local/bin/gh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash -lc 'source "'"$ONBOARD_SH"'" help >/dev/null; check_auth_status github && status=0 || status=$?; printf "%s\n" "$status"')
+
+    if [[ "$output" != "0" ]]; then
+        harness_pass "onboard auth checks ignore other-user home bin_dir from state"
+    else
+        harness_fail "onboard auth checks ignore other-user home bin_dir from state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_onboard_gemini_vertex_auth_finds_target_google_cloud_sdk_bin_outside_current_path() {
     setup_installed_layout_env
 
@@ -8633,12 +9302,17 @@ test_runtime_helpers_do_not_guess_home_paths_from_usernames() {
             "$CONTINUE_SH" "$DASHBOARD_SH" "$INFO_SH" "$CHANGELOG_SH" "$EXPORT_CONFIG_SH" \
             "$STATUS_SH" "$SUPPORT_SH" "$CHEATSHEET_SH" "$DOCTOR_SH" \
             "$REPO_ROOT/scripts/lib/doctor_fix.sh" "$NOTIFY_SH" "$NOTIFICATIONS_SH" \
-            "$WEBHOOK_SH" "$SMOKE_TEST_SH" "$STATE_SH" 2>/dev/null || true
+            "$WEBHOOK_SH" "$SMOKE_TEST_SH" "$STATE_SH" "$SERVICES_SETUP_SH" "$PREFLIGHT_SH" "$ONBOARD_SH" 2>/dev/null || true
         grep -RFn 'echo "/home/$user"' \
             "$CONTINUE_SH" "$DASHBOARD_SH" "$INFO_SH" "$CHANGELOG_SH" "$EXPORT_CONFIG_SH" \
             "$STATUS_SH" "$SUPPORT_SH" "$CHEATSHEET_SH" 2>/dev/null || true
+        grep -RFn "printf '/home/%s' \"\\\$user\"" "$SERVICES_SETUP_SH" "$ONBOARD_SH" "$AUTOFIX_SH" 2>/dev/null || true
         grep -RFn "printf '/home/%s\\n' \"\\\$TARGET_USER\"" "$STATE_SH" 2>/dev/null || true
+        grep -RFn "printf '/home/%s\\n' \"\\\$target_user\"" "$PREFLIGHT_SH" "$UBUNTU_UPGRADE_SH" 2>/dev/null || true
         grep -RFn 'TARGET_HOME="/home/$TARGET_USER"' "$SMOKE_TEST_SH" 2>/dev/null || true
+        grep -RFn 'target_home="/home/$target_user"' "$OS_DETECT_SH" 2>/dev/null || true
+        grep -RFn 'TARGET_HOME="${2:-/home/${TARGET_USER}}"' "$TEST_INSTALL_ARTIFACTS_SH" 2>/dev/null || true
+        grep -RFn "printf '/home/%s\\n' \"\\\$target_user\"" "$TEST_INSTALL_ARTIFACTS_SH" 2>/dev/null || true
     } )"
 
     if [[ -z "$output" ]]; then
@@ -8664,6 +9338,135 @@ test_state_driven_helpers_reject_invalid_target_home_from_state() {
     fi
 }
 
+
+setup_live_home_adjacent_acfs_env() {
+    setup_mock_env
+
+    TEST_ROOT_HOME="$TEST_HOME/root-home"
+    TEST_TARGET_HOME="$TEST_HOME/custom-home"
+    STALE_HOME="$TEST_HOME/stale-home"
+    TEST_INSTALLED_ACFS="$TEST_TARGET_HOME/.acfs"
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    TEST_SYSTEM_STATE_FILE="$TEST_HOME/system-state/state.json"
+
+    mkdir -p "$TEST_ROOT_HOME" "$TEST_INSTALLED_ACFS" "$STALE_HOME" "$TEST_FAKE_BIN" "$(dirname "$TEST_SYSTEM_STATE_FILE")"
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<'JSON'
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z"
+}
+JSON
+    printf '2.0.0\n' > "$TEST_INSTALLED_ACFS/VERSION"
+
+    cat > "$TEST_SYSTEM_STATE_FILE" <<EOF
+{
+  "mode": "safe",
+  "target_user": "staleuser",
+  "target_home": "$STALE_HOME",
+  "started_at": "2030-01-01T00:00:00Z",
+  "last_updated": "2030-01-02T00:00:00Z"
+}
+EOF
+
+    cat > "$TEST_FAKE_BIN/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "passwd" ]] && [[ "\$#" -eq 1 ]]; then
+    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
+    echo "staleuser:x:1001:1001::${STALE_HOME}:/bin/bash"
+    exit 0
+fi
+if [[ "\$1" == "passwd" ]] && [[ "\$2" == "tester" ]]; then
+    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
+    exit 0
+fi
+if [[ "\$1" == "passwd" ]] && [[ "\$2" == "staleuser" ]]; then
+    echo "staleuser:x:1001:1001::${STALE_HOME}:/bin/bash"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+}
+
+test_export_config_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home() {
+    setup_live_home_adjacent_acfs_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         ACFS_HOME="$TEST_INSTALLED_ACFS"         ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_EXPORT_SCRIPT="$EXPORT_CONFIG_SH"         bash -lc '
+            source "$TEST_EXPORT_SCRIPT"
+            prepare_target_context
+            printf "user=%s\nhome=%s\nstate=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "${_EXPORT_STATE_FILE:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"user=tester"* ]]         && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]         && [[ "$output" == *"state=$TEST_INSTALLED_ACFS/state.json"* ]]; then
+        harness_pass "export-config prefers live home-adjacent ACFS path over stale state target_home"
+    else
+        harness_fail "export-config prefers live home-adjacent ACFS path over stale state target_home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_support_bundle_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home() {
+    setup_live_home_adjacent_acfs_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         ACFS_HOME="$TEST_INSTALLED_ACFS"         ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_SUPPORT_SCRIPT="$SUPPORT_SH"         bash -lc '
+            source "$TEST_SUPPORT_SCRIPT"
+            support_initialize_context
+            printf "user=%s\nhome=%s\nacfs=%s\n" "${SUPPORT_TARGET_USER:-}" "${SUPPORT_TARGET_HOME:-}" "${_SUPPORT_ACFS_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"user=tester"* ]]         && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]         && [[ "$output" == *"acfs=$TEST_INSTALLED_ACFS"* ]]; then
+        harness_pass "support bundle prefers live home-adjacent ACFS path over stale state target_home"
+    else
+        harness_fail "support bundle prefers live home-adjacent ACFS path over stale state target_home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_dashboard_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home() {
+    setup_live_home_adjacent_acfs_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         ACFS_HOME="$TEST_INSTALLED_ACFS"         ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_DASHBOARD_SCRIPT="$DASHBOARD_SH"         bash -lc '
+            source "$TEST_DASHBOARD_SCRIPT"
+            dashboard_prepare_context
+            printf "user=%s\nhome=%s\nacfs=%s\n" "${_DASHBOARD_RESOLVED_TARGET_USER:-}" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}" "${_DASHBOARD_ACFS_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"user=tester"* ]]         && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]         && [[ "$output" == *"acfs=$TEST_INSTALLED_ACFS"* ]]; then
+        harness_pass "dashboard prefers live home-adjacent ACFS path over stale state target_home"
+    else
+        harness_fail "dashboard prefers live home-adjacent ACFS path over stale state target_home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_cheatsheet_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home() {
+    setup_live_home_adjacent_acfs_env
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         ACFS_HOME="$TEST_INSTALLED_ACFS"         ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_CHEATSHEET_SCRIPT="$CHEATSHEET_SH"         bash -lc '
+            source "$TEST_CHEATSHEET_SCRIPT"
+            cheatsheet_prepare_context
+            printf "user=%s\nhome=%s\nacfs=%s\n" "${_CHEATSHEET_RESOLVED_TARGET_USER:-}" "${_CHEATSHEET_RESOLVED_TARGET_HOME:-}" "${_CHEATSHEET_ACFS_HOME:-}"
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"user=tester"* ]]         && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]         && [[ "$output" == *"acfs=$TEST_INSTALLED_ACFS"* ]]; then
+        harness_pass "cheatsheet prefers live home-adjacent ACFS path over stale state target_home"
+    else
+        harness_fail "cheatsheet prefers live home-adjacent ACFS path over stale state target_home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 main() {
     harness_init "ACFS Changelog/Export/Status Tests"
 
@@ -8683,13 +9486,18 @@ main() {
     test_services_setup_globals_are_initialized_under_set_u || true
     test_services_setup_setup_flows_tolerate_unset_status_keys || true
     test_services_setup_find_user_bin_checks_system_paths || true
+    test_services_setup_find_user_bin_ignores_other_user_home_bin_dir_override || true
     test_services_setup_repairs_invalid_bun_bin_from_target_user_paths || true
+    test_services_setup_init_target_context_repairs_stale_other_user_bun_bin || true
     test_services_setup_cloud_clis_use_find_user_bin || true
 
     harness_section "Stack"
     test_stack_is_installed_handles_unknown_tool_under_set_u || true
     test_stack_is_installed_ignores_current_shell_only_path_entries || true
     test_stack_target_has_command_finds_target_user_local_claude || true
+    test_stack_target_home_ignores_invalid_explicit_target_home_before_passwd_fallback || true
+    test_stack_target_command_path_ignores_other_user_home_bin_dir_override || true
+    test_stack_target_home_prefers_current_home_over_current_shell_only_getent || true
     test_stack_agent_mail_cli_path_ignores_current_shell_only_am || true
     test_stack_agent_mail_ready_ignores_current_shell_only_am || true
     test_stack_run_as_user_prefers_system_bins_over_current_shell_path || true
@@ -8748,12 +9556,14 @@ main() {
     harness_section "Export Config"
     test_export_config_json_is_valid || true
     test_export_config_uses_installed_layout_under_root_home || true
+    test_export_config_augment_path_ignores_other_user_home_bin_dir || true
     test_export_config_installed_script_ignores_poisoned_explicit_acfs_home || true
     test_export_config_uses_system_state_when_user_state_missing || true
     test_export_config_uses_system_state_target_home_when_getent_unavailable || true
     test_export_config_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_export_config_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
     test_export_config_can_be_sourced_without_mutating_caller_env || true
+    test_export_config_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
     test_export_config_ignores_relative_home_state_trap || true
     test_export_config_does_not_infer_target_home_from_markerless_acfs_home || true
 
@@ -8764,6 +9574,7 @@ main() {
     test_status_errors_on_malformed_state_json || true
     test_status_uses_installed_layout_under_root_home || true
     test_status_ignores_current_shell_only_binaries || true
+    test_status_binary_path_ignores_other_user_home_bin_dir_from_state || true
     test_status_uses_persisted_bin_dir_over_poisoned_env_bin_dir || true
     test_status_prefers_resolved_install_state_over_stale_system_state_for_target_context || true
     test_status_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
@@ -8804,6 +9615,7 @@ main() {
     test_dashboard_copy_install_uses_target_home_only_system_state || true
     test_dashboard_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_dashboard_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_dashboard_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
     test_dashboard_can_be_sourced_without_mutating_caller_env || true
     test_dashboard_copy_install_ignores_relative_home_trap || true
 
@@ -8823,9 +9635,11 @@ main() {
     test_smoke_bootstrap_recovers_local_passwd_when_getent_is_broken || true
     test_smoke_bootstrap_ignores_poisoned_current_user_env_and_path_tools || true
     test_cheatsheet_uses_installed_layout_and_target_path_under_root_home || true
+    test_cheatsheet_ignores_other_user_home_bin_dir_from_state || true
     test_cheatsheet_copy_install_uses_target_home_only_system_state || true
     test_cheatsheet_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_cheatsheet_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_cheatsheet_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
     test_cheatsheet_can_be_sourced_without_running_main || true
     test_cheatsheet_copy_install_ignores_relative_home_trap || true
 
@@ -8852,6 +9666,7 @@ main() {
     test_support_bundle_uses_system_state_target_home_when_getent_unavailable || true
     test_support_bundle_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_support_bundle_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
+    test_support_bundle_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
     test_support_can_be_sourced_without_running_main || true
     test_onboard_cli_aliases_work_in_zero_lessons_mode || true
     test_onboard_repairs_malformed_progress_before_showing_lesson || true
@@ -8861,6 +9676,7 @@ main() {
     test_onboard_auth_checks_use_installed_target_home_under_root_home || true
     test_onboard_auth_checks_find_target_binaries_outside_current_path || true
     test_onboard_auth_checks_ignore_poisoned_current_path_and_env_bin_dir || true
+    test_onboard_auth_checks_ignore_other_user_home_bin_dir_from_state || true
     test_onboard_gemini_vertex_auth_finds_target_google_cloud_sdk_bin_outside_current_path || true
     test_onboard_gemini_vertex_auth_finds_target_gcloud_outside_current_path || true
     test_onboard_copy_install_uses_system_state_under_root_home || true
@@ -8871,10 +9687,18 @@ main() {
     test_onboard_can_be_sourced_without_mutating_caller_env || true
     test_onboard_copy_install_ignores_relative_home_trap || true
 
+    harness_section "Runtime Helper Libs"
+    test_cli_tools_ignore_other_user_home_bin_dir_override || true
+    test_agents_ignore_other_user_home_bin_dir_override || true
+    test_github_api_binary_path_ignores_other_user_home_bin_dir_override || true
+    test_nightly_update_ignores_other_user_home_bin_dir_before_preflight_path || true
+    test_nightly_update_ignores_stale_explicit_target_home_before_preflight_path || true
+
     harness_section "Entrypoint Dispatch"
     test_doctor_entrypoint_dispatches_helper_commands || true
     test_doctor_dispatches_installed_layout_under_root_home || true
     test_doctor_ignores_relative_home_state_trap || true
+    test_doctor_uses_system_state_target_home_when_installed_state_is_stale || true
     test_doctor_prefers_target_home_over_poisoned_acfs_home || true
     test_doctor_manifest_checks_prefer_system_bins_over_current_shell_path || true
     test_doctor_manifest_checks_fail_closed_when_target_home_is_unresolved || true
@@ -8915,6 +9739,7 @@ main() {
     test_acfs_global_wrapper_uses_installed_layout_state_context || true
     test_doctor_agent_checks_use_target_context_under_root_home || true
     test_doctor_agent_checks_prefer_persisted_bin_dir_over_poisoned_env_bin_dir || true
+    test_doctor_agent_checks_ignore_other_user_home_bin_dir_from_state || true
     test_doctor_deep_agent_auth_uses_target_context_under_root_home || true
     test_doctor_deep_gemini_auth_finds_target_google_cloud_sdk_bin_under_root_home || true
     test_doctor_deep_optional_probes_use_target_home_under_root_home || true

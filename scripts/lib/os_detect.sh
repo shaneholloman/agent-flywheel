@@ -89,8 +89,6 @@ is_fresh_vps() {
             target_home="/root"
         elif [[ "$target_user" == "$(whoami 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
             target_home="${HOME%/}"
-        elif [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            target_home="/home/$target_user"
         fi
     fi
 

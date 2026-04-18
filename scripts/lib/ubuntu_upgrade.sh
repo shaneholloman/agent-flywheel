@@ -34,10 +34,34 @@ declare -f log_step &>/dev/null || log_step() { echo "[*] $1" >&2; }
 declare -f log_section &>/dev/null || log_section() { echo ""; echo "=== $1 ===" >&2; }
 declare -f log_info &>/dev/null || log_info() { log_detail "$1"; }
 
+ubuntu_lookup_passwd_home() {
+    local target_user="${1:-}"
+    local passwd_entry=""
+    local home_candidate=""
+
+    [[ -n "$target_user" ]] || return 1
+
+    if command -v getent >/dev/null 2>&1; then
+        passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
+    elif [[ -r /etc/passwd ]]; then
+        passwd_entry="$(awk -F: -v u="$target_user" '$1==u{print $0; exit}' /etc/passwd 2>/dev/null || true)"
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+
+    home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+    if [[ -n "$home_candidate" ]] && [[ "$home_candidate" == /* ]] && [[ "$home_candidate" != "/" ]]; then
+        printf '%s\n' "${home_candidate%/}"
+        return 0
+    fi
+
+    return 1
+}
+
 ubuntu_resolve_target_home() {
     local target_user="${1:-${TARGET_USER:-ubuntu}}"
-    local passwd_entry=""
     local current_user=""
+    local resolved_home=""
 
     if [[ -n "${TARGET_HOME:-}" ]] && [[ "${TARGET_HOME}" == /* ]] && [[ "${TARGET_HOME}" != "/" ]]; then
         printf '%s\n' "${TARGET_HOME%/}"
@@ -49,23 +73,15 @@ ubuntu_resolve_target_home() {
         return 0
     fi
 
-    passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
-    if [[ -n "$passwd_entry" ]]; then
-        passwd_entry="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-        if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]] && [[ "$passwd_entry" != "/" ]]; then
-            printf '%s\n' "${passwd_entry%/}"
-            return 0
-        fi
-    fi
-
-    current_user="$(whoami 2>/dev/null || true)"
-    if [[ "$current_user" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-        printf '%s\n' "${HOME%/}"
+    resolved_home="$(ubuntu_lookup_passwd_home "$target_user" 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "$resolved_home"
         return 0
     fi
 
-    if [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        printf '/home/%s\n' "$target_user"
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        printf '%s\n' "${HOME%/}"
         return 0
     fi
 
@@ -1105,6 +1121,27 @@ upgrade_setup_infrastructure() {
     shift
     local install_args=("$@")
     local service_template="${source_dir}/scripts/templates/acfs-upgrade-resume.service"
+    local resolved_target_home=""
+    local resolved_acfs_home=""
+    local resolved_acfs_state_file=""
+
+    resolved_target_home="$(ubuntu_resolve_target_home "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+    if [[ -z "$resolved_target_home" ]]; then
+        log_error "Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}' while preparing upgrade resume infrastructure"
+        return 1
+    fi
+
+    resolved_acfs_home="${ACFS_HOME:-${resolved_target_home}/.acfs}"
+    if [[ -z "$resolved_acfs_home" ]] || [[ "$resolved_acfs_home" != /* ]] || [[ "$resolved_acfs_home" == "/" ]]; then
+        log_error "Invalid ACFS_HOME for resume infrastructure: ${resolved_acfs_home:-<empty>}"
+        return 1
+    fi
+
+    resolved_acfs_state_file="${ACFS_STATE_FILE:-${resolved_acfs_home}/state.json}"
+    if [[ -z "$resolved_acfs_state_file" ]] || [[ "$resolved_acfs_state_file" != /* ]] || [[ "$resolved_acfs_state_file" == "/" ]]; then
+        log_error "Invalid ACFS_STATE_FILE for resume infrastructure: ${resolved_acfs_state_file:-<empty>}"
+        return 1
+    fi
 
     log_step "Setting up upgrade resume infrastructure..."
 
@@ -1137,7 +1174,7 @@ upgrade_setup_infrastructure() {
 
     # Copy current state file if exists
     local state_file
-    state_file="$(state_get_file 2>/dev/null || echo "${HOME}/.acfs/state.json")"
+    state_file="$(state_get_file 2>/dev/null || printf '%s\n' "$resolved_acfs_state_file")"
     local dest_state_file="${ACFS_RESUME_DIR}/state.json"
     if [[ -f "$state_file" ]] && [[ "$state_file" != "$dest_state_file" ]]; then
         cp "$state_file" "$dest_state_file"
@@ -1169,16 +1206,14 @@ upgrade_setup_infrastructure() {
     repo_ref="${ACFS_COMMIT_SHA_FULL:-${ACFS_REF:-main}}"
     local source_dir_q repo_ref_q install_url install_url_q
     local target_user_q target_home_q acfs_home_q acfs_state_file_q continue_home_q
-    local resolved_target_home=""
-    resolved_target_home="$(ubuntu_resolve_target_home "${TARGET_USER:-ubuntu}")"
     source_dir_q=$(printf '%q' "$source_dir")
     repo_ref_q=$(printf '%q' "$repo_ref")
     install_url="https://raw.githubusercontent.com/${repo_owner}/${repo_name}/${repo_ref}/install.sh"
     install_url_q=$(printf '%q' "$install_url")
     target_user_q=$(printf '%q' "${TARGET_USER:-ubuntu}")
     target_home_q=$(printf '%q' "$resolved_target_home")
-    acfs_home_q=$(printf '%q' "${ACFS_HOME:-${resolved_target_home}/.acfs}")
-    acfs_state_file_q=$(printf '%q' "${ACFS_STATE_FILE:-${ACFS_HOME:-${resolved_target_home}/.acfs}/state.json}")
+    acfs_home_q=$(printf '%q' "$resolved_acfs_home")
+    acfs_state_file_q=$(printf '%q' "$resolved_acfs_state_file")
     continue_home_q=$(printf '%q' "$resolved_target_home")
 
     local -a continue_args=("${install_args[@]}")

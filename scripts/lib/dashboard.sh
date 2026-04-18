@@ -152,13 +152,11 @@ dashboard_read_user_for_home() {
 
     if command -v getent &>/dev/null; then
         while IFS= read -r passwd_line; do
-            passwd_home="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s
-' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            passwd_home="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
             [[ "$passwd_home" == "$user_home" ]] || continue
             candidate_user="${passwd_line%%:*}"
             if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-                printf '%s
-' "$candidate_user"
+                printf '%s\n' "$candidate_user"
                 return 0
             fi
         done < <(getent passwd 2>/dev/null || true)
@@ -166,13 +164,11 @@ dashboard_read_user_for_home() {
 
     if [[ -r /etc/passwd ]]; then
         while IFS= read -r passwd_line; do
-            passwd_home="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s
-' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            passwd_home="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
             [[ "$passwd_home" == "$user_home" ]] || continue
             candidate_user="${passwd_line%%:*}"
             if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-                printf '%s
-' "$candidate_user"
+                printf '%s\n' "$candidate_user"
                 return 0
             fi
         done < /etc/passwd
@@ -182,15 +178,13 @@ dashboard_read_user_for_home() {
     if [[ -n "$current_home" ]] && [[ "$user_home" == "$current_home" ]]; then
         candidate_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
         if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '%s
-' "$candidate_user"
+            printf '%s\n' "$candidate_user"
             return 0
         fi
     fi
 
     if [[ "$user_home" == "/root" ]]; then
-        printf 'root
-'
+        printf 'root\n'
         return 0
     fi
 
@@ -199,15 +193,13 @@ dashboard_read_user_for_home() {
     if [[ -n "$candidate_user" ]]; then
         current_home="$(dashboard_home_for_user "$candidate_user" 2>/dev/null || true)"
         if [[ -n "$current_home" ]] && [[ "$current_home" == "$user_home" ]]; then
-            printf '%s
-' "$candidate_user"
+            printf '%s\n' "$candidate_user"
             return 0
         fi
     fi
 
     return 1
 }
-
 dashboard_read_state_string() {
     local state_file="$1"
     local key="$2"
@@ -347,10 +339,8 @@ dashboard_infer_target_home_from_acfs_home() {
     inferred_home="${acfs_home_candidate%/.acfs}"
     inferred_home="$(dashboard_sanitize_abs_nonroot_path "$inferred_home" 2>/dev/null || true)"
     [[ -n "$inferred_home" ]] || return 1
-    printf '%s
-' "$inferred_home"
+    printf '%s\n' "$inferred_home"
 }
-
 dashboard_prepare_context() {
     local state_file=""
     local path_home=""
@@ -379,11 +369,13 @@ dashboard_prepare_context() {
     fi
 
     if [[ -z "$_DASHBOARD_RESOLVED_TARGET_USER" ]]; then
-        _DASHBOARD_RESOLVED_TARGET_USER="$(dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null ||             dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+        _DASHBOARD_RESOLVED_TARGET_USER="$(dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || \
+            dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
     fi
 
     if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
-        _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_read_target_home_from_state "$_DASHBOARD_SYSTEM_STATE_FILE" 2>/dev/null ||             dashboard_read_target_home_from_state "$state_file" 2>/dev/null || true)"
+        _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_read_target_home_from_state "$_DASHBOARD_SYSTEM_STATE_FILE" 2>/dev/null || \
+            dashboard_read_target_home_from_state "$state_file" 2>/dev/null || true)"
         if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$_DASHBOARD_RESOLVED_TARGET_USER" ]]; then
             _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_home_for_user "$_DASHBOARD_RESOLVED_TARGET_USER" 2>/dev/null || true)"
         fi

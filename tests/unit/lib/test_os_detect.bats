@@ -106,6 +106,17 @@ EOF
     assert_success
 }
 
+@test "is_fresh_vps: refuses to guess a home for unresolved different target user" {
+    export TARGET_USER="missinguser"
+    unset TARGET_HOME
+
+    stub_command "getent" "" 2
+    stub_command "whoami" "ubuntu"
+
+    run is_fresh_vps
+    assert_failure
+}
+
 @test "get_arch: maps x86_64 to amd64" {
     stub_command "uname" "x86_64"
     

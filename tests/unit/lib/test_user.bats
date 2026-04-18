@@ -156,7 +156,7 @@ EOF
     assert_failure
 }
 
-@test "user_home_for_user: accepts dotted fallback usernames" {
+@test "user_home_for_user: does not guess dotted home paths" {
     export HOME="/"
 
     getent() {
@@ -164,6 +164,36 @@ EOF
     }
 
     run user_home_for_user "john.doe"
+    assert_failure
+}
+
+@test "user.sh: sourcing leaves TARGET_HOME empty when unresolved" {
+    run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
+        set -euo pipefail
+        getent() { return 2; }
+        HOME="/"
+        TARGET_USER="john.doe"
+        TARGET_HOME=""
+        source "$PROJECT_ROOT/scripts/lib/logging.sh"
+        source "$PROJECT_ROOT/scripts/lib/user.sh"
+        printf "target_home=%s\n" "${TARGET_HOME:-}"
+    '
     assert_success
-    assert_output "/home/john.doe"
+    assert_output "target_home="
+}
+
+@test "migrate_ssh_keys: fails closed when TARGET_HOME is unresolved" {
+    mkdir -p "$HOME/.ssh"
+    echo "ssh-rsa TESTKEY" > "$HOME/.ssh/authorized_keys"
+
+    export TARGET_HOME=""
+    stub_command "whoami" "otheruser"
+
+    getent() {
+        return 2
+    }
+
+    run migrate_ssh_keys
+    assert_failure
+    assert_output --partial "Unable to resolve TARGET_HOME for 'testuser'"
 }

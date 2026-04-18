@@ -27,6 +27,24 @@ autofix_validate_target_user() {
     [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]
 }
 
+autofix_lookup_passwd_home() {
+    local user="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$user" ]] || return 1
+
+    if command -v getent >/dev/null 2>&1; then
+        passwd_home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6 | head -n1 || true)"
+    elif [[ -r /etc/passwd ]]; then
+        passwd_home="$(awk -F: -v u="$user" '$1==u{print $6; exit}' /etc/passwd 2>/dev/null || true)"
+    fi
+
+    passwd_home="$(autofix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+    [[ -n "$passwd_home" ]] || return 1
+
+    printf '%s\n' "$passwd_home"
+}
+
 autofix_home_for_user() {
     local user="${1:-}"
     local passwd_home=""
@@ -38,8 +56,8 @@ autofix_home_for_user() {
         return 0
     fi
 
-    passwd_home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6 | head -n1 || true)"
-    if passwd_home="$(autofix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null)"; then
+    passwd_home="$(autofix_lookup_passwd_home "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_home" ]]; then
         printf '%s\n' "$passwd_home"
         return 0
     fi
@@ -52,7 +70,7 @@ autofix_home_for_user() {
         fi
     fi
 
-    printf '/home/%s\n' "$user"
+    return 1
 }
 
 autofix_resolve_current_home() {

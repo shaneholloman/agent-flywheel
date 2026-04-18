@@ -49,10 +49,6 @@ services_setup_resolve_current_home() {
             fi
         fi
 
-        if [[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '/home/%s\n' "$current_user"
-            return 0
-        fi
     fi
 
     return 1
@@ -139,6 +135,7 @@ services_setup_validate_target_user() {
 resolve_home_dir() {
     local user="$1"
     local home=""
+    local current_user=""
 
     if command -v getent &>/dev/null; then
         home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
@@ -158,17 +155,79 @@ resolve_home_dir() {
         printf '/root'
         return 0
     fi
-    if [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-        printf '/home/%s' "$user"
-        return 0
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "$user" ]]; then
+        home="$(services_setup_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$home" ]]; then
+            printf '%s' "$home"
+            return 0
+        fi
     fi
 
     return 1
 }
 
+services_setup_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="$(services_setup_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    [[ -n "$bin_dir" ]] || return 1
+    base_home="$(services_setup_sanitize_abs_nonroot_path "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="$(services_setup_sanitize_abs_nonroot_path "$hinted_home" 2>/dev/null || true)"
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(services_setup_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+    fi
+
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(services_setup_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < /etc/passwd
+    fi
+
+    printf '%s\n' "$bin_dir"
+}
+
 BUN_BIN="${BUN_BIN:-}"
 
 init_target_context() {
+    local bun_bin_dir=""
+
     services_setup_validate_target_user "$TARGET_USER" || return 1
 
     if [[ -z "${TARGET_HOME:-}" ]]; then
@@ -177,6 +236,14 @@ init_target_context() {
     if [[ -z "${TARGET_HOME:-}" ]]; then
         log_error "Unable to determine home directory for user: $TARGET_USER"
         return 1
+    fi
+
+    ACFS_BIN_DIR="$(services_setup_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$TARGET_HOME" 2>/dev/null || true)"
+    export ACFS_BIN_DIR
+
+    if [[ -n "${BUN_BIN:-}" && -x "${BUN_BIN:-}" ]]; then
+        bun_bin_dir="$(services_setup_validate_bin_dir_for_home "${BUN_BIN%/*}" "$TARGET_HOME" 2>/dev/null || true)"
+        [[ -n "$bun_bin_dir" ]] || BUN_BIN=""
     fi
 
     if [[ -z "${BUN_BIN:-}" || ! -x "${BUN_BIN:-}" ]]; then
@@ -194,13 +261,19 @@ declare -A SERVICE_STATUS=()
 # Run a command as target user
 run_as_user() {
     local -a env_cmd=()
+    local primary_bin_dir=""
 
     services_setup_validate_target_user "$TARGET_USER" || return 1
+
+    primary_bin_dir="$(services_setup_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -z "$primary_bin_dir" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
+        primary_bin_dir="$TARGET_HOME/.local/bin"
+    fi
 
     env_cmd=("env" "TARGET_USER=$TARGET_USER")
     [[ -n "${TARGET_HOME:-}" ]] && env_cmd+=("TARGET_HOME=$TARGET_HOME" "HOME=$TARGET_HOME")
     [[ -n "${ACFS_HOME:-}" ]] && env_cmd+=("ACFS_HOME=$ACFS_HOME")
-    [[ -n "${ACFS_BIN_DIR:-}" ]] && env_cmd+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")
+    [[ -n "$primary_bin_dir" ]] && env_cmd+=("ACFS_BIN_DIR=$primary_bin_dir")
 
     if [[ "$(whoami)" == "$TARGET_USER" ]]; then
         "${env_cmd[@]}" "$@"
@@ -229,13 +302,19 @@ run_as_user() {
 run_as_user_shell() {
     local cmd="$1"
     local -a env_cmd=()
+    local primary_bin_dir=""
 
     services_setup_validate_target_user "$TARGET_USER" || return 1
+
+    primary_bin_dir="$(services_setup_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -z "$primary_bin_dir" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
+        primary_bin_dir="$TARGET_HOME/.local/bin"
+    fi
 
     env_cmd=("env" "TARGET_USER=$TARGET_USER")
     [[ -n "${TARGET_HOME:-}" ]] && env_cmd+=("TARGET_HOME=$TARGET_HOME" "HOME=$TARGET_HOME")
     [[ -n "${ACFS_HOME:-}" ]] && env_cmd+=("ACFS_HOME=$ACFS_HOME")
-    [[ -n "${ACFS_BIN_DIR:-}" ]] && env_cmd+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")
+    [[ -n "$primary_bin_dir" ]] && env_cmd+=("ACFS_BIN_DIR=$primary_bin_dir")
 
     if [[ "$(whoami)" == "$TARGET_USER" ]]; then
         "${env_cmd[@]}" bash -c "$cmd"
@@ -258,6 +337,8 @@ run_as_user_shell() {
 user_command_exists() {
     local cmd="$1"
     local primary_bin_dir="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    primary_bin_dir="$(services_setup_validate_bin_dir_for_home "$primary_bin_dir" "$TARGET_HOME" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$TARGET_HOME/.local/bin"
     local target_path_prefix="$primary_bin_dir:$TARGET_HOME/.local/bin:$TARGET_HOME/.acfs/bin:$TARGET_HOME/.cargo/bin:$TARGET_HOME/.bun/bin:$TARGET_HOME/.atuin/bin:$TARGET_HOME/go/bin"
     # Include common user install locations (bun/cargo/etc) even when running
     # via sudo, which may otherwise provide a restricted PATH.
@@ -297,6 +378,9 @@ user_dir_has_content() {
 find_user_bin() {
     local name="$1"
     local primary_bin_dir="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+
+    primary_bin_dir="$(services_setup_validate_bin_dir_for_home "$primary_bin_dir" "$TARGET_HOME" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$TARGET_HOME/.local/bin"
 
     local candidates=(
         "$primary_bin_dir/$name"

@@ -231,6 +231,26 @@ EOF
     fi
 }
 
+@test "acfs_ensure_primary_bin_dir: does not use current HOME when TARGET_HOME is unresolved" {
+    export TARGET_USER="missinguser"
+    unset TARGET_HOME
+    export HOME="$(create_temp_dir)"
+    export ACFS_BIN_DIR="/usr/local/bin"
+
+    spy_command "sudo"
+    stub_command "getent" "" 2
+    stub_command "id" "otheruser" 0
+    stub_command "whoami" "otheruser" 0
+
+    run acfs_ensure_primary_bin_dir
+    assert_failure
+    assert_output --partial "Invalid TARGET_HOME for 'missinguser'"
+
+    if [[ -f "$STUB_DIR/sudo.log" ]] && [[ -s "$STUB_DIR/sudo.log" ]]; then
+        fail "acfs_ensure_primary_bin_dir should not invoke sudo when TARGET_HOME cannot be resolved"
+    fi
+}
+
 @test "_acfs_force_reinstall_enabled: returns 0 when true" {
     export ACFS_FORCE_REINSTALL="true"
     run _acfs_force_reinstall_enabled

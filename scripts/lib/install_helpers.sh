@@ -749,11 +749,10 @@ acfs_validate_primary_bin_dir() {
 acfs_primary_bin_dir_uses_root() {
     acfs_validate_primary_bin_dir >/dev/null || return 1
     [[ -n "${ACFS_BIN_DIR:-}" ]] || return 1
-    local target_home="${TARGET_HOME:-$HOME}"
-    [[ -n "$target_home" ]] || return 1
+    [[ -n "${TARGET_HOME:-}" ]] || return 1
 
     case "$ACFS_BIN_DIR" in
-        "$target_home"|"$target_home"/*)
+        "$TARGET_HOME"|"$TARGET_HOME"/*)
             return 1
             ;;
         *)

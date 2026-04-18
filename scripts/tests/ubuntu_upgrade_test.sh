@@ -413,6 +413,121 @@ test_preflight_disk_space_check() {
     fi
 }
 
+
+test_target_home_resolution_current_user_home_fallback() {
+    log_test "Target Home Resolution: Current User HOME Fallback"
+
+    local result=""
+    if result="$(
+        unset TARGET_HOME
+        HOME="/srv/alice"
+        getent() { return 2; }
+        id() {
+            if [[ "${1:-}" == "-un" ]]; then
+                printf '%s\n' 'alice'
+                return 0
+            fi
+            command id "$@"
+        }
+        whoami() { printf '%s\n' 'alice'; }
+        ubuntu_resolve_target_home 'alice'
+    )"; then
+        assert_equals "/srv/alice" "$result" "current user HOME fallback works"
+    else
+        log_fail "current user HOME fallback should succeed"
+    fi
+}
+
+test_target_home_resolution_rejects_missing_user_guess() {
+    log_test "Target Home Resolution Rejects Guessed /home"
+
+    if (
+        unset TARGET_HOME
+        HOME="/root"
+        getent() { return 2; }
+        id() {
+            if [[ "${1:-}" == "-un" ]]; then
+                printf '%s\n' 'root'
+                return 0
+            fi
+            command id "$@"
+        }
+        whoami() { printf '%s\n' 'root'; }
+        ubuntu_resolve_target_home 'missinguser' >/dev/null
+    ); then
+        log_fail "missing user should not synthesize /home/missinguser"
+    else
+        log_pass "missing user does not synthesize /home/<user>"
+    fi
+}
+
+test_upgrade_setup_infrastructure_persists_resolved_target_home() {
+    log_test "Resume Infrastructure Persists Resolved Target Home"
+
+    local test_dir=""
+    local result=""
+    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade-test.XXXXXX")"
+
+    if result="$(
+        ACFS_RESUME_DIR="$test_dir/resume"
+        TARGET_USER="alice"
+        unset TARGET_HOME ACFS_HOME ACFS_STATE_FILE
+        HOME="/root"
+        getent() {
+            if [[ "${1:-}" == "passwd" && "${2:-}" == "alice" ]]; then
+                printf '%s\n' 'alice:x:1000:1000::/srv/alice:/bin/bash'
+                return 0
+            fi
+            return 2
+        }
+        cp() { :; }
+        chmod() { :; }
+        state_get_file() { return 1; }
+        upgrade_setup_infrastructure "$PROJECT_ROOT" --yes >/dev/null 2>&1 || exit 1
+        # shellcheck disable=SC1090
+        source "$ACFS_RESUME_DIR/continue_context.env"
+        printf 'target=%s\nacfs=%s\nstate=%s\nhome=%s\n'             "$CONTINUE_TARGET_HOME" "$CONTINUE_ACFS_HOME" "$CONTINUE_ACFS_STATE_FILE" "$CONTINUE_HOME"
+    )"; then
+        if [[ "$result" == $'target=/srv/alice\nacfs=/srv/alice/.acfs\nstate=/srv/alice/.acfs/state.json\nhome=/srv/alice' ]]; then
+            log_pass "resume context uses resolved target home"
+        else
+            log_fail "resume context uses resolved target home: unexpected output: $result"
+        fi
+    else
+        log_fail "resume infrastructure should succeed with passwd-resolved target home"
+    fi
+}
+
+test_upgrade_setup_infrastructure_rejects_unresolved_target_home() {
+    log_test "Resume Infrastructure Rejects Unresolved Target Home"
+
+    local test_dir=""
+    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade-test.XXXXXX")"
+
+    if (
+        ACFS_RESUME_DIR="$test_dir/resume"
+        TARGET_USER="missinguser"
+        unset TARGET_HOME ACFS_HOME ACFS_STATE_FILE
+        HOME="/root"
+        getent() { return 2; }
+        id() {
+            if [[ "${1:-}" == "-un" ]]; then
+                printf '%s\n' 'root'
+                return 0
+            fi
+            command id "$@"
+        }
+        whoami() { printf '%s\n' 'root'; }
+        upgrade_setup_infrastructure "$PROJECT_ROOT" --yes >/dev/null 2>&1
+    ); then
+        log_fail "resume infrastructure should fail when target home cannot be resolved"
+    elif [[ -e "$test_dir/resume/continue_context.env" ]] || [[ -e "$test_dir/resume/continue_install.sh" ]]; then
+        log_fail "resume infrastructure should fail before writing continuation files"
+    else
+        log_pass "resume infrastructure fails closed when target home is unresolved"
+    fi
+}
+
 # ============================================================
 # State Function Tests
 # ============================================================
@@ -515,6 +630,13 @@ run_all_tests() {
     echo "--- Preflight Check Tests ---"
     test_preflight_detects_docker || true
     test_preflight_disk_space_check || true
+    echo ""
+
+    echo "--- Target Home Resolution Tests ---"
+    test_target_home_resolution_current_user_home_fallback || true
+    test_target_home_resolution_rejects_missing_user_guess || true
+    test_upgrade_setup_infrastructure_persists_resolved_target_home || true
+    test_upgrade_setup_infrastructure_rejects_unresolved_target_home || true
     echo ""
 
     echo "--- State Function Tests ---"

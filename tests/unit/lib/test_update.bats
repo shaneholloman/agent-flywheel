@@ -679,7 +679,8 @@ EOF
     run update_require_security
     assert_failure
     assert_output --partial "$ACFS_BIN_DIR/security.sh"
-    assert_output --partial "$ACFS_HOME/scripts/lib/security.sh"
+    assert_output --partial "$HOME/.acfs/scripts/lib/security.sh"
+    refute_output --partial "$ACFS_HOME/scripts/lib/security.sh"
     refute_output --partial "    - /scripts/lib/security.sh"
 }
 
@@ -1108,6 +1109,7 @@ EOF
 
 @test "services-setup: probes custom and ACFS bin dirs for target-user commands" {
     local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
 
     run grep -F "services_setup_validate_target_user() {" "$services_setup"
     assert_success
@@ -1123,6 +1125,18 @@ EOF
 
     run grep -F '"$TARGET_HOME/.acfs/bin/$name"' "$services_setup"
     assert_success
+
+    run grep -F "printf '/home/%s\n' \"\$current_user\"" "$services_setup"
+    assert_failure
+
+    run grep -F "printf '/home/%s' \"\$user\"" "$services_setup"
+    assert_failure
+
+    run grep -F "printf '/home/%s\n' \"\$current_user\"" "$preflight"
+    assert_failure
+
+    run grep -F "printf '/home/%s\n' \"\$target_user\"" "$preflight"
+    assert_failure
 }
 
 @test "diagnostic helpers: prepend primary ACFS bin dir and ~/.acfs/bin" {
@@ -1166,7 +1180,7 @@ EOF
     assert_success
     run grep -F 'local seen_path=":$current_path:"' "$update"
     assert_success
-    run grep -F 'sanitized_primary_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update"
+    run grep -F 'sanitized_primary_bin="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "${HOME:-}" 2>/dev/null || true)"' "$update"
     assert_success
     run grep -F '$HOME/google-cloud-sdk/bin' "$update"
     assert_success
@@ -1188,7 +1202,7 @@ EOF
     assert_success
     run grep -F '$current_state_file' "$update"
     assert_success
-    run grep -F 'explicit_bin_dir="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update"
+    run grep -F 'explicit_bin_dir="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"' "$update"
     assert_success
     run grep -F 'explicit_state_file="$(update_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"' "$update"
     assert_success
@@ -1198,7 +1212,7 @@ EOF
     assert_success
     run grep -F 'local -a candidates=()' "$update"
     assert_success
-    run grep -F 'configured_bin="$(update_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update"
+    run grep -F 'configured_bin="$(update_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"' "$update"
     assert_success
     run grep -F '[[ -n "$target_home" ]] && preferred_src="$target_home/.atuin/bin/atuin"' "$update"
     assert_success
@@ -1350,6 +1364,55 @@ EOF
     [[ -f "$target_home/.acfs/logs/updates/nightly-2025-01-01.log" ]]
 }
 
+@test "nightly update prefers live target-home updater over stale persisted bin dir" {
+    local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local root_home
+    local target_home
+    local stale_home
+    local system_state
+
+    root_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$root_home/system-state.json"
+
+    mkdir -p         "$root_home/.acfs/scripts/lib"         "$target_home/.acfs/bin"         "$target_home/.acfs/scripts/lib"         "$target_home/.acfs/logs/updates"         "$stale_home/.local/bin"
+
+    cat > "$root_home/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$target_home/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$target_home",
+  "bin_dir": "$stale_home/.local/bin"
+}
+EOF
+    cat > "$target_home/.acfs/bin/acfs-update" <<'EOF'
+#!/usr/bin/env bash
+printf 'LIVE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s
+' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    cat > "$stale_home/.local/bin/acfs-update" <<'EOF'
+#!/usr/bin/env bash
+printf 'STALE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s
+' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    chmod +x "$target_home/.acfs/bin/acfs-update" "$stale_home/.local/bin/acfs-update"
+
+    run env HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
+
+    assert_success
+    assert_output --partial "Running: $target_home/.acfs/bin/acfs-update --yes --quiet --no-self-update"
+    refute_output --partial "STALE_HOME="
+    assert_output --partial "LIVE_HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
+    [[ -f "$target_home/.acfs/logs/updates/nightly-2025-01-01.log" ]]
+}
+
 @test "nightly update falls back to target home binaries when system state omits bin dir" {
     local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
     local root_home
@@ -1415,11 +1478,13 @@ EOF
     run grep -F '[[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$preflight"
     assert_success
 
-    run grep -F '[[ "$current_user" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$services_setup"
+    run grep -F '[[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$services_setup"
     assert_success
 
-    run grep -F '[[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$onboard"
+    run grep -F 'home_candidate="$(onboard_lookup_passwd_home "$user" 2>/dev/null || true)"' "$onboard"
     assert_success
+    run grep -F "printf '/home/%s\n' \"\$user\"" "$onboard"
+    assert_failure
 }
 
 @test "run-as-user helper libs validate target context and preserve repaired env" {
@@ -1544,6 +1609,164 @@ EOF
     run _stack_target_home "tester"
     assert_success
     assert_output "$resolved_home"
+}
+
+@test "services-setup: resolve_home_dir prefers current HOME over guessed standard path" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local resolved_home
+    resolved_home="$(create_temp_dir)"
+
+    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$services_setup")"
+
+    export HOME="$resolved_home"
+
+    getent() {
+        return 2
+    }
+
+    id() {
+        if [[ "$1" == "-un" ]]; then
+            printf 'tester\n'
+            return 0
+        fi
+        command id "$@"
+    }
+
+    whoami() {
+        printf 'tester\n'
+    }
+
+    run resolve_home_dir "tester"
+    assert_success
+    assert_output "$resolved_home"
+}
+
+@test "services-setup: resolve_current_home fails closed when HOME is invalid and passwd lookup fails" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+
+    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_resolve_current_home()/,/^}$/p' "$services_setup")"
+
+    export HOME="relative-home"
+
+    getent() {
+        return 2
+    }
+
+    id() {
+        if [[ "$1" == "-un" ]]; then
+            printf 'tester\n'
+            return 0
+        fi
+        command id "$@"
+    }
+
+    whoami() {
+        printf 'tester\n'
+    }
+
+    run services_setup_resolve_current_home
+    assert_failure
+    assert_output ""
+}
+
+@test "preflight: resolve_current_home fails closed when HOME is invalid and passwd lookup fails" {
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
+
+    eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$preflight")"
+
+    export HOME="relative-home"
+
+    getent() {
+        return 2
+    }
+
+    id() {
+        if [[ "$1" == "-un" ]]; then
+            printf 'tester\n'
+            return 0
+        fi
+        command id "$@"
+    }
+
+    whoami() {
+        printf 'tester\n'
+    }
+
+    run resolve_current_home
+    assert_failure
+    assert_output ""
+}
+
+@test "preflight: resolve_install_target_home fails closed for different unresolved target" {
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
+
+    eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_install_target_home()/,/^}$/p' "$preflight")"
+
+    export HOME="$(create_temp_dir)"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+
+    getent() {
+        return 2
+    }
+
+    id() {
+        if [[ "$1" == "-un" ]]; then
+            printf 'tester\n'
+            return 0
+        fi
+        command id "$@"
+    }
+
+    whoami() {
+        printf 'tester\n'
+    }
+
+    run resolve_install_target_home
+    assert_failure
+    assert_output ""
+}
+
+@test "preflight: binary helper ignores stale other-user ACFS_BIN_DIR" {
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
+    local current_home
+    local target_home
+    local tool_name="acfs-preflight-test-tool"
+
+    eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_validate_bin_dir_for_home()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_install_target_home()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_binary_path()/,/^}$/p' "$preflight")"
+
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    mkdir -p "$current_home/.local/bin" "$target_home/.local/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$current_home/.local/bin/$tool_name"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$target_home/.local/bin/$tool_name"
+    chmod +x "$current_home/.local/bin/$tool_name" "$target_home/.local/bin/$tool_name"
+
+    export HOME="$current_home"
+    export TARGET_HOME="$target_home"
+    unset TARGET_USER
+    export ACFS_BIN_DIR="$current_home/.local/bin"
+
+    run preflight_binary_path "$tool_name"
+    assert_success
+    assert_output "$target_home/.local/bin/$tool_name"
 }
 
 @test "run-as-user helper libs reject unresolved TARGET_HOME before sudo" {
@@ -2604,4 +2827,299 @@ EOF
     [[ "$(cat "$HOME/zoxide-attempts")" == "2" ]]
     [[ "$SUCCESS_COUNT" -eq 1 ]]
     [[ "$FAIL_COUNT" -eq 0 ]]
+}
+
+
+@test "update_preferred_user_bin_dir: ignores stale other-user ACFS_BIN_DIR" {
+    local current_home
+    local target_home
+    local stale_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+
+    mkdir -p "$stale_home/.local/bin"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+
+    getent() {
+        if [[ "$1" == "passwd" && "${2:-}" == "ubuntu" ]]; then
+            printf 'ubuntu:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            return 0
+        fi
+        if [[ "$1" == "passwd" && -z "${2:-}" ]]; then
+            printf 'ubuntu:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'other:x:1001:1001::%s:/bin/bash\n' "$stale_home"
+            return 0
+        fi
+        command getent "$@"
+    }
+
+    run update_preferred_user_bin_dir
+    assert_success
+    assert_output "$target_home/.local/bin"
+}
+
+@test "update_binary_path: ignores stale other-user ACFS_BIN_DIR when target binary exists" {
+    local current_home
+    local target_home
+    local stale_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+
+    mkdir -p "$target_home/.local/bin" "$stale_home/.local/bin"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+    unset ACFS_STATE_FILE
+    unset ACFS_HOME
+
+    cat > "$stale_home/.local/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "stale-home-gh"
+EOF
+    chmod +x "$stale_home/.local/bin/gh"
+
+    cat > "$target_home/.local/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "target-home-gh"
+EOF
+    chmod +x "$target_home/.local/bin/gh"
+
+    getent() {
+        if [[ "$1" == "passwd" && "${2:-}" == "ubuntu" ]]; then
+            printf 'ubuntu:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            return 0
+        fi
+        if [[ "$1" == "passwd" && -z "${2:-}" ]]; then
+            printf 'ubuntu:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'other:x:1001:1001::%s:/bin/bash\n' "$stale_home"
+            return 0
+        fi
+        command getent "$@"
+    }
+
+    run update_binary_path "gh"
+    assert_success
+    assert_output "$target_home/.local/bin/gh"
+}
+
+@test "update.sh: target path ignores stale other-user ACFS_BIN_DIR" {
+    local target_home
+    local stale_home
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+
+    mkdir -p "$target_home/.local/bin" "$target_home/.acfs/bin" "$target_home/google-cloud-sdk/bin" "$stale_home/.local/bin"
+
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+    PATH="/usr/bin:/bin"
+
+    getent() {
+        if [[ "$1" == "passwd" && -z "${2:-}" ]]; then
+            printf 'ubuntu:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'other:x:1001:1001::%s:/bin/bash\n' "$stale_home"
+            return 0
+        fi
+        command getent "$@"
+    }
+
+    run update_target_path "$target_home"
+    assert_success
+    [[ "$output" == "$target_home/.local/bin:"* ]]
+    refute_output --partial "$stale_home/.local/bin"
+}
+
+@test "update_require_security: ignores stale other-user ACFS_BIN_DIR" {
+    local current_home
+    local target_home
+    local stale_home
+    local target_marker
+    local stale_marker
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    target_marker="$BATS_TEST_TMPDIR/target-security.marker"
+    stale_marker="$BATS_TEST_TMPDIR/stale-security.marker"
+
+    mkdir -p "$target_home/.local/bin" "$stale_home/.local/bin"
+
+    cat > "$target_home/.local/bin/security.sh" <<EOF
+#!/usr/bin/env bash
+load_checksums() {
+    : > "$target_marker"
+    return 0
+}
+EOF
+    chmod +x "$target_home/.local/bin/security.sh"
+
+    cat > "$stale_home/.local/bin/security.sh" <<EOF
+#!/usr/bin/env bash
+load_checksums() {
+    : > "$stale_marker"
+    return 0
+}
+EOF
+    chmod +x "$stale_home/.local/bin/security.sh"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+    export ACFS_HOME="$current_home/missing-acfs"
+    unset ACFS_REPO_ROOT
+    export CHECKSUMS_LOCAL="$current_home/checksums.yaml"
+    UPDATE_SECURITY_READY=false
+
+    refresh_checksums() {
+        return 0
+    }
+
+    getent() {
+        if [[ "$1" == "passwd" && "${2:-}" == "ubuntu" ]]; then
+            printf 'ubuntu:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            return 0
+        fi
+        if [[ "$1" == "passwd" && -z "${2:-}" ]]; then
+            printf 'ubuntu:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'other:x:1001:1001::%s:/bin/bash\n' "$stale_home"
+            return 0
+        fi
+        command getent "$@"
+    }
+
+    run update_require_security
+    assert_success
+    [[ -f "$target_marker" ]]
+    [[ ! -e "$stale_marker" ]]
+}
+
+
+@test "update_runtime_primary_bin_dir: fails closed for different unresolved target" {
+    local current_home
+    current_home="$(create_temp_dir)"
+
+    mkdir -p "$current_home/.local/bin"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+    export ACFS_BIN_DIR="$current_home/.local/bin"
+
+    getent() {
+        return 2
+    }
+
+    run update_runtime_primary_bin_dir
+    assert_failure
+}
+
+@test "update_runtime_acfs_home: fails closed for different unresolved target" {
+    local current_home
+    current_home="$(create_temp_dir)"
+
+    mkdir -p "$current_home/.acfs"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+    export ACFS_HOME="$current_home/.acfs"
+
+    getent() {
+        return 2
+    }
+
+    run update_runtime_acfs_home
+    assert_failure
+}
+
+@test "update_require_security: does not fall back to current HOME when different target is unresolved" {
+    local current_home
+    local bin_marker
+    local acfs_marker
+    current_home="$(create_temp_dir)"
+    bin_marker="$BATS_TEST_TMPDIR/current-bin-security.marker"
+    acfs_marker="$BATS_TEST_TMPDIR/current-acfs-security.marker"
+
+    mkdir -p "$current_home/.local/bin" "$current_home/.acfs/scripts/lib"
+
+    cat > "$current_home/.local/bin/security.sh" <<EOF
+#!/usr/bin/env bash
+load_checksums() {
+    : > "$bin_marker"
+    return 0
+}
+EOF
+    chmod +x "$current_home/.local/bin/security.sh"
+
+    cat > "$current_home/.acfs/scripts/lib/security.sh" <<EOF
+#!/usr/bin/env bash
+load_checksums() {
+    : > "$acfs_marker"
+    return 0
+}
+EOF
+    chmod +x "$current_home/.acfs/scripts/lib/security.sh"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+    export ACFS_BIN_DIR="$current_home/.local/bin"
+    export ACFS_HOME="$current_home/.acfs"
+    unset ACFS_REPO_ROOT
+    export CHECKSUMS_LOCAL="$current_home/checksums.yaml"
+    UPDATE_SECURITY_READY=false
+
+    refresh_checksums() {
+        return 0
+    }
+
+    getent() {
+        return 2
+    }
+
+    run update_require_security
+    assert_failure
+    [[ ! -e "$bin_marker" ]]
+    [[ ! -e "$acfs_marker" ]]
+}
+
+@test "refresh_checksums: does not fall back to current HOME when different target is unresolved" {
+    local current_home
+    local curl_marker
+    current_home="$(create_temp_dir)"
+    curl_marker="$BATS_TEST_TMPDIR/refresh-curl.marker"
+
+    mkdir -p "$current_home/.acfs"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+    export ACFS_HOME="$current_home/.acfs"
+    export CHECKSUMS_LOCAL="$current_home/fallback-checksums.yaml"
+
+    curl() {
+        : > "$curl_marker"
+        return 0
+    }
+
+    getent() {
+        return 2
+    }
+
+    run refresh_checksums true
+    assert_failure
+    [[ ! -e "$curl_marker" ]]
+    [[ ! -e "$current_home/.acfs/checksums.yaml" ]]
+    [[ ! -e "$CHECKSUMS_LOCAL" ]]
 }

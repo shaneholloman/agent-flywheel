@@ -21,10 +21,104 @@ doctor_fix_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+doctor_fix_is_valid_username() {
+    local username="${1:-}"
+    [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+doctor_fix_current_user() {
+    local current_user=""
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+doctor_fix_resolve_home_for_user() {
+    local user="${1:-}"
+    local home_candidate=""
+    local passwd_entry=""
+
+    doctor_fix_is_valid_username "$user" || [[ "$user" == "root" ]] || return 1
+
+    if [[ "$user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+        home_candidate="$(doctor_fix_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+doctor_fix_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="$(doctor_fix_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    [[ -n "$bin_dir" ]] || return 1
+    base_home="$(doctor_fix_sanitize_abs_nonroot_path "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="$(doctor_fix_sanitize_abs_nonroot_path "$hinted_home" 2>/dev/null || true)"
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(printf '%s\n' "$passwd_line" | cut -d: -f6)"
+            passwd_home="$(doctor_fix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+    fi
+
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(printf '%s\n' "$passwd_line" | cut -d: -f6)"
+            passwd_home="$(doctor_fix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < /etc/passwd
+    fi
+
+    printf '%s\n' "$bin_dir"
+}
+
 doctor_fix_resolve_current_home() {
     local current_user=""
     local home_candidate=""
-    local passwd_entry=""
 
     home_candidate="$(doctor_fix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
     if [[ -n "$home_candidate" ]]; then
@@ -32,23 +126,13 @@ doctor_fix_resolve_current_home() {
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
-    if [[ "$current_user" == "root" ]]; then
-        printf '/root\n'
-        return 0
-    fi
-
+    current_user="$(doctor_fix_current_user 2>/dev/null || true)"
     if [[ -n "$current_user" ]]; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
-        if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            home_candidate="$(doctor_fix_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
-                return 0
-            fi
+        home_candidate="$(doctor_fix_resolve_home_for_user "$current_user" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
         fi
-
     fi
 
     return 1
@@ -56,28 +140,46 @@ doctor_fix_resolve_current_home() {
 
 doctor_fix_runtime_home() {
     local resolved_home=""
+    local target_user_raw="${TARGET_USER:-}"
+    local current_user=""
 
     resolved_home="$(doctor_fix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -z "$resolved_home" ]]; then
-        resolved_home="$(doctor_fix_resolve_current_home 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "${resolved_home%/}"
+        return 0
     fi
 
-    if [[ -n "$resolved_home" ]] && [[ "$resolved_home" == /* ]] && [[ "$resolved_home" != "/" ]]; then
-        printf '%s\n' "${resolved_home%/}"
-    else
-        printf '/root\n'
+    if [[ -n "$target_user_raw" ]]; then
+        doctor_fix_is_valid_username "$target_user_raw" || return 1
+        current_user="$(doctor_fix_current_user 2>/dev/null || true)"
+        if [[ -z "$current_user" ]] || [[ "$target_user_raw" != "$current_user" ]]; then
+            resolved_home="$(doctor_fix_resolve_home_for_user "$target_user_raw" 2>/dev/null || true)"
+            [[ -n "$resolved_home" ]] || return 1
+            printf '%s\n' "${resolved_home%/}"
+            return 0
+        fi
     fi
+
+    resolved_home="$(doctor_fix_resolve_current_home 2>/dev/null || true)"
+    [[ -n "$resolved_home" ]] || return 1
+    printf '%s\n' "${resolved_home%/}"
 }
 
 doctor_fix_runtime_acfs_home() {
     local runtime_home=""
     local resolved_acfs_home=""
 
-    runtime_home="$(doctor_fix_runtime_home)"
+    runtime_home="$(doctor_fix_runtime_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
     resolved_acfs_home="$(doctor_fix_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 
-    if [[ -n "${TARGET_HOME:-}" ]]; then
+    if [[ -n "${TARGET_HOME:-}" ]] || [[ -n "${TARGET_USER:-}" ]]; then
         printf '%s/.acfs\n' "$runtime_home"
+        return 0
+    fi
+
+    if [[ "$resolved_acfs_home" == "$runtime_home/.acfs" ]]; then
+        printf '%s\n' "$resolved_acfs_home"
         return 0
     fi
 
@@ -102,10 +204,10 @@ doctor_fix_runtime_bin_dir() {
     local runtime_home=""
     local configured_bin=""
 
-    runtime_home="$(doctor_fix_runtime_home)"
+    runtime_home="$(doctor_fix_runtime_home 2>/dev/null || true)"
     [[ -n "$runtime_home" ]] || return 1
 
-    configured_bin="$(doctor_fix_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    configured_bin="$(doctor_fix_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$runtime_home" 2>/dev/null || true)"
     if [[ -n "$configured_bin" ]]; then
         printf '%s\n' "$configured_bin"
         return 0

@@ -389,6 +389,7 @@ resolve_target_home_from_state_hint() {
     local state_file="$1"
     local candidate_home=""
     local candidate_user=""
+    local state_home=""
 
     state_file="$(sanitize_abs_nonroot_path "$state_file" 2>/dev/null || true)"
     [[ -n "$state_file" && -f "$state_file" ]] || return 1
@@ -397,6 +398,17 @@ resolve_target_home_from_state_hint() {
     if [[ -n "$candidate_home" ]]; then
         printf '%s\n' "$candidate_home"
         return 0
+    fi
+
+    if [[ "$state_file" == */.acfs/state.json ]]; then
+        state_home="${state_file%/.acfs/state.json}"
+        state_home="$(existing_abs_nonroot_dir "$state_home" 2>/dev/null || true)"
+        candidate_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
+        candidate_home="$(existing_abs_nonroot_dir "$candidate_home" 2>/dev/null || true)"
+        if [[ -n "$state_home" ]] && [[ -z "$candidate_home" || "$candidate_home" == "$state_home" ]] && find_acfs_bin_for_home "$state_home" >/dev/null 2>&1; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
     fi
 
     candidate_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"

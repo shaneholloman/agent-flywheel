@@ -414,13 +414,11 @@ read_user_for_home() {
 
     if command -v getent &>/dev/null; then
         while IFS= read -r passwd_line; do
-            passwd_home="$(export_sanitize_abs_nonroot_path "$(printf '%s
-' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            passwd_home="$(export_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
             [[ "$passwd_home" == "$user_home" ]] || continue
             candidate_user="${passwd_line%%:*}"
             if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-                printf '%s
-' "$candidate_user"
+                printf '%s\n' "$candidate_user"
                 return 0
             fi
         done < <(getent passwd 2>/dev/null || true)
@@ -428,13 +426,11 @@ read_user_for_home() {
 
     if [[ -r /etc/passwd ]]; then
         while IFS= read -r passwd_line; do
-            passwd_home="$(export_sanitize_abs_nonroot_path "$(printf '%s
-' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            passwd_home="$(export_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
             [[ "$passwd_home" == "$user_home" ]] || continue
             candidate_user="${passwd_line%%:*}"
             if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-                printf '%s
-' "$candidate_user"
+                printf '%s\n' "$candidate_user"
                 return 0
             fi
         done < /etc/passwd
@@ -444,15 +440,13 @@ read_user_for_home() {
     if [[ -n "$current_home" ]] && [[ "$user_home" == "$current_home" ]]; then
         candidate_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
         if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '%s
-' "$candidate_user"
+            printf '%s\n' "$candidate_user"
             return 0
         fi
     fi
 
     if [[ "$user_home" == "/root" ]]; then
-        printf 'root
-'
+        printf 'root\n'
         return 0
     fi
 
@@ -461,14 +455,14 @@ read_user_for_home() {
     if [[ -n "$candidate_user" ]]; then
         current_home="$(home_for_user "$candidate_user" 2>/dev/null || true)"
         if [[ -n "$current_home" ]] && [[ "$current_home" == "$user_home" ]]; then
-            printf '%s
-' "$candidate_user"
+            printf '%s\n' "$candidate_user"
             return 0
         fi
     fi
 
     return 1
 }
+
 infer_target_home_from_acfs_home() {
     local acfs_home_candidate=""
     local inferred_home=""
@@ -490,20 +484,34 @@ infer_target_home_from_acfs_home() {
     inferred_home="$(export_sanitize_abs_nonroot_path "$inferred_home" 2>/dev/null || true)"
     [[ -n "$inferred_home" ]] || return 1
 
-    printf '%s
-' "$inferred_home"
+    printf '%s\n' "$inferred_home"
 }
 prepare_target_context() {
     local detected_user=""
     local detected_home=""
     local path_home=""
     local state_user=""
+    local state_user_home=""
 
     refresh_acfs_paths
     path_home="$(infer_target_home_from_acfs_home 2>/dev/null || true)"
 
     if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "$path_home" ]]; then
         export TARGET_HOME="$path_home"
+    fi
+
+    state_user="$(read_target_user_from_state "$_EXPORT_STATE_FILE" 2>/dev/null || true)"
+    if [[ -z "${TARGET_USER:-}" ]] \
+        && [[ -n "$path_home" ]] \
+        && [[ -n "${TARGET_HOME:-}" ]] \
+        && [[ "$TARGET_HOME" == "$path_home" ]] \
+        && [[ -n "$state_user" ]] \
+        && [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] \
+        && [[ "$_EXPORT_STATE_FILE" == "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" ]]; then
+        state_user_home="$(home_for_user "$state_user" 2>/dev/null || true)"
+        if [[ -z "$state_user_home" || "$state_user_home" == "$path_home" ]]; then
+            export TARGET_USER="$state_user"
+        fi
     fi
 
     if [[ -z "${TARGET_USER:-}" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
@@ -514,7 +522,6 @@ prepare_target_context() {
     fi
 
     if [[ -z "${TARGET_USER:-}" ]] && [[ -n "$path_home" ]] && [[ -n "${_EXPORT_STATE_FILE:-}" ]]; then
-        state_user="$(read_target_user_from_state "$_EXPORT_STATE_FILE" 2>/dev/null || true)"
         if [[ -n "$state_user" ]]; then
             export TARGET_USER="$state_user"
         fi
@@ -546,11 +553,71 @@ prepare_target_context() {
         export TARGET_HOME="$path_home"
     fi
 }
+
+export_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="$(export_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    [[ -n "$bin_dir" ]] || return 1
+    base_home="$(export_sanitize_abs_nonroot_path "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="$(export_sanitize_abs_nonroot_path "$hinted_home" 2>/dev/null || true)"
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(export_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+    fi
+
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(export_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < /etc/passwd
+    fi
+
+    printf '%s\n' "$bin_dir"
+}
+
 augment_path_for_target_user() {
     local dir=""
     local target_home="${TARGET_HOME:-}"
     local primary_bin_dir="${ACFS_BIN_DIR:-$target_home/.local/bin}"
     local current_path="${PATH:-}"
+    if declare -f export_validate_bin_dir_for_home >/dev/null 2>&1; then
+        primary_bin_dir="$(export_validate_bin_dir_for_home "$primary_bin_dir" "$target_home" 2>/dev/null || true)"
+    fi
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$target_home/.local/bin"
     local seen_path=":${current_path}:"
     local -a to_prepend=()
 

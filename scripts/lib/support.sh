@@ -220,13 +220,11 @@ support_read_user_for_home() {
 
     if command -v getent &>/dev/null; then
         while IFS= read -r passwd_line; do
-            passwd_home="$(support_sanitize_abs_nonroot_path "$(printf '%s
-' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            passwd_home="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
             [[ "$passwd_home" == "$user_home" ]] || continue
             candidate_user="${passwd_line%%:*}"
             if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-                printf '%s
-' "$candidate_user"
+                printf '%s\n' "$candidate_user"
                 return 0
             fi
         done < <(getent passwd 2>/dev/null || true)
@@ -234,13 +232,11 @@ support_read_user_for_home() {
 
     if [[ -r /etc/passwd ]]; then
         while IFS= read -r passwd_line; do
-            passwd_home="$(support_sanitize_abs_nonroot_path "$(printf '%s
-' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            passwd_home="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
             [[ "$passwd_home" == "$user_home" ]] || continue
             candidate_user="${passwd_line%%:*}"
             if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-                printf '%s
-' "$candidate_user"
+                printf '%s\n' "$candidate_user"
                 return 0
             fi
         done < /etc/passwd
@@ -250,15 +246,13 @@ support_read_user_for_home() {
     if [[ -n "$current_home" ]] && [[ "$user_home" == "$current_home" ]]; then
         candidate_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
         if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '%s
-' "$candidate_user"
+            printf '%s\n' "$candidate_user"
             return 0
         fi
     fi
 
     if [[ "$user_home" == "/root" ]]; then
-        printf 'root
-'
+        printf 'root\n'
         return 0
     fi
 
@@ -267,15 +261,13 @@ support_read_user_for_home() {
     if [[ -n "$candidate_user" ]]; then
         current_home="$(support_home_for_user "$candidate_user" 2>/dev/null || true)"
         if [[ -n "$current_home" ]] && [[ "$current_home" == "$user_home" ]]; then
-            printf '%s
-' "$candidate_user"
+            printf '%s\n' "$candidate_user"
             return 0
         fi
     fi
 
     return 1
 }
-
 support_candidate_has_acfs_data() {
     local candidate="$1"
     [[ -n "$candidate" ]] || return 1
@@ -422,10 +414,8 @@ support_infer_target_home_from_acfs_home() {
     inferred_home="${acfs_home_candidate%/.acfs}"
     inferred_home="$(support_sanitize_abs_nonroot_path "$inferred_home" 2>/dev/null || true)"
     [[ -n "$inferred_home" ]] || return 1
-    printf '%s
-' "$inferred_home"
+    printf '%s\n' "$inferred_home"
 }
-
 support_initialize_context() {
     local state_file=""
     local path_home=""

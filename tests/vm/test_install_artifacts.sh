@@ -22,7 +22,7 @@ set -euo pipefail
 TESTS_PASSED=0
 TESTS_FAILED=0
 TARGET_USER="${1:-ubuntu}"
-TARGET_HOME="${2:-/home/${TARGET_USER}}"
+TARGET_HOME="${2:-}"
 
 resolve_target_home() {
     local target_user="${1:-ubuntu}"
@@ -42,12 +42,12 @@ resolve_target_home() {
         fi
     fi
 
-    if [[ "$target_user" == "$(whoami 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-        printf '%s\n' "$HOME"
+    if [[ "$target_user" == "$(whoami 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        printf '%s\n' "${HOME%/}"
         return 0
     fi
 
-    printf '/home/%s\n' "$target_user"
+    return 1
 }
 
 # Parse arguments
@@ -64,10 +64,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "${TARGET_HOME:-}" == "/home/${TARGET_USER}" ]]; then
-    TARGET_HOME="$(resolve_target_home "$TARGET_USER")"
+if [[ -z "${TARGET_HOME:-}" ]]; then
+    TARGET_HOME="$(resolve_target_home "$TARGET_USER" 2>/dev/null || true)"
 fi
 
+if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" != /* ]] || [[ "${TARGET_HOME}" == "/" ]]; then
+    echo "Error: unable to resolve TARGET_HOME for '$TARGET_USER'; pass --home explicitly" >&2
+    exit 1
+fi
+
+TARGET_HOME="${TARGET_HOME%/}"
 ACFS_LOGS_DIR="${TARGET_HOME}/.acfs/logs"
 
 # Logging

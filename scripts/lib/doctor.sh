@@ -20,6 +20,15 @@ _acfs_doctor_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+_acfs_doctor_existing_abs_nonroot_dir() {
+    local path_value=""
+
+    path_value="$(_acfs_doctor_sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+    [[ -d "$path_value" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
 _acfs_doctor_resolve_current_home() {
     local current_user=""
     local home_candidate=""
@@ -81,6 +90,9 @@ ensure_path() {
     local seen_path=":$current_path:"
     local primary_home="${TARGET_HOME:-${_acfs_doctor_current_home:-/root}}"
     local primary_bin_dir="${ACFS_BIN_DIR:-$primary_home/.local/bin}"
+
+    primary_bin_dir="$(_acfs_doctor_validate_bin_dir_for_home "$primary_bin_dir" "$primary_home" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$primary_home/.local/bin"
 
     # Priority order for ACFS tools
     local candidate_dirs=(
@@ -198,6 +210,61 @@ if ! type -t log_error >/dev/null 2>&1; then
     log_info() { echo "    $*" >&2; }
 fi
 
+_acfs_doctor_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="$(_acfs_doctor_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    [[ -n "$bin_dir" ]] || return 1
+    base_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$hinted_home" 2>/dev/null || true)"
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < <(getent passwd 2>/dev/null || true)
+    fi
+
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ -n "$passwd_home" ]] || continue
+            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+                return 1
+            fi
+        done < /etc/passwd
+    fi
+
+    printf '%s\n' "$bin_dir"
+}
+
 # Global format options (set by argument parsing)
 _DOCTOR_OUTPUT_FORMAT=""
 _DOCTOR_SHOW_STATS=false
@@ -291,10 +358,7 @@ for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
         TARGET_HOME="$(sed -n 's/.*"target_home"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
     fi
     if [[ -n "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="${TARGET_HOME%/}"
-        if [[ -z "$TARGET_HOME" ]] || [[ "$TARGET_HOME" == "/" ]] || [[ "$TARGET_HOME" != /* ]]; then
-            TARGET_HOME=""
-        fi
+        TARGET_HOME="$(_acfs_doctor_existing_abs_nonroot_dir "${TARGET_HOME%/}" 2>/dev/null || true)"
     fi
     [[ -n "${TARGET_HOME:-}" ]] && break
 done
@@ -316,10 +380,7 @@ if [[ -z "${TARGET_HOME:-}" ]]; then
             TARGET_HOME="$(sed -n 's/.*"target_home"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
         fi
         if [[ -n "${TARGET_HOME:-}" ]]; then
-            TARGET_HOME="${TARGET_HOME%/}"
-            if [[ -z "$TARGET_HOME" ]] || [[ "$TARGET_HOME" == "/" ]] || [[ "$TARGET_HOME" != /* ]]; then
-                TARGET_HOME=""
-            fi
+            TARGET_HOME="$(_acfs_doctor_existing_abs_nonroot_dir "${TARGET_HOME%/}" 2>/dev/null || true)"
         fi
         [[ -n "${TARGET_HOME:-}" ]] && break
     done
@@ -333,7 +394,8 @@ for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
     if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
         ACFS_BIN_DIR="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
     fi
-    ACFS_BIN_DIR="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    ACFS_BIN_DIR="$(_acfs_doctor_existing_abs_nonroot_dir "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+    ACFS_BIN_DIR="$(_acfs_doctor_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" 2>/dev/null || true)"
     [[ -n "${ACFS_BIN_DIR:-}" ]] && break
 done
 if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
@@ -353,13 +415,14 @@ if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
         if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
             ACFS_BIN_DIR="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
         fi
-        ACFS_BIN_DIR="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+        ACFS_BIN_DIR="$(_acfs_doctor_existing_abs_nonroot_dir "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+        ACFS_BIN_DIR="$(_acfs_doctor_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" 2>/dev/null || true)"
         [[ -n "${ACFS_BIN_DIR:-}" ]] && break
     done
     unset _acfs_doctor_ambient_target_user
 fi
 if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
-    ACFS_BIN_DIR="$_ACFS_DOCTOR_ENV_BIN_DIR"
+    ACFS_BIN_DIR="$(_acfs_doctor_validate_bin_dir_for_home "$_ACFS_DOCTOR_ENV_BIN_DIR" "${TARGET_HOME:-}" 2>/dev/null || true)"
 fi
 
 if [[ -z "${TARGET_HOME:-}" ]]; then
@@ -387,6 +450,8 @@ if [[ -z "${TARGET_HOME:-}" ]]; then
         TARGET_HOME="$_acfs_doctor_current_home"
     fi
 fi
+
+ACFS_BIN_DIR="$(_acfs_doctor_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" 2>/dev/null || true)"
 
 export TARGET_USER
 export TARGET_HOME
@@ -1223,7 +1288,8 @@ doctor_binary_path() {
     runtime_home="$(doctor_runtime_home)"
     [[ -n "$runtime_home" ]] || return 1
 
-    primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    primary_bin_dir="$(_acfs_doctor_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$runtime_home" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$runtime_home/.local/bin"
     if [[ -n "${ACFS_HOME:-}" ]]; then
         candidates+=("$ACFS_HOME/bin/$name")
     fi
@@ -1282,7 +1348,8 @@ doctor_runtime_path() {
     runtime_home="$(doctor_runtime_home)"
     [[ -n "$runtime_home" ]] || return 1
 
-    primary_bin_dir="${ACFS_BIN_DIR:-$runtime_home/.local/bin}"
+    primary_bin_dir="$(_acfs_doctor_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$runtime_home" 2>/dev/null || true)"
+    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$runtime_home/.local/bin"
 
     if [[ -n "${ACFS_HOME:-}" ]]; then
         path_entries+=("$ACFS_HOME/bin")
@@ -2251,7 +2318,9 @@ _doctor_run_manifest_check() {
                 log_error "Invalid TARGET_HOME for '$target_user': ${target_home:-<empty>} (must be an absolute path and cannot be '/')"
                 return 1
             fi
-            local target_bin="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+            local target_bin=""
+            target_bin="$(_acfs_doctor_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"
+            [[ -n "$target_bin" ]] || target_bin="$target_home/.local/bin"
             if [[ -z "$target_bin" ]] || [[ "$target_bin" != /* ]] || [[ "$target_bin" == "/" ]]; then
                 log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${target_bin:-<empty>})"
                 return 1
