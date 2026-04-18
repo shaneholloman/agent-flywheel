@@ -1829,18 +1829,12 @@ EOF
     system_state="$BATS_TEST_TMPDIR/resolver-system-state.json"
 
     mkdir -p "$current_home" "$target_home/.acfs" "$stale_home/.acfs"
-    printf 'live
-' > "$target_home/.acfs/VERSION"
-    printf 'stale
-' > "$stale_home/.acfs/VERSION"
-    printf '{}
-' > "$target_home/.acfs/state.json"
-    printf '{}
-' > "$stale_home/.acfs/state.json"
-    printf '# live
-' > "$target_home/.acfs/CHANGELOG.md"
-    printf '# stale
-' > "$stale_home/.acfs/CHANGELOG.md"
+    printf 'live\n' > "$target_home/.acfs/VERSION"
+    printf 'stale\n' > "$stale_home/.acfs/VERSION"
+    printf '{}\n' > "$target_home/.acfs/state.json"
+    printf '{}\n' > "$stale_home/.acfs/state.json"
+    printf '# live\n' > "$target_home/.acfs/CHANGELOG.md"
+    printf '# stale\n' > "$stale_home/.acfs/CHANGELOG.md"
 
     cat > "$system_state" <<EOF
 {
