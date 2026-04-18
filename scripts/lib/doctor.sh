@@ -63,7 +63,10 @@ _ACFS_DOCTOR_ENV_TARGET_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "${TARGET
 TARGET_HOME="$_ACFS_DOCTOR_ENV_TARGET_HOME"
 ACFS_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 ACFS_STATE_FILE="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
-ACFS_SYSTEM_STATE_FILE="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"
+ACFS_SYSTEM_STATE_FILE="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+if [[ -z "$ACFS_SYSTEM_STATE_FILE" ]]; then
+    ACFS_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
+fi
 _ACFS_DOCTOR_ENV_BIN_DIR="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
 ACFS_BIN_DIR=""
 export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR

@@ -297,21 +297,29 @@ cheatsheet_resolve_state_file() {
 cheatsheet_prepend_user_paths() {
   local base_home="$1"
   local dir=""
+  local primary_bin_dir=""
 
   [[ -n "$base_home" ]] || return 0
+  primary_bin_dir="$(cheatsheet_sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+  [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"
 
   for dir in \
+    "$primary_bin_dir" \
     "$base_home/.local/bin" \
+    "$base_home/.acfs/bin" \
     "$base_home/.bun/bin" \
     "$base_home/.cargo/bin" \
     "$base_home/go/bin" \
-    "$base_home/.atuin/bin"; do
+    "$base_home/.atuin/bin" \
+    "$base_home/google-cloud-sdk/bin"; do
+    [[ -d "$dir" ]] || continue
     case ":$PATH:" in
       *":$dir:"*) ;;
       *) export PATH="$dir:$PATH" ;;
     esac
   done
 }
+
 
 cheatsheet_prepare_context() {
   local state_file=""

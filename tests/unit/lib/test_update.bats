@@ -1955,6 +1955,75 @@ EOF
     assert_success
 }
 
+@test "cheatsheet.sh: prepend_user_paths prefers ACFS bin and skips missing dirs" {
+    local cheatsheet="$PROJECT_ROOT/scripts/lib/cheatsheet.sh"
+    local test_home
+    local expected_path=""
+
+    test_home="$(create_temp_dir)"
+    mkdir -p "$test_home/custom-bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^cheatsheet_sanitize_abs_nonroot_path()/,/^}$/p' "$cheatsheet")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^cheatsheet_prepend_user_paths()/,/^}$/p' "$cheatsheet")"
+
+    export ACFS_BIN_DIR="$test_home/custom-bin"
+    PATH="/usr/bin:/bin"
+    cheatsheet_prepend_user_paths "$test_home"
+
+    expected_path="$test_home/custom-bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/bin:/bin"
+    [ "$PATH" = "$expected_path" ]
+}
+
+@test "cheatsheet.sh: parse_zshrc sees tools installed only in ACFS bins" {
+    local cheatsheet="$PROJECT_ROOT/scripts/lib/cheatsheet.sh"
+    local test_home
+    local zshrc
+
+    test_home="$(create_temp_dir)"
+    zshrc="$test_home/acfs.zshrc"
+    mkdir -p "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
+
+    cat > "$test_home/.acfs/bin/am" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    cat > "$test_home/google-cloud-sdk/bin/gcloud" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$test_home/.acfs/bin/am" "$test_home/google-cloud-sdk/bin/gcloud"
+
+    cat > "$zshrc" <<'EOF'
+# --- Agents ---
+command -v am &>/dev/null && alias amserve='am serve-http'
+command -v gcloud &>/dev/null && alias gbq='gcloud bq'
+EOF
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^cheatsheet_sanitize_abs_nonroot_path()/,/^}$/p' "$cheatsheet")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^cheatsheet_prepend_user_paths()/,/^}$/p' "$cheatsheet")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^normalize_category()/,/^}$/p' "$cheatsheet")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^infer_category()/,/^}$/p' "$cheatsheet")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^cheatsheet_parse_zshrc()/,/^}$/p' "$cheatsheet")"
+
+    export ACFS_BIN_DIR=""
+    export CHEATSHEET_DELIM=$'	'
+    PATH="/usr/bin:/bin"
+    cheatsheet_prepend_user_paths "$test_home"
+
+    run cheatsheet_parse_zshrc "$zshrc"
+
+    assert_success
+    assert_output --partial $'Agents	amserve	am serve-http	alias'
+    assert_output --partial $'gbq	gcloud bq	alias'
+}
+
 @test "info.sh: binary helper ignores current-shell-only PATH entries" {
     local info_lib="$PROJECT_ROOT/scripts/lib/info.sh"
 
@@ -2023,6 +2092,26 @@ EOF
 
     expected_path="$test_home/.local/bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
     [ "$output" = "$expected_path" ]
+}
+
+@test "doctor.sh: defaults ACFS_SYSTEM_STATE_FILE to system state path" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local test_home
+
+    test_home="$(create_temp_dir)"
+    mkdir -p "$test_home"
+
+    unset TARGET_USER TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR
+    export HOME="$test_home"
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_sanitize_abs_nonroot_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_resolve_current_home()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_current_home="\$(_acfs_doctor_resolve_current_home/,/^export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR$/p' "$doctor_lib")"
+
+    [[ "$ACFS_SYSTEM_STATE_FILE" == "/var/lib/acfs/state.json" ]]
 }
 
 @test "doctor.sh: ensure_path restores system PATH when empty" {
