@@ -1935,6 +1935,184 @@ EOF
     assert_output "$target_home"
 }
 
+@test "home-to-user helpers ignore PATH-poisoned id/whoami/getent shims" {
+    local current_user
+    local current_home
+    local fake_home
+    local fake_bin
+    local label
+    local script
+    local func
+    local current_home_var
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        current_home="/root"
+    else
+        current_home="$(getent passwd "$current_user" | cut -d: -f6)"
+    fi
+    current_home="${current_home%/}"
+
+    fake_home="$(create_temp_dir)"
+    fake_bin="$BATS_TEST_TMPDIR/path-poison-bin"
+    mkdir -p "$fake_home/.local/bin" "$fake_bin"
+
+    cat > "$fake_bin/id" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-un" ]]; then
+    printf 'poisoned-user\n'
+    exit 0
+fi
+exit 2
+EOF
+    cat > "$fake_bin/whoami" <<'EOF'
+#!/usr/bin/env bash
+printf 'poisoned-user\n'
+EOF
+    cat > "$fake_bin/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]]; then
+    printf 'poisoned-user:x:1000:1000::%s:/bin/bash\n' "$fake_home"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$fake_bin/id" "$fake_bin/whoami" "$fake_bin/getent"
+
+    while IFS='|' read -r label script func current_home_var; do
+        run env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$fake_home" bash -c '
+            script="$1"
+            label="$2"
+            func="$3"
+            current_home="$4"
+            current_home_var="$5"
+            case "$label" in
+                status)
+                    eval "$(sed -n '/^_status_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^_status_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^_status_resolve_current_user()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^_status_read_user_for_home()/,/^}$/p' "$script")"
+                    ;;
+                support)
+                    eval "$(sed -n '/^support_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^support_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^support_resolve_current_user()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^support_read_user_for_home()/,/^}$/p' "$script")"
+                    ;;
+                info)
+                    eval "$(sed -n '/^info_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^info_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^info_resolve_current_user()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^info_read_user_for_home()/,/^}$/p' "$script")"
+                    ;;
+                export-config)
+                    eval "$(sed -n '/^export_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^export_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^export_resolve_current_user()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^read_user_for_home()/,/^}$/p' "$script")"
+                    ;;
+                dashboard)
+                    eval "$(sed -n '/^dashboard_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^dashboard_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^dashboard_resolve_current_user()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^dashboard_read_user_for_home()/,/^}$/p' "$script")"
+                    ;;
+                cheatsheet)
+                    eval "$(sed -n '/^cheatsheet_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^cheatsheet_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^cheatsheet_resolve_current_user()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^cheatsheet_read_user_for_home()/,/^}$/p' "$script")"
+                    ;;
+            esac
+            export "$current_home_var=$current_home"
+            "$func" "$current_home"
+        ' _ "$script" "$label" "$func" "$current_home" "$current_home_var"
+        assert_success
+        assert_output "$current_user"
+    done <<EOF
+status|$PROJECT_ROOT/scripts/lib/status.sh|_status_read_user_for_home|_STATUS_CURRENT_HOME
+support|$PROJECT_ROOT/scripts/lib/support.sh|support_read_user_for_home|_SUPPORT_CURRENT_HOME
+info|$PROJECT_ROOT/scripts/lib/info.sh|info_read_user_for_home|_INFO_CURRENT_HOME
+export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|read_user_for_home|_EXPORT_CURRENT_HOME
+dashboard|$PROJECT_ROOT/scripts/lib/dashboard.sh|dashboard_read_user_for_home|_DASHBOARD_CURRENT_HOME
+cheatsheet|$PROJECT_ROOT/scripts/lib/cheatsheet.sh|cheatsheet_read_user_for_home|_CHEATSHEET_CURRENT_HOME
+EOF
+}
+
+@test "bin-dir validators ignore PATH-poisoned getent passwd streams" {
+    local current_user
+    local current_home
+    local fake_home
+    local fake_bin
+    local fake_bin_dir
+    local label
+    local script
+    local func
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        current_home="/root"
+    else
+        current_home="$(getent passwd "$current_user" | cut -d: -f6)"
+    fi
+    current_home="${current_home%/}"
+
+    fake_home="$(create_temp_dir)"
+    fake_bin_dir="$fake_home/.local/bin"
+    fake_bin="$BATS_TEST_TMPDIR/validate-path-poison-bin"
+    mkdir -p "$fake_bin_dir" "$fake_bin"
+
+    cat > "$fake_bin/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]]; then
+    printf 'poisoned-user:x:1000:1000::%s:/bin/bash\n' "$fake_home"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$fake_bin/getent"
+
+    while IFS='|' read -r label script func; do
+        run env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$current_home" bash -c '
+            script="$1"
+            label="$2"
+            func="$3"
+            fake_bin_dir="$4"
+            current_home="$5"
+            case "$label" in
+                status)
+                    eval "$(sed -n '/^_status_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^_status_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^_status_validate_bin_dir_for_home()/,/^}$/p' "$script")"
+                    ;;
+                info)
+                    eval "$(sed -n '/^info_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^info_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^info_validate_bin_dir_for_home()/,/^}$/p' "$script")"
+                    ;;
+                export-config)
+                    eval "$(sed -n '/^export_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^export_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^export_validate_bin_dir_for_home()/,/^}$/p' "$script")"
+                    ;;
+                cheatsheet)
+                    eval "$(sed -n '/^cheatsheet_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^cheatsheet_system_binary_path()/,/^}$/p' "$script")"
+                    eval "$(sed -n '/^cheatsheet_validate_bin_dir_for_home()/,/^}$/p' "$script")"
+                    ;;
+            esac
+            "$func" "$fake_bin_dir" "$current_home"
+        ' _ "$script" "$label" "$func" "$fake_bin_dir" "$current_home"
+        assert_success
+        assert_output "$fake_bin_dir"
+    done <<EOF
+status|$PROJECT_ROOT/scripts/lib/status.sh|_status_validate_bin_dir_for_home
+info|$PROJECT_ROOT/scripts/lib/info.sh|info_validate_bin_dir_for_home
+export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|export_validate_bin_dir_for_home
+cheatsheet|$PROJECT_ROOT/scripts/lib/cheatsheet.sh|cheatsheet_validate_bin_dir_for_home
+EOF
+}
+
 @test "username helpers and wrappers allow dotted usernames and validate before re-exec" {
     local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
     local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"

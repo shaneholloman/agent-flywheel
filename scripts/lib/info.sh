@@ -355,6 +355,7 @@ info_validate_bin_dir_for_home() {
     local passwd_line=""
     local passwd_home=""
     local hinted_home=""
+    local getent_bin=""
 
     bin_dir="$(info_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
     [[ -n "$bin_dir" ]] || return 1
@@ -374,12 +375,13 @@ info_validate_bin_dir_for_home() {
         */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
         */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
     esac
-    hinted_home=$(info_sanitize_abs_nonroot_path "$hinted_home" 2>/dev/null || true)
+    hinted_home="$(info_sanitize_abs_nonroot_path "$hinted_home" 2>/dev/null || true)"
     if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
         return 1
     fi
 
-    if command -v getent &>/dev/null; then
+    getent_bin="$(info_system_binary_path getent 2>/dev/null || true)"
+    if [[ -n "$getent_bin" ]]; then
         while IFS= read -r passwd_line; do
             passwd_home="$(info_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
             [[ -n "$passwd_home" ]] || continue
@@ -387,7 +389,7 @@ info_validate_bin_dir_for_home() {
             if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
                 return 1
             fi
-        done < <(getent passwd 2>/dev/null || true)
+        done < <("$getent_bin" passwd 2>/dev/null || true)
     fi
 
     if [[ -r /etc/passwd ]]; then
@@ -441,11 +443,13 @@ info_read_user_for_home() {
     local passwd_line=""
     local passwd_home=""
     local state_file=""
+    local getent_bin=""
 
     user_home="$(info_sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
     [[ -n "$user_home" ]] || return 1
 
-    if command -v getent &>/dev/null; then
+    getent_bin="$(info_system_binary_path getent 2>/dev/null || true)"
+    if [[ -n "$getent_bin" ]]; then
         while IFS= read -r passwd_line; do
             passwd_home="$(info_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
             [[ "$passwd_home" == "$user_home" ]] || continue
@@ -454,7 +458,7 @@ info_read_user_for_home() {
                 printf '%s\n' "$candidate_user"
                 return 0
             fi
-        done < <(getent passwd 2>/dev/null || true)
+        done < <("$getent_bin" passwd 2>/dev/null || true)
     fi
 
     if [[ -r /etc/passwd ]]; then
@@ -469,7 +473,7 @@ info_read_user_for_home() {
         done < /etc/passwd
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(info_resolve_current_user 2>/dev/null || true)"
     current_home="${_INFO_CURRENT_HOME:-}"
     if [[ -z "$current_home" ]]; then
         current_home="$(info_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
