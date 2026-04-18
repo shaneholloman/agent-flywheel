@@ -1214,7 +1214,7 @@ EOF
     run grep -F '"$target_home/.acfs/bin"' "$export_config"
     assert_success
 
-    run grep -F '_smoke_prepend_user_paths "$TARGET_HOME"' "$smoke"
+    run grep -F '_smoke_prepend_user_paths "$_SMOKE_TARGET_HOME"' "$smoke"
     assert_success
     run grep -F 'primary_bin_dir="$(_smoke_preferred_bin_dir "$base_home" 2>/dev/null || true)"' "$smoke"
     assert_success
@@ -1236,6 +1236,8 @@ EOF
     assert_success
     run grep -F 'ACFS_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"' "$nightly"
     assert_success
+    run grep -F 'ACFS_SYSTEM_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"' "$nightly"
+    assert_success
     run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$nightly"
     assert_success
 
@@ -1251,7 +1253,7 @@ EOF
     assert_success
     run grep -F 'state_bin_dir="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"' "$global_wrapper"
     assert_success
-    run grep -F 'ACFS_BIN_DIR="${state_bin_dir:-${sanitized_bin_dir:-}}"' "$global_wrapper"
+    run grep -F 'ACFS_BIN_DIR="${state_bin_dir:-}"' "$global_wrapper"
     assert_success
     run grep -F 'current_home="$(resolve_current_home 2>/dev/null || true)"' "$global_wrapper"
     assert_success
@@ -1272,7 +1274,7 @@ EOF
     assert_success
     run grep -F 'state_bin_dir="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"' "$update_wrapper"
     assert_success
-    run grep -F 'ACFS_BIN_DIR="${state_bin_dir:-${sanitized_bin_dir:-}}"' "$update_wrapper"
+    run grep -F 'ACFS_BIN_DIR="${state_bin_dir:-}"' "$update_wrapper"
     assert_success
     run grep -F 'current_home="$(resolve_current_home 2>/dev/null || true)"' "$update_wrapper"
     assert_success
@@ -1280,6 +1282,93 @@ EOF
     assert_success
     run grep -F '[[ -n "$sanitized_system_state_file" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$sanitized_system_state_file")' "$update_wrapper"
     assert_success
+}
+
+@test "nightly update honors explicit system state and repairs target runtime home" {
+    local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local root_home
+    local target_home
+    local system_state
+
+    root_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    system_state="$root_home/system-state.json"
+
+    mkdir -p \
+        "$root_home/.acfs/scripts/lib" \
+        "$target_home/.acfs/scripts/lib" \
+        "$target_home/.acfs/logs/updates" \
+        "$target_home/.local/bin"
+
+    cat > "$root_home/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$target_home/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$target_home",
+  "bin_dir": "$target_home/.local/bin"
+}
+EOF
+    cat > "$target_home/.local/bin/acfs-update" <<'EOF'
+#!/usr/bin/env bash
+printf 'CHILD_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    chmod +x "$target_home/.local/bin/acfs-update"
+
+    run env HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
+
+    assert_success
+    assert_output --partial "Running: $target_home/.local/bin/acfs-update --yes --quiet --no-self-update"
+    assert_output --partial "CHILD_HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
+    [[ -f "$target_home/.acfs/logs/updates/nightly-2025-01-01.log" ]]
+}
+
+@test "nightly update falls back to target home binaries when system state omits bin dir" {
+    local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local root_home
+    local target_home
+    local system_state
+
+    root_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    system_state="$root_home/system-state.json"
+
+    mkdir -p \
+        "$root_home/.acfs/scripts/lib" \
+        "$target_home/.acfs/bin" \
+        "$target_home/.acfs/scripts/lib" \
+        "$target_home/.acfs/logs/updates"
+
+    cat > "$root_home/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$target_home/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$target_home"
+}
+EOF
+    cat > "$target_home/.acfs/bin/acfs-update" <<'EOF'
+#!/usr/bin/env bash
+printf 'CHILD_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    chmod +x "$target_home/.acfs/bin/acfs-update"
+
+    run env HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
+
+    assert_success
+    assert_output --partial "Running: $target_home/.acfs/bin/acfs-update --yes --quiet --no-self-update"
+    assert_output --partial "CHILD_HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
+    [[ -f "$target_home/.acfs/logs/updates/nightly-2025-01-01.log" ]]
 }
 
 @test "username helpers and wrappers allow dotted usernames and validate before re-exec" {
@@ -1828,11 +1917,14 @@ EOF
     init_stub_dir
 
     # shellcheck disable=SC1090
+    eval "$(sed -n '/^_smoke_preferred_bin_dir()/,/^}$/p' "$smoke")"
+    # shellcheck disable=SC1090
     eval "$(sed -n '/^_smoke_binary_path()/,/^}$/p' "$smoke")"
     # shellcheck disable=SC1090
     eval "$(sed -n '/^_smoke_binary_exists()/,/^}$/p' "$smoke")"
 
     export TARGET_HOME="$HOME/target-home"
+    export _SMOKE_TARGET_HOME="$TARGET_HOME"
     export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
     mkdir -p "$ACFS_BIN_DIR"
 

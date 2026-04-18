@@ -61,8 +61,12 @@ HOME="$(resolve_current_home)" || {
     exit 1
 }
 export HOME
+TARGET_HOME="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+ACFS_HOME="$(sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 ACFS_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
-export ACFS_STATE_FILE
+ACFS_SYSTEM_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR
 
 read_bin_dir_from_state_file() {
     local state_file="$1"
@@ -86,12 +90,62 @@ read_bin_dir_from_state_file() {
     return 1
 }
 
-for state_candidate in \
-    "${ACFS_STATE_FILE:-}" \
-    "$HOME/.acfs/state.json" \
-    "/var/lib/acfs/state.json"; do
+read_target_home_from_state_file() {
+    local state_file="$1"
+    local target_home=""
+
+    [[ -f "$state_file" ]] || return 1
+
+    if command -v jq &>/dev/null; then
+        target_home="$(jq -r '.target_home // empty' "$state_file" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$target_home" ]]; then
+        target_home="$(sed -n 's/.*"target_home"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
+    fi
+
+    target_home="$(sanitize_abs_nonroot_path "$target_home" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+    [[ -d "$target_home" ]] || return 1
+    printf '%s\n' "$target_home"
+}
+
+state_file_path_target_home() {
+    local state_file="$1"
+    local candidate_home=""
+
+    [[ "$state_file" == */.acfs/state.json ]] || return 1
+    candidate_home="${state_file%/.acfs/state.json}"
+    candidate_home="$(sanitize_abs_nonroot_path "$candidate_home" 2>/dev/null || true)"
+    [[ -n "$candidate_home" ]] || return 1
+    [[ -d "$candidate_home" ]] || return 1
+    printf '%s\n' "$candidate_home"
+}
+
+state_candidates=()
+if [[ -n "${ACFS_STATE_FILE:-}" ]]; then
+    state_candidates+=("$ACFS_STATE_FILE")
+fi
+if [[ "$HOME" == "/root" ]]; then
+    [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && state_candidates+=("$ACFS_SYSTEM_STATE_FILE")
+    state_candidates+=("$HOME/.acfs/state.json")
+else
+    state_candidates+=("$HOME/.acfs/state.json")
+    [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && state_candidates+=("$ACFS_SYSTEM_STATE_FILE")
+fi
+
+for state_candidate in "${state_candidates[@]}"; do
     [[ -n "$state_candidate" && -f "$state_candidate" ]] || continue
     ACFS_STATE_FILE="$state_candidate"
+    TARGET_HOME="$(read_target_home_from_state_file "$state_candidate" 2>/dev/null || true)"
+    if [[ -z "${TARGET_HOME:-}" ]]; then
+        TARGET_HOME="$(state_file_path_target_home "$state_candidate" 2>/dev/null || true)"
+    fi
+    if [[ -n "${TARGET_HOME:-}" ]]; then
+        HOME="$TARGET_HOME"
+        ACFS_HOME="$TARGET_HOME/.acfs"
+        export HOME TARGET_HOME ACFS_HOME
+    fi
     ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$state_candidate" 2>/dev/null || true)"
     export ACFS_STATE_FILE ACFS_BIN_DIR
     break
