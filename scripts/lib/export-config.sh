@@ -461,7 +461,15 @@ augment_path_for_target_user() {
 
     [[ -n "$target_home" ]] || return 0
 
-    for dir in         "$primary_bin_dir"         "$target_home/.local/bin"         "$target_home/.acfs/bin"         "$target_home/.bun/bin"         "$target_home/.cargo/bin"         "$target_home/go/bin"         "$target_home/.atuin/bin"         "$target_home/google-cloud-sdk/bin"; do
+    for dir in \
+        "$primary_bin_dir" \
+        "$target_home/.local/bin" \
+        "$target_home/.acfs/bin" \
+        "$target_home/.bun/bin" \
+        "$target_home/.cargo/bin" \
+        "$target_home/go/bin" \
+        "$target_home/.atuin/bin" \
+        "$target_home/google-cloud-sdk/bin"; do
         [[ -d "$dir" ]] || continue
         case "$seen_path" in
             *":$dir:"*) ;;
