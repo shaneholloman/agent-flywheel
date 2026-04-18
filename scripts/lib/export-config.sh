@@ -344,8 +344,7 @@ resolve_target_home() {
     explicit_target_home="$(resolve_explicit_target_home 2>/dev/null || true)"
 
     if [[ -n "$explicit_target_home" ]]; then
-        printf '%s
-' "$explicit_target_home"
+        printf '%s\n' "$explicit_target_home"
         return 0
     fi
 
@@ -355,26 +354,22 @@ resolve_target_home() {
 
     if [[ -n "$state_home" ]]; then
         if [[ "$state_file" == "$_EXPORT_SYSTEM_STATE_FILE" ]]; then
-            printf '%s
-' "$state_home"
+            printf '%s\n' "$state_home"
             return 0
         fi
         if [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" ]]; then
-            printf '%s
-' "$state_home"
+            printf '%s\n' "$state_home"
             return 0
         fi
     fi
 
     if [[ -n "$system_home" ]]; then
-        printf '%s
-' "$system_home"
+        printf '%s\n' "$system_home"
         return 0
     fi
 
     if [[ -n "$state_home" ]]; then
-        printf '%s
-' "$state_home"
+        printf '%s\n' "$state_home"
         return 0
     fi
 

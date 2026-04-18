@@ -1872,10 +1872,8 @@ EOF
     system_state="$BATS_TEST_TMPDIR/target-home-resolver-system-state.json"
 
     mkdir -p "$current_home" "$target_home/.acfs" "$stale_home/.acfs"
-    printf '{}
-' > "$target_home/.acfs/state.json"
-    printf '{}
-' > "$stale_home/.acfs/state.json"
+    printf '{}\n' > "$target_home/.acfs/state.json"
+    printf '{}\n' > "$stale_home/.acfs/state.json"
 
     cat > "$system_state" <<EOF
 {
@@ -1907,14 +1905,10 @@ EOF
     system_state="$BATS_TEST_TMPDIR/context-builder-system-state.json"
 
     mkdir -p "$current_home" "$target_home/.acfs" "$stale_home/.acfs"
-    printf 'live
-' > "$target_home/.acfs/VERSION"
-    printf 'stale
-' > "$stale_home/.acfs/VERSION"
-    printf '{}
-' > "$target_home/.acfs/state.json"
-    printf '{}
-' > "$stale_home/.acfs/state.json"
+    printf 'live\n' > "$target_home/.acfs/VERSION"
+    printf 'stale\n' > "$stale_home/.acfs/VERSION"
+    printf '{}\n' > "$target_home/.acfs/state.json"
+    printf '{}\n' > "$stale_home/.acfs/state.json"
 
     cat > "$system_state" <<EOF
 {
@@ -1922,27 +1916,21 @@ EOF
 }
 EOF
 
-    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; printf "data_home=%s
-state_file=%s
-target_home=%s
-" "$(info_get_data_home 2>/dev/null || true)" "$(info_get_install_state_file 2>/dev/null || true)" "$(info_resolve_target_home "$(info_get_install_state_file 2>/dev/null || true)" 2>/dev/null || true)"' _ "$PROJECT_ROOT/scripts/lib/info.sh"
+    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; printf "data_home=%s\nstate_file=%s\ntarget_home=%s\n" "$(info_get_data_home 2>/dev/null || true)" "$(info_get_install_state_file 2>/dev/null || true)" "$(info_resolve_target_home "$(info_get_install_state_file 2>/dev/null || true)" 2>/dev/null || true)"' _ "$PROJECT_ROOT/scripts/lib/info.sh"
     assert_success
     assert_output --partial "data_home=$target_home/.acfs"
     assert_output --partial "state_file=$target_home/.acfs/state.json"
     assert_output --partial "target_home=$target_home"
 
-    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; dashboard_prepare_context >/dev/null 2>&1; printf "%s
-" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/dashboard.sh"
+    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; dashboard_prepare_context >/dev/null 2>&1; printf "%s\n" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/dashboard.sh"
     assert_success
     assert_output "$target_home"
 
-    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; support_initialize_context >/dev/null 2>&1; printf "%s
-" "${SUPPORT_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/support.sh"
+    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; support_initialize_context >/dev/null 2>&1; printf "%s\n" "${SUPPORT_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/support.sh"
     assert_success
     assert_output "$target_home"
 
-    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; cheatsheet_prepare_context >/dev/null 2>&1; printf "%s
-" "${_CHEATSHEET_RESOLVED_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/cheatsheet.sh"
+    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; cheatsheet_prepare_context >/dev/null 2>&1; printf "%s\n" "${_CHEATSHEET_RESOLVED_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/cheatsheet.sh"
     assert_success
     assert_output "$target_home"
 }
@@ -2180,8 +2168,7 @@ target_home=%s
 
     getent() {
         if [[ "${1:-}" == "passwd" ]] && [[ "${2:-}" == "$ACFS_TEST_CURRENT_USER" ]]; then
-            printf '%s:x:1000:1000::%s:/bin/bash
-' "$ACFS_TEST_CURRENT_USER" "$ACFS_TEST_PASSWD_HOME"
+            printf '%s:x:1000:1000::%s:/bin/bash\n' "$ACFS_TEST_CURRENT_USER" "$ACFS_TEST_PASSWD_HOME"
             return 0
         fi
         return 2
@@ -2189,16 +2176,14 @@ target_home=%s
 
     id() {
         if [[ "${1:-}" == "-un" ]]; then
-            printf '%s
-' "$ACFS_TEST_CURRENT_USER"
+            printf '%s\n' "$ACFS_TEST_CURRENT_USER"
             return 0
         fi
         command id "$@"
     }
 
     whoami() {
-        printf '%s
-' "$ACFS_TEST_CURRENT_USER"
+        printf '%s\n' "$ACFS_TEST_CURRENT_USER"
     }
 
     while IFS='|' read -r label script func; do
@@ -3141,8 +3126,7 @@ EOF
     local expected_path=""
     mkdir -p "$test_home/.local/bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
 
-    run env HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'source "$1"; ACFS_BIN_DIR=""; PATH=""; ensure_path; printf "%s
-" "$PATH"' _ "$update"
+    run env HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'source "$1"; ACFS_BIN_DIR=""; PATH=""; ensure_path; printf "%s\n" "$PATH"' _ "$update"
     assert_success
 
     expected_path="$test_home/.local/bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
@@ -3156,8 +3140,7 @@ EOF
     local expected_path=""
     mkdir -p "$test_home/.local/bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin" "$cwd/relative/bin"
 
-    run env HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'cd "$3"; source "$1"; ACFS_BIN_DIR="relative/bin"; PATH=""; ensure_path; printf "%s
-" "$PATH"' _ "$update" unused "$cwd"
+    run env HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'cd "$3"; source "$1"; ACFS_BIN_DIR="relative/bin"; PATH=""; ensure_path; printf "%s\n" "$PATH"' _ "$update" unused "$cwd"
     assert_success
 
     expected_path="$test_home/.local/bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
