@@ -471,6 +471,30 @@ if ! command -v bun &>/dev/null; then
     exit 2
 fi
 
+# Refuse to fix if any tracked source file (anything contributing to
+# ACFS_INTERNAL_CHECKSUMS or to the generated installer scripts) has
+# uncommitted changes. Otherwise `bun run generate` would hash the dirty
+# working-tree contents and we'd push checksums that don't match what's
+# actually committed — exactly the failure mode that broke Pinned Ref Smoke
+# and the offline bootstrap installer tests on c55a89eb.
+DIRTY_SOURCES="$(cd "$REPO_ROOT" && git status --porcelain -- \
+    scripts/lib \
+    scripts/acfs-global \
+    scripts/acfs-update \
+    acfs.manifest.yaml \
+    packages/manifest 2>/dev/null \
+    | grep -v '^??' || true)"
+if [[ -n "$DIRTY_SOURCES" ]]; then
+    log_error "Refusing to auto-fix: tracked source files have uncommitted changes."
+    log_error "Otherwise generated checksums would capture working-tree state and"
+    log_error "diverge from what's actually committed/pushed. Commit (or stash)"
+    log_error "these first, then re-run with --fix:"
+    while IFS= read -r _line; do
+        [[ -z "$_line" ]] || log_error "  $_line"
+    done <<< "$DIRTY_SOURCES"
+    exit 2
+fi
+
 # Regenerate
 cd "$REPO_ROOT/packages/manifest"
 if ! bun run generate >&2; then
