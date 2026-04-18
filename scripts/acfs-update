@@ -224,6 +224,26 @@ read_bin_dir_from_state_file() {
   return 1
 }
 
+state_file_matches_target_home() {
+  local state_file="$1"
+  local expected_home="$2"
+  local state_home=""
+
+  [[ -n "$state_file" ]] || return 1
+  expected_home="$(sanitize_abs_nonroot_path "$expected_home" 2>/dev/null || true)"
+  [[ -n "$expected_home" ]] || return 1
+
+  if [[ "$state_file" == */.acfs/state.json ]]; then
+    state_home="${state_file%/.acfs/state.json}"
+    state_home="$(sanitize_abs_nonroot_path "$state_home" 2>/dev/null || true)"
+  else
+    state_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
+  fi
+
+  [[ -n "$state_home" ]] || return 1
+  [[ "$state_home" == "$expected_home" ]]
+}
+
 find_update_script_for_state_file() {
   local state_file="$1"
   local state_home=""
@@ -722,6 +742,7 @@ main() {
 
   if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
     local state_candidate=""
+    local expected_home=""
     state_candidates=(
       "${ACFS_STATE_FILE:-}"
       "${ACFS_SYSTEM_STATE_FILE:-}"
@@ -729,8 +750,12 @@ main() {
     if [[ -n "$current_home" ]] && [[ -z "${TARGET_HOME:-}" || "$current_home" == "${TARGET_HOME:-}" ]]; then
       state_candidates+=("$current_home/.acfs/state.json")
     fi
+    expected_home="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
     for state_candidate in "${state_candidates[@]}"; do
       [[ -n "$state_candidate" && -f "$state_candidate" ]] || continue
+      if [[ -n "$expected_home" ]] && ! state_file_matches_target_home "$state_candidate" "$expected_home"; then
+        continue
+      fi
       ACFS_BIN_DIR="$(read_bin_dir_from_state_file "$state_candidate" 2>/dev/null || true)"
       [[ -n "$ACFS_BIN_DIR" ]] && break
     done
