@@ -455,22 +455,28 @@ augment_path_for_target_user() {
     local dir=""
     local target_home="${TARGET_HOME:-}"
     local primary_bin_dir="${ACFS_BIN_DIR:-$target_home/.local/bin}"
+    local current_path="${PATH:-}"
+    local seen_path=":${current_path}:"
+    local -a to_prepend=()
 
     [[ -n "$target_home" ]] || return 0
 
-    for dir in \
-        "$primary_bin_dir" \
-        "$target_home/.local/bin" \
-        "$target_home/.acfs/bin" \
-        "$target_home/.bun/bin" \
-        "$target_home/.cargo/bin" \
-        "$target_home/go/bin" \
-        "$target_home/.atuin/bin"; do
-        case ":$PATH:" in
+    for dir in         "$primary_bin_dir"         "$target_home/.local/bin"         "$target_home/.acfs/bin"         "$target_home/.bun/bin"         "$target_home/.cargo/bin"         "$target_home/go/bin"         "$target_home/.atuin/bin"         "$target_home/google-cloud-sdk/bin"; do
+        [[ -d "$dir" ]] || continue
+        case "$seen_path" in
             *":$dir:"*) ;;
-            *) export PATH="$dir:$PATH" ;;
+            *)
+                to_prepend+=("$dir")
+                seen_path="${seen_path}${dir}:"
+                ;;
         esac
     done
+
+    if [[ ${#to_prepend[@]} -gt 0 ]]; then
+        local prefix=""
+        prefix="$(IFS=:; printf '%s' "${to_prepend[*]}")"
+        export PATH="$prefix${current_path:+:$current_path}"
+    fi
 }
 
 load_module_detection_support() {

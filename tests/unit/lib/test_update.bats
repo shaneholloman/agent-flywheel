@@ -2064,6 +2064,26 @@ EOF
     [ "$PATH" = "$expected_path" ]
 }
 
+@test "export-config.sh: augment_path_for_target_user preserves primary bin priority" {
+    local export_config="$PROJECT_ROOT/scripts/lib/export-config.sh"
+    local test_home
+    local expected_path=""
+
+    test_home="$(create_temp_dir)"
+    mkdir -p "$test_home/custom-bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^augment_path_for_target_user()/,/^}$/p' "$export_config")"
+
+    export TARGET_HOME="$test_home"
+    export ACFS_BIN_DIR="$test_home/custom-bin"
+    PATH="/usr/bin:/bin"
+    augment_path_for_target_user
+
+    expected_path="$test_home/custom-bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/bin:/bin"
+    [ "$PATH" = "$expected_path" ]
+}
+
 @test "smoke_test.sh: prepend_user_paths preserves primary bin priority" {
     local smoke_lib="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
     local test_home
