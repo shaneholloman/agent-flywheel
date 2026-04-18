@@ -2264,8 +2264,39 @@ EOF
                 }
                 ;;
             state)
+                local state_bin_dir="$BATS_TEST_TMPDIR/state-bin"
+                mkdir -p "$state_bin_dir"
+                cat > "$state_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    printf '%s\n' "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$state_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "$current_user"
+EOF
+                cat > "$state_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\n' "$current_user" "$passwd_home"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$state_bin_dir/id" "$state_bin_dir/whoami" "$state_bin_dir/getent"
                 eval "$(sed -n '/^state_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^state_system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^state_resolve_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^state_getent_passwd_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^state_resolve_current_home()/,/^}$/p' "$script")"
+                state_system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    printf '%s/%s\n' "$state_bin_dir" "$name"
+                }
                 ;;
         esac
 
