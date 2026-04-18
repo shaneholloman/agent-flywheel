@@ -1857,6 +1857,96 @@ changelog|$PROJECT_ROOT/scripts/lib/changelog.sh|resolve_changelog_acfs_home|$ta
 EOF
 }
 
+@test "target home resolvers honor explicit TARGET_HOME over stale system state" {
+    local current_home
+    local target_home
+    local stale_home
+    local system_state
+    local label
+    local script
+    local func
+
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$BATS_TEST_TMPDIR/target-home-resolver-system-state.json"
+
+    mkdir -p "$current_home" "$target_home/.acfs" "$stale_home/.acfs"
+    printf '{}
+' > "$target_home/.acfs/state.json"
+    printf '{}
+' > "$stale_home/.acfs/state.json"
+
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$stale_home"
+}
+EOF
+
+    while IFS='|' read -r label script func; do
+        run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; func="$2"; "$func" "$3"' _ "$script" "$func" "$target_home/.acfs/state.json"
+        assert_success
+        assert_output "$target_home"
+    done <<EOF
+status|$PROJECT_ROOT/scripts/lib/status.sh|_status_resolve_target_home
+export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|resolve_target_home
+support|$PROJECT_ROOT/scripts/lib/support.sh|support_resolve_target_home
+info|$PROJECT_ROOT/scripts/lib/info.sh|info_resolve_target_home
+EOF
+}
+
+@test "context builders and info paths honor explicit TARGET_HOME over stale system state" {
+    local current_home
+    local target_home
+    local stale_home
+    local system_state
+
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$BATS_TEST_TMPDIR/context-builder-system-state.json"
+
+    mkdir -p "$current_home" "$target_home/.acfs" "$stale_home/.acfs"
+    printf 'live
+' > "$target_home/.acfs/VERSION"
+    printf 'stale
+' > "$stale_home/.acfs/VERSION"
+    printf '{}
+' > "$target_home/.acfs/state.json"
+    printf '{}
+' > "$stale_home/.acfs/state.json"
+
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$stale_home"
+}
+EOF
+
+    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; printf "data_home=%s
+state_file=%s
+target_home=%s
+" "$(info_get_data_home 2>/dev/null || true)" "$(info_get_install_state_file 2>/dev/null || true)" "$(info_resolve_target_home "$(info_get_install_state_file 2>/dev/null || true)" 2>/dev/null || true)"' _ "$PROJECT_ROOT/scripts/lib/info.sh"
+    assert_success
+    assert_output --partial "data_home=$target_home/.acfs"
+    assert_output --partial "state_file=$target_home/.acfs/state.json"
+    assert_output --partial "target_home=$target_home"
+
+    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; dashboard_prepare_context >/dev/null 2>&1; printf "%s
+" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/dashboard.sh"
+    assert_success
+    assert_output "$target_home"
+
+    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; support_initialize_context >/dev/null 2>&1; printf "%s
+" "${SUPPORT_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/support.sh"
+    assert_success
+    assert_output "$target_home"
+
+    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; cheatsheet_prepare_context >/dev/null 2>&1; printf "%s
+" "${_CHEATSHEET_RESOLVED_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/cheatsheet.sh"
+    assert_success
+    assert_output "$target_home"
+}
+
 @test "username helpers and wrappers allow dotted usernames and validate before re-exec" {
     local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
     local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"

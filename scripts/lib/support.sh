@@ -420,30 +420,50 @@ support_resolve_target_home() {
     local state_file="${1:-}"
     local state_home=""
     local system_home=""
+    local explicit_target_home=""
 
     if [[ -n "$state_file" ]]; then
         state_home=$(support_read_target_home_from_state "$state_file" 2>/dev/null || true)
     fi
     system_home=$(support_read_target_home_from_state "$SUPPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
+    explicit_target_home="$(support_resolve_explicit_target_home 2>/dev/null || true)"
+
+    if [[ -n "$explicit_target_home" ]]; then
+        printf '%s
+' "$explicit_target_home"
+        return 0
+    fi
+
+    if [[ -n "$_SUPPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
+        return 1
+    fi
 
     if [[ -n "$state_home" ]]; then
         if [[ "$state_file" == "$SUPPORT_SYSTEM_STATE_FILE" ]]; then
-            printf '%s\n' "$state_home"
+            printf '%s
+' "$state_home"
             return 0
         fi
         if [[ -n "$_SUPPORT_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_SUPPORT_EXPLICIT_ACFS_HOME/state.json" ]]; then
-            printf '%s\n' "$state_home"
+            printf '%s
+' "$state_home"
             return 0
         fi
     fi
 
     if [[ -n "$system_home" ]]; then
-        printf '%s\n' "$system_home"
+        printf '%s
+' "$system_home"
         return 0
     fi
 
-    [[ -n "$state_home" ]] || return 1
-    printf '%s\n' "$state_home"
+    if [[ -n "$state_home" ]]; then
+        printf '%s
+' "$state_home"
+        return 0
+    fi
+
+    return 1
 }
 
 support_get_install_state_file() {
@@ -583,6 +603,16 @@ support_initialize_context() {
     explicit_target_home="$(support_resolve_explicit_target_home 2>/dev/null || true)"
     state_target_user="$(support_read_target_user_from_state "$SUPPORT_SYSTEM_STATE_FILE" 2>/dev/null || support_read_target_user_from_state "$state_file" 2>/dev/null || true)"
 
+    if [[ -n "$_SUPPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
+        if [[ -n "$explicit_target_home" ]]; then
+            SUPPORT_TARGET_HOME="$explicit_target_home"
+            target_home_source="explicit_target_home"
+        else
+            log_error "Explicit TARGET_HOME/TARGET_USER did not resolve to an installed home; refusing to fall back to current HOME"
+            return 1
+        fi
+    fi
+
     if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
         SUPPORT_TARGET_HOME="$path_home"
         target_home_source="path_home"
@@ -614,18 +644,6 @@ support_initialize_context() {
         if [[ -n "$resolved_target_home" ]]; then
             SUPPORT_TARGET_HOME="$resolved_target_home"
             target_home_source="acfs_home_path"
-        fi
-    fi
-
-    if [[ -n "$_SUPPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
-        if [[ -n "$explicit_target_home" ]]; then
-            if [[ -z "$SUPPORT_TARGET_HOME" ]] || [[ "$target_home_source" == "current_home" ]]; then
-                SUPPORT_TARGET_HOME="$explicit_target_home"
-                target_home_source="explicit_target_home"
-            fi
-        elif [[ -z "$SUPPORT_TARGET_HOME" ]]; then
-            log_error "Explicit TARGET_HOME/TARGET_USER did not resolve to an installed home; refusing to fall back to current HOME"
-            return 1
         fi
     fi
 

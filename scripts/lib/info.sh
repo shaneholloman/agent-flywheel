@@ -574,34 +574,51 @@ info_resolve_target_home() {
     local path_home=""
     local state_home=""
     local system_home=""
+    local explicit_target_home=""
 
     path_home="$(info_state_file_path_target_home "$state_file" 2>/dev/null || true)"
     state_home="$(info_read_target_home_from_state "$state_file" 2>/dev/null || true)"
     system_home="$(info_read_target_home_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+    explicit_target_home="$(info_resolve_explicit_target_home 2>/dev/null || true)"
 
     if [[ -n "$path_home" ]]; then
-        printf '%s\n' "$path_home"
+        printf '%s
+' "$path_home"
         return 0
+    fi
+
+    if [[ -n "$explicit_target_home" ]]; then
+        printf '%s
+' "$explicit_target_home"
+        return 0
+    fi
+
+    if [[ -n "$_INFO_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_INFO_EXPLICIT_TARGET_USER_RAW" ]]; then
+        return 1
     fi
 
     if [[ -n "$state_home" ]]; then
         if [[ "$state_file" == "$_INFO_SYSTEM_STATE_FILE" ]]; then
-            printf '%s\n' "$state_home"
+            printf '%s
+' "$state_home"
             return 0
         fi
         if [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_INFO_EXPLICIT_ACFS_HOME/state.json" ]]; then
-            printf '%s\n' "$state_home"
+            printf '%s
+' "$state_home"
             return 0
         fi
     fi
 
     if [[ -n "$system_home" ]]; then
-        printf '%s\n' "$system_home"
+        printf '%s
+' "$system_home"
         return 0
     fi
 
     if [[ -n "$state_home" ]]; then
-        printf '%s\n' "$state_home"
+        printf '%s
+' "$state_home"
         return 0
     fi
 
@@ -650,6 +667,28 @@ info_get_data_home() {
         return 0
     fi
 
+    if [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_EXPLICIT_ACFS_HOME"; then
+        _INFO_RESOLVED_ACFS_HOME="$_INFO_EXPLICIT_ACFS_HOME"
+        echo "$_INFO_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    explicit_target_home="$(info_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if info_candidate_has_acfs_data "$candidate"; then
+            _INFO_RESOLVED_ACFS_HOME="$candidate"
+            echo "$_INFO_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_INFO_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_INFO_EXPLICIT_TARGET_USER_RAW" ]]; then
+        _INFO_RESOLVED_ACFS_HOME=""
+        echo ""
+        return 0
+    fi
+
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(info_home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs"
@@ -681,28 +720,6 @@ info_get_data_home() {
         fi
     fi
 
-    if [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_EXPLICIT_ACFS_HOME"; then
-        _INFO_RESOLVED_ACFS_HOME="$_INFO_EXPLICIT_ACFS_HOME"
-        echo "$_INFO_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
-    explicit_target_home="$(info_resolve_explicit_target_home 2>/dev/null || true)"
-    if [[ -n "$explicit_target_home" ]]; then
-        candidate="${explicit_target_home}/.acfs"
-        if info_candidate_has_acfs_data "$candidate"; then
-            _INFO_RESOLVED_ACFS_HOME="$candidate"
-            echo "$_INFO_RESOLVED_ACFS_HOME"
-            return 0
-        fi
-    fi
-
-    if [[ -n "$_INFO_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_INFO_EXPLICIT_TARGET_USER_RAW" ]]; then
-        _INFO_RESOLVED_ACFS_HOME=""
-        echo ""
-        return 0
-    fi
-
     if [[ -n "$_INFO_DEFAULT_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_DEFAULT_ACFS_HOME"; then
         _INFO_RESOLVED_ACFS_HOME="$_INFO_DEFAULT_ACFS_HOME"
         echo "$_INFO_RESOLVED_ACFS_HOME"
@@ -723,6 +740,11 @@ info_get_install_state_file() {
     fi
 
     if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
+        echo "$candidate"
+        return 0
+    fi
+
+    if [[ -n "$_INFO_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_INFO_EXPLICIT_TARGET_USER_RAW" ]]; then
         echo "$candidate"
         return 0
     fi

@@ -485,6 +485,16 @@ dashboard_prepare_context() {
     explicit_target_home="$(dashboard_resolve_explicit_target_home 2>/dev/null || true)"
     state_target_user="$(dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null ||         dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
 
+    if [[ -n "$_DASHBOARD_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
+        if [[ -n "$explicit_target_home" ]]; then
+            _DASHBOARD_RESOLVED_TARGET_HOME="$explicit_target_home"
+            target_home_source="explicit_target_home"
+        else
+            echo "Error: explicit TARGET_HOME/TARGET_USER did not resolve to an installed home; refusing to fall back to current HOME" >&2
+            return 1
+        fi
+    fi
+
     if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
         _DASHBOARD_RESOLVED_TARGET_HOME="$path_home"
         target_home_source="path_home"
@@ -516,18 +526,6 @@ dashboard_prepare_context() {
         if [[ -n "$resolved_target_home" ]]; then
             _DASHBOARD_RESOLVED_TARGET_HOME="$resolved_target_home"
             target_home_source="acfs_home_path"
-        fi
-    fi
-
-    if [[ -n "$_DASHBOARD_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
-        if [[ -n "$explicit_target_home" ]]; then
-            if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] || [[ "$target_home_source" == "current_home" ]]; then
-                _DASHBOARD_RESOLVED_TARGET_HOME="$explicit_target_home"
-                target_home_source="explicit_target_home"
-            fi
-        elif [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
-            echo "Error: explicit TARGET_HOME/TARGET_USER did not resolve to an installed home; refusing to fall back to current HOME" >&2
-            return 1
         fi
     fi
 

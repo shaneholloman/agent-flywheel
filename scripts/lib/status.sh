@@ -663,63 +663,51 @@ _status_resolve_target_home() {
     local path_home=""
     local state_home=""
     local system_home=""
+    local explicit_target_home=""
 
     path_home="$(_status_state_file_path_target_home "$state_file" 2>/dev/null || true)"
     state_home="$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)"
     system_home="$(_status_read_target_home_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+    explicit_target_home="$(_status_resolve_explicit_target_home 2>/dev/null || true)"
 
     if [[ -n "$path_home" ]]; then
-        printf '%s\n' "$path_home"
+        printf '%s
+' "$path_home"
         return 0
+    fi
+
+    if [[ -n "$explicit_target_home" ]]; then
+        printf '%s
+' "$explicit_target_home"
+        return 0
+    fi
+
+    if [[ -n "$_STATUS_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_STATUS_EXPLICIT_TARGET_USER_RAW" ]]; then
+        return 1
     fi
 
     if [[ -n "$state_home" ]]; then
         if [[ "$state_file" == "$_STATUS_SYSTEM_STATE_FILE" ]]; then
-            printf '%s\n' "$state_home"
+            printf '%s
+' "$state_home"
             return 0
         fi
         if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]]; then
-            printf '%s\n' "$state_home"
+            printf '%s
+' "$state_home"
             return 0
         fi
     fi
 
     if [[ -n "$system_home" ]]; then
-        printf '%s\n' "$system_home"
+        printf '%s
+' "$system_home"
         return 0
     fi
 
     if [[ -n "$state_home" ]]; then
-        printf '%s\n' "$state_home"
-        return 0
-    fi
-
-    return 1
-}
-
-_status_allow_target_home_fallback_from_user() {
-    local state_file="${1:-}"
-    local path_home=""
-    local state_home=""
-    local script_acfs_home=""
-
-    path_home="$(_status_state_file_path_target_home "$state_file" 2>/dev/null || true)"
-    state_home="$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)"
-    script_acfs_home="$(_status_script_acfs_home 2>/dev/null || true)"
-
-    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]]; then
-        return 0
-    fi
-
-    if [[ -n "$script_acfs_home" ]] && [[ "$state_file" == "$script_acfs_home/state.json" ]]; then
-        return 0
-    fi
-
-    if [[ "$state_file" == "$_STATUS_SYSTEM_STATE_FILE" ]]; then
-        return 0
-    fi
-
-    if [[ -n "$state_home" ]] && { [[ -z "$path_home" ]] || [[ "$path_home" == "$state_home" ]]; }; then
+        printf '%s
+' "$state_home"
         return 0
     fi
 
