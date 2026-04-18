@@ -8,7 +8,15 @@ set -euo pipefail
 
 ACFS_STATE_FILE="${ACFS_STATE_FILE:-}"
 ACFS_SYSTEM_STATE_FILE="${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_path="${BASH_SOURCE[0]}"
+case "$script_path" in
+  */*)
+    SCRIPT_DIR="$(cd "${script_path%/*}" && pwd)"
+    ;;
+  *)
+    SCRIPT_DIR="$(pwd)"
+    ;;
+esac
 
 sanitize_abs_nonroot_path() {
   local path_value="${1:-}"
@@ -19,6 +27,97 @@ sanitize_abs_nonroot_path() {
   [[ "$path_value" == /* ]] || return 1
   [[ "$path_value" != "/" ]] || return 1
   printf '%s\n' "$path_value"
+}
+
+system_binary_path() {
+  local name="${1:-}"
+  local candidate=""
+
+  [[ -n "$name" ]] || return 1
+
+  for candidate in \
+    "/usr/bin/$name" \
+    "/bin/$name" \
+    "/usr/sbin/$name" \
+    "/sbin/$name"
+  do
+    [[ -x "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+
+  return 1
+}
+
+resolve_current_user() {
+  local current_user=""
+  local id_bin=""
+  local whoami_bin=""
+
+  id_bin="$(system_binary_path id 2>/dev/null || true)"
+  if [[ -n "$id_bin" ]]; then
+    current_user="$("$id_bin" -un 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$current_user" ]]; then
+    whoami_bin="$(system_binary_path whoami 2>/dev/null || true)"
+    if [[ -n "$whoami_bin" ]]; then
+      current_user="$("$whoami_bin" 2>/dev/null || true)"
+    fi
+  fi
+
+  [[ -n "$current_user" ]] || return 1
+  printf '%s\n' "$current_user"
+}
+
+getent_passwd_entry() {
+  local user="${1:-}"
+  local getent_bin=""
+
+  getent_bin="$(system_binary_path getent 2>/dev/null || true)"
+  [[ -n "$getent_bin" ]] || return 1
+
+  if [[ -n "$user" ]]; then
+    "$getent_bin" passwd "$user" 2>/dev/null
+  else
+    "$getent_bin" passwd 2>/dev/null
+  fi
+}
+
+passwd_home_from_entry() {
+  local passwd_entry="${1:-}"
+  local passwd_home=""
+
+  [[ -n "$passwd_entry" ]] || return 1
+  IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+  passwd_home="$(sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+  [[ -n "$passwd_home" ]] || return 1
+  printf '%s\n' "$passwd_home"
+}
+
+read_state_string() {
+  local state_file="$1"
+  local key="$2"
+  local value=""
+  local jq_bin=""
+  local sed_bin=""
+
+  [[ -f "$state_file" ]] || return 1
+
+  jq_bin="$(system_binary_path jq 2>/dev/null || true)"
+  if [[ -n "$jq_bin" ]]; then
+    value="$("$jq_bin" -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)"
+  else
+    sed_bin="$(system_binary_path sed 2>/dev/null || true)"
+    if [[ -n "$sed_bin" ]]; then
+      while IFS= read -r value; do
+        break
+      done < <("$sed_bin" -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null || true)
+    fi
+  fi
+
+  [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+  printf '%s\n' "$value"
 }
 
 is_valid_username() {
@@ -39,17 +138,20 @@ validate_target_user_or_die() {
 resolve_home_for_user() {
   local user="$1"
   local user_home=""
+  local passwd_entry=""
 
   if [[ "$user" == "root" ]]; then
     printf '/root\n'
     return 0
   fi
 
-  user_home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)" || true
-  user_home="$(sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
-  if [[ -n "$user_home" ]]; then
-    printf '%s\n' "$user_home"
-    return 0
+  passwd_entry="$(getent_passwd_entry "$user" 2>/dev/null || true)"
+  if [[ -n "$passwd_entry" ]]; then
+    user_home="$(passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+    if [[ -n "$user_home" ]]; then
+      printf '%s\n' "$user_home"
+      return 0
+    fi
   fi
 
   return 1
@@ -65,7 +167,7 @@ resolve_current_home() {
     return 0
   fi
 
-  current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+  current_user="$(resolve_current_user 2>/dev/null || true)"
   if [[ -n "$current_user" ]]; then
     home_candidate="$(resolve_home_for_user "$current_user" 2>/dev/null || true)"
     if [[ -n "$home_candidate" ]]; then
@@ -83,14 +185,7 @@ read_target_user_from_state_file() {
 
   [[ -f "$state_file" ]] || return 1
 
-  if command -v jq &>/dev/null; then
-    target_user="$(jq -r '.target_user // empty' "$state_file" 2>/dev/null || true)"
-  fi
-
-  if [[ -z "$target_user" ]]; then
-    target_user="$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
-  fi
-
+  target_user="$(read_state_string "$state_file" "target_user" 2>/dev/null || true)"
   if [[ -n "$target_user" ]] && is_valid_username "$target_user"; then
     printf '%s\n' "$target_user"
     return 0
@@ -105,14 +200,7 @@ read_target_home_from_state_file() {
 
   [[ -f "$state_file" ]] || return 1
 
-  if command -v jq &>/dev/null; then
-    target_home="$(jq -r '.target_home // empty' "$state_file" 2>/dev/null || true)"
-  fi
-
-  if [[ -z "$target_home" ]]; then
-    target_home="$(sed -n 's/.*"target_home"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
-  fi
-
+  target_home="$(read_state_string "$state_file" "target_home" 2>/dev/null || true)"
   if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
     printf '%s\n' "${target_home%/}"
     return 0
@@ -127,14 +215,7 @@ read_bin_dir_from_state_file() {
 
   [[ -f "$state_file" ]] || return 1
 
-  if command -v jq &>/dev/null; then
-    bin_dir="$(jq -r '.bin_dir // empty' "$state_file" 2>/dev/null || true)"
-  fi
-
-  if [[ -z "$bin_dir" ]]; then
-    bin_dir="$(sed -n 's/.*"bin_dir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$state_file" | head -n 1)"
-  fi
-
+  bin_dir="$(read_state_string "$state_file" "bin_dir" 2>/dev/null || true)"
   if [[ -n "$bin_dir" ]] && [[ "$bin_dir" == /* ]] && [[ "$bin_dir" != "/" ]]; then
     printf '%s\n' "${bin_dir%/}"
     return 0
@@ -147,7 +228,6 @@ find_update_script_for_state_file() {
   local state_file="$1"
   local state_home=""
   local target_home=""
-  local target_user=""
   local candidate_script=""
 
   [[ -f "$state_file" ]] || return 1
@@ -177,9 +257,7 @@ find_update_script_for_state_file() {
     fi
   fi
 
-  target_user="$(read_target_user_from_state_file "$state_file" 2>/dev/null || true)"
-  [[ -n "$target_user" ]] || return 1
-  find_update_script_for_user "$target_user"
+  return 1
 }
 
 find_wrapper_installed_home() {
@@ -210,22 +288,25 @@ read_user_for_home() {
   local candidate_user=""
   local state_file=""
   local state_home=""
+  local stat_bin=""
 
   user_home="$(sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
   [[ -n "$user_home" ]] || return 1
   state_file="$user_home/.acfs/state.json"
 
-  candidate_user="$(
-    getent passwd 2>/dev/null \
-      | awk -F: -v home="$user_home" '$6 == home { print $1; exit }'
-  )" || true
-  if [[ -n "$candidate_user" ]] && is_valid_username "$candidate_user"; then
-    printf '%s\n' "$candidate_user"
-    return 0
-  fi
+  while IFS=: read -r candidate_user _ _ _ _ state_home _; do
+    [[ -n "$candidate_user" ]] || continue
+    [[ -n "$state_home" ]] || continue
+    state_home="$(sanitize_abs_nonroot_path "$state_home" 2>/dev/null || true)"
+    if [[ -n "$state_home" ]] && [[ "$state_home" == "$user_home" ]] && is_valid_username "$candidate_user"; then
+      printf '%s\n' "$candidate_user"
+      return 0
+    fi
+  done < <(getent_passwd_entry 2>/dev/null || true)
 
-  if command -v stat >/dev/null 2>&1; then
-    candidate_user="$(stat -c '%U' "$user_home" 2>/dev/null || true)"
+  stat_bin="$(system_binary_path stat 2>/dev/null || true)"
+  if [[ -n "$stat_bin" ]]; then
+    candidate_user="$("$stat_bin" -c '%U' "$user_home" 2>/dev/null || true)"
     if [[ -n "$candidate_user" ]] && [[ "$candidate_user" != "UNKNOWN" ]] && is_valid_username "$candidate_user"; then
       printf '%s\n' "$candidate_user"
       return 0
@@ -237,8 +318,7 @@ read_user_for_home() {
 
   state_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
   if [[ -z "$state_home" ]]; then
-    state_home="$(getent passwd "$candidate_user" 2>/dev/null | cut -d: -f6)" || true
-    state_home="${state_home%/}"
+    state_home="$(resolve_home_for_user "$candidate_user" 2>/dev/null || true)"
   fi
 
   if [[ -n "$state_home" ]] && [[ "$state_home" == "$user_home" ]]; then
@@ -283,12 +363,6 @@ read_target_user_from_state_hint() {
       printf '%s\n' "$candidate_user"
       return 0
     fi
-  fi
-
-  candidate_user="$(read_target_user_from_state_file "$state_file" 2>/dev/null || true)"
-  if [[ -n "$candidate_user" ]] && user_has_installed_update_script "$candidate_user"; then
-    printf '%s\n' "$candidate_user"
-    return 0
   fi
 
   return 1
@@ -356,7 +430,7 @@ find_repo_local_update_script() {
   if [[ -f "${SCRIPT_DIR}/lib/update.sh" ]] && [[ -f "${SCRIPT_DIR}/../acfs.manifest.yaml" ]]; then
     candidate="${SCRIPT_DIR}/lib/update.sh"
     # normalize path
-    candidate="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+    candidate="$(cd "${candidate%/*}" && pwd)/${candidate##*/}"
     printf '%s\n' "$candidate"
     return 0
   fi
@@ -375,7 +449,7 @@ find_update_script_for_user() {
     return 0
   fi
 
-  current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+  current_user="$(resolve_current_user 2>/dev/null || true)"
   if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
     user_home="${HOME%/}"
     if find_update_script_for_home "$user_home" >/dev/null 2>&1; then
@@ -394,11 +468,10 @@ user_has_installed_update_script() {
 
 find_installed_update_owner() {
   local current_user=""
-  local entry=""
   local candidate_user=""
   local candidate_home=""
 
-  current_user="$(whoami 2>/dev/null || true)"
+  current_user="$(resolve_current_user 2>/dev/null || true)"
   if [[ -n "$current_user" ]] && user_has_installed_update_script "$current_user"; then
     printf '%s\n' "$current_user"
     return 0
@@ -407,12 +480,13 @@ find_installed_update_owner() {
   while IFS=: read -r candidate_user _ _ _ _ candidate_home _; do
     [[ -n "$candidate_user" ]] || continue
     [[ -n "$candidate_home" ]] || continue
-    [[ "$candidate_home" == /* ]] || continue
+    candidate_home="$(sanitize_abs_nonroot_path "$candidate_home" 2>/dev/null || true)"
+    [[ -n "$candidate_home" ]] || continue
     if [[ -f "$candidate_home/.acfs/scripts/lib/update.sh" ]]; then
       printf '%s\n' "$candidate_user"
       return 0
     fi
-  done < <(getent passwd 2>/dev/null || true)
+  done < <(getent_passwd_entry 2>/dev/null || true)
 
   return 1
 }
@@ -441,7 +515,15 @@ detect_target_user() {
       printf '%s\n' "$candidate_user"
       return 0
     fi
+    [[ -f "$ACFS_STATE_FILE" ]] && return 1
   fi
+
+  candidate_user="$(read_target_user_from_state_hint "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+  if [[ -n "$candidate_user" ]]; then
+    printf '%s\n' "$candidate_user"
+    return 0
+  fi
+  [[ -f "$ACFS_SYSTEM_STATE_FILE" ]] && return 1
 
   if [[ -n "${ACFS_HOME:-}" ]]; then
     candidate_user="$(read_target_user_from_state_hint "${ACFS_HOME}/state.json" 2>/dev/null || true)"
@@ -449,6 +531,7 @@ detect_target_user() {
       printf '%s\n' "$candidate_user"
       return 0
     fi
+    [[ -f "${ACFS_HOME}/state.json" ]] && return 1
   fi
 
   if [[ -n "$current_home" ]]; then
@@ -468,13 +551,7 @@ detect_target_user() {
       printf '%s\n' "$candidate_user"
       return 0
     fi
-  done < <(getent passwd 2>/dev/null || true)
-
-  candidate_user="$(read_target_user_from_state_hint "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
-  if [[ -n "$candidate_user" ]]; then
-    printf '%s\n' "$candidate_user"
-    return 0
-  fi
+  done < <(getent_passwd_entry 2>/dev/null || true)
 
   candidate_user="$(find_installed_update_owner 2>/dev/null || true)"
   if [[ -n "$candidate_user" ]]; then
@@ -494,6 +571,10 @@ exec_as_target_user() {
   local sanitized_target_home=""
   local sanitized_acfs_home=""
   local sanitized_bin_dir=""
+  local -a cmd_with_env=()
+  local env_bin=""
+  local runuser_bin=""
+  local sudo_bin=""
 
   sanitized_state_file="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
   sanitized_system_state_file="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"
@@ -511,31 +592,39 @@ exec_as_target_user() {
   [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
   [[ -n "${ACFS_RAW:-}" ]] && env_args+=("ACFS_RAW=$ACFS_RAW")
 
-  local cmd_with_env
-  if [[ ${#env_args[@]} -gt 0 ]]; then
-    cmd_with_env=("env" "${env_args[@]}" "$@")
+  env_bin="$(system_binary_path env 2>/dev/null || true)"
+  if [[ -n "$env_bin" && ${#env_args[@]} -gt 0 ]]; then
+    cmd_with_env=("$env_bin" "${env_args[@]}" "$@")
+  elif [[ ${#env_args[@]} -gt 0 ]]; then
+    echo "Error: unable to locate env for acfs-update re-exec" >&2
+    exit 1
   else
     cmd_with_env=("$@")
   fi
 
   if [[ "$EUID" -eq 0 ]]; then
-    if command -v runuser >/dev/null 2>&1; then
-      exec runuser -u "$user" -- "${cmd_with_env[@]}"
+    runuser_bin="$(system_binary_path runuser 2>/dev/null || true)"
+    if [[ -n "$runuser_bin" ]]; then
+      exec "$runuser_bin" -u "$user" -- "${cmd_with_env[@]}"
     fi
-    if command -v sudo >/dev/null 2>&1; then
-      exec sudo -u "$user" -H "${cmd_with_env[@]}"
+
+    sudo_bin="$(system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+      exec "$sudo_bin" -u "$user" -H "${cmd_with_env[@]}"
     fi
+
     echo "Error: need runuser or sudo to run acfs-update as '$user'" >&2
     exit 1
   fi
 
-  if ! command -v sudo >/dev/null 2>&1; then
+  sudo_bin="$(system_binary_path sudo 2>/dev/null || true)"
+  if [[ -z "$sudo_bin" ]]; then
     echo "Error: need sudo to run acfs-update as '$user'" >&2
     exit 1
   fi
 
   echo "Note: Running acfs-update as '$user' (ACFS owner)" >&2
-  exec sudo -u "$user" -H "${cmd_with_env[@]}"
+  exec "$sudo_bin" -u "$user" -H "${cmd_with_env[@]}"
 }
 
 main() {
@@ -550,6 +639,8 @@ main() {
   local direct_acfs_home=""
   local current_home=""
   local -a state_candidates=()
+  local bash_bin=""
+  local env_bin=""
 
   current_home="$(resolve_current_home 2>/dev/null || true)"
   if [[ -n "$current_home" ]]; then
@@ -563,6 +654,16 @@ main() {
   TARGET_HOME="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
   ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
   export ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_HOME TARGET_HOME ACFS_BIN_DIR
+
+  bash_bin="$(sanitize_abs_nonroot_path "${BASH:-}" 2>/dev/null || true)"
+  if [[ -z "$bash_bin" ]]; then
+    bash_bin="$(system_binary_path bash 2>/dev/null || true)"
+  fi
+  env_bin="$(system_binary_path env 2>/dev/null || true)"
+  if [[ -z "$bash_bin" ]]; then
+    echo "Error: unable to locate bash interpreter for acfs-update" >&2
+    exit 1
+  fi
 
   repo_update_script="$(find_repo_local_update_script || true)"
   wrapper_home="$(find_wrapper_installed_home || true)"
@@ -583,6 +684,11 @@ main() {
     [[ -n "$candidate_script" ]] && update_script="$candidate_script"
   fi
 
+  if [[ -z "$update_script" ]]; then
+    candidate_script="$(find_update_script_for_state_file "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+    [[ -n "$candidate_script" ]] && update_script="$candidate_script"
+  fi
+
   if [[ -z "$update_script" ]] && [[ -n "${ACFS_HOME:-}" ]]; then
     candidate_script="$(find_update_script_for_state_file "${ACFS_HOME}/state.json" 2>/dev/null || true)"
     [[ -n "$candidate_script" ]] && update_script="$candidate_script"
@@ -590,11 +696,6 @@ main() {
 
   if [[ -z "$update_script" ]] && [[ -n "$current_home" ]]; then
     candidate_script="$(find_update_script_for_state_file "$current_home/.acfs/state.json" 2>/dev/null || true)"
-    [[ -n "$candidate_script" ]] && update_script="$candidate_script"
-  fi
-
-  if [[ -z "$update_script" ]]; then
-    candidate_script="$(find_update_script_for_state_file "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
     [[ -n "$candidate_script" ]] && update_script="$candidate_script"
   fi
 
@@ -636,21 +737,28 @@ main() {
     export ACFS_BIN_DIR
   fi
 
-  current_user="$(whoami)"
+  current_user="$(resolve_current_user 2>/dev/null || true)"
   if [[ -z "$target_user" || "$current_user" == "$target_user" ]]; then
     if [[ -n "${TARGET_HOME:-}" ]]; then
       direct_acfs_home="$(sanitize_abs_nonroot_path "${ACFS_HOME:-$TARGET_HOME/.acfs}" 2>/dev/null || true)"
-      exec env \
-        HOME="$TARGET_HOME" \
-        TARGET_HOME="$TARGET_HOME" \
-        ACFS_HOME="${direct_acfs_home:-$TARGET_HOME/.acfs}" \
-        ACFS_BIN_DIR="${ACFS_BIN_DIR:-}" \
-        bash "$update_script" "$@"
+      if [[ -n "$env_bin" ]]; then
+        exec "$env_bin" \
+          HOME="$TARGET_HOME" \
+          TARGET_HOME="$TARGET_HOME" \
+          ACFS_HOME="${direct_acfs_home:-$TARGET_HOME/.acfs}" \
+          ACFS_BIN_DIR="${ACFS_BIN_DIR:-}" \
+          "$bash_bin" "$update_script" "$@"
+      fi
+      HOME="$TARGET_HOME"
+      ACFS_HOME="${direct_acfs_home:-$TARGET_HOME/.acfs}"
+      ACFS_BIN_DIR="${ACFS_BIN_DIR:-}"
+      export HOME TARGET_HOME ACFS_HOME ACFS_BIN_DIR
+      exec "$bash_bin" "$update_script" "$@"
     fi
-    exec bash "$update_script" "$@"
+    exec "$bash_bin" "$update_script" "$@"
   fi
 
-  exec_as_target_user "$target_user" bash "$update_script" "$@"
+  exec_as_target_user "$target_user" "$bash_bin" "$update_script" "$@"
 }
 
 main "$@"

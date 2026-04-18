@@ -18,7 +18,14 @@ fi
 
 # Ensure we have logging functions available
 if [[ -z "${ACFS_BLUE:-}" ]]; then
-    _SMOKE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    case "${BASH_SOURCE[0]}" in
+        */*)
+            _SMOKE_SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+            ;;
+        *)
+            _SMOKE_SCRIPT_DIR="$(pwd)"
+            ;;
+    esac
     # shellcheck source=logging.sh
     source "$_SMOKE_SCRIPT_DIR/logging.sh"
 fi
@@ -34,6 +41,110 @@ _smoke_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+_smoke_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in "/usr/bin/$name" "/bin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+_smoke_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+
+    [[ -n "$user" ]] || return 1
+
+    getent_bin="$(_smoke_system_binary_path getent 2>/dev/null || true)"
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+_smoke_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(_smoke_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+        if [[ -n "$current_user" ]]; then
+            printf '%s\n' "$current_user"
+            return 0
+        fi
+    fi
+
+    whoami_bin="$(_smoke_system_binary_path whoami 2>/dev/null || true)"
+    if [[ -n "$whoami_bin" ]]; then
+        current_user="$("$whoami_bin" 2>/dev/null || true)"
+        if [[ -n "$current_user" ]]; then
+            printf '%s\n' "$current_user"
+            return 0
+        fi
+    fi
+
+    current_user="${USER:-${LOGNAME:-}}"
+    if [[ -n "$current_user" ]]; then
+        printf '%s\n' "$current_user"
+        return 0
+    fi
+
+    return 1
+}
+
+_smoke_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local _passwd_user=""
+    local _passwd_pw=""
+    local _passwd_uid=""
+    local _passwd_gid=""
+    local _passwd_gecos=""
+    local passwd_home=""
+    local _passwd_shell=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=':' read -r _passwd_user _passwd_pw _passwd_uid _passwd_gid _passwd_gecos passwd_home _passwd_shell <<< "$passwd_entry"
+    [[ -n "$passwd_home" ]] || return 1
+    printf '%s\n' "$passwd_home"
+}
+
+_smoke_passwd_shell_from_entry() {
+    local passwd_entry="${1:-}"
+    local _passwd_user=""
+    local _passwd_pw=""
+    local _passwd_uid=""
+    local _passwd_gid=""
+    local _passwd_gecos=""
+    local _passwd_home=""
+    local passwd_shell=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=':' read -r _passwd_user _passwd_pw _passwd_uid _passwd_gid _passwd_gecos _passwd_home passwd_shell <<< "$passwd_entry"
+    [[ -n "$passwd_shell" ]] || return 1
+    printf '%s\n' "$passwd_shell"
+}
+
 _smoke_resolve_current_home() {
     local current_user=""
     local home_candidate=""
@@ -45,16 +156,16 @@ _smoke_resolve_current_home() {
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(_smoke_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
     if [[ -n "$current_user" ]]; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        passwd_entry="$(_smoke_getent_passwd_entry "$current_user" || true)"
         if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            home_candidate="$(_smoke_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
             home_candidate="$(_smoke_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
             if [[ -n "$home_candidate" ]]; then
                 printf '%s\n' "$home_candidate"
@@ -67,6 +178,7 @@ _smoke_resolve_current_home() {
     return 1
 }
 
+_SMOKE_CURRENT_USER="$(_smoke_resolve_current_user 2>/dev/null || true)"
 _SMOKE_CURRENT_HOME="$(_smoke_resolve_current_home 2>/dev/null || true)"
 if [[ -n "$_SMOKE_CURRENT_HOME" ]]; then
     HOME="$_SMOKE_CURRENT_HOME"
@@ -82,8 +194,19 @@ fi
 
 _smoke_script_acfs_home() {
     local candidate=""
-    candidate=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd) || return 1
-    [[ "$(basename "$candidate")" == ".acfs" ]] || return 1
+    local script_dir=""
+
+    case "${BASH_SOURCE[0]}" in
+        */*)
+            script_dir="${BASH_SOURCE[0]%/*}"
+            ;;
+        *)
+            script_dir="."
+            ;;
+    esac
+
+    candidate=$(cd "$script_dir/../.." 2>/dev/null && pwd) || return 1
+    [[ "${candidate##*/}" == ".acfs" ]] || return 1
     printf '%s\n' "$candidate"
 }
 
@@ -101,13 +224,21 @@ _smoke_read_state_string() {
     local state_file="$1"
     local key="$2"
     local value=""
+    local jq_bin=""
+    local sed_bin=""
 
     [[ -f "$state_file" ]] || return 1
 
-    if command -v jq >/dev/null 2>&1; then
-        value="$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)"
+    jq_bin="$(_smoke_system_binary_path jq 2>/dev/null || true)"
+    if [[ -n "$jq_bin" ]]; then
+        value="$("$jq_bin" -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)"
     else
-        value="$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)"
+        sed_bin="$(_smoke_system_binary_path sed 2>/dev/null || true)"
+        if [[ -n "$sed_bin" ]]; then
+            while IFS= read -r value; do
+                break
+            done < <("$sed_bin" -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null || true)
+        fi
     fi
 
     [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
@@ -116,6 +247,7 @@ _smoke_read_state_string() {
 
 _smoke_resolve_bootstrap_state_file() {
     local candidate=""
+    local explicit_state_file=""
     local env_state_file=""
 
     candidate="$(_smoke_script_acfs_home 2>/dev/null || true)"
@@ -124,17 +256,17 @@ _smoke_resolve_bootstrap_state_file() {
         return 0
     fi
 
-    if [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]]; then
-        candidate="$_SMOKE_EXPLICIT_ACFS_HOME/state.json"
-        if [[ -f "$candidate" ]]; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    fi
-
     if [[ -f "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
         printf '%s\n' "$_SMOKE_SYSTEM_STATE_FILE"
         return 0
+    fi
+
+    if [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]]; then
+        explicit_state_file="$_SMOKE_EXPLICIT_ACFS_HOME/state.json"
+        if [[ -f "$explicit_state_file" ]]; then
+            printf '%s\n' "$explicit_state_file"
+            return 0
+        fi
     fi
 
     if [[ -n "$_SMOKE_DEFAULT_ACFS_HOME" ]]; then
@@ -152,26 +284,49 @@ _smoke_resolve_bootstrap_state_file() {
     fi
 
     candidate="${env_state_file:-${_SMOKE_DEFAULT_ACFS_HOME:+$_SMOKE_DEFAULT_ACFS_HOME/state.json}}"
+    [[ -n "$candidate" ]] || candidate="$explicit_state_file"
     printf '%s\n' "$candidate"
 }
 
 _smoke_read_user_for_home() {
     local user_home="$1"
     local candidate_user=""
+    local getent_bin=""
+    local stat_bin=""
+    local passwd_line=""
+    local passwd_home=""
 
     user_home="$(_smoke_sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
     [[ -n "$user_home" ]] || return 1
 
-    if command -v getent >/dev/null 2>&1; then
-        candidate_user="$(getent passwd 2>/dev/null | awk -F: -v home="$user_home" '$6 == home { print $1; exit }' || true)"
-        if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-            printf '%s\n' "$candidate_user"
-            return 0
-        fi
+    getent_bin="$(_smoke_system_binary_path getent 2>/dev/null || true)"
+    if [[ -n "$getent_bin" ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_smoke_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+            [[ "$passwd_home" == "$user_home" ]] || continue
+            candidate_user="${passwd_line%%:*}"
+            if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+                printf '%s\n' "$candidate_user"
+                return 0
+            fi
+        done < <("$getent_bin" passwd 2>/dev/null || true)
     fi
 
-    if command -v stat >/dev/null 2>&1; then
-        candidate_user="$(stat -c '%U' "$user_home" 2>/dev/null || stat -f '%Su' "$user_home" 2>/dev/null || true)"
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_smoke_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+            [[ "$passwd_home" == "$user_home" ]] || continue
+            candidate_user="${passwd_line%%:*}"
+            if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+                printf '%s\n' "$candidate_user"
+                return 0
+            fi
+        done < /etc/passwd
+    fi
+
+    stat_bin="$(_smoke_system_binary_path stat 2>/dev/null || true)"
+    if [[ -n "$stat_bin" ]]; then
+        candidate_user="$("$stat_bin" -c '%U' "$user_home" 2>/dev/null || "$stat_bin" -f '%Su' "$user_home" 2>/dev/null || true)"
         if [[ -n "$candidate_user" ]] && [[ "$candidate_user" != "UNKNOWN" ]] && [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
             printf '%s\n' "$candidate_user"
             return 0
@@ -200,12 +355,12 @@ if [[ -z "${_SMOKE_TARGET_HOME:-}" ]]; then
     _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${_SMOKE_TARGET_HOME:-}" 2>/dev/null || true)"
 fi
 if [[ -z "${_SMOKE_TARGET_HOME:-}" ]]; then
-    _smoke_target_passwd_entry="$(getent passwd "$_SMOKE_TARGET_USER" 2>/dev/null || true)"
+    _smoke_target_passwd_entry="$(_smoke_getent_passwd_entry "$_SMOKE_TARGET_USER" || true)"
     if [[ -n "$_smoke_target_passwd_entry" ]]; then
-        _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "$(printf '%s\n' "$_smoke_target_passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+        _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "$(_smoke_passwd_home_from_entry "$_smoke_target_passwd_entry" 2>/dev/null || true)" 2>/dev/null || true)"
     elif [[ "${_SMOKE_TARGET_USER}" == "root" ]]; then
         _SMOKE_TARGET_HOME="/root"
-    elif [[ "${_SMOKE_TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
+    elif [[ -n "${_SMOKE_CURRENT_USER:-}" ]] && [[ "${_SMOKE_TARGET_USER}" == "${_SMOKE_CURRENT_USER}" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
         _SMOKE_TARGET_HOME="$_SMOKE_CURRENT_HOME"
     fi
     unset _smoke_target_passwd_entry
@@ -213,7 +368,7 @@ fi
 if [[ "${_SMOKE_TARGET_HOME:-}" != /* ]]; then
     if [[ "${_SMOKE_TARGET_USER}" == "root" ]]; then
         _SMOKE_TARGET_HOME="/root"
-    elif [[ "${_SMOKE_TARGET_USER}" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
+    elif [[ -n "${_SMOKE_CURRENT_USER:-}" ]] && [[ "${_SMOKE_TARGET_USER}" == "${_SMOKE_CURRENT_USER}" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
         _SMOKE_TARGET_HOME="$_SMOKE_CURRENT_HOME"
     else
         _SMOKE_TARGET_HOME=""
@@ -247,14 +402,6 @@ _smoke_resolve_state_file() {
         fi
     fi
 
-    if [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]]; then
-        explicit_state_file="$_SMOKE_EXPLICIT_ACFS_HOME/state.json"
-        if [[ -f "$explicit_state_file" ]]; then
-            printf '%s\n' "$explicit_state_file"
-            return 0
-        fi
-    fi
-
     if [[ -n "${_SMOKE_TARGET_HOME:-}" ]]; then
         target_state_file="${_SMOKE_TARGET_HOME}/.acfs/state.json"
         if [[ -f "$target_state_file" ]]; then
@@ -266,6 +413,14 @@ _smoke_resolve_state_file() {
     if [[ -f "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
         printf '%s\n' "$_SMOKE_SYSTEM_STATE_FILE"
         return 0
+    fi
+
+    if [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]]; then
+        explicit_state_file="$_SMOKE_EXPLICIT_ACFS_HOME/state.json"
+        if [[ -f "$explicit_state_file" ]]; then
+            printf '%s\n' "$explicit_state_file"
+            return 0
+        fi
     fi
 
     if [[ -n "$_SMOKE_DEFAULT_ACFS_HOME" ]]; then
@@ -389,9 +544,18 @@ _smoke_binary_exists() {
 
 _smoke_get_local_passwd_entry() {
     local user="${1:-}"
+    local passwd_line=""
+
     [[ -n "$user" ]] || return 1
     [[ -r /etc/passwd ]] || return 1
-    awk -F: -v user="$user" '$1 == user { print $0; exit }' /etc/passwd 2>/dev/null
+
+    while IFS= read -r passwd_line; do
+        [[ "${passwd_line%%:*}" == "$user" ]] || continue
+        printf '%s\n' "$passwd_line"
+        return 0
+    done < /etc/passwd
+
+    return 1
 }
 
 _smoke_is_externally_managed_user() {
@@ -400,7 +564,7 @@ _smoke_is_externally_managed_user() {
     local local_entry=""
 
     [[ -n "$user" ]] || return 1
-    passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
+    passwd_entry="$(_smoke_getent_passwd_entry "$user" || true)"
     [[ -n "$passwd_entry" ]] || return 1
 
     local_entry="$(_smoke_get_local_passwd_entry "$user" || true)"
@@ -464,8 +628,8 @@ _smoke_header() {
 
 # Check 1: User is ubuntu
 _check_user() {
-    local current_user
-    current_user=$(whoami)
+    local current_user=""
+    current_user="$(_smoke_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$_SMOKE_TARGET_USER" ]]; then
         _smoke_pass "User: $_SMOKE_TARGET_USER"
         return 0
@@ -477,8 +641,11 @@ _check_user() {
 
 # Check 2: Shell is zsh
 _check_shell() {
-    local shell
-    shell=$(getent passwd "$_SMOKE_TARGET_USER" 2>/dev/null | cut -d: -f7)
+    local shell=""
+    local passwd_entry=""
+
+    passwd_entry="$(_smoke_getent_passwd_entry "$_SMOKE_TARGET_USER" || true)"
+    [[ -n "$passwd_entry" ]] && shell="$(_smoke_passwd_shell_from_entry "$passwd_entry" 2>/dev/null || true)"
     # Check if configured shell is zsh (the actual login shell, not just that zsh exists)
     if [[ "$shell" == *"zsh"* ]]; then
         _smoke_pass "Shell: zsh"

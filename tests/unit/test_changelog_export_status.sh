@@ -5455,31 +5455,155 @@ test_smoke_installed_script_ignores_poisoned_explicit_acfs_home() {
     cleanup_mock_env
 }
 
+test_smoke_repo_local_ignores_poisoned_explicit_acfs_home() {
+    setup_system_state_target_home_env
+    setup_poisoned_acfs_home
+
+    local output=""
+    output=$(
+        HOME="$TEST_ROOT_HOME" \
+            ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+            ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+            PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+            bash -c 'source "$1"; printf "bootstrap=%s\nstate=%s\ntarget_user=%s\ntarget_home=%s\nbin=%s\n" "$(_smoke_resolve_bootstrap_state_file)" "$(_smoke_resolve_state_file)" "${_SMOKE_TARGET_USER:-}" "${_SMOKE_TARGET_HOME:-}" "$(_smoke_binary_path claude 2>/dev/null || true)"' \
+            _ "$SMOKE_TEST_SH"
+    )
+
+    if [[ "$output" == *"bootstrap=$TEST_SYSTEM_STATE_FILE"* ]] \
+        && [[ "$output" == *"state=$TEST_INSTALLED_ACFS/state.json"* ]] \
+        && [[ "$output" == *"target_user=tester"* ]] \
+        && [[ "$output" == *"target_home=$TEST_TARGET_HOME"* ]] \
+        && [[ "$output" == *"bin=$TEST_TARGET_HOME/.local/bin/claude"* ]]; then
+        harness_pass "smoke repo-local script ignores poisoned explicit ACFS_HOME"
+    else
+        harness_fail "smoke repo-local script ignores poisoned explicit ACFS_HOME" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_smoke_bootstrap_uses_system_state_target_home_when_getent_unavailable() {
     setup_system_state_target_home_only_env
 
-    cat > "$TEST_FAKE_BIN/stat" <<EOF
-#!/usr/bin/env bash
-if [[ "\${1:-}" == "-c" ]] && [[ "\${2:-}" == "%U" ]] && [[ "\${3:-}" == "$TEST_TARGET_HOME" ]]; then
-    printf 'tester\n'
-    exit 0
-fi
-exec /usr/bin/stat "\$@"
-EOF
-    chmod +x "$TEST_FAKE_BIN/stat"
-
+    local current_user=""
     local output=""
-    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
-        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        bash -c 'source "$1"; printf "target_user=%s\ntarget_home=%s\nbinary=%s\n" "${_SMOKE_TARGET_USER:-}" "${_SMOKE_TARGET_HOME:-}" "$(_smoke_binary_path claude 2>/dev/null || true)"' \
-        _ "$SMOKE_TEST_SH")
 
-    if [[ "$output" == *"target_user=tester"* ]] \
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    output=$(
+        HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
+            PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+            bash -c 'source "$1"; printf "target_user=%s\ntarget_home=%s\nbinary=%s\n" "${_SMOKE_TARGET_USER:-}" "${_SMOKE_TARGET_HOME:-}" "$(_smoke_binary_path claude 2>/dev/null || true)"' \
+            _ "$SMOKE_TEST_SH"
+    )
+
+    if [[ "$output" == *"target_user=$current_user"* ]] \
         && [[ "$output" == *"target_home=$TEST_TARGET_HOME"* ]] \
         && [[ "$output" == *"binary=$TEST_TARGET_HOME/.local/bin/claude"* ]]; then
         harness_pass "smoke bootstrap uses system state target_home when getent is unavailable"
     else
         harness_fail "smoke bootstrap uses system state target_home when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_smoke_bootstrap_reads_state_with_poisoned_path() {
+    setup_system_state_target_home_env
+
+    local output=""
+
+    output=$(
+        HOME="relative-home" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" PATH="/nonexistent" \
+            /bin/bash -c 'source "$1" >/dev/null 2>&1; printf "target_user=%s\ntarget_home=%s\n" "${_SMOKE_TARGET_USER:-}" "${_SMOKE_TARGET_HOME:-}"' \
+            _ "$SMOKE_TEST_SH"
+    )
+
+    if [[ "$output" == *"target_user=tester"* ]] && [[ "$output" == *"target_home=$TEST_TARGET_HOME"* ]]; then
+        harness_pass "smoke bootstrap reads state with poisoned path"
+    else
+        harness_fail "smoke bootstrap reads state with poisoned path" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_smoke_bootstrap_recovers_local_passwd_when_getent_is_broken() {
+    setup_mock_env
+
+    local current_user=""
+    local passwd_home=""
+    local output=""
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    passwd_home="$(awk -F: -v user="$current_user" '$1 == user { print $6; exit }' /etc/passwd 2>/dev/null || true)"
+    passwd_home="${passwd_home%/}"
+
+    if [[ -z "$current_user" ]] || [[ -z "$passwd_home" ]] || [[ "$passwd_home" != /* ]]; then
+        harness_fail "smoke bootstrap recovers local passwd when getent is broken" "user=$current_user home=$passwd_home"
+        cleanup_mock_env
+        return
+    fi
+
+    output=$(
+        HOME="relative-home" TARGET_USER="$current_user" PATH="/nonexistent" \
+            /bin/bash -c 'getent() { return 127; }; source "$1" >/dev/null 2>&1; printf "current=%s\ntarget=%s\n" "${_SMOKE_CURRENT_HOME:-}" "${_SMOKE_TARGET_HOME:-}"' \
+            _ "$SMOKE_TEST_SH"
+    )
+
+    if [[ "$output" == *"current=$passwd_home"* ]] && [[ "$output" == *"target=$passwd_home"* ]]; then
+        harness_pass "smoke bootstrap recovers local passwd when getent is broken"
+    else
+        harness_fail "smoke bootstrap recovers local passwd when getent is broken" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_smoke_bootstrap_ignores_poisoned_current_user_env_and_path_tools() {
+    setup_mock_env
+
+    local current_user=""
+    local passwd_home=""
+    local output=""
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    passwd_home="$(awk -F: -v user="$current_user" '$1 == user { print $6; exit }' /etc/passwd 2>/dev/null || true)"
+    passwd_home="${passwd_home%/}"
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p "$TEST_FAKE_BIN"
+
+    if [[ -z "$current_user" ]] || [[ -z "$passwd_home" ]] || [[ "$passwd_home" != /* ]]; then
+        harness_fail "smoke bootstrap ignores poisoned current user env and path tools" "user=$current_user home=$passwd_home"
+        cleanup_mock_env
+        return
+    fi
+
+    cat > "$TEST_FAKE_BIN/id" <<'EOF'
+#!/usr/bin/env bash
+printf 'evil\n'
+EOF
+    cat > "$TEST_FAKE_BIN/whoami" <<'EOF'
+#!/usr/bin/env bash
+printf 'evil\n'
+EOF
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+printf 'evil:x:9999:9999::/tmp/evil:/bin/false\n'
+EOF
+    chmod +x "$TEST_FAKE_BIN/id" "$TEST_FAKE_BIN/whoami" "$TEST_FAKE_BIN/getent"
+
+    output=$(
+        USER="evil" LOGNAME="evil" HOME="relative-home" TARGET_USER="$current_user" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+            /bin/bash -c 'source "$1" >/dev/null 2>&1; printf "user=%s\ncurrent=%s\ntarget=%s\n" "${_SMOKE_CURRENT_USER:-}" "${_SMOKE_CURRENT_HOME:-}" "${_SMOKE_TARGET_HOME:-}"' \
+            _ "$SMOKE_TEST_SH"
+    )
+
+    if [[ "$output" == *"user=$current_user"* ]] && [[ "$output" == *"current=$passwd_home"* ]] && [[ "$output" == *"target=$passwd_home"* ]]; then
+        harness_pass "smoke bootstrap ignores poisoned current user env and path tools"
+    else
+        harness_fail "smoke bootstrap ignores poisoned current user env and path tools" "$output"
     fi
 
     cleanup_mock_env
@@ -5704,36 +5828,34 @@ EOF
 }
 
 test_acfs_update_wrapper_uses_system_state_target_home_when_getent_unavailable() {
-    setup_system_state_target_home_env
+    setup_system_state_target_home_only_env
 
-    mkdir -p "$TEST_TARGET_HOME/.acfs/scripts/lib" "$TEST_HOME/probe"
-    printf '#!/usr/bin/env bash\n' > "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh"
-    chmod +x "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh"
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.acfs/scripts/lib" "$TEST_FAKE_BIN"
     cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
     chmod +x "$TEST_HOME/probe/acfs-update"
 
-    cat > "$TEST_FAKE_BIN/sudo" <<'EOF'
+    cat > "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh" <<'EOF'
 #!/usr/bin/env bash
-printf 'sudo-argv=%s\n' "$*"
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s SYSTEM_STATE=%s ARG1=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${ACFS_SYSTEM_STATE_FILE:-}" "${1:-}"
 EOF
-    cat > "$TEST_FAKE_BIN/stat" <<EOF
+    chmod +x "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh"
+
+    local tool=""
+    for tool in id whoami getent stat jq sed head env bash sudo runuser dirname; do
+        cat > "$TEST_FAKE_BIN/$tool" <<EOF
 #!/usr/bin/env bash
-if [[ "\$1" == "-c" ]] && [[ "\$2" == "%U" ]] && [[ "\$3" == "$TEST_TARGET_HOME" ]]; then
-    printf 'tester\n'
-    exit 0
-fi
-exec /usr/bin/stat "\$@"
+printf 'poisoned-$tool\n' >&2
+exit 99
 EOF
-    chmod +x "$TEST_FAKE_BIN/sudo" "$TEST_FAKE_BIN/stat"
+        chmod +x "$TEST_FAKE_BIN/$tool"
+    done
 
     local output=""
-    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+    output=$(HOME="$TEST_ROOT_HOME" USER="evil" LOGNAME="evil" PATH="$TEST_FAKE_BIN" \
         ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
-        bash "$TEST_HOME/probe/acfs-update" --help 2>&1)
+        /bin/bash "$TEST_HOME/probe/acfs-update" --dry-run 2>&1)
 
-    if [[ "$output" == *"ACFS_SYSTEM_STATE_FILE=$TEST_SYSTEM_STATE_FILE"* ]] \
-        && [[ "$output" == *"$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh --help"* ]] \
-        && [[ "$output" == *"-u tester -H"* ]]; then
+    if [[ "$output" == "HOME=$TEST_TARGET_HOME TARGET_HOME=$TEST_TARGET_HOME ACFS_HOME=$TEST_INSTALLED_ACFS SYSTEM_STATE=$TEST_SYSTEM_STATE_FILE ARG1=--dry-run" ]]; then
         harness_pass "acfs-update wrapper uses system-state target_home when getent is unavailable"
     else
         harness_fail "acfs-update wrapper uses system-state target_home when getent is unavailable" "$output"
@@ -5944,6 +6066,160 @@ EOF
     cleanup_mock_env
 }
 
+test_acfs_update_wrapper_does_not_guess_current_home_when_target_home_is_unresolved() {
+    setup_mock_env
+
+    TEST_ROOT_HOME="$TEST_HOME/root-home"
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+
+    mkdir -p "$TEST_ROOT_HOME" "$TEST_FAKE_BIN" "$TEST_HOME/probe"
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    chmod +x "$TEST_FAKE_BIN/getent"
+
+    local custom_state="$TEST_HOME/system-state.json"
+    cat > "$custom_state" <<'JSON'
+{
+  "target_user": "ubuntu"
+}
+JSON
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_SYSTEM_STATE_FILE="$custom_state" \
+        bash "$TEST_HOME/probe/acfs-update" --dry-run 2>&1 || true)
+
+    if [[ "$output" == *"Error: update.sh not found."* ]] \
+        && [[ "$output" == *"Run from the repo or install ACFS first."* ]]; then
+        harness_pass "acfs-update wrapper does not guess current HOME when target_home is unresolved"
+    else
+        harness_fail "acfs-update wrapper does not guess current HOME when target_home is unresolved" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_update_wrapper_ignores_stale_explicit_acfs_home_when_system_state_points_to_live_install() {
+    setup_mock_env
+
+    TEST_ROOT_HOME="$TEST_HOME/root-home"
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    local live_home="$TEST_HOME/live-home"
+    local stale_home="$TEST_HOME/stale-home"
+    local current_user=""
+    local system_state="$TEST_HOME/system-state.json"
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p \
+        "$TEST_ROOT_HOME" \
+        "$TEST_FAKE_BIN" \
+        "$live_home/.acfs/scripts/lib" \
+        "$stale_home/.acfs/scripts/lib" \
+        "$TEST_HOME/probe"
+
+    cat > "$live_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=live ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    cat > "$stale_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=stale ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$live_home/.acfs/scripts/lib/update.sh" "$stale_home/.acfs/scripts/lib/update.sh"
+
+    cat > "$stale_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$stale_home"
+}
+EOF
+    cat > "$system_state" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$live_home"
+}
+EOF
+
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$stale_home/.acfs" \
+        ACFS_SYSTEM_STATE_FILE="$system_state" \
+        /bin/bash "$TEST_HOME/probe/acfs-update" --help 2>&1)
+
+    if [[ "$output" == "TARGET_HOME=$live_home SOURCE=live ARG1=--help" ]]; then
+        harness_pass "acfs-update wrapper ignores stale explicit ACFS_HOME when system state points to live install"
+    else
+        harness_fail "acfs-update wrapper ignores stale explicit ACFS_HOME when system state points to live install" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_update_wrapper_prefers_explicit_acfs_home_over_current_home_when_system_state_is_missing() {
+    setup_mock_env
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    local current_home="$TEST_HOME/current-home"
+    local explicit_home="$TEST_HOME/explicit-home"
+    local current_user=""
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p \
+        "$TEST_FAKE_BIN" \
+        "$current_home/.acfs/scripts/lib" \
+        "$explicit_home/.acfs/scripts/lib" \
+        "$TEST_HOME/probe"
+
+    cat > "$current_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$current_home"
+}
+EOF
+    cat > "$explicit_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$explicit_home"
+}
+EOF
+    cat > "$current_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=current ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    cat > "$explicit_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=explicit ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$current_home/.acfs/scripts/lib/update.sh" "$explicit_home/.acfs/scripts/lib/update.sh"
+
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    local output=""
+    output=$(HOME="$current_home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$explicit_home/.acfs" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json" \
+        /bin/bash "$TEST_HOME/probe/acfs-update" --help 2>&1)
+
+    if [[ "$output" == "TARGET_HOME=$explicit_home SOURCE=explicit ARG1=--help" ]]; then
+        harness_pass "acfs-update wrapper prefers explicit ACFS_HOME over current home when system state is missing"
+    else
+        harness_fail "acfs-update wrapper prefers explicit ACFS_HOME over current home when system state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user() {
     setup_mock_env
 
@@ -5951,6 +6227,7 @@ test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user() {
     TEST_TARGET_HOME="$TEST_HOME/custom-home"
     TEST_FAKE_BIN="$TEST_HOME/fake-bin"
     local other_home="$TEST_HOME/other-home"
+    local tool=""
 
     mkdir -p \
         "$TEST_ROOT_HOME" \
@@ -5964,44 +6241,33 @@ test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user() {
   "target_user": "otheruser"
 }
 JSON
-    printf '#!/usr/bin/env bash\n' > "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh"
-    printf '#!/usr/bin/env bash\n' > "$other_home/.acfs/scripts/lib/update.sh"
+    cat > "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=live ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    cat > "$other_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=stale ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
     chmod +x "$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh" "$other_home/.acfs/scripts/lib/update.sh"
     cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
     chmod +x "$TEST_HOME/probe/acfs-update"
 
-    cat > "$TEST_FAKE_BIN/getent" <<EOF
+    for tool in id whoami getent stat jq sed head env bash sudo runuser dirname; do
+        cat > "$TEST_FAKE_BIN/$tool" <<EOF
 #!/usr/bin/env bash
-if [[ "\$1" == "passwd" ]] && [[ -z "\${2:-}" ]]; then
-    printf 'tester:x:1000:1000::%s:/bin/bash\n' "$TEST_TARGET_HOME"
-    printf 'otheruser:x:1001:1001::%s:/bin/bash\n' "$other_home"
-    exit 0
-fi
-if [[ "\$1" == "passwd" ]] && [[ "\$2" == "tester" ]]; then
-    printf 'tester:x:1000:1000::%s:/bin/bash\n' "$TEST_TARGET_HOME"
-    exit 0
-fi
-if [[ "\$1" == "passwd" ]] && [[ "\$2" == "otheruser" ]]; then
-    printf 'otheruser:x:1001:1001::%s:/bin/bash\n' "$other_home"
-    exit 0
-fi
-exit 2
+printf 'poisoned-$tool\n' >&2
+exit 99
 EOF
-    cat > "$TEST_FAKE_BIN/sudo" <<'EOF'
-#!/usr/bin/env bash
-printf 'sudo-argv=%s\n' "$*"
-EOF
-    chmod +x "$TEST_FAKE_BIN/getent" "$TEST_FAKE_BIN/sudo"
+        chmod +x "$TEST_FAKE_BIN/$tool"
+    done
 
     local output=""
-    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+    output=$(HOME="$TEST_ROOT_HOME" USER="evil" LOGNAME="evil" PATH="$TEST_FAKE_BIN" \
         ACFS_STATE_FILE="$TEST_TARGET_HOME/.acfs/state.json" \
-        bash "$TEST_HOME/probe/acfs-update" --help 2>&1)
+        /bin/bash "$TEST_HOME/probe/acfs-update" --help 2>&1)
 
-    if [[ "$output" == *"$TEST_TARGET_HOME/.acfs/scripts/lib/update.sh --help"* ]] \
-        && [[ "$output" == *"-u tester -H"* ]] \
-        && [[ "$output" != *"$other_home/.acfs/scripts/lib/update.sh"* ]] \
-        && [[ "$output" != *"-u otheruser -H"* ]]; then
+    if [[ "$output" == "TARGET_HOME=$TEST_TARGET_HOME SOURCE=live ARG1=--help" ]]; then
         harness_pass "acfs-update wrapper ignores stale home-adjacent target_user"
     else
         harness_fail "acfs-update wrapper ignores stale home-adjacent target_user" "$output"
@@ -6011,36 +6277,34 @@ EOF
 }
 
 test_acfs_global_wrapper_uses_system_state_target_home_when_getent_unavailable() {
-    setup_system_state_target_home_env
+    setup_system_state_target_home_only_env
 
-    mkdir -p "$TEST_HOME/probe"
-    printf '#!/usr/bin/env bash\n' > "$TEST_TARGET_HOME/.local/bin/acfs"
-    chmod +x "$TEST_TARGET_HOME/.local/bin/acfs"
+    mkdir -p "$TEST_HOME/probe" "$TEST_TARGET_HOME/.local/bin" "$TEST_FAKE_BIN"
     cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
     chmod +x "$TEST_HOME/probe/acfs"
 
-    cat > "$TEST_FAKE_BIN/sudo" <<'EOF'
+    cat > "$TEST_TARGET_HOME/.local/bin/acfs" <<'EOF'
 #!/usr/bin/env bash
-printf 'sudo-argv=%s\n' "$*"
+printf 'HOME=%s TARGET_HOME=%s ACFS_HOME=%s SYSTEM_STATE=%s ARG1=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}" "${ACFS_SYSTEM_STATE_FILE:-}" "${1:-}"
 EOF
-    cat > "$TEST_FAKE_BIN/stat" <<EOF
+    chmod +x "$TEST_TARGET_HOME/.local/bin/acfs"
+
+    local tool=""
+    for tool in id whoami getent stat jq sed head env bash sudo runuser dirname; do
+        cat > "$TEST_FAKE_BIN/$tool" <<EOF
 #!/usr/bin/env bash
-if [[ "\$1" == "-c" ]] && [[ "\$2" == "%U" ]] && [[ "\$3" == "$TEST_TARGET_HOME" ]]; then
-    printf 'tester\n'
-    exit 0
-fi
-exec /usr/bin/stat "\$@"
+printf 'poisoned-$tool\n' >&2
+exit 99
 EOF
-    chmod +x "$TEST_FAKE_BIN/sudo" "$TEST_FAKE_BIN/stat"
+        chmod +x "$TEST_FAKE_BIN/$tool"
+    done
 
     local output=""
-    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+    output=$(HOME="$TEST_ROOT_HOME" USER="evil" LOGNAME="evil" PATH="$TEST_FAKE_BIN" \
         ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
-        bash "$TEST_HOME/probe/acfs" version 2>&1)
+        /bin/bash "$TEST_HOME/probe/acfs" version 2>&1)
 
-    if [[ "$output" == *"ACFS_SYSTEM_STATE_FILE=$TEST_SYSTEM_STATE_FILE"* ]] \
-        && [[ "$output" == *"$TEST_TARGET_HOME/.local/bin/acfs version"* ]] \
-        && [[ "$output" == *"-u tester -H"* ]]; then
+    if [[ "$output" == "HOME=$TEST_TARGET_HOME TARGET_HOME=$TEST_TARGET_HOME ACFS_HOME=$TEST_INSTALLED_ACFS SYSTEM_STATE=$TEST_SYSTEM_STATE_FILE ARG1=version" ]]; then
         harness_pass "global acfs wrapper uses system-state target_home when getent is unavailable"
     else
         harness_fail "global acfs wrapper uses system-state target_home when getent is unavailable" "$output"
@@ -6331,6 +6595,125 @@ JSON
     cleanup_mock_env
 }
 
+test_acfs_global_wrapper_ignores_stale_explicit_acfs_home_when_system_state_points_to_live_install() {
+    setup_mock_env
+
+    TEST_ROOT_HOME="$TEST_HOME/root-home"
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    local live_home="$TEST_HOME/live-home"
+    local stale_home="$TEST_HOME/stale-home"
+    local current_user=""
+    local system_state="$TEST_HOME/system-state.json"
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p \
+        "$TEST_ROOT_HOME" \
+        "$TEST_FAKE_BIN" \
+        "$live_home/.local/bin" \
+        "$stale_home/.local/bin" \
+        "$stale_home/.acfs" \
+        "$TEST_HOME/probe"
+
+    cat > "$live_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=live ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    cat > "$stale_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=stale ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$live_home/.local/bin/acfs" "$stale_home/.local/bin/acfs"
+
+    cat > "$stale_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$stale_home"
+}
+EOF
+    cat > "$system_state" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$live_home"
+}
+EOF
+
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$stale_home/.acfs" \
+        ACFS_SYSTEM_STATE_FILE="$system_state" \
+        /bin/bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "TARGET_HOME=$live_home SOURCE=live ARG1=version" ]]; then
+        harness_pass "global acfs wrapper ignores stale explicit ACFS_HOME when system state points to live install"
+    else
+        harness_fail "global acfs wrapper ignores stale explicit ACFS_HOME when system state points to live install" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_global_wrapper_prefers_explicit_acfs_home_over_current_home_when_system_state_is_missing() {
+    setup_mock_env
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    local current_home="$TEST_HOME/current-home"
+    local explicit_home="$TEST_HOME/explicit-home"
+    local current_user=""
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p \
+        "$TEST_FAKE_BIN" \
+        "$current_home/.acfs" \
+        "$current_home/.local/bin" \
+        "$explicit_home/.acfs" \
+        "$explicit_home/.local/bin" \
+        "$TEST_HOME/probe"
+
+    cat > "$current_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$current_home"
+}
+EOF
+    cat > "$explicit_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$explicit_home"
+}
+EOF
+    cat > "$current_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=current ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    cat > "$explicit_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=explicit ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$current_home/.local/bin/acfs" "$explicit_home/.local/bin/acfs"
+
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    local output=""
+    output=$(HOME="$current_home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$explicit_home/.acfs" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json" \
+        /bin/bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "TARGET_HOME=$explicit_home SOURCE=explicit ARG1=version" ]]; then
+        harness_pass "global acfs wrapper prefers explicit ACFS_HOME over current home when system state is missing"
+    else
+        harness_fail "global acfs wrapper prefers explicit ACFS_HOME over current home when system state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_acfs_global_wrapper_ignores_stale_home_adjacent_target_user() {
     setup_mock_env
 
@@ -6338,6 +6721,7 @@ test_acfs_global_wrapper_ignores_stale_home_adjacent_target_user() {
     TEST_TARGET_HOME="$TEST_HOME/custom-home"
     TEST_FAKE_BIN="$TEST_HOME/fake-bin"
     local other_home="$TEST_HOME/other-home"
+    local tool=""
 
     mkdir -p \
         "$TEST_ROOT_HOME" \
@@ -6352,44 +6736,33 @@ test_acfs_global_wrapper_ignores_stale_home_adjacent_target_user() {
   "target_user": "otheruser"
 }
 JSON
-    printf '#!/usr/bin/env bash\n' > "$TEST_TARGET_HOME/.local/bin/acfs"
-    printf '#!/usr/bin/env bash\n' > "$other_home/.local/bin/acfs"
+    cat > "$TEST_TARGET_HOME/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=live ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
+    cat > "$other_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'TARGET_HOME=%s SOURCE=stale ARG1=%s\n' "${TARGET_HOME:-}" "${1:-}"
+EOF
     chmod +x "$TEST_TARGET_HOME/.local/bin/acfs" "$other_home/.local/bin/acfs"
     cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
     chmod +x "$TEST_HOME/probe/acfs"
 
-    cat > "$TEST_FAKE_BIN/getent" <<EOF
+    for tool in id whoami getent stat jq sed head env bash sudo runuser dirname; do
+        cat > "$TEST_FAKE_BIN/$tool" <<EOF
 #!/usr/bin/env bash
-if [[ "\$1" == "passwd" ]] && [[ -z "\${2:-}" ]]; then
-    printf 'tester:x:1000:1000::%s:/bin/bash\n' "$TEST_TARGET_HOME"
-    printf 'otheruser:x:1001:1001::%s:/bin/bash\n' "$other_home"
-    exit 0
-fi
-if [[ "\$1" == "passwd" ]] && [[ "\$2" == "tester" ]]; then
-    printf 'tester:x:1000:1000::%s:/bin/bash\n' "$TEST_TARGET_HOME"
-    exit 0
-fi
-if [[ "\$1" == "passwd" ]] && [[ "\$2" == "otheruser" ]]; then
-    printf 'otheruser:x:1001:1001::%s:/bin/bash\n' "$other_home"
-    exit 0
-fi
-exit 2
+printf 'poisoned-$tool\n' >&2
+exit 99
 EOF
-    cat > "$TEST_FAKE_BIN/sudo" <<'EOF'
-#!/usr/bin/env bash
-printf 'sudo-argv=%s\n' "$*"
-EOF
-    chmod +x "$TEST_FAKE_BIN/getent" "$TEST_FAKE_BIN/sudo"
+        chmod +x "$TEST_FAKE_BIN/$tool"
+    done
 
     local output=""
-    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+    output=$(HOME="$TEST_ROOT_HOME" USER="evil" LOGNAME="evil" PATH="$TEST_FAKE_BIN" \
         ACFS_STATE_FILE="$TEST_TARGET_HOME/.acfs/state.json" \
-        bash "$TEST_HOME/probe/acfs" version 2>&1)
+        /bin/bash "$TEST_HOME/probe/acfs" version 2>&1)
 
-    if [[ "$output" == *"$TEST_TARGET_HOME/.local/bin/acfs version"* ]] \
-        && [[ "$output" == *"-u tester -H"* ]] \
-        && [[ "$output" != *"$other_home/.local/bin/acfs"* ]] \
-        && [[ "$output" != *"-u otheruser -H"* ]]; then
+    if [[ "$output" == "TARGET_HOME=$TEST_TARGET_HOME SOURCE=live ARG1=version" ]]; then
         harness_pass "global acfs wrapper ignores stale home-adjacent target_user"
     else
         harness_fail "global acfs wrapper ignores stale home-adjacent target_user" "$output"
@@ -7610,7 +7983,11 @@ main() {
     test_smoke_test_run_preserves_caller_path_when_sourced || true
     test_smoke_binary_path_prefers_persisted_bin_dir_over_poisoned_env_bin_dir || true
     test_smoke_installed_script_ignores_poisoned_explicit_acfs_home || true
+    test_smoke_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_smoke_bootstrap_uses_system_state_target_home_when_getent_unavailable || true
+    test_smoke_bootstrap_reads_state_with_poisoned_path || true
+    test_smoke_bootstrap_recovers_local_passwd_when_getent_is_broken || true
+    test_smoke_bootstrap_ignores_poisoned_current_user_env_and_path_tools || true
     test_cheatsheet_uses_installed_layout_and_target_path_under_root_home || true
     test_cheatsheet_copy_install_uses_target_home_only_system_state || true
     test_cheatsheet_repo_local_ignores_poisoned_explicit_acfs_home || true
@@ -7673,6 +8050,9 @@ main() {
     test_acfs_update_wrapper_discards_invalid_env_bin_dir_on_direct_exec || true
     test_acfs_update_wrapper_discards_invalid_env_state_file_on_direct_exec || true
     test_acfs_update_wrapper_ignores_relative_home_state_trap || true
+    test_acfs_update_wrapper_does_not_guess_current_home_when_target_home_is_unresolved || true
+    test_acfs_update_wrapper_ignores_stale_explicit_acfs_home_when_system_state_points_to_live_install || true
+    test_acfs_update_wrapper_prefers_explicit_acfs_home_over_current_home_when_system_state_is_missing || true
     test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user || true
     test_acfs_global_wrapper_uses_system_state_target_home_when_getent_unavailable || true
     test_acfs_global_wrapper_repairs_runtime_home_on_direct_exec || true
@@ -7683,6 +8063,8 @@ main() {
     test_acfs_global_wrapper_discards_invalid_env_state_file_on_direct_exec || true
     test_acfs_global_wrapper_ignores_relative_home_state_trap || true
     test_acfs_global_wrapper_does_not_guess_current_home_when_target_home_is_unresolved || true
+    test_acfs_global_wrapper_ignores_stale_explicit_acfs_home_when_system_state_points_to_live_install || true
+    test_acfs_global_wrapper_prefers_explicit_acfs_home_over_current_home_when_system_state_is_missing || true
     test_acfs_global_wrapper_ignores_stale_home_adjacent_target_user || true
     test_doctor_agent_checks_use_target_context_under_root_home || true
     test_doctor_agent_checks_prefer_persisted_bin_dir_over_poisoned_env_bin_dir || true
