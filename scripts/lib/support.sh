@@ -481,6 +481,26 @@ support_resolve_acfs_home() {
         return 0
     fi
 
+    if [[ -n "$_SUPPORT_ACFS_HOME" ]] && support_candidate_has_acfs_data "$_SUPPORT_ACFS_HOME"; then
+        _SUPPORT_ACFS_HOME_SOURCE="explicit_acfs_home"
+        printf '%s\n' "$_SUPPORT_ACFS_HOME"
+        return 0
+    fi
+
+    explicit_target_home="$(support_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if support_candidate_has_acfs_data "$candidate"; then
+            _SUPPORT_ACFS_HOME_SOURCE="explicit_target_home"
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_SUPPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
+        return 1
+    fi
+
     if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
         target_home=$(support_home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs"
@@ -510,26 +530,6 @@ support_resolve_acfs_home() {
             printf '%s\n' "$candidate"
             return 0
         fi
-    fi
-
-    if [[ -n "$_SUPPORT_ACFS_HOME" ]] && support_candidate_has_acfs_data "$_SUPPORT_ACFS_HOME"; then
-        _SUPPORT_ACFS_HOME_SOURCE="explicit_acfs_home"
-        printf '%s\n' "$_SUPPORT_ACFS_HOME"
-        return 0
-    fi
-
-    explicit_target_home="$(support_resolve_explicit_target_home 2>/dev/null || true)"
-    if [[ -n "$explicit_target_home" ]]; then
-        candidate="${explicit_target_home}/.acfs"
-        if support_candidate_has_acfs_data "$candidate"; then
-            _SUPPORT_ACFS_HOME_SOURCE="explicit_target_home"
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    fi
-
-    if [[ -n "$_SUPPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
-        return 1
     fi
 
     if [[ -n "$_SUPPORT_DEFAULT_ACFS_HOME" ]] && support_candidate_has_acfs_data "$_SUPPORT_DEFAULT_ACFS_HOME"; then

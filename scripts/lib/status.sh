@@ -755,6 +755,28 @@ _status_resolve_acfs_home() {
         return 0
     fi
 
+    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_STATUS_EXPLICIT_ACFS_HOME/state.json" || -f "$_STATUS_EXPLICIT_ACFS_HOME/VERSION" || -d "$_STATUS_EXPLICIT_ACFS_HOME/onboard" ]]; then
+        _STATUS_RESOLVED_ACFS_HOME="$_STATUS_EXPLICIT_ACFS_HOME"
+        printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    explicit_target_home="$(_status_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+            _STATUS_RESOLVED_ACFS_HOME="$candidate"
+            printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_STATUS_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_STATUS_EXPLICIT_TARGET_USER_RAW" ]]; then
+        _STATUS_RESOLVED_ACFS_HOME=""
+        printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(_status_home_for_user "$SUDO_USER" 2>/dev/null || true)
         candidate="${target_home}/.acfs"
@@ -784,28 +806,6 @@ _status_resolve_acfs_home() {
             printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
             return 0
         fi
-    fi
-
-    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_STATUS_EXPLICIT_ACFS_HOME/state.json" || -f "$_STATUS_EXPLICIT_ACFS_HOME/VERSION" || -d "$_STATUS_EXPLICIT_ACFS_HOME/onboard" ]]; then
-        _STATUS_RESOLVED_ACFS_HOME="$_STATUS_EXPLICIT_ACFS_HOME"
-        printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
-    explicit_target_home="$(_status_resolve_explicit_target_home 2>/dev/null || true)"
-    if [[ -n "$explicit_target_home" ]]; then
-        candidate="${explicit_target_home}/.acfs"
-        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
-            _STATUS_RESOLVED_ACFS_HOME="$candidate"
-            printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
-            return 0
-        fi
-    fi
-
-    if [[ -n "$_STATUS_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_STATUS_EXPLICIT_TARGET_USER_RAW" ]]; then
-        _STATUS_RESOLVED_ACFS_HOME=""
-        printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
-        return 0
     fi
 
     if [[ -n "$_STATUS_DEFAULT_ACFS_HOME" ]] && [[ -f "$_STATUS_DEFAULT_ACFS_HOME/state.json" || -f "$_STATUS_DEFAULT_ACFS_HOME/VERSION" || -d "$_STATUS_DEFAULT_ACFS_HOME/onboard" ]]; then

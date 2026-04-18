@@ -375,9 +375,22 @@ get_install_state_file() {
         return 0
     fi
 
+    explicit_target_home="$(continue_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs/state.json"
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    fi
+
     if [[ -n "$_CONTINUE_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_CONTINUE_EXPLICIT_ACFS_HOME/state.json" ]]; then
         echo "$_CONTINUE_EXPLICIT_ACFS_HOME/state.json"
         return 0
+    fi
+
+    if [[ -n "$_CONTINUE_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_CONTINUE_EXPLICIT_TARGET_USER_RAW" ]]; then
+        return 1
     fi
 
     if [[ -n "${SUDO_USER:-}" ]]; then
@@ -406,19 +419,6 @@ get_install_state_file() {
             echo "$candidate"
             return 0
         fi
-    fi
-
-    explicit_target_home="$(continue_resolve_explicit_target_home 2>/dev/null || true)"
-    if [[ -n "$explicit_target_home" ]]; then
-        candidate="${explicit_target_home}/.acfs/state.json"
-        if [[ -f "$candidate" ]]; then
-            echo "$candidate"
-            return 0
-        fi
-    fi
-
-    if [[ -n "$_CONTINUE_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_CONTINUE_EXPLICIT_TARGET_USER_RAW" ]]; then
-        return 1
     fi
 
     candidate="$(current_user_state_file 2>/dev/null || true)"

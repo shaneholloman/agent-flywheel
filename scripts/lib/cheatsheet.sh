@@ -456,6 +456,28 @@ cheatsheet_resolve_acfs_home() {
     return 0
   fi
 
+  if [[ -n "$_CHEATSHEET_EXPLICIT_ACFS_HOME" ]] && cheatsheet_candidate_has_acfs_data "$_CHEATSHEET_EXPLICIT_ACFS_HOME"; then
+    _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_EXPLICIT_ACFS_HOME"
+    _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
+    printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+    return 0
+  fi
+
+  explicit_target_home="$(cheatsheet_resolve_explicit_target_home 2>/dev/null || true)"
+  if [[ -n "$explicit_target_home" ]]; then
+    candidate="${explicit_target_home}/.acfs"
+    if cheatsheet_candidate_has_acfs_data "$candidate"; then
+      _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
+      _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="explicit_target_home"
+      printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+      return 0
+    fi
+  fi
+
+  if [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW" ]]; then
+    return 1
+  fi
+
   if [[ -n "${SUDO_USER:-}" ]]; then
     target_home=$(cheatsheet_home_for_user "$SUDO_USER" 2>/dev/null || true)
     candidate="${target_home}/.acfs"
@@ -488,28 +510,6 @@ cheatsheet_resolve_acfs_home() {
       printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
       return 0
     fi
-  fi
-
-  if [[ -n "$_CHEATSHEET_EXPLICIT_ACFS_HOME" ]] && cheatsheet_candidate_has_acfs_data "$_CHEATSHEET_EXPLICIT_ACFS_HOME"; then
-    _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_EXPLICIT_ACFS_HOME"
-    _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
-    printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
-    return 0
-  fi
-
-  explicit_target_home="$(cheatsheet_resolve_explicit_target_home 2>/dev/null || true)"
-  if [[ -n "$explicit_target_home" ]]; then
-    candidate="${explicit_target_home}/.acfs"
-    if cheatsheet_candidate_has_acfs_data "$candidate"; then
-      _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
-      _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="explicit_target_home"
-      printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
-      return 0
-    fi
-  fi
-
-  if [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW" ]]; then
-    return 1
   fi
 
   _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_DEFAULT_ACFS_HOME"

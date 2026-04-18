@@ -363,6 +363,28 @@ dashboard_resolve_acfs_home() {
         return 0
     fi
 
+    if [[ -n "$_DASHBOARD_EXPLICIT_ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$_DASHBOARD_EXPLICIT_ACFS_HOME"; then
+        _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_EXPLICIT_ACFS_HOME"
+        _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
+        printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    explicit_target_home="$(dashboard_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if dashboard_candidate_has_acfs_data "$candidate"; then
+            _DASHBOARD_RESOLVED_ACFS_HOME="$candidate"
+            _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="explicit_target_home"
+            printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_DASHBOARD_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
+        return 1
+    fi
+
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(dashboard_home_for_user "$SUDO_USER" 2>/dev/null || true)
         candidate="${target_home}/.acfs"
@@ -395,28 +417,6 @@ dashboard_resolve_acfs_home() {
             printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
             return 0
         fi
-    fi
-
-    if [[ -n "$_DASHBOARD_EXPLICIT_ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$_DASHBOARD_EXPLICIT_ACFS_HOME"; then
-        _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_EXPLICIT_ACFS_HOME"
-        _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
-        printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
-    explicit_target_home="$(dashboard_resolve_explicit_target_home 2>/dev/null || true)"
-    if [[ -n "$explicit_target_home" ]]; then
-        candidate="${explicit_target_home}/.acfs"
-        if dashboard_candidate_has_acfs_data "$candidate"; then
-            _DASHBOARD_RESOLVED_ACFS_HOME="$candidate"
-            _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="explicit_target_home"
-            printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
-            return 0
-        fi
-    fi
-
-    if [[ -n "$_DASHBOARD_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
-        return 1
     fi
 
     _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_DEFAULT_ACFS_HOME"

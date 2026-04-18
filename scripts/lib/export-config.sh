@@ -386,6 +386,28 @@ resolve_acfs_home() {
         return 0
     fi
 
+    if [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" || -f "$_EXPORT_EXPLICIT_ACFS_HOME/VERSION" || -d "$_EXPORT_EXPLICIT_ACFS_HOME/onboard" ]]; then
+        _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_EXPLICIT_ACFS_HOME"
+        printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    explicit_target_home="$(resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+            _EXPORT_RESOLVED_ACFS_HOME="$candidate"
+            printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_EXPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_EXPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
+        _EXPORT_RESOLVED_ACFS_HOME=""
+        printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
     if [[ -n "${SUDO_USER:-}" ]]; then
         detected_home=$(home_for_user "$SUDO_USER" 2>/dev/null || true)
         candidate="${detected_home}/.acfs"
@@ -415,28 +437,6 @@ resolve_acfs_home() {
             printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
             return 0
         fi
-    fi
-
-    if [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" || -f "$_EXPORT_EXPLICIT_ACFS_HOME/VERSION" || -d "$_EXPORT_EXPLICIT_ACFS_HOME/onboard" ]]; then
-        _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_EXPLICIT_ACFS_HOME"
-        printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
-    explicit_target_home="$(resolve_explicit_target_home 2>/dev/null || true)"
-    if [[ -n "$explicit_target_home" ]]; then
-        candidate="${explicit_target_home}/.acfs"
-        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
-            _EXPORT_RESOLVED_ACFS_HOME="$candidate"
-            printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
-            return 0
-        fi
-    fi
-
-    if [[ -n "$_EXPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_EXPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
-        _EXPORT_RESOLVED_ACFS_HOME=""
-        printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
-        return 0
     fi
 
     if [[ -n "$_EXPORT_DEFAULT_ACFS_HOME" ]] && [[ -f "$_EXPORT_DEFAULT_ACFS_HOME/state.json" || -f "$_EXPORT_DEFAULT_ACFS_HOME/VERSION" || -d "$_EXPORT_DEFAULT_ACFS_HOME/onboard" ]]; then

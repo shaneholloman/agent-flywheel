@@ -1813,6 +1813,56 @@ EOF
     assert_output --partial "LIVE_ACFS HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
 }
 
+@test "ACFS home resolvers honor explicit TARGET_HOME over stale system state" {
+    local current_home
+    local target_home
+    local stale_home
+    local system_state
+    local label
+    local script
+    local func
+    local expected
+
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$BATS_TEST_TMPDIR/resolver-system-state.json"
+
+    mkdir -p "$current_home" "$target_home/.acfs" "$stale_home/.acfs"
+    printf 'live
+' > "$target_home/.acfs/VERSION"
+    printf 'stale
+' > "$stale_home/.acfs/VERSION"
+    printf '{}
+' > "$target_home/.acfs/state.json"
+    printf '{}
+' > "$stale_home/.acfs/state.json"
+    printf '# live
+' > "$target_home/.acfs/CHANGELOG.md"
+    printf '# stale
+' > "$stale_home/.acfs/CHANGELOG.md"
+
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$stale_home"
+}
+EOF
+
+    while IFS='|' read -r label script func expected; do
+        run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; func="$2"; "$func"' _ "$script" "$func"
+        assert_success
+        assert_output "$expected"
+    done <<EOF
+status|$PROJECT_ROOT/scripts/lib/status.sh|_status_resolve_acfs_home|$target_home/.acfs
+dashboard|$PROJECT_ROOT/scripts/lib/dashboard.sh|dashboard_resolve_acfs_home|$target_home/.acfs
+export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|resolve_acfs_home|$target_home/.acfs
+support|$PROJECT_ROOT/scripts/lib/support.sh|support_resolve_acfs_home|$target_home/.acfs
+cheatsheet|$PROJECT_ROOT/scripts/lib/cheatsheet.sh|cheatsheet_resolve_acfs_home|$target_home/.acfs
+continue|$PROJECT_ROOT/scripts/lib/continue.sh|get_install_state_file|$target_home/.acfs/state.json
+changelog|$PROJECT_ROOT/scripts/lib/changelog.sh|resolve_changelog_acfs_home|$target_home/.acfs
+EOF
+}
+
 @test "username helpers and wrappers allow dotted usernames and validate before re-exec" {
     local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
     local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"
