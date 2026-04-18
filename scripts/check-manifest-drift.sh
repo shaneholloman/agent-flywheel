@@ -483,7 +483,7 @@ DIRTY_SOURCES="$(cd "$REPO_ROOT" && git status --porcelain -- \
     scripts/acfs-update \
     acfs.manifest.yaml \
     packages/manifest 2>/dev/null \
-    | grep -v '^??' || true)"
+    | grep -v '^[?][?]' || true)"
 if [[ -n "$DIRTY_SOURCES" ]]; then
     log_error "Refusing to auto-fix: tracked source files have uncommitted changes."
     log_error "Otherwise generated checksums would capture working-tree state and"
