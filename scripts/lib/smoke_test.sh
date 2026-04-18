@@ -635,6 +635,9 @@ _smoke_prepend_user_paths() {
     local base_home="$1"
     local dir=""
     local primary_bin_dir=""
+    local current_path="${PATH:-}"
+    local seen_path=":${current_path}:"
+    local -a to_prepend=()
 
     [[ -n "$base_home" ]] || return 0
     primary_bin_dir="$(_smoke_preferred_bin_dir "$base_home" 2>/dev/null || true)"
@@ -650,13 +653,21 @@ _smoke_prepend_user_paths() {
         "$base_home/go/bin" \
         "$base_home/google-cloud-sdk/bin"; do
         [[ -d "$dir" ]] || continue
-        case ":$PATH:" in
+        case "$seen_path" in
             *":$dir:"*) ;;
-            *) export PATH="$dir:$PATH" ;;
+            *)
+                to_prepend+=("$dir")
+                seen_path="${seen_path}${dir}:"
+                ;;
         esac
     done
-}
 
+    if [[ ${#to_prepend[@]} -gt 0 ]]; then
+        local prefix=""
+        prefix="$(IFS=:; printf '%s' "${to_prepend[*]}")"
+        export PATH="$prefix${current_path:+:$current_path}"
+    fi
+}
 
 _smoke_binary_path() {
     local name="${1:-}"

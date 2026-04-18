@@ -2024,6 +2024,66 @@ EOF
     assert_output --partial $'gbq	gcloud bq	alias'
 }
 
+@test "info.sh: prepend_user_paths preserves primary bin priority" {
+    local info_lib="$PROJECT_ROOT/scripts/lib/info.sh"
+    local test_home
+    local expected_path=""
+
+    test_home="$(create_temp_dir)"
+    mkdir -p "$test_home/custom-bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
+
+    info_preferred_bin_dir() { printf '%s\n' "$ACFS_BIN_DIR"; }
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^info_prepend_user_paths()/,/^}$/p' "$info_lib")"
+
+    export ACFS_BIN_DIR="$test_home/custom-bin"
+    PATH="/usr/bin:/bin"
+    info_prepend_user_paths "$test_home"
+
+    expected_path="$test_home/custom-bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/bin:/bin"
+    [ "$PATH" = "$expected_path" ]
+}
+
+@test "status.sh: prepend_user_paths preserves primary bin priority" {
+    local status_lib="$PROJECT_ROOT/scripts/lib/status.sh"
+    local test_home
+    local expected_path=""
+
+    test_home="$(create_temp_dir)"
+    mkdir -p "$test_home/custom-bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
+
+    _status_preferred_bin_dir() { printf '%s\n' "$ACFS_BIN_DIR"; }
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_status_prepend_user_paths()/,/^}$/p' "$status_lib")"
+
+    export ACFS_BIN_DIR="$test_home/custom-bin"
+    PATH="/usr/bin:/bin"
+    _status_prepend_user_paths "$test_home"
+
+    expected_path="$test_home/custom-bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/bin:/bin"
+    [ "$PATH" = "$expected_path" ]
+}
+
+@test "smoke_test.sh: prepend_user_paths preserves primary bin priority" {
+    local smoke_lib="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
+    local test_home
+    local expected_path=""
+
+    test_home="$(create_temp_dir)"
+    mkdir -p "$test_home/custom-bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
+
+    _smoke_preferred_bin_dir() { printf '%s\n' "$ACFS_BIN_DIR"; }
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_smoke_prepend_user_paths()/,/^}$/p' "$smoke_lib")"
+
+    export ACFS_BIN_DIR="$test_home/custom-bin"
+    PATH="/usr/bin:/bin"
+    _smoke_prepend_user_paths "$test_home"
+
+    expected_path="$test_home/custom-bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/bin:/bin"
+    [ "$PATH" = "$expected_path" ]
+}
+
 @test "info.sh: binary helper ignores current-shell-only PATH entries" {
     local info_lib="$PROJECT_ROOT/scripts/lib/info.sh"
 
