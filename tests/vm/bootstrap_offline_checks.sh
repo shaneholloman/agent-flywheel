@@ -49,6 +49,11 @@ create_archive() {
   cp -R "$REPO_ROOT/scripts/lib" "$stage_dir/acfs-offline/scripts/"
   cp -R "$REPO_ROOT/scripts/generated" "$stage_dir/acfs-offline/scripts/"
   cp "$REPO_ROOT/scripts/preflight.sh" "$stage_dir/acfs-offline/scripts/preflight.sh"
+  # acfs-global and acfs-update are tracked in scripts/generated/internal_checksums.sh
+  # (ACFS_INTERNAL_CHECKSUMS), so install.sh's integrity check will treat them as
+  # "missing" and fail unless they're in the bootstrap archive.
+  cp "$REPO_ROOT/scripts/acfs-global" "$stage_dir/acfs-offline/scripts/acfs-global"
+  cp "$REPO_ROOT/scripts/acfs-update" "$stage_dir/acfs-offline/scripts/acfs-update"
 
   cp -R "$REPO_ROOT/acfs" "$stage_dir/acfs-offline/acfs"
   cp "$REPO_ROOT/checksums.yaml" "$stage_dir/acfs-offline/checksums.yaml"
