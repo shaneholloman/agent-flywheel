@@ -32,13 +32,9 @@ notifications_resolve_current_home() {
     local current_user=""
     local home_candidate=""
     local passwd_entry=""
+    local passwd_home=""
 
     home_candidate="$(notifications_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
-    fi
-
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
@@ -48,17 +44,17 @@ notifications_resolve_current_home() {
     if [[ -n "$current_user" ]]; then
         passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            home_candidate="$(notifications_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
+            passwd_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            passwd_home="$(notifications_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
                 return 0
             fi
         fi
-
     fi
 
-    return 1
+    [[ -n "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
 }
 
 notifications_runtime_home() {

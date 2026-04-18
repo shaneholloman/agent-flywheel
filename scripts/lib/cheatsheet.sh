@@ -36,38 +36,118 @@ cheatsheet_sanitize_abs_nonroot_path() {
   printf '%s\n' "$path_value"
 }
 
-cheatsheet_resolve_current_home() {
-  local current_user=""
-  local home_candidate=""
-  local passwd_entry=""
+cheatsheet_existing_abs_home() {
+  local path_value=""
 
-  home_candidate="$(cheatsheet_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-  if [[ -n "$home_candidate" ]]; then
-    printf '%s\n' "$home_candidate"
-    return 0
-  fi
+  path_value="$(cheatsheet_sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+  [[ -n "$path_value" ]] || return 1
+  [[ -d "$path_value" ]] || return 1
+  printf '%s\n' "$path_value"
+}
 
-  current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
-  if [[ "$current_user" == "root" ]]; then
-    printf '/root\n'
-    return 0
-  fi
+cheatsheet_system_binary_path() {
+  local name="${1:-}"
+  local candidate=""
 
-  if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
-    passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
-    if [[ -n "$passwd_entry" ]]; then
-      home_candidate="$(cheatsheet_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-      if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
-      fi
-    fi
-  fi
+  [[ -n "$name" ]] || return 1
+
+  for candidate in \
+      "/usr/bin/$name" \
+      "/bin/$name" \
+      "/usr/sbin/$name" \
+      "/sbin/$name"
+  do
+      [[ -x "$candidate" ]] || continue
+      printf '%s\n' "$candidate"
+      return 0
+  done
 
   return 1
 }
 
-_CHEATSHEET_CURRENT_HOME="$(cheatsheet_resolve_current_home 2>/dev/null || true)"
+cheatsheet_resolve_current_user() {
+  local current_user=""
+  local id_bin=""
+  local whoami_bin=""
+
+  id_bin="$(cheatsheet_system_binary_path id 2>/dev/null || true)"
+  if [[ -n "$id_bin" ]]; then
+      current_user="$("$id_bin" -un 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$current_user" ]]; then
+      whoami_bin="$(cheatsheet_system_binary_path whoami 2>/dev/null || true)"
+      if [[ -n "$whoami_bin" ]]; then
+          current_user="$("$whoami_bin" 2>/dev/null || true)"
+      fi
+  fi
+
+  [[ -n "$current_user" ]] || return 1
+  printf '%s\n' "$current_user"
+}
+
+cheatsheet_getent_passwd_entry() {
+  local user="${1:-}"
+  local getent_bin=""
+
+  getent_bin="$(cheatsheet_system_binary_path getent 2>/dev/null || true)"
+  [[ -n "$getent_bin" ]] || return 1
+
+  if [[ -n "$user" ]]; then
+      "$getent_bin" passwd "$user" 2>/dev/null
+  else
+      "$getent_bin" passwd 2>/dev/null
+  fi
+}
+cheatsheet_is_valid_username() {
+  local username="${1:-}"
+  [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+cheatsheet_resolve_current_home() {
+  local current_user=""
+  local fallback_home=""
+  local passwd_entry=""
+  local passwd_home=""
+  fallback_home="$(cheatsheet_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+  if [[ "${_CHEATSHEET_WAS_SOURCED:-false}" == "true" ]]; then
+      fallback_home="$(cheatsheet_sanitize_abs_nonroot_path "${_CHEATSHEET_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+  fi
+  current_user="$(cheatsheet_resolve_current_user 2>/dev/null || true)"
+
+  if [[ "$current_user" == "root" ]]; then
+      printf '/root\n'
+      return 0
+  fi
+
+  if [[ -n "$current_user" ]]; then
+      passwd_entry="$(cheatsheet_getent_passwd_entry "$current_user" 2>/dev/null || true)"
+      if [[ -n "$passwd_entry" ]]; then
+          passwd_home="$(cheatsheet_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+          if [[ -n "$passwd_home" ]]; then
+              printf '%s\n' "$passwd_home"
+              return 0
+          fi
+      fi
+  fi
+
+  [[ -n "$fallback_home" ]] || return 1
+  printf '%s\n' "$fallback_home"
+}
+cheatsheet_initial_current_home() {
+  local cached_home=""
+
+  if [[ "${_CHEATSHEET_WAS_SOURCED:-false}" == "true" ]]; then
+      cached_home="$(cheatsheet_sanitize_abs_nonroot_path "${_CHEATSHEET_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+      if [[ -n "$cached_home" ]]; then
+          printf '%s\n' "$cached_home"
+          return 0
+      fi
+  fi
+
+  cheatsheet_resolve_current_home
+}
+_CHEATSHEET_CURRENT_HOME="$(cheatsheet_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_CHEATSHEET_CURRENT_HOME" ]]; then
   HOME="$_CHEATSHEET_CURRENT_HOME"
   export HOME
@@ -83,7 +163,11 @@ _CHEATSHEET_SYSTEM_STATE_FILE="$(cheatsheet_sanitize_abs_nonroot_path "${ACFS_SY
 if [[ -z "$_CHEATSHEET_SYSTEM_STATE_FILE" ]]; then
   _CHEATSHEET_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
 fi
+_CHEATSHEET_EXPLICIT_TARGET_HOME_RAW="${TARGET_HOME:-}"
+_CHEATSHEET_EXPLICIT_TARGET_USER_RAW="${TARGET_USER:-}"
+_CHEATSHEET_EXPLICIT_TARGET_HOME="$(cheatsheet_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
 _CHEATSHEET_RESOLVED_ACFS_HOME=""
+_CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE=""
 _CHEATSHEET_RESOLVED_TARGET_USER=""
 _CHEATSHEET_RESOLVED_TARGET_HOME=""
 
@@ -101,7 +185,7 @@ _CHEATSHEET_SHOW_STATS=false
 
 if [[ -f "$_CHEATSHEET_SCRIPT_DIR/../../VERSION" ]]; then
   _CHEATSHEET_VERSION="$(cat "$_CHEATSHEET_SCRIPT_DIR/../../VERSION" 2>/dev/null || echo "$_CHEATSHEET_VERSION")"
-elif [[ -f "$_CHEATSHEET_ACFS_HOME/VERSION" ]]; then
+elif [[ -n "$_CHEATSHEET_ACFS_HOME" ]] && [[ -f "$_CHEATSHEET_ACFS_HOME/VERSION" ]]; then
   _CHEATSHEET_VERSION="$(cat "$_CHEATSHEET_ACFS_HOME/VERSION" 2>/dev/null || echo "$_CHEATSHEET_VERSION")"
 fi
 
@@ -145,36 +229,55 @@ cheatsheet_home_for_user() {
 
   [[ -n "$user" ]] || return 1
 
-  if command -v getent &>/dev/null; then
-    passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
-    if [[ -n "$passwd_entry" ]]; then
+  if [[ "$user" == "root" ]]; then
+      printf '/root\n'
+      return 0
+  fi
+
+  passwd_entry="$(cheatsheet_getent_passwd_entry "$user" 2>/dev/null || true)"
+  if [[ -n "$passwd_entry" ]]; then
       home_candidate="$(cheatsheet_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
       if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
+          printf '%s\n' "$home_candidate"
+          return 0
       fi
-    fi
   fi
 
-  if [[ "$user" == "root" ]]; then
-    echo "/root"
-    return 0
-  fi
-
-  current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+  current_user="$(cheatsheet_resolve_current_user 2>/dev/null || true)"
   if [[ "$user" == "$current_user" ]]; then
-    home_candidate="${_CHEATSHEET_CURRENT_HOME:-}"
-    if [[ -z "$home_candidate" ]]; then
-      home_candidate="$(cheatsheet_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    fi
-    if [[ -n "$home_candidate" ]]; then
-      printf '%s\n' "$home_candidate"
-      return 0
-    fi
+      home_candidate="${_CHEATSHEET_CURRENT_HOME:-}"
+      if [[ -z "$home_candidate" ]]; then
+          home_candidate="$(cheatsheet_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+      fi
+      if [[ -n "$home_candidate" ]]; then
+          printf '%s\n' "$home_candidate"
+          return 0
+      fi
   fi
 
   return 1
 }
+
+cheatsheet_resolve_explicit_target_home() {
+  local target_home=""
+
+  target_home="$_CHEATSHEET_EXPLICIT_TARGET_HOME"
+  if [[ -n "$target_home" ]]; then
+    printf '%s\n' "${target_home%/}"
+    return 0
+  fi
+
+  if [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW" ]]; then
+    cheatsheet_is_valid_username "$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW" || return 1
+    target_home="$(cheatsheet_existing_abs_home "$(cheatsheet_home_for_user "$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW" 2>/dev/null || true)" 2>/dev/null || true)"
+    [[ -n "$target_home" ]] || return 1
+    printf '%s\n' "${target_home%/}"
+    return 0
+  fi
+
+  return 1
+}
+
 cheatsheet_read_user_for_home() {
   local user_home="$1"
   local candidate_user=""
@@ -341,10 +444,14 @@ cheatsheet_resolve_acfs_home() {
   local candidate=""
   local target_home=""
   local target_user=""
+  local explicit_target_home=""
+
+  _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE=""
 
   candidate=$(cheatsheet_script_acfs_home 2>/dev/null || true)
   if cheatsheet_candidate_has_acfs_data "$candidate"; then
     _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
+    _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="script_acfs_home"
     printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
     return 0
   fi
@@ -354,6 +461,7 @@ cheatsheet_resolve_acfs_home() {
     candidate="${target_home}/.acfs"
     if [[ -n "$target_home" ]] && cheatsheet_candidate_has_acfs_data "$candidate"; then
       _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
+      _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="sudo_user_home"
       printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
       return 0
     fi
@@ -363,6 +471,7 @@ cheatsheet_resolve_acfs_home() {
   candidate="${target_home}/.acfs"
   if [[ -n "$target_home" ]] && cheatsheet_candidate_has_acfs_data "$candidate"; then
     _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
+    _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="system_state_target_home"
     printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
     return 0
   fi
@@ -375,18 +484,36 @@ cheatsheet_resolve_acfs_home() {
     candidate="${target_home}/.acfs"
     if [[ -n "$target_home" ]] && cheatsheet_candidate_has_acfs_data "$candidate"; then
       _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
+      _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="system_state_target_user"
       printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
       return 0
     fi
   fi
 
-  if [[ -n "$_CHEATSHEET_ACFS_HOME" ]] && cheatsheet_candidate_has_acfs_data "$_CHEATSHEET_ACFS_HOME"; then
-    _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_ACFS_HOME"
+  if [[ -n "$_CHEATSHEET_EXPLICIT_ACFS_HOME" ]] && cheatsheet_candidate_has_acfs_data "$_CHEATSHEET_EXPLICIT_ACFS_HOME"; then
+    _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_EXPLICIT_ACFS_HOME"
+    _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
     printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
     return 0
   fi
 
-  _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_ACFS_HOME"
+  explicit_target_home="$(cheatsheet_resolve_explicit_target_home 2>/dev/null || true)"
+  if [[ -n "$explicit_target_home" ]]; then
+    candidate="${explicit_target_home}/.acfs"
+    if cheatsheet_candidate_has_acfs_data "$candidate"; then
+      _CHEATSHEET_RESOLVED_ACFS_HOME="$candidate"
+      _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="explicit_target_home"
+      printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
+      return 0
+    fi
+  fi
+
+  if [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW" ]]; then
+    return 1
+  fi
+
+  _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_DEFAULT_ACFS_HOME"
+  _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="current_home"
   printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"
 }
 
@@ -463,6 +590,8 @@ cheatsheet_infer_target_home_from_acfs_home() {
     :
   elif [[ -n "$_CHEATSHEET_DEFAULT_ACFS_HOME" ]] && [[ "$acfs_home_candidate" == "$_CHEATSHEET_DEFAULT_ACFS_HOME" ]]; then
     :
+  elif [[ "${_CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE:-}" == "explicit_target_home" ]]; then
+    :
   else
     return 1
   fi
@@ -476,13 +605,71 @@ cheatsheet_prepare_context() {
   local state_file=""
   local path_home=""
   local detected_user=""
+  local state_target_user=""
+  local resolved_target_home=""
+  local explicit_target_home=""
+  local target_home_source=""
 
-  _CHEATSHEET_ACFS_HOME="$(cheatsheet_resolve_acfs_home)"
+  _CHEATSHEET_RESOLVED_TARGET_USER=""
+  _CHEATSHEET_RESOLVED_TARGET_HOME=""
+  _CHEATSHEET_ACFS_HOME="$(cheatsheet_resolve_acfs_home 2>/dev/null || true)"
   state_file="$(cheatsheet_resolve_state_file)"
   path_home="$(cheatsheet_infer_target_home_from_acfs_home 2>/dev/null || true)"
+  explicit_target_home="$(cheatsheet_resolve_explicit_target_home 2>/dev/null || true)"
+  state_target_user="$(cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_user" 2>/dev/null ||     cheatsheet_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
 
   if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
     _CHEATSHEET_RESOLVED_TARGET_HOME="$path_home"
+    target_home_source="path_home"
+  fi
+
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]]; then
+    resolved_target_home="$(cheatsheet_read_target_home_from_state "$_CHEATSHEET_SYSTEM_STATE_FILE" 2>/dev/null ||       cheatsheet_read_target_home_from_state "$state_file" 2>/dev/null || true)"
+    if [[ -n "$resolved_target_home" ]]; then
+      _CHEATSHEET_RESOLVED_TARGET_HOME="$resolved_target_home"
+      target_home_source="state_target_home"
+    fi
+  fi
+
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ -n "$state_target_user" ]]; then
+    resolved_target_home="$(cheatsheet_existing_abs_home "$(cheatsheet_home_for_user "$state_target_user" 2>/dev/null || true)" 2>/dev/null || true)"
+    if [[ -n "$resolved_target_home" ]]; then
+      _CHEATSHEET_RESOLVED_TARGET_HOME="$resolved_target_home"
+      target_home_source="state_target_user"
+    fi
+  fi
+
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
+    _CHEATSHEET_RESOLVED_TARGET_HOME="$path_home"
+    target_home_source="path_home"
+  fi
+
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ "$_CHEATSHEET_ACFS_HOME" == */.acfs ]]; then
+    resolved_target_home="$(cheatsheet_existing_abs_home "${_CHEATSHEET_ACFS_HOME%/.acfs}" 2>/dev/null || true)"
+    if [[ -n "$resolved_target_home" ]]; then
+      _CHEATSHEET_RESOLVED_TARGET_HOME="$resolved_target_home"
+      target_home_source="acfs_home_path"
+    fi
+  fi
+
+  if [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW" ]]; then
+    if [[ -n "$explicit_target_home" ]]; then
+      if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] || [[ "$target_home_source" == "current_home" ]]; then
+        _CHEATSHEET_RESOLVED_TARGET_HOME="$explicit_target_home"
+        target_home_source="explicit_target_home"
+      fi
+    elif [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]]; then
+      echo "Error: explicit TARGET_HOME/TARGET_USER did not resolve to an installed home; refusing to fall back to current HOME" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]]; then
+    resolved_target_home="$(cheatsheet_existing_abs_home "${_CHEATSHEET_CURRENT_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$resolved_target_home" ]]; then
+      _CHEATSHEET_RESOLVED_TARGET_HOME="$resolved_target_home"
+      target_home_source="current_home"
+    fi
   fi
 
   if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_USER" ]] && [[ -n "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]]; then
@@ -492,30 +679,16 @@ cheatsheet_prepare_context() {
     fi
   fi
 
-  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_USER" ]] && [[ -n "$path_home" ]]; then
-    detected_user="$(cheatsheet_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
-    if [[ -n "$detected_user" ]]; then
-      _CHEATSHEET_RESOLVED_TARGET_USER="$detected_user"
-    fi
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_USER" ]] && [[ "$target_home_source" != "explicit_target_home" ]] && [[ -n "$state_target_user" ]]; then
+    _CHEATSHEET_RESOLVED_TARGET_USER="$state_target_user"
   fi
 
-  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_USER" ]]; then
-    _CHEATSHEET_RESOLVED_TARGET_USER="$(cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || \
-      cheatsheet_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_USER" ]] && cheatsheet_is_valid_username "$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW"; then
+    _CHEATSHEET_RESOLVED_TARGET_USER="$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW"
   fi
 
-  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]]; then
-    _CHEATSHEET_RESOLVED_TARGET_HOME="$(cheatsheet_read_target_home_from_state "$_CHEATSHEET_SYSTEM_STATE_FILE" 2>/dev/null || \
-      cheatsheet_read_target_home_from_state "$state_file" 2>/dev/null || true)"
-    if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ -n "$_CHEATSHEET_RESOLVED_TARGET_USER" ]]; then
-      _CHEATSHEET_RESOLVED_TARGET_HOME="$(cheatsheet_home_for_user "$_CHEATSHEET_RESOLVED_TARGET_USER" 2>/dev/null || true)"
-    fi
-    if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
-      _CHEATSHEET_RESOLVED_TARGET_HOME="$path_home"
-    fi
-    if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_HOME" ]] && [[ "$_CHEATSHEET_ACFS_HOME" == */.acfs ]]; then
-      _CHEATSHEET_RESOLVED_TARGET_HOME="${_CHEATSHEET_ACFS_HOME%/.acfs}"
-    fi
+  if [[ -z "$_CHEATSHEET_RESOLVED_TARGET_USER" ]] && [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
+    _CHEATSHEET_RESOLVED_TARGET_USER="$SUDO_USER"
   fi
 
   cheatsheet_prepend_user_paths "$_CHEATSHEET_CURRENT_HOME"
@@ -523,6 +696,7 @@ cheatsheet_prepare_context() {
     cheatsheet_prepend_user_paths "$_CHEATSHEET_RESOLVED_TARGET_HOME"
   fi
 }
+
 json_escape() {
   local s="${1:-}"
   s=${s//\\/\\\\}

@@ -30,13 +30,9 @@ sanitize_abs_nonroot_path() {
 resolve_current_home() {
     local current_user=""
     local home_candidate=""
+    local passwd_home=""
 
     home_candidate="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
-    fi
-
     current_user="$(id -un 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
@@ -44,15 +40,16 @@ resolve_current_home() {
     fi
 
     if [[ -n "$current_user" ]]; then
-        home_candidate="$(getent passwd "$current_user" 2>/dev/null | cut -d: -f6 | head -n 1)" || true
-        home_candidate="$(sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
-        if [[ -n "$home_candidate" ]]; then
-            printf '%s\n' "$home_candidate"
+        passwd_home="$(getent passwd "$current_user" 2>/dev/null | cut -d: -f6 | head -n 1)" || true
+        passwd_home="$(sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+        if [[ -n "$passwd_home" ]]; then
+            printf '%s\n' "$passwd_home"
             return 0
         fi
     fi
 
-    return 1
+    [[ -n "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
 }
 
 # Resolve home directory (systemd %h may not set HOME reliably)
@@ -66,6 +63,12 @@ ACFS_HOME="$(sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 ACFS_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
 ACFS_SYSTEM_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
+explicit_target_home="${TARGET_HOME:-}"
+if [[ -n "$explicit_target_home" ]]; then
+    HOME="$explicit_target_home"
+    ACFS_HOME="$explicit_target_home/.acfs"
+    export HOME ACFS_HOME
+fi
 export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR
 
 read_bin_dir_from_state_file() {
@@ -120,6 +123,24 @@ state_file_path_target_home() {
     [[ -n "$candidate_home" ]] || return 1
     [[ -d "$candidate_home" ]] || return 1
     printf '%s\n' "$candidate_home"
+}
+
+state_file_matches_target_home() {
+    local state_file="$1"
+    local expected_home="$2"
+    local state_home=""
+
+    [[ -f "$state_file" ]] || return 1
+    expected_home="$(sanitize_abs_nonroot_path "$expected_home" 2>/dev/null || true)"
+    [[ -n "$expected_home" ]] || return 1
+
+    state_home="$(state_file_path_target_home "$state_file" 2>/dev/null || true)"
+    if [[ -z "$state_home" ]]; then
+        state_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
+    fi
+
+    [[ -n "$state_home" ]] || return 1
+    [[ "$state_home" == "$expected_home" ]]
 }
 
 validate_bin_dir_for_home() {
@@ -178,6 +199,7 @@ validate_bin_dir_for_home() {
 }
 
 state_candidates=()
+state_target_home=""
 if [[ -n "${ACFS_STATE_FILE:-}" ]]; then
     state_candidates+=("$ACFS_STATE_FILE")
 fi
@@ -191,12 +213,16 @@ fi
 
 for state_candidate in "${state_candidates[@]}"; do
     [[ -n "$state_candidate" && -f "$state_candidate" ]] || continue
-    ACFS_STATE_FILE="$state_candidate"
-    TARGET_HOME="$(read_target_home_from_state_file "$state_candidate" 2>/dev/null || true)"
-    if [[ -z "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="$(state_file_path_target_home "$state_candidate" 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]] && ! state_file_matches_target_home "$state_candidate" "$explicit_target_home"; then
+        continue
     fi
-    if [[ -n "${TARGET_HOME:-}" ]]; then
+    ACFS_STATE_FILE="$state_candidate"
+    state_target_home="$(read_target_home_from_state_file "$state_candidate" 2>/dev/null || true)"
+    if [[ -z "${state_target_home:-}" ]]; then
+        state_target_home="$(state_file_path_target_home "$state_candidate" 2>/dev/null || true)"
+    fi
+    if [[ -n "${state_target_home:-}" ]]; then
+        TARGET_HOME="$state_target_home"
         HOME="$TARGET_HOME"
         ACFS_HOME="$TARGET_HOME/.acfs"
         export HOME TARGET_HOME ACFS_HOME

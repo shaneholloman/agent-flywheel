@@ -84,6 +84,60 @@ onboard_existing_abs_home() {
     printf '%s\n' "$path_value"
 }
 
+onboard_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+onboard_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(onboard_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(onboard_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+onboard_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+
+    getent_bin="$(onboard_system_binary_path getent 2>/dev/null || true)"
+    [[ -n "$getent_bin" ]] || return 1
+
+    if [[ -n "$user" ]]; then
+        "$getent_bin" passwd "$user" 2>/dev/null
+    else
+        "$getent_bin" passwd 2>/dev/null
+    fi
+}
 onboard_lookup_passwd_home() {
     local user="$1"
     local passwd_entry=""
@@ -91,9 +145,8 @@ onboard_lookup_passwd_home() {
 
     [[ -n "$user" ]] || return 1
 
-    if command -v getent >/dev/null 2>&1; then
-        passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
-    elif [[ -r /etc/passwd ]]; then
+    passwd_entry="$(onboard_getent_passwd_entry "$user" 2>/dev/null || true)"
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
         passwd_entry="$(awk -F: -v u="$user" '$1==u{print $0; exit}' /etc/passwd 2>/dev/null || true)"
     fi
 
@@ -105,35 +158,46 @@ onboard_lookup_passwd_home() {
 
     printf '%s\n' "$home_candidate"
 }
-
 onboard_resolve_current_home() {
     local current_user=""
-    local home_candidate=""
+    local fallback_home=""
+    local passwd_home=""
 
-    home_candidate="$(onboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
+    fallback_home="$(onboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ "${_ONBOARD_WAS_SOURCED:-false}" == "true" ]]; then
+        fallback_home="$(onboard_sanitize_abs_nonroot_path "${_ONBOARD_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
     fi
-
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(onboard_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
     if [[ -n "$current_user" ]]; then
-        home_candidate="$(onboard_lookup_passwd_home "$current_user" 2>/dev/null || true)"
-        if [[ -n "$home_candidate" ]]; then
-            printf '%s\n' "$home_candidate"
+        passwd_home="$(onboard_lookup_passwd_home "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_home" ]]; then
+            printf '%s\n' "$passwd_home"
             return 0
         fi
     fi
 
-    return 1
+    [[ -n "$fallback_home" ]] || return 1
+    printf '%s\n' "$fallback_home"
 }
+onboard_initial_current_home() {
+    local cached_home=""
 
-_ONBOARD_CURRENT_HOME="$(onboard_resolve_current_home 2>/dev/null || true)"
+    if [[ "${_ONBOARD_WAS_SOURCED:-false}" == "true" ]]; then
+        cached_home="$(onboard_sanitize_abs_nonroot_path "${_ONBOARD_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
+
+    onboard_resolve_current_home
+}
+_ONBOARD_CURRENT_HOME="$(onboard_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_ONBOARD_CURRENT_HOME" ]]; then
     HOME="$_ONBOARD_CURRENT_HOME"
     export HOME
@@ -152,9 +216,40 @@ _ONBOARD_FALLBACK_TMPDIR="$(onboard_sanitize_abs_nonroot_path "${TMPDIR:-/tmp}" 
 if [[ -z "$_ONBOARD_FALLBACK_TMPDIR" ]]; then
     _ONBOARD_FALLBACK_TMPDIR="/tmp"
 fi
+_ONBOARD_EXPLICIT_TARGET_USER_RAW="${TARGET_USER:-}"
+_ONBOARD_EXPLICIT_TARGET_HOME="$(onboard_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
+_ONBOARD_ACFS_HOME_SOURCE=""
+_ONBOARD_RUNTIME_HOME=""
+_ONBOARD_RUNTIME_HOME_SOURCE=""
+
+onboard_is_valid_username() {
+    local username="${1:-}"
+    [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+onboard_resolve_explicit_runtime_home() {
+    local target_home=""
+
+    target_home="$_ONBOARD_EXPLICIT_TARGET_HOME"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "${target_home%/}"
+        return 0
+    fi
+
+    if [[ -n "$_ONBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
+        onboard_is_valid_username "$_ONBOARD_EXPLICIT_TARGET_USER_RAW" || return 1
+        target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$_ONBOARD_EXPLICIT_TARGET_USER_RAW" 2>/dev/null || true)" 2>/dev/null || true)"
+        [[ -n "$target_home" ]] || return 1
+        printf '%s\n' "${target_home%/}"
+        return 0
+    fi
+
+    return 1
+}
 
 onboard_home_for_user() {
     local user="$1"
+    local current_user=""
     local home_candidate=""
 
     [[ -n "$user" ]] || return 1
@@ -162,6 +257,18 @@ onboard_home_for_user() {
     if [[ "$user" == "root" ]]; then
         printf '/root\n'
         return 0
+    fi
+
+    current_user="$(onboard_resolve_current_user 2>/dev/null || true)"
+    if [[ "$user" == "$current_user" ]]; then
+        home_candidate="${_ONBOARD_CURRENT_HOME:-}"
+        if [[ -z "$home_candidate" ]]; then
+            home_candidate="$(onboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        fi
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
     fi
 
     home_candidate="$(onboard_lookup_passwd_home "$user" 2>/dev/null || true)"
@@ -276,9 +383,13 @@ onboard_resolve_acfs_home() {
     local target_home=""
     local target_user=""
     local candidate=""
+    local explicit_target_home=""
+
+    _ONBOARD_ACFS_HOME_SOURCE=""
 
     installed_home="$(onboard_script_acfs_home 2>/dev/null || true)"
     if onboard_candidate_has_acfs_data "$installed_home"; then
+        _ONBOARD_ACFS_HOME_SOURCE="script_acfs_home"
         printf '%s\n' "$installed_home"
         return 0
     fi
@@ -287,6 +398,7 @@ onboard_resolve_acfs_home() {
         target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$SUDO_USER" 2>/dev/null || true)" 2>/dev/null || true)"
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
+            _ONBOARD_ACFS_HOME_SOURCE="sudo_user_home"
             printf '%s\n' "$candidate"
             return 0
         fi
@@ -295,6 +407,7 @@ onboard_resolve_acfs_home() {
     target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
     candidate="${target_home}/.acfs"
     if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
+        _ONBOARD_ACFS_HOME_SOURCE="system_state_target_home"
         printf '%s\n' "$candidate"
         return 0
     fi
@@ -306,22 +419,41 @@ onboard_resolve_acfs_home() {
         fi
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
+            _ONBOARD_ACFS_HOME_SOURCE="system_state_target_user"
             printf '%s\n' "$candidate"
             return 0
         fi
     fi
 
     if onboard_candidate_has_acfs_data "$_ONBOARD_EXPLICIT_ACFS_HOME"; then
+        _ONBOARD_ACFS_HOME_SOURCE="explicit_acfs_home"
         printf '%s\n' "$_ONBOARD_EXPLICIT_ACFS_HOME"
         return 0
     fi
 
+    explicit_target_home="$(onboard_resolve_explicit_runtime_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if onboard_candidate_has_acfs_data "$candidate"; then
+            _ONBOARD_ACFS_HOME_SOURCE="explicit_target_home"
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
+    if [[ -n "${TARGET_HOME:-}" ]] || [[ -n "${TARGET_USER:-}" ]] || [[ -n "$_ONBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
+        printf '%s\n' ""
+        return 0
+    fi
+
     if onboard_candidate_has_acfs_data "$_ONBOARD_DEFAULT_ACFS_HOME"; then
+        _ONBOARD_ACFS_HOME_SOURCE="default_acfs_home"
         printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
         return 0
     fi
 
     if [[ -n "$_ONBOARD_DEFAULT_ACFS_HOME" ]]; then
+        _ONBOARD_ACFS_HOME_SOURCE="default_acfs_home"
         printf '%s\n' "$_ONBOARD_DEFAULT_ACFS_HOME"
         return 0
     fi
@@ -334,10 +466,17 @@ _ONBOARD_ACFS_HOME="$(onboard_resolve_acfs_home 2>/dev/null || true)"
 onboard_resolve_runtime_home() {
     local target_home=""
     local target_user=""
+    local acfs_path_home=""
+    local state_target_home=""
+    local state_target_user_home=""
+
+    _ONBOARD_RUNTIME_HOME=""
+    _ONBOARD_RUNTIME_HOME_SOURCE=""
 
     target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
     if [[ -n "$target_home" ]]; then
-        printf '%s\n' "${target_home%/}"
+        _ONBOARD_RUNTIME_HOME="${target_home%/}"
+        _ONBOARD_RUNTIME_HOME_SOURCE="system_state_target_home"
         return 0
     fi
 
@@ -345,48 +484,98 @@ onboard_resolve_runtime_home() {
     if [[ -n "$target_user" ]]; then
         target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$target_user" 2>/dev/null || true)" 2>/dev/null || true)"
         if [[ -n "$target_home" ]]; then
-            printf '%s\n' "${target_home%/}"
+            _ONBOARD_RUNTIME_HOME="${target_home%/}"
+            _ONBOARD_RUNTIME_HOME_SOURCE="system_state_target_user"
             return 0
         fi
     fi
 
-    target_user="$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_user" 2>/dev/null || true)"
-    if [[ -n "$target_user" ]]; then
-        target_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$target_user" 2>/dev/null || true)" 2>/dev/null || true)"
-        if [[ -n "$target_home" ]]; then
-            printf '%s\n' "${target_home%/}"
+    if onboard_candidate_has_acfs_data "$_ONBOARD_ACFS_HOME"; then
+        acfs_path_home="$(onboard_acfs_home_target_home "$_ONBOARD_ACFS_HOME" 2>/dev/null || true)"
+        state_target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
+
+        if [[ -n "$state_target_home" ]]; then
+            if [[ -n "$acfs_path_home" ]] && [[ "$acfs_path_home" == "$state_target_home" ]]; then
+                _ONBOARD_RUNTIME_HOME="${acfs_path_home%/}"
+                _ONBOARD_RUNTIME_HOME_SOURCE="acfs_home_path"
+                return 0
+            fi
+            if [[ "${_ONBOARD_ACFS_HOME_SOURCE:-}" == "script_acfs_home" ]] && [[ -n "$acfs_path_home" ]]; then
+                _ONBOARD_RUNTIME_HOME="${acfs_path_home%/}"
+                _ONBOARD_RUNTIME_HOME_SOURCE="acfs_home_path"
+                return 0
+            fi
+            _ONBOARD_RUNTIME_HOME="${state_target_home%/}"
+            _ONBOARD_RUNTIME_HOME_SOURCE="acfs_state_target_home"
             return 0
+        fi
+
+        if [[ -n "$acfs_path_home" ]]; then
+            _ONBOARD_RUNTIME_HOME="${acfs_path_home%/}"
+            _ONBOARD_RUNTIME_HOME_SOURCE="acfs_home_path"
+            return 0
+        fi
+
+        target_user="$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_user" 2>/dev/null || true)"
+        if [[ -n "$target_user" ]]; then
+            state_target_user_home="$(onboard_existing_abs_home "$(onboard_home_for_user "$target_user" 2>/dev/null || true)" 2>/dev/null || true)"
+            if [[ -n "$state_target_user_home" ]]; then
+                _ONBOARD_RUNTIME_HOME="${state_target_user_home%/}"
+                _ONBOARD_RUNTIME_HOME_SOURCE="acfs_state_target_user"
+                return 0
+            fi
         fi
     fi
 
-    # When state-based user/home hints are absent or stale, fall back to the
-    # concrete ACFS location that was selected for this session.
-    target_home="$(onboard_acfs_home_target_home "$_ONBOARD_ACFS_HOME" 2>/dev/null || true)"
-    if [[ -n "$target_home" ]]; then
-        printf '%s\n' "${target_home%/}"
-        return 0
-    fi
-
-    target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
-    if [[ -n "$target_home" ]]; then
-        printf '%s\n' "${target_home%/}"
-        return 0
-    fi
-
-    target_home="$(onboard_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$target_home" ]]; then
-        printf '%s\n' "${target_home%/}"
-        return 0
-    fi
-
-    printf '%s\n' "${_ONBOARD_CURRENT_HOME:-/root}"
+    _ONBOARD_RUNTIME_HOME="${_ONBOARD_CURRENT_HOME:-/root}"
+    _ONBOARD_RUNTIME_HOME_SOURCE="current_home"
+    return 0
 }
 
-_ONBOARD_RUNTIME_HOME="$(onboard_resolve_runtime_home)"
+onboard_resolve_runtime_home >/dev/null 2>&1 || true
+
+onboard_effective_runtime_home() {
+    local runtime_home=""
+    local explicit_runtime_home=""
+
+    runtime_home="$(onboard_existing_abs_home "${_ONBOARD_RUNTIME_HOME:-}" 2>/dev/null || true)"
+
+    if [[ -n "$_ONBOARD_EXPLICIT_TARGET_HOME" ]] || [[ -n "$_ONBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
+        explicit_runtime_home="$(onboard_resolve_explicit_runtime_home 2>/dev/null || true)"
+        if [[ -n "$explicit_runtime_home" ]]; then
+            if [[ -n "$runtime_home" ]] && [[ "${_ONBOARD_RUNTIME_HOME_SOURCE:-}" != "current_home" ]]; then
+                printf '%s\n' "$runtime_home"
+                return 0
+            fi
+            printf '%s\n' "$explicit_runtime_home"
+            return 0
+        fi
+        if [[ -n "$runtime_home" ]] && [[ "${_ONBOARD_RUNTIME_HOME_SOURCE:-}" != "current_home" ]]; then
+            printf '%s\n' "$runtime_home"
+            return 0
+        fi
+        return 1
+    fi
+
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
+
+    runtime_home="$(onboard_existing_abs_home "${_ONBOARD_CURRENT_HOME:-}" 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+    printf '%s\n' "$runtime_home"
+}
 
 onboard_preferred_bin_dir() {
-    local runtime_home="${1:-${_ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}}"
+    local runtime_home="${1:-}"
     local candidate=""
+
+    if [[ -z "$runtime_home" ]]; then
+        runtime_home="$(onboard_effective_runtime_home 2>/dev/null || true)"
+    fi
+    runtime_home="$(onboard_existing_abs_home "$runtime_home" 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
 
     candidate="$(onboard_sanitize_abs_nonroot_path "$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "bin_dir" 2>/dev/null || true)" 2>/dev/null || true)"
     candidate="$(onboard_validate_bin_dir_for_home "$candidate" "$runtime_home" 2>/dev/null || true)"
@@ -414,7 +603,7 @@ onboard_preferred_bin_dir() {
 
 onboard_runtime_binary_path() {
     local name="${1:-}"
-    local runtime_home="${_ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}"
+    local runtime_home=""
     local primary_bin_dir=""
     local candidate=""
     local path_dir=""
@@ -422,6 +611,9 @@ onboard_runtime_binary_path() {
     local -a path_entries=()
 
     [[ -n "$name" ]] || return 1
+
+    runtime_home="$(onboard_effective_runtime_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
 
     primary_bin_dir="$(onboard_preferred_bin_dir "$runtime_home" 2>/dev/null || true)"
     [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$runtime_home/.local/bin"
@@ -1361,13 +1553,18 @@ EOF
 # Returns: 0 = authenticated, 1 = not authenticated, 2 = not installed
 check_auth_status() {
     local service=$1
-    local runtime_home="${_ONBOARD_RUNTIME_HOME:-${_ONBOARD_CURRENT_HOME:-/root}}"
-    local shell_config_files=(
-        "$runtime_home/.zshrc.local"
-        "$runtime_home/.zshrc"
-        "$runtime_home/.bashrc"
-        "$runtime_home/.profile"
-    )
+    local runtime_home=""
+    local shell_config_files=()
+
+    runtime_home="$(onboard_effective_runtime_home 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        shell_config_files=(
+            "$runtime_home/.zshrc.local"
+            "$runtime_home/.zshrc"
+            "$runtime_home/.bashrc"
+            "$runtime_home/.profile"
+        )
+    fi
 
     case "$service" in
         tailscale)

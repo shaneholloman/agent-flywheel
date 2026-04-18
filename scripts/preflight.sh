@@ -163,23 +163,21 @@ resolve_home_dir() {
 resolve_current_home() {
     local current_user=""
     local home_candidate=""
+    local resolved_home=""
 
     home_candidate="$(preflight_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
-    fi
 
     current_user="$(resolve_current_user 2>/dev/null || true)"
-    [[ -n "$current_user" ]] || return 1
-
-    home_candidate="$(resolve_home_dir "$current_user" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
+    if [[ -n "$current_user" ]]; then
+        resolved_home="$(resolve_home_dir "$current_user" 2>/dev/null || true)"
+        if [[ -n "$resolved_home" ]]; then
+            printf '%s\n' "$resolved_home"
+            return 0
+        fi
     fi
 
-    return 1
+    [[ -n "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
 }
 
 resolve_install_target_home() {

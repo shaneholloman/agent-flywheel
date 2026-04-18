@@ -46,38 +46,120 @@ continue_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
-continue_resolve_current_home() {
-    local current_user=""
-    local home_candidate=""
-    local passwd_entry=""
+continue_existing_abs_home() {
+    local path_value=""
 
-    home_candidate="$(continue_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
+    path_value="$(continue_sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+    [[ -d "$path_value" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+continue_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
         return 0
+    done
+
+    return 1
+}
+
+continue_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(continue_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(continue_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+continue_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+
+    getent_bin="$(continue_system_binary_path getent 2>/dev/null || true)"
+    [[ -n "$getent_bin" ]] || return 1
+
+    if [[ -n "$user" ]]; then
+        "$getent_bin" passwd "$user" 2>/dev/null
+    else
+        "$getent_bin" passwd 2>/dev/null
+    fi
+}
+continue_is_valid_username() {
+    local username="${1:-}"
+    [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+continue_resolve_current_home() {
+    local current_user=""
+    local fallback_home=""
+    local passwd_entry=""
+    local passwd_home=""
+
+    fallback_home="$(continue_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ "${_CONTINUE_WAS_SOURCED:-false}" == "true" ]]; then
+        fallback_home="$(continue_sanitize_abs_nonroot_path "${_CONTINUE_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+    fi
+
+    current_user="$(continue_resolve_current_user 2>/dev/null || true)"
+
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
-    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(continue_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(continue_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
+            passwd_home="$(continue_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
                 return 0
             fi
         fi
     fi
 
-    return 1
+    [[ -n "$fallback_home" ]] || return 1
+    printf '%s\n' "$fallback_home"
 }
+continue_initial_current_home() {
+    local cached_home=""
 
-_CONTINUE_CURRENT_HOME="$(continue_resolve_current_home 2>/dev/null || true)"
+    if [[ "${_CONTINUE_WAS_SOURCED:-false}" == "true" ]]; then
+        cached_home="$(continue_sanitize_abs_nonroot_path "${_CONTINUE_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
+
+    continue_resolve_current_home
+}
+_CONTINUE_CURRENT_HOME="$(continue_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_CONTINUE_CURRENT_HOME" ]]; then
     HOME="$_CONTINUE_CURRENT_HOME"
     export HOME
@@ -96,6 +178,9 @@ _CONTINUE_STATE_FILE="$(continue_sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}
 _CONTINUE_EXPLICIT_ACFS_HOME="$(continue_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 _CONTINUE_DEFAULT_ACFS_HOME=""
 [[ -n "$_CONTINUE_CURRENT_HOME" ]] && _CONTINUE_DEFAULT_ACFS_HOME="${_CONTINUE_CURRENT_HOME}/.acfs"
+_CONTINUE_EXPLICIT_TARGET_HOME_RAW="${TARGET_HOME:-}"
+_CONTINUE_EXPLICIT_TARGET_USER_RAW="${TARGET_USER:-}"
+_CONTINUE_EXPLICIT_TARGET_HOME="$(continue_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
 _CONTINUE_SERVICE_NAME="acfs-upgrade-resume"
 
 # Colors
@@ -146,29 +231,50 @@ home_for_user() {
 
     [[ -n "$user" ]] || return 1
 
-    if command -v getent &>/dev/null; then
-        passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
-        if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(continue_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
-                return 0
-            fi
-        fi
-    fi
-
     if [[ "$user" == "root" ]]; then
-        echo "/root"
+        printf '/root\n'
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(continue_resolve_current_user 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
-        home_candidate="$(continue_sanitize_abs_nonroot_path "${_CONTINUE_CURRENT_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        home_candidate="${_CONTINUE_CURRENT_HOME:-}"
+        if [[ -z "$home_candidate" ]]; then
+            home_candidate="$(continue_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        fi
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
         fi
+    fi
+
+    passwd_entry="$(continue_getent_passwd_entry "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        home_candidate="$(continue_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+continue_resolve_explicit_target_home() {
+    local target_home=""
+
+    target_home="$_CONTINUE_EXPLICIT_TARGET_HOME"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "${target_home%/}"
+        return 0
+    fi
+
+    if [[ -n "$_CONTINUE_EXPLICIT_TARGET_USER_RAW" ]]; then
+        continue_is_valid_username "$_CONTINUE_EXPLICIT_TARGET_USER_RAW" || return 1
+        target_home="$(continue_existing_abs_home "$(home_for_user "$_CONTINUE_EXPLICIT_TARGET_USER_RAW" 2>/dev/null || true)" 2>/dev/null || true)"
+        [[ -n "$target_home" ]] || return 1
+        printf '%s\n' "${target_home%/}"
+        return 0
     fi
 
     return 1
@@ -256,6 +362,7 @@ get_install_state_file() {
     local candidate=""
     local target_user=""
     local target_home=""
+    local explicit_target_home=""
 
     if [[ -n "${_CONTINUE_STATE_FILE:-}" ]] && [[ -f "${_CONTINUE_STATE_FILE}" ]] && [[ "${_CONTINUE_STATE_FILE}" != "$_CONTINUE_SYSTEM_STATE_FILE" ]]; then
         echo "$_CONTINUE_STATE_FILE"
@@ -301,6 +408,19 @@ get_install_state_file() {
         fi
     fi
 
+    explicit_target_home="$(continue_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs/state.json"
+        if [[ -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_CONTINUE_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_CONTINUE_EXPLICIT_TARGET_USER_RAW" ]]; then
+        return 1
+    fi
+
     candidate="$(current_user_state_file 2>/dev/null || true)"
     if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
         echo "$candidate"
@@ -326,6 +446,11 @@ select_state_file_for_key() {
     local key="$1"
     local install_state_file=""
     local candidate=""
+    local explicit_target_requested=false
+
+    if [[ -n "$_CONTINUE_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_CONTINUE_EXPLICIT_TARGET_USER_RAW" ]]; then
+        explicit_target_requested=true
+    fi
 
     if [[ "$key" == *"ubuntu_upgrade"* ]]; then
         if [[ -f "$_CONTINUE_SYSTEM_STATE_FILE" ]]; then
@@ -347,6 +472,10 @@ select_state_file_for_key() {
             echo "$_CONTINUE_SYSTEM_STATE_FILE"
             return 0
         fi
+    fi
+
+    if [[ "$explicit_target_requested" == "true" ]]; then
+        return 1
     fi
 
     candidate="$(current_user_state_file 2>/dev/null || true)"

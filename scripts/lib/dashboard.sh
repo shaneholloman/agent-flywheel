@@ -42,38 +42,118 @@ dashboard_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
-dashboard_resolve_current_home() {
-    local current_user=""
-    local home_candidate=""
-    local passwd_entry=""
+dashboard_existing_abs_home() {
+    local path_value=""
 
-    home_candidate="$(dashboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
+    path_value="$(dashboard_sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+    [[ -d "$path_value" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+dashboard_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
         return 0
+    done
+
+    return 1
+}
+
+dashboard_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(dashboard_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(dashboard_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+dashboard_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+
+    getent_bin="$(dashboard_system_binary_path getent 2>/dev/null || true)"
+    [[ -n "$getent_bin" ]] || return 1
+
+    if [[ -n "$user" ]]; then
+        "$getent_bin" passwd "$user" 2>/dev/null
+    else
+        "$getent_bin" passwd 2>/dev/null
+    fi
+}
+dashboard_is_valid_username() {
+    local username="${1:-}"
+    [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+dashboard_resolve_current_home() {
+    local current_user=""
+    local fallback_home=""
+    local passwd_entry=""
+    local passwd_home=""
+    fallback_home="$(dashboard_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ "${_DASHBOARD_WAS_SOURCED:-false}" == "true" ]]; then
+        fallback_home="$(dashboard_sanitize_abs_nonroot_path "${_DASHBOARD_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+    fi
+    current_user="$(dashboard_resolve_current_user 2>/dev/null || true)"
+
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
-    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(dashboard_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
+            passwd_home="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
                 return 0
             fi
         fi
     fi
 
-    return 1
+    [[ -n "$fallback_home" ]] || return 1
+    printf '%s\n' "$fallback_home"
 }
+dashboard_initial_current_home() {
+    local cached_home=""
 
-_DASHBOARD_CURRENT_HOME="$(dashboard_resolve_current_home 2>/dev/null || true)"
+    if [[ "${_DASHBOARD_WAS_SOURCED:-false}" == "true" ]]; then
+        cached_home="$(dashboard_sanitize_abs_nonroot_path "${_DASHBOARD_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
+
+    dashboard_resolve_current_home
+}
+_DASHBOARD_CURRENT_HOME="$(dashboard_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_DASHBOARD_CURRENT_HOME" ]]; then
     HOME="$_DASHBOARD_CURRENT_HOME"
     export HOME
@@ -87,7 +167,11 @@ _DASHBOARD_SYSTEM_STATE_FILE="$(dashboard_sanitize_abs_nonroot_path "${ACFS_SYST
 if [[ -z "$_DASHBOARD_SYSTEM_STATE_FILE" ]]; then
     _DASHBOARD_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
 fi
+_DASHBOARD_EXPLICIT_TARGET_HOME_RAW="${TARGET_HOME:-}"
+_DASHBOARD_EXPLICIT_TARGET_USER_RAW="${TARGET_USER:-}"
+_DASHBOARD_EXPLICIT_TARGET_HOME="$(dashboard_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
 _DASHBOARD_RESOLVED_ACFS_HOME=""
+_DASHBOARD_RESOLVED_ACFS_HOME_SOURCE=""
 _DASHBOARD_RESOLVED_TARGET_USER=""
 _DASHBOARD_RESOLVED_TARGET_HOME=""
 
@@ -108,23 +192,21 @@ dashboard_home_for_user() {
 
     [[ -n "$user" ]] || return 1
 
-    if command -v getent &>/dev/null; then
-        passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
-        if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
-                return 0
-            fi
-        fi
-    fi
-
     if [[ "$user" == "root" ]]; then
-        echo "/root"
+        printf '/root\n'
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    passwd_entry="$(dashboard_getent_passwd_entry "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        home_candidate="$(dashboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
+    fi
+
+    current_user="$(dashboard_resolve_current_user 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
         home_candidate="${_DASHBOARD_CURRENT_HOME:-}"
         if [[ -z "$home_candidate" ]]; then
@@ -134,6 +216,25 @@ dashboard_home_for_user() {
             printf '%s\n' "$home_candidate"
             return 0
         fi
+    fi
+
+    return 1
+}
+dashboard_resolve_explicit_target_home() {
+    local target_home=""
+
+    target_home="$_DASHBOARD_EXPLICIT_TARGET_HOME"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "${target_home%/}"
+        return 0
+    fi
+
+    if [[ -n "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
+        dashboard_is_valid_username "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" || return 1
+        target_home="$(dashboard_existing_abs_home "$(dashboard_home_for_user "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" 2>/dev/null || true)" 2>/dev/null || true)"
+        [[ -n "$target_home" ]] || return 1
+        printf '%s\n' "${target_home%/}"
+        return 0
     fi
 
     return 1
@@ -250,10 +351,14 @@ dashboard_resolve_acfs_home() {
     local candidate=""
     local target_home=""
     local target_user=""
+    local explicit_target_home=""
+
+    _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE=""
 
     candidate=$(dashboard_script_acfs_home 2>/dev/null || true)
     if dashboard_candidate_has_acfs_data "$candidate"; then
         _DASHBOARD_RESOLVED_ACFS_HOME="$candidate"
+        _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="script_acfs_home"
         printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
         return 0
     fi
@@ -263,6 +368,7 @@ dashboard_resolve_acfs_home() {
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && dashboard_candidate_has_acfs_data "$candidate"; then
             _DASHBOARD_RESOLVED_ACFS_HOME="$candidate"
+            _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="sudo_user_home"
             printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
             return 0
         fi
@@ -272,6 +378,7 @@ dashboard_resolve_acfs_home() {
     candidate="${target_home}/.acfs"
     if [[ -n "$target_home" ]] && dashboard_candidate_has_acfs_data "$candidate"; then
         _DASHBOARD_RESOLVED_ACFS_HOME="$candidate"
+        _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="system_state_target_home"
         printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
         return 0
     fi
@@ -284,18 +391,36 @@ dashboard_resolve_acfs_home() {
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && dashboard_candidate_has_acfs_data "$candidate"; then
             _DASHBOARD_RESOLVED_ACFS_HOME="$candidate"
+            _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="system_state_target_user"
             printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
             return 0
         fi
     fi
 
-    if [[ -n "$_DASHBOARD_ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$_DASHBOARD_ACFS_HOME"; then
-        _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_ACFS_HOME"
+    if [[ -n "$_DASHBOARD_EXPLICIT_ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$_DASHBOARD_EXPLICIT_ACFS_HOME"; then
+        _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_EXPLICIT_ACFS_HOME"
+        _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
         printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
         return 0
     fi
 
-    _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_ACFS_HOME"
+    explicit_target_home="$(dashboard_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if dashboard_candidate_has_acfs_data "$candidate"; then
+            _DASHBOARD_RESOLVED_ACFS_HOME="$candidate"
+            _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="explicit_target_home"
+            printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_DASHBOARD_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
+        return 1
+    fi
+
+    _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_DEFAULT_ACFS_HOME"
+    _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="current_home"
     printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
 }
 
@@ -332,6 +457,8 @@ dashboard_infer_target_home_from_acfs_home() {
         :
     elif [[ -n "$_DASHBOARD_DEFAULT_ACFS_HOME" ]] && [[ "$acfs_home_candidate" == "$_DASHBOARD_DEFAULT_ACFS_HOME" ]]; then
         :
+    elif [[ "${_DASHBOARD_RESOLVED_ACFS_HOME_SOURCE:-}" == "explicit_target_home" ]]; then
+        :
     else
         return 1
     fi
@@ -345,13 +472,71 @@ dashboard_prepare_context() {
     local state_file=""
     local path_home=""
     local detected_user=""
+    local state_target_user=""
+    local resolved_target_home=""
+    local explicit_target_home=""
+    local target_home_source=""
 
-    _DASHBOARD_ACFS_HOME="$(dashboard_resolve_acfs_home)"
+    _DASHBOARD_RESOLVED_TARGET_USER=""
+    _DASHBOARD_RESOLVED_TARGET_HOME=""
+    _DASHBOARD_ACFS_HOME="$(dashboard_resolve_acfs_home 2>/dev/null || true)"
     state_file="$(dashboard_resolve_state_file)"
     path_home="$(dashboard_infer_target_home_from_acfs_home 2>/dev/null || true)"
+    explicit_target_home="$(dashboard_resolve_explicit_target_home 2>/dev/null || true)"
+    state_target_user="$(dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null ||         dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
 
     if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
         _DASHBOARD_RESOLVED_TARGET_HOME="$path_home"
+        target_home_source="path_home"
+    fi
+
+    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
+        resolved_target_home="$(dashboard_read_target_home_from_state "$_DASHBOARD_SYSTEM_STATE_FILE" 2>/dev/null ||             dashboard_read_target_home_from_state "$state_file" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            _DASHBOARD_RESOLVED_TARGET_HOME="$resolved_target_home"
+            target_home_source="state_target_home"
+        fi
+    fi
+
+    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$state_target_user" ]]; then
+        resolved_target_home="$(dashboard_existing_abs_home "$(dashboard_home_for_user "$state_target_user" 2>/dev/null || true)" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            _DASHBOARD_RESOLVED_TARGET_HOME="$resolved_target_home"
+            target_home_source="state_target_user"
+        fi
+    fi
+
+    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
+        _DASHBOARD_RESOLVED_TARGET_HOME="$path_home"
+        target_home_source="path_home"
+    fi
+
+    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ "$_DASHBOARD_ACFS_HOME" == */.acfs ]]; then
+        resolved_target_home="$(dashboard_existing_abs_home "${_DASHBOARD_ACFS_HOME%/.acfs}" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            _DASHBOARD_RESOLVED_TARGET_HOME="$resolved_target_home"
+            target_home_source="acfs_home_path"
+        fi
+    fi
+
+    if [[ -n "$_DASHBOARD_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
+        if [[ -n "$explicit_target_home" ]]; then
+            if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] || [[ "$target_home_source" == "current_home" ]]; then
+                _DASHBOARD_RESOLVED_TARGET_HOME="$explicit_target_home"
+                target_home_source="explicit_target_home"
+            fi
+        elif [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
+            echo "Error: explicit TARGET_HOME/TARGET_USER did not resolve to an installed home; refusing to fall back to current HOME" >&2
+            return 1
+        fi
+    fi
+
+    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
+        resolved_target_home="$(dashboard_existing_abs_home "${_DASHBOARD_CURRENT_HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            _DASHBOARD_RESOLVED_TARGET_HOME="$resolved_target_home"
+            target_home_source="current_home"
+        fi
     fi
 
     if [[ -z "$_DASHBOARD_RESOLVED_TARGET_USER" ]] && [[ -n "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
@@ -361,32 +546,19 @@ dashboard_prepare_context() {
         fi
     fi
 
-    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_USER" ]] && [[ -n "$path_home" ]]; then
-        detected_user="$(dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
-        if [[ -n "$detected_user" ]]; then
-            _DASHBOARD_RESOLVED_TARGET_USER="$detected_user"
-        fi
+    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_USER" ]] && [[ "$target_home_source" != "explicit_target_home" ]] && [[ -n "$state_target_user" ]]; then
+        _DASHBOARD_RESOLVED_TARGET_USER="$state_target_user"
     fi
 
-    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_USER" ]]; then
-        _DASHBOARD_RESOLVED_TARGET_USER="$(dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || \
-            dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_USER" ]] && dashboard_is_valid_username "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW"; then
+        _DASHBOARD_RESOLVED_TARGET_USER="$_DASHBOARD_EXPLICIT_TARGET_USER_RAW"
     fi
 
-    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]]; then
-        _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_read_target_home_from_state "$_DASHBOARD_SYSTEM_STATE_FILE" 2>/dev/null || \
-            dashboard_read_target_home_from_state "$state_file" 2>/dev/null || true)"
-        if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$_DASHBOARD_RESOLVED_TARGET_USER" ]]; then
-            _DASHBOARD_RESOLVED_TARGET_HOME="$(dashboard_home_for_user "$_DASHBOARD_RESOLVED_TARGET_USER" 2>/dev/null || true)"
-        fi
-        if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
-            _DASHBOARD_RESOLVED_TARGET_HOME="$path_home"
-        fi
-        if [[ -z "$_DASHBOARD_RESOLVED_TARGET_HOME" ]] && [[ "$_DASHBOARD_ACFS_HOME" == */.acfs ]]; then
-            _DASHBOARD_RESOLVED_TARGET_HOME="${_DASHBOARD_ACFS_HOME%/.acfs}"
-        fi
+    if [[ -z "$_DASHBOARD_RESOLVED_TARGET_USER" ]] && [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
+        _DASHBOARD_RESOLVED_TARGET_USER="$SUDO_USER"
     fi
 }
+
 find_info_script() {
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

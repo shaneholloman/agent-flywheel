@@ -37,38 +37,118 @@ export_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
-export_resolve_current_home() {
-    local current_user=""
-    local home_candidate=""
-    local passwd_entry=""
+export_existing_abs_home() {
+    local path_value=""
 
-    home_candidate="$(export_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
+    path_value="$(export_sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+    [[ -d "$path_value" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+export_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
         return 0
+    done
+
+    return 1
+}
+
+export_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(export_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(export_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+export_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+
+    getent_bin="$(export_system_binary_path getent 2>/dev/null || true)"
+    [[ -n "$getent_bin" ]] || return 1
+
+    if [[ -n "$user" ]]; then
+        "$getent_bin" passwd "$user" 2>/dev/null
+    else
+        "$getent_bin" passwd 2>/dev/null
+    fi
+}
+export_is_valid_username() {
+    local username="${1:-}"
+    [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+export_resolve_current_home() {
+    local current_user=""
+    local fallback_home=""
+    local passwd_entry=""
+    local passwd_home=""
+    fallback_home="$(export_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ "${_EXPORT_WAS_SOURCED:-false}" == "true" ]]; then
+        fallback_home="$(export_sanitize_abs_nonroot_path "${_EXPORT_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+    fi
+    current_user="$(export_resolve_current_user 2>/dev/null || true)"
+
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
-    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(export_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(export_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
+            passwd_home="$(export_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
                 return 0
             fi
         fi
     fi
 
-    return 1
+    [[ -n "$fallback_home" ]] || return 1
+    printf '%s\n' "$fallback_home"
 }
+export_initial_current_home() {
+    local cached_home=""
 
-_EXPORT_CURRENT_HOME="$(export_resolve_current_home 2>/dev/null || true)"
+    if [[ "${_EXPORT_WAS_SOURCED:-false}" == "true" ]]; then
+        cached_home="$(export_sanitize_abs_nonroot_path "${_EXPORT_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
+
+    export_resolve_current_home
+}
+_EXPORT_CURRENT_HOME="$(export_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_EXPORT_CURRENT_HOME" ]]; then
     HOME="$_EXPORT_CURRENT_HOME"
     export HOME
@@ -84,6 +164,9 @@ _EXPORT_SYSTEM_STATE_FILE="$(export_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STA
 if [[ -z "$_EXPORT_SYSTEM_STATE_FILE" ]]; then
     _EXPORT_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
 fi
+_EXPORT_EXPLICIT_TARGET_HOME_RAW="${TARGET_HOME:-}"
+_EXPORT_EXPLICIT_TARGET_USER_RAW="${TARGET_USER:-}"
+_EXPORT_EXPLICIT_TARGET_HOME="$(export_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
 _EXPORT_RESOLVED_ACFS_HOME=""
 
 # Source logging if available
@@ -250,15 +333,32 @@ read_target_home_from_state() {
 
 resolve_target_home() {
     local state_file="${1:-}"
-    local detected_home=""
+    local state_home=""
+    local system_home=""
 
-    detected_home=$(read_target_home_from_state "$_EXPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
-    if [[ -z "$detected_home" ]] && [[ -n "$state_file" ]]; then
-        detected_home=$(read_target_home_from_state "$state_file" 2>/dev/null || true)
+    if [[ -n "$state_file" ]]; then
+        state_home=$(read_target_home_from_state "$state_file" 2>/dev/null || true)
+    fi
+    system_home=$(read_target_home_from_state "$_EXPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
+
+    if [[ -n "$state_home" ]]; then
+        if [[ "$state_file" == "$_EXPORT_SYSTEM_STATE_FILE" ]]; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
+        if [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" ]]; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
     fi
 
-    [[ -n "$detected_home" ]] || return 1
-    printf '%s\n' "$detected_home"
+    if [[ -n "$system_home" ]]; then
+        printf '%s\n' "$system_home"
+        return 0
+    fi
+
+    [[ -n "$state_home" ]] || return 1
+    printf '%s\n' "$state_home"
 }
 
 script_acfs_home() {
@@ -277,6 +377,7 @@ resolve_acfs_home() {
     local candidate=""
     local detected_home=""
     local detected_user=""
+    local explicit_target_home=""
 
     candidate=$(script_acfs_home 2>/dev/null || true)
     if [[ -n "$candidate" ]] && [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
@@ -316,13 +417,35 @@ resolve_acfs_home() {
         fi
     fi
 
-    if [[ -n "$_EXPORT_ACFS_HOME" ]] && [[ -f "$_EXPORT_ACFS_HOME/state.json" || -f "$_EXPORT_ACFS_HOME/VERSION" || -d "$_EXPORT_ACFS_HOME/onboard" ]]; then
-        _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_ACFS_HOME"
+    if [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" || -f "$_EXPORT_EXPLICIT_ACFS_HOME/VERSION" || -d "$_EXPORT_EXPLICIT_ACFS_HOME/onboard" ]]; then
+        _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_EXPLICIT_ACFS_HOME"
         printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
         return 0
     fi
 
-    _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_ACFS_HOME"
+    explicit_target_home="$(resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+            _EXPORT_RESOLVED_ACFS_HOME="$candidate"
+            printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_EXPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_EXPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
+        _EXPORT_RESOLVED_ACFS_HOME=""
+        printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    if [[ -n "$_EXPORT_DEFAULT_ACFS_HOME" ]] && [[ -f "$_EXPORT_DEFAULT_ACFS_HOME/state.json" || -f "$_EXPORT_DEFAULT_ACFS_HOME/VERSION" || -d "$_EXPORT_DEFAULT_ACFS_HOME/onboard" ]]; then
+        _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_DEFAULT_ACFS_HOME"
+        printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_DEFAULT_ACFS_HOME"
     printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
 }
 
@@ -370,23 +493,12 @@ home_for_user() {
 
     [[ -n "$user" ]] || return 1
 
-    if command -v getent &>/dev/null; then
-        passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
-        if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(export_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
-                return 0
-            fi
-        fi
-    fi
-
     if [[ "$user" == "root" ]]; then
-        echo "/root"
+        printf '/root\n'
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(export_resolve_current_user 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
         home_candidate="${_EXPORT_CURRENT_HOME:-}"
         if [[ -z "$home_candidate" ]]; then
@@ -396,6 +508,35 @@ home_for_user() {
             printf '%s\n' "$home_candidate"
             return 0
         fi
+    fi
+
+    passwd_entry="$(export_getent_passwd_entry "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        home_candidate="$(export_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+resolve_explicit_target_home() {
+    local target_home=""
+
+    target_home="$_EXPORT_EXPLICIT_TARGET_HOME"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "${target_home%/}"
+        return 0
+    fi
+
+    if [[ -n "$_EXPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
+        export_is_valid_username "$_EXPORT_EXPLICIT_TARGET_USER_RAW" || return 1
+        target_home="$(export_existing_abs_home "$(home_for_user "$_EXPORT_EXPLICIT_TARGET_USER_RAW" 2>/dev/null || true)" 2>/dev/null || true)"
+        [[ -n "$target_home" ]] || return 1
+        printf '%s\n' "${target_home%/}"
+        return 0
     fi
 
     return 1

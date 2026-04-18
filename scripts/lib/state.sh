@@ -153,45 +153,88 @@ state_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+state_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+state_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(state_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(state_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+state_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+
+    getent_bin="$(state_system_binary_path getent 2>/dev/null || true)"
+    [[ -n "$getent_bin" ]] || return 1
+
+    if [[ -n "$user" ]]; then
+        "$getent_bin" passwd "$user" 2>/dev/null
+    else
+        "$getent_bin" passwd 2>/dev/null
+    fi
+}
+
 state_resolve_current_home() {
     local current_user=""
     local home_candidate=""
     local passwd_entry=""
+    local passwd_home=""
 
     home_candidate="$(state_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
-    fi
-
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(state_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
     if [[ -n "$current_user" ]]; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        passwd_entry="$(state_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            home_candidate="$(state_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
-                return 0
-            fi
-        fi
-
-        if [[ "$current_user" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            home_candidate="$(eval "printf '%s\\n' ~$current_user" 2>/dev/null || true)"
-            home_candidate="$(state_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
+            passwd_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
+            passwd_home="$(state_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
                 return 0
             fi
         fi
     fi
 
-    return 1
+    [[ -n "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
 }
 
 state_resolve_target_home() {
@@ -210,7 +253,7 @@ state_resolve_target_home() {
 
     if [[ -n "${TARGET_USER:-}" ]]; then
         local passwd_entry=""
-        passwd_entry="$(getent passwd "$TARGET_USER" 2>/dev/null || true)"
+        passwd_entry="$(state_getent_passwd_entry "$TARGET_USER" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
             resolved_home="$(state_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
             if [[ -n "$resolved_home" ]]; then
@@ -219,7 +262,7 @@ state_resolve_target_home() {
             fi
         fi
 
-        if [[ "$(id -un 2>/dev/null || whoami 2>/dev/null || true)" == "$TARGET_USER" ]] && [[ -n "${HOME:-}" ]]; then
+        if [[ "$(state_resolve_current_user 2>/dev/null || true)" == "$TARGET_USER" ]] && [[ -n "${HOME:-}" ]]; then
             resolved_home="$(state_resolve_current_home 2>/dev/null || true)"
             if [[ -n "$resolved_home" ]]; then
                 printf '%s\n' "$resolved_home"

@@ -153,23 +153,50 @@ resolve_home_for_user() {
     return 1
 }
 
+current_home_matches_acfs_install() {
+    local candidate_home="$1"
+    local current_user=""
+    local state_user=""
+
+    candidate_home="$(sanitize_abs_nonroot_path "$candidate_home" 2>/dev/null || true)"
+    [[ -n "$candidate_home" ]] || return 1
+    [[ -f "$candidate_home/.acfs/state.json" ]] || return 1
+    find_acfs_bin_for_home "$candidate_home" >/dev/null 2>&1 || return 1
+
+    current_user="$(resolve_current_user 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || return 1
+    state_user="$(read_target_user_from_state_hint "$candidate_home/.acfs/state.json" 2>/dev/null || true)"
+    [[ -n "$state_user" ]] || return 1
+    [[ "$state_user" == "$current_user" ]]
+}
+
 resolve_current_home() {
     local current_user=""
     local home_candidate=""
+    local passwd_home=""
 
     home_candidate="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
-    fi
-
     current_user="$(resolve_current_user 2>/dev/null || true)"
     if [[ -n "$current_user" ]]; then
-        home_candidate="$(resolve_home_for_user "$current_user" 2>/dev/null || true)"
-        if [[ -n "$home_candidate" ]]; then
+        passwd_home="$(resolve_home_for_user "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_home" ]]; then
+            printf '%s\n' "$passwd_home"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$home_candidate" ]]; then
+        if current_home_matches_acfs_install "$home_candidate"; then
             printf '%s\n' "$home_candidate"
             return 0
         fi
+
+        if [[ -e "$home_candidate/.acfs/state.json" ]] || [[ -e "$home_candidate/.acfs/bin/acfs" ]] || [[ -e "$home_candidate/.local/bin/acfs" ]]; then
+            return 1
+        fi
+
+        printf '%s\n' "$home_candidate"
+        return 0
     fi
 
     return 1
@@ -511,6 +538,12 @@ resolve_direct_exec_target_home() {
       fi
     fi
 
+    candidate_home="$(existing_abs_nonroot_dir "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$candidate_home" ]]; then
+      printf '%s\n' "$candidate_home"
+      return 0
+    fi
+
     for state_candidate in "${ACFS_STATE_FILE:-}" "${ACFS_SYSTEM_STATE_FILE:-}"; do
       candidate_home="$(resolve_target_home_from_state_hint "$state_candidate" 2>/dev/null || true)"
       [[ -n "$candidate_home" ]] || continue
@@ -524,9 +557,7 @@ resolve_direct_exec_target_home() {
       return 0
     fi
 
-    candidate_home="$(existing_abs_nonroot_dir "${TARGET_HOME:-}" 2>/dev/null || true)"
-    [[ -n "$candidate_home" ]] || return 1
-    printf '%s\n' "$candidate_home"
+    return 1
 }
 
 resolve_direct_exec_acfs_home() {
@@ -685,17 +716,18 @@ find_acfs_bin() {
     local user="$1"
     local user_home=""
     local current_user=""
+    local target_home=""
 
-    user_home="$(resolve_home_for_user "$user" || true)"
-    if [[ -n "$user_home" ]] && find_acfs_bin_for_home "$user_home" >/dev/null 2>&1; then
-        find_acfs_bin_for_home "$user_home"
+    target_home="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$target_home" ]] && [[ "$(validated_target_user_for_dispatch "$user" "$target_home" 2>/dev/null || true)" == "$user" ]]         && find_acfs_bin_for_home "$target_home" >/dev/null 2>&1; then
+        find_acfs_bin_for_home "$target_home"
         return 0
     fi
 
     current_user="$(resolve_current_user 2>/dev/null || true)"
-    if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-        user_home="${HOME%/}"
-        if find_acfs_bin_for_home "$user_home" >/dev/null 2>&1; then
+    if [[ "$current_user" == "$user" ]]; then
+        user_home="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$user_home" ]] && current_home_matches_acfs_install "$user_home"; then
             find_acfs_bin_for_home "$user_home"
             return 0
         fi
@@ -736,8 +768,18 @@ detect_target_user() {
     local candidate_home=""
     local acfs_home="${ACFS_HOME:-}"
     local current_home=""
+    local explicit_target_home=""
 
     current_home="$(resolve_current_home 2>/dev/null || true)"
+
+    explicit_target_home="$(existing_abs_nonroot_dir "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate_user="$(read_user_for_home "$explicit_target_home" 2>/dev/null || true)"
+        if [[ -n "$candidate_user" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
 
     if [[ -n "${ACFS_STATE_FILE:-}" ]]; then
         candidate_user="$(read_target_user_from_state_hint "$ACFS_STATE_FILE" 2>/dev/null || true)"
@@ -842,24 +884,37 @@ main() {
     current_user="$(resolve_current_user 2>/dev/null || true)"
 
     # Find the acfs binary
-    if [[ -z "$acfs_bin" ]] && [[ -n "${ACFS_STATE_FILE:-}" ]]; then
-        candidate_bin="$(find_acfs_bin_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"
+    if [[ -z "$acfs_bin" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
+        candidate_bin="$(find_acfs_bin_for_home "${TARGET_HOME}" 2>/dev/null || true)"
         [[ -n "$candidate_bin" ]] && acfs_bin="$candidate_bin"
+    fi
+
+    if [[ -z "$acfs_bin" ]] && [[ -n "${ACFS_STATE_FILE:-}" ]]; then
+        if [[ -z "${TARGET_HOME:-}" ]] || state_file_matches_target_home "$ACFS_STATE_FILE" "${TARGET_HOME}"; then
+            candidate_bin="$(find_acfs_bin_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"
+            [[ -n "$candidate_bin" ]] && acfs_bin="$candidate_bin"
+        fi
     fi
 
     if [[ -z "$acfs_bin" ]] && [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]]; then
-        candidate_bin="$(find_acfs_bin_from_state_file "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
-        [[ -n "$candidate_bin" ]] && acfs_bin="$candidate_bin"
+        if [[ -z "${TARGET_HOME:-}" ]] || state_file_matches_target_home "$ACFS_SYSTEM_STATE_FILE" "${TARGET_HOME}"; then
+            candidate_bin="$(find_acfs_bin_from_state_file "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+            [[ -n "$candidate_bin" ]] && acfs_bin="$candidate_bin"
+        fi
     fi
 
     if [[ -z "$acfs_bin" ]] && [[ -n "${ACFS_HOME:-}" ]] && [[ "${ACFS_HOME}" == */.acfs ]]; then
-        candidate_bin="$(find_acfs_bin_for_home "${ACFS_HOME%/.acfs}" 2>/dev/null || true)"
-        [[ -n "$candidate_bin" ]] && acfs_bin="$candidate_bin"
+        if [[ -z "${TARGET_HOME:-}" ]] || state_file_matches_target_home "${ACFS_HOME}/state.json" "${TARGET_HOME}"; then
+            candidate_bin="$(find_acfs_bin_for_home "${ACFS_HOME%/.acfs}" 2>/dev/null || true)"
+            [[ -n "$candidate_bin" ]] && acfs_bin="$candidate_bin"
+        fi
     fi
 
     if [[ -z "$acfs_bin" ]] && [[ -n "$current_home" ]]; then
-        candidate_bin="$(find_acfs_bin_from_state_file "$current_home/.acfs/state.json" 2>/dev/null || true)"
-        [[ -n "$candidate_bin" ]] && acfs_bin="$candidate_bin"
+        if [[ -z "${TARGET_HOME:-}" ]] || state_file_matches_target_home "$current_home/.acfs/state.json" "${TARGET_HOME}"; then
+            candidate_bin="$(find_acfs_bin_from_state_file "$current_home/.acfs/state.json" 2>/dev/null || true)"
+            [[ -n "$candidate_bin" ]] && acfs_bin="$candidate_bin"
+        fi
     fi
 
     if [[ -z "$acfs_bin" ]]; then
@@ -868,19 +923,22 @@ main() {
 
     if [[ -z "$acfs_bin" ]]; then
         local target_home=""
-        if [[ -n "$target_user" ]]; then
-            echo "Error: ACFS not found for user '$target_user'" >&2
-            target_home="$(resolve_home_for_user "$target_user" || true)"
-        else
-            echo "Error: ACFS not found." >&2
+        target_home="$(existing_abs_nonroot_dir "${TARGET_HOME:-}" 2>/dev/null || true)"
+        if [[ -z "$target_home" ]] && [[ -n "${ACFS_STATE_FILE:-}" ]]; then
+            target_home="$(resolve_target_home_from_state_hint "$ACFS_STATE_FILE" 2>/dev/null || true)"
+        fi
+        if [[ -z "$target_home" ]] && [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]]; then
+            target_home="$(resolve_target_home_from_state_hint "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+        fi
+        if [[ -z "$target_home" ]] && [[ -n "${ACFS_HOME:-}" ]] && [[ -f "${ACFS_HOME}/state.json" ]]; then
+            target_home="$(resolve_target_home_from_state_hint "${ACFS_HOME}/state.json" 2>/dev/null || true)"
         fi
 
-        if [[ -n "$target_home" ]]; then
+        if [[ -n "$target_user" && -n "$target_home" ]]; then
+            echo "Error: ACFS not found for user '$target_user'" >&2
             echo "Expected at: $target_home/.local/bin/acfs (or $target_home/.acfs/bin/acfs)" >&2
-        elif [[ -n "$target_user" ]]; then
-            echo "Unable to determine an exact home directory for user '$target_user'." >&2
-            echo "Provide ACFS_STATE_FILE/ACFS_SYSTEM_STATE_FILE with target_home, or re-run from the installed ACFS tree." >&2
         else
+            echo "Error: ACFS not found." >&2
             echo "Unable to determine the ACFS owner automatically." >&2
             echo "Provide ACFS_STATE_FILE/ACFS_SYSTEM_STATE_FILE with target_home, or re-run from the installed ACFS tree." >&2
         fi

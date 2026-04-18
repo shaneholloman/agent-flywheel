@@ -158,16 +158,17 @@ setup_installed_layout_env() {
     cp "$SUPPORT_SH" "$TEST_INSTALLED_ACFS/scripts/lib/support.sh"
     cp "$CONTINUE_SH" "$TEST_INSTALLED_ACFS/scripts/lib/continue.sh"
 
-    cat > "$TEST_INSTALLED_ACFS/state.json" <<'JSON'
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
 {
   "mode": "safe",
   "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
   "started_at": "2026-03-09T08:00:00Z",
   "last_updated": "2026-03-10T12:34:56Z",
   "current_phase": { "id": "bootstrap" },
   "current_step": "Installing tools"
 }
-JSON
+EOF
     printf '2.0.0\n' > "$TEST_INSTALLED_ACFS/VERSION"
 
     cat > "$TEST_INSTALLED_ACFS/CHANGELOG.md" <<'EOF'
@@ -255,16 +256,16 @@ setup_cross_home_bin_dir_env() {
 
     cat > "$TEST_FAKE_BIN/getent" <<EOF
 #!/usr/bin/env bash
-if [[ "${1:-}" == "passwd" ]] && [[ "$#" -eq 1 ]]; then
+if [[ "\${1:-}" == "passwd" ]] && [[ "\$#" -eq 1 ]]; then
     echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
     echo "staleuser:x:1001:1001::${STALE_HOME}:/bin/bash"
     exit 0
 fi
-if [[ "${1:-}" == "passwd" ]] && [[ "${2:-}" == "tester" ]]; then
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "tester" ]]; then
     echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
     exit 0
 fi
-if [[ "${1:-}" == "passwd" ]] && [[ "${2:-}" == "staleuser" ]]; then
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "staleuser" ]]; then
     echo "staleuser:x:1001:1001::${STALE_HOME}:/bin/bash"
     exit 0
 fi
@@ -312,17 +313,18 @@ setup_system_state_only_env() {
     mkdir -p "$(dirname "$TEST_SYSTEM_STATE_FILE")"
     mv "$TEST_INSTALLED_ACFS/state.json" "$TEST_INSTALLED_ACFS/state.user.bak"
 
-    cat > "$TEST_SYSTEM_STATE_FILE" <<'JSON'
+    cat > "$TEST_SYSTEM_STATE_FILE" <<EOF
 {
   "mode": "safe",
   "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
   "started_at": "2026-03-09T08:00:00Z",
   "last_updated": "2026-03-10T12:34:56Z",
   "current_phase": { "id": "bootstrap" },
   "current_step": "Installing tools",
   "skipped_tools": ["ntm", "bv"]
 }
-JSON
+EOF
 }
 
 setup_system_state_target_home_env() {
@@ -4316,6 +4318,55 @@ test_status_uses_installed_layout_under_root_home() {
     cleanup_mock_env
 }
 
+test_status_uses_explicit_target_home_when_state_is_missing() {
+    setup_system_state_target_home_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json" "$TEST_SYSTEM_STATE_FILE"
+
+    local output=""
+    local expected=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="tester"         TARGET_HOME="$TEST_TARGET_HOME"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_STATUS_SCRIPT="$STATUS_SH"         bash -lc '
+            source "$TEST_STATUS_SCRIPT"
+            _status_prepare_context
+            printf "user=%s\nhome=%s\nacfs=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "${_ACFS_HOME:-}"
+        ' 2>/dev/null)
+    expected=$'user=tester
+home='"$TEST_TARGET_HOME"$'
+acfs='"$TEST_INSTALLED_ACFS"
+
+    if [[ "$output" == "$expected" ]]; then
+        harness_pass "status uses explicit target home when state is missing"
+    else
+        harness_fail "status uses explicit target home when state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_status_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved() {
+    setup_installed_layout_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json"
+
+    local missing_target_home="$TEST_HOME/missing-target-home"
+    local output=""
+    local expected=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="ghost"         TARGET_HOME="$missing_target_home"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_STATUS_SCRIPT="$STATUS_SH"         bash -lc '
+            source "$TEST_STATUS_SCRIPT"
+            _status_prepare_context
+            printf "user=%s\nhome=%s\nacfs=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "${_ACFS_HOME:-}"
+        ' 2>/dev/null)
+    expected=$'user=ghost
+home='"$missing_target_home"$'
+acfs='
+
+    if [[ "$output" == "$expected" ]]; then
+        harness_pass "status does not fall back to current home when explicit target is unresolved"
+    else
+        harness_fail "status does not fall back to current home when explicit target is unresolved" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_status_ignores_current_shell_only_binaries() {
     setup_installed_layout_env
 
@@ -4331,10 +4382,21 @@ test_status_ignores_current_shell_only_binaries() {
     write_fake_command "$TEST_FAKE_BIN/ntm" "ntm 9.9.9"
 
     local output=""
-    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        bash "$TEST_INSTALLED_ACFS/scripts/lib/status.sh" --json)
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_HOME="$TEST_INSTALLED_ACFS" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TEST_STATUS_SCRIPT="$STATUS_SH" bash -lc '
+            source "$TEST_STATUS_SCRIPT"
+            _status_prepare_context
+            printf "claude=%s\ncodex=%s\ngemini=%s\nntm=%s\n" \
+                "$(_status_binary_path claude 2>/dev/null || true)" \
+                "$(_status_binary_path codex 2>/dev/null || true)" \
+                "$(_status_binary_path gemini 2>/dev/null || true)" \
+                "$(_status_binary_path ntm 2>/dev/null || true)"
+        ' 2>/dev/null)
 
-    if printf '%s\n' "$output" | jq -e '.status == "warn" and (.errors | length == 0) and (.warnings | index("missing: claude")) != null' >/dev/null 2>&1; then
+    if [[ "$output" != *"$TEST_FAKE_BIN/claude"* ]] \
+        && [[ "$output" != *"$TEST_FAKE_BIN/codex"* ]] \
+        && [[ "$output" != *"$TEST_FAKE_BIN/gemini"* ]] \
+        && [[ "$output" != *"$TEST_FAKE_BIN/ntm"* ]]; then
         harness_pass "status ignores current-shell-only binaries"
     else
         harness_fail "status ignores current-shell-only binaries" "$output"
@@ -4589,19 +4651,20 @@ test_status_repo_local_prefers_system_state_target_user_over_stale_installed_sta
 }
 EOF
 
-    cat > "$TEST_FAKE_BIN/getent" <<EOF
-#!/usr/bin/env bash
-if [[ "\$1" == "passwd" ]] && [[ "\$2" == "tester" ]]; then
-    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
-    exit 0
-fi
-exit 2
-EOF
-    chmod +x "$TEST_FAKE_BIN/getent"
-
     local output=""
-    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        bash "$STATUS_SH" --json)
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" TEST_TARGET_HOME="$TEST_TARGET_HOME" \
+        TEST_STATUS_SCRIPT="$STATUS_SH" PATH="/usr/bin:/bin" \
+        bash -lc '
+            source "$TEST_STATUS_SCRIPT"
+            _status_getent_passwd_entry() {
+                if [[ "${1:-}" == "tester" ]]; then
+                    printf "tester:x:1000:1000::%s:/bin/bash\n" "$TEST_TARGET_HOME"
+                    return 0
+                fi
+                return 2
+            }
+            status_main --json || true
+        ')
 
     if printf '%s\n' "$output" | jq -e '
         .status == "warn" and
@@ -4616,6 +4679,7 @@ EOF
 
     cleanup_mock_env
 }
+
 test_status_can_be_sourced_without_running_main() {
     setup_mock_env
 
@@ -4722,6 +4786,70 @@ test_changelog_uses_system_state_target_home_when_getent_unavailable() {
         harness_pass "changelog uses target_home from system state when getent is unavailable"
     else
         harness_fail "changelog uses target_home from system state when getent is unavailable" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+
+test_changelog_uses_explicit_target_home_when_state_is_missing() {
+    setup_system_state_target_home_env
+    rm -f "$TEST_SYSTEM_STATE_FILE"
+
+    local output=""
+    local expected=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_USER="tester" TARGET_HOME="$TEST_TARGET_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TEST_CHANGELOG_SCRIPT="$CHANGELOG_SH" \
+        bash -lc '
+            source "$TEST_CHANGELOG_SCRIPT"
+            refresh_changelog_paths
+            printf "acfs=%s\nstate=%s\nfile=%s\n" "${_CHANGELOG_ACFS_HOME:-}" "$(resolve_changelog_state_file 2>/dev/null || true)" "$(find_changelog 2>/dev/null || true)"
+        ' 2>/dev/null)
+    expected=$'acfs='"$TEST_TARGET_HOME"$'/.acfs\nstate='"$TEST_TARGET_HOME"$'/.acfs/state.json\nfile='"$TEST_TARGET_HOME"$'/.acfs/CHANGELOG.md'
+
+    if [[ "$output" == "$expected" ]]; then
+        harness_pass "changelog uses explicit target home when state is missing"
+    else
+        harness_fail "changelog uses explicit target home when state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_changelog_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_ROOT_HOME/.acfs"
+    cat > "$TEST_ROOT_HOME/.acfs/state.json" <<'JSON'
+{
+  "target_user": "root",
+  "target_home": "/trap/root-home"
+}
+JSON
+    cat > "$TEST_ROOT_HOME/.acfs/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [9.9.9] - 2030-01-01
+
+### Added
+- Trap entry
+EOF
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_USER="ghost" TARGET_HOME="$TEST_HOME/missing-target-home" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TEST_CHANGELOG_SCRIPT="$CHANGELOG_SH" \
+        bash -lc '
+            source "$TEST_CHANGELOG_SCRIPT"
+            refresh_changelog_paths
+            printf "acfs=%s\nstate=%s\nfile=%s\n" "${_CHANGELOG_ACFS_HOME:-}" "$(resolve_changelog_state_file 2>/dev/null || true)" "$(find_changelog 2>/dev/null || true)"
+        ' 2>/dev/null)
+
+    if [[ "$output" == $'acfs=\nstate=\nfile=' ]]; then
+        harness_pass "changelog does not fall back to current home when explicit target is unresolved"
+    else
+        harness_fail "changelog does not fall back to current home when explicit target is unresolved" "$output"
     fi
 
     cleanup_mock_env
@@ -4841,6 +4969,57 @@ test_export_config_uses_installed_layout_under_root_home() {
         harness_pass "export-config uses installed-layout state and target-user PATH under root home"
     else
         harness_fail "export-config uses installed-layout state and target-user PATH under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_export_config_uses_explicit_target_home_when_state_is_missing() {
+    setup_system_state_target_home_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json" "$TEST_SYSTEM_STATE_FILE"
+
+    local output=""
+    local expected=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="tester"         TARGET_HOME="$TEST_TARGET_HOME"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_EXPORT_SCRIPT="$EXPORT_CONFIG_SH"         bash -lc '
+            source "$TEST_EXPORT_SCRIPT"
+            prepare_target_context
+            printf "user=%s\nhome=%s\nacfs=%s\nstate=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "${_EXPORT_ACFS_HOME:-}" "${_EXPORT_STATE_FILE:-}"
+        ' 2>/dev/null)
+    expected=$'user=tester
+home='"$TEST_TARGET_HOME"$'
+acfs='"$TEST_INSTALLED_ACFS"$'
+state='"$TEST_INSTALLED_ACFS/state.json"
+
+    if [[ "$output" == "$expected" ]]; then
+        harness_pass "export-config uses explicit target home when state is missing"
+    else
+        harness_fail "export-config uses explicit target home when state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_export_config_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved() {
+    setup_installed_layout_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json"
+
+    local missing_target_home="$TEST_HOME/missing-target-home"
+    local output=""
+    local expected=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="ghost"         TARGET_HOME="$missing_target_home"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_EXPORT_SCRIPT="$EXPORT_CONFIG_SH"         bash -lc '
+            source "$TEST_EXPORT_SCRIPT"
+            prepare_target_context
+            printf "user=%s\nhome=%s\nacfs=%s\nstate=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "${_EXPORT_ACFS_HOME:-}" "${_EXPORT_STATE_FILE:-}"
+        ' 2>/dev/null)
+    expected=$'user=ghost
+home='"$missing_target_home"$'
+acfs=
+state='
+
+    if [[ "$output" == "$expected" ]]; then
+        harness_pass "export-config does not fall back to current home when explicit target is unresolved"
+    else
+        harness_fail "export-config does not fall back to current home when explicit target is unresolved" "$output"
     fi
 
     cleanup_mock_env
@@ -5126,6 +5305,59 @@ test_continue_uses_system_state_target_home_when_getent_unavailable() {
     cleanup_mock_env
 }
 
+
+test_continue_uses_explicit_target_home_when_state_is_missing() {
+    setup_system_state_target_home_env
+    rm -f "$TEST_SYSTEM_STATE_FILE"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_USER="tester" TARGET_HOME="$TEST_TARGET_HOME" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TEST_CONTINUE_SCRIPT="$CONTINUE_SH" \
+        bash -lc '
+            source "$TEST_CONTINUE_SCRIPT"
+            get_install_state_file
+        ' 2>&1)
+
+    if [[ "$output" == "$TEST_TARGET_HOME/.acfs/state.json" ]]; then
+        harness_pass "continue uses explicit target home when state is missing"
+    else
+        harness_fail "continue uses explicit target home when state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_continue_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved() {
+    setup_installed_layout_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json"
+
+    mkdir -p "$TEST_ROOT_HOME/.acfs"
+    cat > "$TEST_ROOT_HOME/.acfs/state.json" <<'JSON'
+{
+  "target_user": "root",
+  "target_home": "/trap/root-home"
+}
+JSON
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_USER="ghost" TARGET_HOME="$TEST_HOME/missing-target-home" \
+        ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        TEST_CONTINUE_SCRIPT="$CONTINUE_SH" \
+        bash -lc '
+            source "$TEST_CONTINUE_SCRIPT"
+            printf "%s\n" "$(get_install_state_file 2>/dev/null || true)"
+        ' 2>&1)
+
+    if [[ -z "$output" ]]; then
+        harness_pass "continue does not fall back to current home when explicit target is unresolved"
+    else
+        harness_fail "continue does not fall back to current home when explicit target is unresolved" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_continue_ignores_relative_home_state_trap() {
     setup_system_state_target_home_only_env
     setup_relative_home_trap
@@ -5328,6 +5560,81 @@ test_continue_sourced_helper_uses_cached_current_home_when_runtime_home_is_poiso
     cleanup_mock_env
 }
 
+test_other_sourced_helpers_use_cached_current_home_when_runtime_home_is_poisoned() {
+    setup_mock_env
+
+    local current_user=""
+    local failures=""
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    while IFS='|' read -r label script func; do
+        [[ -n "$label" ]] || continue
+        local output=""
+        local status=0
+
+        output=$(HOME="$TEST_HOME" CURRENT_USER="$current_user" \
+            bash -c '
+                script="$1"
+                func="$2"
+                label="$3"
+                shift 3
+                set --
+                source "$script" >/dev/null 2>&1
+                HOME=relative-home
+                case "$label" in
+                    dashboard)
+                        dashboard_getent_passwd_entry() { return 127; }
+                        ;;
+                    info)
+                        info_getent_passwd_entry() { return 127; }
+                        ;;
+                    support)
+                        support_getent_passwd_entry() { return 127; }
+                        ;;
+                    status)
+                        _status_getent_passwd_entry() { return 127; }
+                        ;;
+                    export)
+                        export_getent_passwd_entry() { return 127; }
+                        ;;
+                    cheatsheet)
+                        cheatsheet_getent_passwd_entry() { return 127; }
+                        ;;
+                    onboard)
+                        onboard_lookup_passwd_home() { return 1; }
+                        ;;
+                    smoke)
+                        _smoke_getent_passwd_entry() { return 1; }
+                        ;;
+                esac
+                "$func" "$CURRENT_USER"
+            ' _ "$script" "$func" "$label" 2>&1) || status=$?
+
+        if [[ $status -ne 0 ]] || [[ "$output" != "$TEST_HOME" ]]; then
+            printf -v failures '%s%s\n' "$failures" "${label}: status=${status} output=${output}"
+        fi
+    done <<EOF
+
+dashboard|$DASHBOARD_SH|dashboard_home_for_user
+info|$INFO_SH|info_home_for_user
+support|$SUPPORT_SH|support_home_for_user
+status|$STATUS_SH|_status_home_for_user
+export|$EXPORT_CONFIG_SH|home_for_user
+cheatsheet|$CHEATSHEET_SH|cheatsheet_home_for_user
+onboard|$ONBOARD_SH|onboard_home_for_user
+smoke|$SMOKE_TEST_SH|_smoke_home_for_user
+EOF
+
+    if [[ -z "$failures" ]]; then
+        harness_pass "other sourced helpers use cached current home when runtime HOME is poisoned"
+    else
+        harness_fail "other sourced helpers use cached current home when runtime HOME is poisoned" "$failures"
+    fi
+
+    cleanup_mock_env
+}
+
 test_continue_scans_nonstandard_homes_via_getent() {
     setup_installed_layout_env
 
@@ -5387,6 +5694,55 @@ test_info_uses_installed_layout_under_root_home() {
         harness_pass "info uses installed-layout state and lessons under root home"
     else
         harness_fail "info uses installed-layout state and lessons under root home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_info_uses_explicit_target_home_when_state_is_missing() {
+    setup_system_state_target_home_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json" "$TEST_SYSTEM_STATE_FILE"
+
+    local output=""
+    local expected=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="tester"         TARGET_HOME="$TEST_TARGET_HOME"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_INFO_SCRIPT="$INFO_SH"         bash -lc '
+            source "$TEST_INFO_SCRIPT"
+            info_prepare_context
+            printf "user=%s\nhome=%s\nacfs=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "${_INFO_RESOLVED_ACFS_HOME:-}"
+        ' 2>/dev/null)
+    expected=$'user=tester
+home='"$TEST_TARGET_HOME"$'
+acfs='"$TEST_INSTALLED_ACFS"
+
+    if [[ "$output" == "$expected" ]]; then
+        harness_pass "info uses explicit target home when state is missing"
+    else
+        harness_fail "info uses explicit target home when state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_info_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved() {
+    setup_installed_layout_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json"
+
+    local missing_target_home="$TEST_HOME/missing-target-home"
+    local output=""
+    local expected=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="ghost"         TARGET_HOME="$missing_target_home"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_INFO_SCRIPT="$INFO_SH"         bash -lc '
+            source "$TEST_INFO_SCRIPT"
+            info_prepare_context
+            printf "user=%s\nhome=%s\nacfs=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "${_INFO_RESOLVED_ACFS_HOME:-}"
+        ' 2>/dev/null)
+    expected=$'user=ghost
+home='"$missing_target_home"$'
+acfs='
+
+    if [[ "$output" == "$expected" ]]; then
+        harness_pass "info does not fall back to current home when explicit target is unresolved"
+    else
+        harness_fail "info does not fall back to current home when explicit target is unresolved" "$output"
     fi
 
     cleanup_mock_env
@@ -6508,26 +6864,45 @@ test_runtime_helpers_resolve_current_home_from_passwd_when_home_invalid() {
 
     current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
     passwd_home="$TEST_HOME/passwd-home"
-    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
-    mkdir -p "$TEST_FAKE_BIN" "$passwd_home"
-
-    cat > "$TEST_FAKE_BIN/getent" <<EOF
-#!/usr/bin/env bash
-if [[ "\$1" == "passwd" ]] && [[ "\$2" == "$current_user" ]]; then
-    echo "$current_user:x:1000:1000::$passwd_home:/bin/bash"
-    exit 0
-fi
-exit 2
-EOF
-    chmod +x "$TEST_FAKE_BIN/getent"
+    mkdir -p "$passwd_home"
 
     while IFS='|' read -r label script func; do
         [[ -n "$label" ]] || continue
         local output=""
         local status=0
-        output=$(HOME="relative-home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-            bash -c 'script="$1"; func="$2"; shift 2; set --; source "$script"; "$func"' _ \
-            "$script" "$func" 2>&1) || status=$?
+        output=$(HOME="relative-home" CURRENT_USER="$current_user" PASSWD_HOME="$passwd_home" \
+            bash -c '
+                script="$1"
+                func="$2"
+                label="$3"
+                shift 3
+                set --
+                source "$script"
+                case "$label" in
+                    continue)
+                        continue_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                        ;;
+                    dashboard)
+                        dashboard_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                        ;;
+                    info)
+                        info_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                        ;;
+                    changelog)
+                        changelog_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                        ;;
+                    onboard)
+                        onboard_lookup_passwd_home() {
+                            if [[ "${1:-}" == "$CURRENT_USER" ]]; then
+                                printf "%s\n" "$PASSWD_HOME"
+                                return 0
+                            fi
+                            return 1
+                        }
+                        ;;
+                esac
+                "$func"
+            ' _ "$script" "$func" "$label" 2>&1) || status=$?
 
         if [[ $status -ne 0 ]] || [[ "$output" != "$passwd_home" ]]; then
             failures+="${label}: status=${status} output=${output}"$'\n'
@@ -6549,7 +6924,178 @@ EOF
     cleanup_mock_env
 }
 
+test_runtime_helpers_prefer_passwd_home_over_mismatched_absolute_home() {
+    setup_mock_env
 
+    local current_user=""
+    local passwd_home=""
+    local poisoned_home=""
+    local failures=""
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    passwd_home="$TEST_HOME/passwd-home"
+    poisoned_home="$TEST_HOME/poisoned-home"
+    mkdir -p "$passwd_home" "$poisoned_home"
+
+    while IFS='|' read -r label script func; do
+        [[ -n "$label" ]] || continue
+        local output=""
+        local status=0
+        output=$(
+            HOME="$poisoned_home" CURRENT_USER="$current_user" PASSWD_HOME="$passwd_home" \
+                bash -c '
+                    script="$1"
+                    func="$2"
+                    label="$3"
+                    shift 3
+                    set --
+                    source "$script"
+                    case "$label" in
+                        continue)
+                            continue_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                            ;;
+                        dashboard)
+                            dashboard_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                            ;;
+                        info)
+                            info_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                            ;;
+                        changelog)
+                            changelog_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                            ;;
+                        support)
+                            support_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                            ;;
+                        status)
+                            _status_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                            ;;
+                        export)
+                            export_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                            ;;
+                        cheatsheet)
+                            cheatsheet_getent_passwd_entry() { printf "%s:x:1000:1000::%s:/bin/bash\n" "$CURRENT_USER" "$PASSWD_HOME"; }
+                            ;;
+                        onboard)
+                            onboard_lookup_passwd_home() {
+                                if [[ "${1:-}" == "$CURRENT_USER" ]]; then
+                                    printf "%s\n" "$PASSWD_HOME"
+                                    return 0
+                                fi
+                                return 1
+                            }
+                            ;;
+                    esac
+                    "$func"
+                ' _ "$script" "$func" "$label" 2>&1
+        ) || status=$?
+
+        if [[ $status -ne 0 ]] || [[ "$output" != "$passwd_home" ]]; then
+            printf -v failures '%s%s\n' "$failures" "${label}: status=${status} output=${output}"
+        fi
+    done <<EOF
+continue|$CONTINUE_SH|continue_resolve_current_home
+dashboard|$DASHBOARD_SH|dashboard_resolve_current_home
+info|$INFO_SH|info_resolve_current_home
+changelog|$CHANGELOG_SH|changelog_resolve_current_home
+support|$SUPPORT_SH|support_resolve_current_home
+status|$STATUS_SH|_status_resolve_current_home
+export|$EXPORT_CONFIG_SH|export_resolve_current_home
+cheatsheet|$CHEATSHEET_SH|cheatsheet_resolve_current_home
+onboard|$ONBOARD_SH|onboard_resolve_current_home
+EOF
+
+    if [[ -z "$failures" ]]; then
+        harness_pass "runtime helpers prefer passwd home over mismatched absolute HOME"
+    else
+        harness_fail "runtime helpers prefer passwd home over mismatched absolute HOME" "$failures"
+    fi
+
+    cleanup_mock_env
+}
+
+test_runtime_helpers_ignore_poisoned_current_user_path_tools() {
+    setup_mock_env
+
+    local current_user=""
+    local passwd_home=""
+    local getent_bin=""
+    local failures=""
+
+    if [[ -x /usr/bin/id ]]; then
+        current_user="$(/usr/bin/id -un 2>/dev/null || true)"
+    elif [[ -x /bin/id ]]; then
+        current_user="$(/bin/id -un 2>/dev/null || true)"
+    else
+        current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    fi
+
+    if [[ -x /usr/bin/getent ]]; then
+        getent_bin=/usr/bin/getent
+    elif [[ -x /bin/getent ]]; then
+        getent_bin=/bin/getent
+    else
+        getent_bin="$(command -v getent 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$getent_bin" ]] && [[ -n "$current_user" ]]; then
+        passwd_home="$("$getent_bin" passwd "$current_user" 2>/dev/null | cut -d: -f6)"
+    fi
+    if [[ -z "$passwd_home" ]] && [[ -n "$current_user" ]] && [[ -r /etc/passwd ]]; then
+        passwd_home="$(awk -F: -v u="$current_user" '$1==u{print $6; exit}' /etc/passwd 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]] || [[ -z "$passwd_home" ]]; then
+        harness_fail "runtime helpers ignore poisoned current user path tools" "unable to determine current user/passwd home"
+        cleanup_mock_env
+        return
+    fi
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p "$TEST_FAKE_BIN"
+
+    while IFS= read -r tool; do
+        [[ -n "$tool" ]] || continue
+        cat > "$TEST_FAKE_BIN/$tool" <<'EOF'
+#!/usr/bin/env bash
+exit 99
+EOF
+        chmod +x "$TEST_FAKE_BIN/$tool"
+    done <<'EOF'
+id
+whoami
+getent
+EOF
+
+    while IFS='|' read -r label script func; do
+        [[ -n "$label" ]] || continue
+        local output=""
+        local status=0
+
+        output=$(HOME="relative-home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin"             bash -c 'script="$1"; func="$2"; shift 2; set --; source "$script"; "$func"' _             "$script" "$func" 2>&1) || status=$?
+
+        if [[ $status -ne 0 ]] || [[ "$output" != "$passwd_home" ]]; then
+            printf -v failures '%s%s\n' "$failures" "${label}: status=${status} output=${output}"
+        fi
+    done <<EOF
+continue|$CONTINUE_SH|continue_resolve_current_home
+dashboard|$DASHBOARD_SH|dashboard_resolve_current_home
+info|$INFO_SH|info_resolve_current_home
+changelog|$CHANGELOG_SH|changelog_resolve_current_home
+support|$SUPPORT_SH|support_resolve_current_home
+status|$STATUS_SH|_status_resolve_current_home
+export|$EXPORT_CONFIG_SH|export_resolve_current_home
+cheatsheet|$CHEATSHEET_SH|cheatsheet_resolve_current_home
+onboard|$ONBOARD_SH|onboard_resolve_current_home
+EOF
+
+    if [[ -z "$failures" ]]; then
+        harness_pass "runtime helpers ignore poisoned current user path tools"
+    else
+        harness_fail "runtime helpers ignore poisoned current user path tools" "$failures"
+    fi
+
+    cleanup_mock_env
+}
 
 test_runtime_helpers_fail_closed_when_current_home_unresolved() {
     setup_mock_env
@@ -6695,8 +7241,7 @@ test_doctor_uses_system_state_target_home_when_installed_state_is_stale() {
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE"         bash "$TEST_INSTALLED_ACFS/bin/acfs" doctor --json)
 
-    if printf '%s
-' "$output" | jq -e --arg live_path "$TEST_TARGET_HOME/.local/bin/claude" '
+    if printf '%s\n' "$output" | jq -e --arg live_path "$TEST_TARGET_HOME/.local/bin/claude" '
         ([.checks[] | select(.id == "agent.path.claude") | .details] | first) == ("native (" + $live_path + ")") and
         ([.checks[] | select(.id == "agent.claude") | .status] | first) == "pass"
     ' >/dev/null 2>&1; then
@@ -6738,6 +7283,139 @@ EOF
         harness_pass "doctor sources doctor_fix with resolved target install context"
     else
         harness_fail "doctor sources doctor_fix with resolved target install context" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_wrappers_prefer_passwd_home_over_mismatched_absolute_home() {
+    setup_mock_env
+
+    local passwd_home="$TEST_HOME/passwd-home"
+    local poisoned_home="$TEST_HOME/poisoned-home"
+    local failures=""
+
+    mkdir -p "$passwd_home" "$poisoned_home" "$TEST_HOME/probe"
+
+    while IFS='|' read -r label script_path; do
+        [[ -n "$label" ]] || continue
+        local sourceable_wrapper="$TEST_HOME/probe/${label}-sourceable.sh"
+        local output=""
+        local status=0
+
+        sed '$d' "$script_path" > "$sourceable_wrapper"
+        chmod +x "$sourceable_wrapper"
+
+        output=$(
+            HOME="$poisoned_home" PASSWD_HOME="$passwd_home" SOURCEABLE_WRAPPER="$sourceable_wrapper"                 bash -lc '
+set -euo pipefail
+source "$SOURCEABLE_WRAPPER"
+resolve_current_user() { printf "tester\n"; }
+resolve_home_for_user() { printf "%s\n" "$PASSWD_HOME"; }
+resolve_current_home
+' 2>&1
+        ) || status=$?
+
+        if [[ $status -ne 0 ]] || [[ "$output" != "$passwd_home" ]]; then
+            printf -v failures '%s%s\n' "$failures" "${label}: status=${status} output=${output}"
+        fi
+    done <<EOF
+acfs-update|$REPO_ROOT/scripts/acfs-update
+acfs-global|$REPO_ROOT/scripts/acfs-global
+EOF
+
+    if [[ -z "$failures" ]]; then
+        harness_pass "acfs wrappers prefer passwd home over mismatched absolute HOME"
+    else
+        harness_fail "acfs wrappers prefer passwd home over mismatched absolute HOME" "$failures"
+    fi
+
+    cleanup_mock_env
+}
+
+
+test_acfs_wrappers_ignore_poisoned_current_user_path_tools() {
+    setup_mock_env
+
+    local current_user=""
+    local passwd_home=""
+    local getent_bin=""
+    local failures=""
+
+    if [[ -x /usr/bin/id ]]; then
+        current_user="$(/usr/bin/id -un 2>/dev/null || true)"
+    elif [[ -x /bin/id ]]; then
+        current_user="$(/bin/id -un 2>/dev/null || true)"
+    else
+        current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    fi
+
+    if [[ -x /usr/bin/getent ]]; then
+        getent_bin=/usr/bin/getent
+    elif [[ -x /bin/getent ]]; then
+        getent_bin=/bin/getent
+    else
+        getent_bin="$(command -v getent 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$getent_bin" ]] && [[ -n "$current_user" ]]; then
+        passwd_home="$("$getent_bin" passwd "$current_user" 2>/dev/null | cut -d: -f6)"
+    fi
+    if [[ -z "$passwd_home" ]] && [[ -n "$current_user" ]] && [[ -r /etc/passwd ]]; then
+        passwd_home="$(awk -F: -v u="$current_user" '$1==u{print $6; exit}' /etc/passwd 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]] || [[ -z "$passwd_home" ]]; then
+        harness_fail "acfs wrappers ignore poisoned current user path tools" "unable to determine current user/passwd home"
+        cleanup_mock_env
+        return
+    fi
+
+    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
+    mkdir -p "$TEST_FAKE_BIN" "$TEST_HOME/probe"
+
+    while IFS= read -r tool; do
+        [[ -n "$tool" ]] || continue
+        cat > "$TEST_FAKE_BIN/$tool" <<'EOF'
+#!/usr/bin/env bash
+exit 99
+EOF
+        chmod +x "$TEST_FAKE_BIN/$tool"
+    done <<'EOF'
+id
+whoami
+getent
+EOF
+
+    while IFS='|' read -r label script_path; do
+        [[ -n "$label" ]] || continue
+        local sourceable_wrapper="$TEST_HOME/probe/${label}-sourceable.sh"
+        local output=""
+        local status=0
+
+        sed '$d' "$script_path" > "$sourceable_wrapper"
+        chmod +x "$sourceable_wrapper"
+
+        output=$(
+            HOME="relative-home" SOURCEABLE_WRAPPER="$sourceable_wrapper" PATH="$TEST_FAKE_BIN:/usr/bin:/bin"                 bash -lc '
+set -euo pipefail
+source "$SOURCEABLE_WRAPPER"
+resolve_current_home
+' 2>&1
+        ) || status=$?
+
+        if [[ $status -ne 0 ]] || [[ "$output" != "$passwd_home" ]]; then
+            printf -v failures '%s%s\n' "$failures" "${label}: status=${status} output=${output}"
+        fi
+    done <<EOF
+acfs-update|$REPO_ROOT/scripts/acfs-update
+acfs-global|$REPO_ROOT/scripts/acfs-global
+EOF
+
+    if [[ -z "$failures" ]]; then
+        harness_pass "acfs wrappers ignore poisoned current user path tools"
+    else
+        harness_fail "acfs wrappers ignore poisoned current user path tools" "$failures"
     fi
 
     cleanup_mock_env
@@ -6964,6 +7642,73 @@ EOF
         harness_pass "acfs-update wrapper prefers persisted bin_dir over poisoned env"
     else
         harness_fail "acfs-update wrapper prefers persisted bin_dir over poisoned env" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_update_wrapper_ignores_other_user_home_bin_dir_from_state() {
+    setup_cross_home_bin_dir_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_INSTALLED_ACFS/scripts/lib"
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$STALE_HOME/.local/bin"
+}
+EOF
+    cat > "$TEST_INSTALLED_ACFS/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'ACFS_BIN_DIR=%s TARGET_HOME=%s ARG1=%s\n' "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$TEST_INSTALLED_ACFS/scripts/lib/update.sh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_STATE_FILE="$TEST_INSTALLED_ACFS/state.json" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_HOME/probe/acfs-update" --help 2>&1)
+
+    if [[ "$output" == "ACFS_BIN_DIR= TARGET_HOME=$TEST_TARGET_HOME ARG1=--help" ]]; then
+        harness_pass "acfs-update wrapper ignores other-user home bin_dir from state"
+    else
+        harness_fail "acfs-update wrapper ignores other-user home bin_dir from state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_update_wrapper_ignores_other_user_home_env_bin_dir_after_runtime_resolution() {
+    setup_cross_home_bin_dir_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_INSTALLED_ACFS/scripts/lib"
+    cp "$REPO_ROOT/scripts/acfs-update" "$TEST_HOME/probe/acfs-update"
+    chmod +x "$TEST_HOME/probe/acfs-update"
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME"
+}
+EOF
+    cat > "$TEST_INSTALLED_ACFS/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'ACFS_BIN_DIR=%s TARGET_HOME=%s ARG1=%s\n' "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$TEST_INSTALLED_ACFS/scripts/lib/update.sh"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_STATE_FILE="$TEST_INSTALLED_ACFS/state.json" \
+        ACFS_BIN_DIR="$STALE_HOME/.local/bin" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_HOME/probe/acfs-update" --help 2>&1)
+
+    if [[ "$output" == "ACFS_BIN_DIR= TARGET_HOME=$TEST_TARGET_HOME ARG1=--help" ]]; then
+        harness_pass "acfs-update wrapper ignores other-user home env bin_dir after runtime resolution"
+    else
+        harness_fail "acfs-update wrapper ignores other-user home env bin_dir after runtime resolution" "$output"
     fi
 
     cleanup_mock_env
@@ -7658,6 +8403,73 @@ EOF
         harness_pass "global acfs wrapper prefers persisted bin_dir over poisoned env"
     else
         harness_fail "global acfs wrapper prefers persisted bin_dir over poisoned env" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_global_wrapper_ignores_other_user_home_bin_dir_from_state() {
+    setup_cross_home_bin_dir_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_INSTALLED_ACFS/bin"
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME",
+  "bin_dir": "$STALE_HOME/.local/bin"
+}
+EOF
+    cat > "$TEST_INSTALLED_ACFS/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'ACFS_BIN_DIR=%s TARGET_HOME=%s ARG1=%s\n' "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$TEST_INSTALLED_ACFS/bin/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_STATE_FILE="$TEST_INSTALLED_ACFS/state.json" \
+        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "ACFS_BIN_DIR= TARGET_HOME=$TEST_TARGET_HOME ARG1=version" ]]; then
+        harness_pass "global acfs wrapper ignores other-user home bin_dir from state"
+    else
+        harness_fail "global acfs wrapper ignores other-user home bin_dir from state" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_acfs_global_wrapper_ignores_other_user_home_env_bin_dir_after_runtime_resolution() {
+    setup_cross_home_bin_dir_env
+
+    mkdir -p "$TEST_HOME/probe" "$TEST_INSTALLED_ACFS/bin"
+    cp "$REPO_ROOT/scripts/acfs-global" "$TEST_HOME/probe/acfs"
+    chmod +x "$TEST_HOME/probe/acfs"
+
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$TEST_TARGET_HOME"
+}
+EOF
+    cat > "$TEST_INSTALLED_ACFS/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'ACFS_BIN_DIR=%s TARGET_HOME=%s ARG1=%s\n' "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" "${1:-}"
+EOF
+    chmod +x "$TEST_INSTALLED_ACFS/bin/acfs"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" ACFS_STATE_FILE="$TEST_INSTALLED_ACFS/state.json" \
+        ACFS_BIN_DIR="$STALE_HOME/.local/bin" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        bash "$TEST_HOME/probe/acfs" version 2>&1)
+
+    if [[ "$output" == "ACFS_BIN_DIR= TARGET_HOME=$TEST_TARGET_HOME ARG1=version" ]]; then
+        harness_pass "global acfs wrapper ignores other-user home env bin_dir after runtime resolution"
+    else
+        harness_fail "global acfs wrapper ignores other-user home env bin_dir after runtime resolution" "$output"
     fi
 
     cleanup_mock_env
@@ -8975,6 +9787,70 @@ EOF
     cleanup_mock_env
 }
 
+test_onboard_auth_checks_use_explicit_target_user_when_no_authoritative_runtime_home_exists() {
+    setup_cross_home_bin_dir_env
+
+    cat > "$TEST_TARGET_HOME/.local/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_TARGET_HOME/.local/bin/gh"
+
+    local missing_system_state="$TEST_HOME/missing-system-state.json"
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_USER="tester" TARGET_HOME="" ACFS_SYSTEM_STATE_FILE="$missing_system_state" \
+        TEST_TARGET_HOME="$TEST_TARGET_HOME" TEST_ONBOARD_SCRIPT="$ONBOARD_SH" PATH="/usr/bin:/bin" \
+        bash -lc '
+            source "$TEST_ONBOARD_SCRIPT" help >/dev/null
+            onboard_lookup_passwd_home() {
+                if [[ "${1:-}" == "tester" ]]; then
+                    printf "%s\n" "$TEST_TARGET_HOME"
+                    return 0
+                fi
+                return 1
+            }
+            check_auth_status github && status=0 || status=$?
+            printf "%s\n" "$status"
+        ')
+
+    if [[ "$output" == "0" ]]; then
+        harness_pass "onboard auth checks use explicit target_user when no authoritative runtime home exists"
+    else
+        harness_fail "onboard auth checks use explicit target_user when no authoritative runtime home exists" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_onboard_auth_checks_do_not_fall_back_to_current_home_when_explicit_target_user_is_unresolved() {
+    setup_installed_layout_env
+
+    mkdir -p "$TEST_ROOT_HOME/.local/bin"
+    cat > "$TEST_ROOT_HOME/.local/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$TEST_ROOT_HOME/.local/bin/gh"
+
+    local missing_system_state="$TEST_HOME/missing-system-state.json"
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_USER="missinguser" TARGET_HOME=""         ACFS_SYSTEM_STATE_FILE="$missing_system_state" PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         bash -lc 'source "'"$ONBOARD_SH"'" help >/dev/null; check_auth_status github && status=0 || status=$?; printf "%s\n" "$status"')
+
+    if [[ "$output" == "2" ]]; then
+        harness_pass "onboard auth checks do not fall back to current home when explicit target_user is unresolved"
+    else
+        harness_fail "onboard auth checks do not fall back to current home when explicit target_user is unresolved" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_onboard_gemini_vertex_auth_finds_target_google_cloud_sdk_bin_outside_current_path() {
     setup_installed_layout_env
 
@@ -9133,21 +10009,23 @@ test_onboard_repo_local_prefers_system_state_target_user_over_stale_installed_st
 }
 EOF
 
-    cat > "$TEST_FAKE_BIN/getent" <<EOF
-#!/usr/bin/env bash
-if [[ "\$1" == "passwd" ]] && [[ "\$2" == "tester" ]]; then
-    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
-    exit 0
-fi
-exit 2
-EOF
-    chmod +x "$TEST_FAKE_BIN/getent"
-
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" \
         ACFS_SYSTEM_STATE_FILE="$TEST_SYSTEM_STATE_FILE" \
-        PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        bash -lc 'source "'"$ONBOARD_SH"'"; printf "acfs=%s\nhome=%s\n" "${_ONBOARD_ACFS_HOME:-}" "${_ONBOARD_RUNTIME_HOME:-}"' \
+        TEST_TARGET_HOME="$TEST_TARGET_HOME" TEST_ONBOARD_SCRIPT="$ONBOARD_SH" PATH="/usr/bin:/bin" \
+        bash -lc '
+            source "$TEST_ONBOARD_SCRIPT"
+            onboard_lookup_passwd_home() {
+                if [[ "${1:-}" == "tester" ]]; then
+                    printf "%s\n" "$TEST_TARGET_HOME"
+                    return 0
+                fi
+                return 1
+            }
+            _ONBOARD_ACFS_HOME="$(onboard_resolve_acfs_home 2>/dev/null || true)"
+            onboard_resolve_runtime_home >/dev/null 2>&1 || true
+            printf "acfs=%s\nhome=%s\n" "${_ONBOARD_ACFS_HOME:-}" "${_ONBOARD_RUNTIME_HOME:-}"
+        ' \
         2>/dev/null)
 
     if [[ "$output" == *"acfs=$TEST_INSTALLED_ACFS"* ]] \
@@ -9429,6 +10307,118 @@ test_support_bundle_prefers_live_home_adjacent_acfs_path_over_stale_state_target
     cleanup_mock_env
 }
 
+test_support_bundle_uses_explicit_target_home_when_state_is_missing() {
+    setup_system_state_target_home_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json" "$TEST_SYSTEM_STATE_FILE"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="tester"         TARGET_HOME="$TEST_TARGET_HOME"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_SUPPORT_SCRIPT="$SUPPORT_SH"         bash -lc '
+            source "$TEST_SUPPORT_SCRIPT"
+            if support_initialize_context; then
+                printf "status=ok\nuser=%s\nhome=%s\nacfs=%s\n" "${SUPPORT_TARGET_USER:-}" "${SUPPORT_TARGET_HOME:-}" "${_SUPPORT_ACFS_HOME:-}"
+            else
+                printf "status=failed\n"
+            fi
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"status=ok"* ]]         && [[ "$output" == *"user=tester"* ]]         && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]         && [[ "$output" == *"acfs=$TEST_INSTALLED_ACFS"* ]]; then
+        harness_pass "support bundle uses explicit target home when state is missing"
+    else
+        harness_fail "support bundle uses explicit target home when state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_support_bundle_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved() {
+    setup_installed_layout_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json"
+    mkdir -p "$TEST_ROOT_HOME/.acfs/logs"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="ghost"         TARGET_HOME="$TEST_HOME/missing-target-home"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_SUPPORT_SCRIPT="$SUPPORT_SH"         bash -lc '
+            source "$TEST_SUPPORT_SCRIPT"
+            if support_initialize_context; then
+                printf "status=ok
+user=%s
+home=%s
+acfs=%s
+" "${SUPPORT_TARGET_USER:-}" "${SUPPORT_TARGET_HOME:-}" "${_SUPPORT_ACFS_HOME:-}"
+            else
+                printf "status=failed
+user=%s
+home=%s
+acfs=%s
+" "${SUPPORT_TARGET_USER:-}" "${SUPPORT_TARGET_HOME:-}" "${_SUPPORT_ACFS_HOME:-}"
+            fi
+        ' 2>&1)
+
+    if [[ "$output" == *"status=failed"* ]]         && [[ "$output" == *"refusing to fall back to current HOME"* ]]         && [[ "$output" == *"home="* ]]         && [[ "$output" != *"home=$TEST_ROOT_HOME"* ]]         && [[ "$output" == *"acfs="* ]]         && [[ "$output" != *"acfs=$TEST_ROOT_HOME/.acfs"* ]]; then
+        harness_pass "support bundle does not fall back to current home when explicit target is unresolved"
+    else
+        harness_fail "support bundle does not fall back to current home when explicit target is unresolved" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_dashboard_uses_explicit_target_home_when_state_is_missing() {
+    setup_system_state_target_home_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json" "$TEST_SYSTEM_STATE_FILE"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="tester"         TARGET_HOME="$TEST_TARGET_HOME"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_DASHBOARD_SCRIPT="$DASHBOARD_SH"         bash -lc '
+            source "$TEST_DASHBOARD_SCRIPT"
+            if dashboard_prepare_context; then
+                printf "status=ok\nuser=%s\nhome=%s\nacfs=%s\n" "${_DASHBOARD_RESOLVED_TARGET_USER:-}" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}" "${_DASHBOARD_ACFS_HOME:-}"
+            else
+                printf "status=failed\n"
+            fi
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"status=ok"* ]]         && [[ "$output" == *"user=tester"* ]]         && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]         && [[ "$output" == *"acfs=$TEST_INSTALLED_ACFS"* ]]; then
+        harness_pass "dashboard uses explicit target home when state is missing"
+    else
+        harness_fail "dashboard uses explicit target home when state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_dashboard_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved() {
+    setup_installed_layout_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json"
+    mkdir -p "$TEST_ROOT_HOME/.acfs"
+    printf '0.0.0-test
+' > "$TEST_ROOT_HOME/.acfs/VERSION"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="ghost"         TARGET_HOME="$TEST_HOME/missing-target-home"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_DASHBOARD_SCRIPT="$DASHBOARD_SH"         bash -lc '
+            source "$TEST_DASHBOARD_SCRIPT"
+            if dashboard_prepare_context; then
+                printf "status=ok
+user=%s
+home=%s
+acfs=%s
+" "${_DASHBOARD_RESOLVED_TARGET_USER:-}" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}" "${_DASHBOARD_ACFS_HOME:-}"
+            else
+                printf "status=failed
+user=%s
+home=%s
+acfs=%s
+" "${_DASHBOARD_RESOLVED_TARGET_USER:-}" "${_DASHBOARD_RESOLVED_TARGET_HOME:-}" "${_DASHBOARD_ACFS_HOME:-}"
+            fi
+        ' 2>&1)
+
+    if [[ "$output" == *"status=failed"* ]]         && [[ "$output" == *"refusing to fall back to current HOME"* ]]         && [[ "$output" == *"home="* ]]         && [[ "$output" != *"home=$TEST_ROOT_HOME"* ]]         && [[ "$output" == *"acfs="* ]]         && [[ "$output" != *"acfs=$TEST_ROOT_HOME/.acfs"* ]]; then
+        harness_pass "dashboard does not fall back to current home when explicit target is unresolved"
+    else
+        harness_fail "dashboard does not fall back to current home when explicit target is unresolved" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_dashboard_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home() {
     setup_live_home_adjacent_acfs_env
 
@@ -9443,6 +10433,65 @@ test_dashboard_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home
         harness_pass "dashboard prefers live home-adjacent ACFS path over stale state target_home"
     else
         harness_fail "dashboard prefers live home-adjacent ACFS path over stale state target_home" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_cheatsheet_uses_explicit_target_home_when_state_is_missing() {
+    setup_system_state_target_home_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json" "$TEST_SYSTEM_STATE_FILE"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="tester"         TARGET_HOME="$TEST_TARGET_HOME"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_CHEATSHEET_SCRIPT="$CHEATSHEET_SH"         bash -lc '
+            source "$TEST_CHEATSHEET_SCRIPT"
+            if cheatsheet_prepare_context; then
+                printf "status=ok\nuser=%s\nhome=%s\nacfs=%s\nPATH=%s\n" "${_CHEATSHEET_RESOLVED_TARGET_USER:-}" "${_CHEATSHEET_RESOLVED_TARGET_HOME:-}" "${_CHEATSHEET_ACFS_HOME:-}" "$PATH"
+            else
+                printf "status=failed\n"
+            fi
+        ' 2>/dev/null)
+
+    if [[ "$output" == *"status=ok"* ]]         && [[ "$output" == *"user=tester"* ]]         && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]         && [[ "$output" == *"acfs=$TEST_INSTALLED_ACFS"* ]]         && [[ "$output" == *"$TEST_TARGET_HOME/.local/bin"* ]]; then
+        harness_pass "cheatsheet uses explicit target home when state is missing"
+    else
+        harness_fail "cheatsheet uses explicit target home when state is missing" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_cheatsheet_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved() {
+    setup_installed_layout_env
+    rm -f "$TEST_INSTALLED_ACFS/state.json"
+    mkdir -p "$TEST_ROOT_HOME/.acfs"
+    printf '0.0.0-test
+' > "$TEST_ROOT_HOME/.acfs/VERSION"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME"         TARGET_USER="ghost"         TARGET_HOME="$TEST_HOME/missing-target-home"         ACFS_SYSTEM_STATE_FILE="$TEST_HOME/missing-system-state.json"         PATH="$TEST_FAKE_BIN:/usr/bin:/bin"         TEST_CHEATSHEET_SCRIPT="$CHEATSHEET_SH"         bash -lc '
+            source "$TEST_CHEATSHEET_SCRIPT"
+            if cheatsheet_prepare_context; then
+                printf "status=ok
+user=%s
+home=%s
+acfs=%s
+PATH=%s
+" "${_CHEATSHEET_RESOLVED_TARGET_USER:-}" "${_CHEATSHEET_RESOLVED_TARGET_HOME:-}" "${_CHEATSHEET_ACFS_HOME:-}" "$PATH"
+            else
+                printf "status=failed
+user=%s
+home=%s
+acfs=%s
+PATH=%s
+" "${_CHEATSHEET_RESOLVED_TARGET_USER:-}" "${_CHEATSHEET_RESOLVED_TARGET_HOME:-}" "${_CHEATSHEET_ACFS_HOME:-}" "$PATH"
+            fi
+        ' 2>&1)
+
+    if [[ "$output" == *"status=failed"* ]]         && [[ "$output" == *"refusing to fall back to current HOME"* ]]         && [[ "$output" == *"home="* ]]         && [[ "$output" != *"home=$TEST_ROOT_HOME"* ]]         && [[ "$output" == *"acfs="* ]]         && [[ "$output" != *"acfs=$TEST_ROOT_HOME/.acfs"* ]]; then
+        harness_pass "cheatsheet does not fall back to current home when explicit target is unresolved"
+    else
+        harness_fail "cheatsheet does not fall back to current home when explicit target is unresolved" "$output"
     fi
 
     cleanup_mock_env
@@ -9556,6 +10605,8 @@ main() {
     harness_section "Export Config"
     test_export_config_json_is_valid || true
     test_export_config_uses_installed_layout_under_root_home || true
+    test_export_config_uses_explicit_target_home_when_state_is_missing || true
+    test_export_config_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
     test_export_config_augment_path_ignores_other_user_home_bin_dir || true
     test_export_config_installed_script_ignores_poisoned_explicit_acfs_home || true
     test_export_config_uses_system_state_when_user_state_missing || true
@@ -9573,6 +10624,8 @@ main() {
     test_status_reports_last_updated_timestamp || true
     test_status_errors_on_malformed_state_json || true
     test_status_uses_installed_layout_under_root_home || true
+    test_status_uses_explicit_target_home_when_state_is_missing || true
+    test_status_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
     test_status_ignores_current_shell_only_binaries || true
     test_status_binary_path_ignores_other_user_home_bin_dir_from_state || true
     test_status_uses_persisted_bin_dir_over_poisoned_env_bin_dir || true
@@ -9589,6 +10642,8 @@ main() {
     test_changelog_uses_installed_layout_under_root_home || true
     test_changelog_uses_system_state_when_user_state_missing || true
     test_changelog_uses_system_state_target_home_when_getent_unavailable || true
+    test_changelog_uses_explicit_target_home_when_state_is_missing || true
+    test_changelog_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
     test_changelog_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_changelog_ignores_relative_home_trap || true
     test_changelog_can_be_sourced_without_leaking_install_context || true
@@ -9597,6 +10652,8 @@ main() {
     harness_section "Continue"
     test_continue_uses_installed_layout_under_root_home || true
     test_continue_uses_system_state_target_home_when_getent_unavailable || true
+    test_continue_uses_explicit_target_home_when_state_is_missing || true
+    test_continue_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
     test_continue_ignores_relative_home_state_trap || true
     test_continue_ignores_generic_install_process_matches || true
     test_continue_failed_state_beats_runtime_probe || true
@@ -9604,6 +10661,7 @@ main() {
     test_continue_live_log_hint_uses_installed_layout_log_dir || true
     test_continue_can_be_sourced_without_leaking_install_context || true
     test_continue_sourced_helper_uses_cached_current_home_when_runtime_home_is_poisoned || true
+    test_other_sourced_helpers_use_cached_current_home_when_runtime_home_is_poisoned || true
     test_continue_scans_nonstandard_homes_via_getent || true
 
     harness_section "Dashboard"
@@ -9616,6 +10674,8 @@ main() {
     test_dashboard_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_dashboard_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
     test_dashboard_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
+    test_dashboard_uses_explicit_target_home_when_state_is_missing || true
+    test_dashboard_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
     test_dashboard_can_be_sourced_without_mutating_caller_env || true
     test_dashboard_copy_install_ignores_relative_home_trap || true
 
@@ -9647,9 +10707,13 @@ main() {
     test_state_driven_helpers_reject_invalid_target_home_from_state || true
     test_runtime_helpers_do_not_guess_home_paths_from_usernames || true
     test_runtime_helpers_resolve_current_home_from_passwd_when_home_invalid || true
+    test_runtime_helpers_prefer_passwd_home_over_mismatched_absolute_home || true
+    test_runtime_helpers_ignore_poisoned_current_user_path_tools || true
     test_runtime_helpers_fail_closed_when_current_home_unresolved || true
     test_runtime_helpers_fail_closed_on_invalid_passwd_home_for_target_user || true
     test_info_uses_installed_layout_under_root_home || true
+    test_info_uses_explicit_target_home_when_state_is_missing || true
+    test_info_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
     test_info_uses_system_state_target_home_when_getent_unavailable || true
     test_info_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_info_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
@@ -9667,6 +10731,8 @@ main() {
     test_support_bundle_repo_local_ignores_poisoned_explicit_acfs_home || true
     test_support_bundle_repo_local_prefers_system_state_target_user_over_stale_installed_state || true
     test_support_bundle_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
+    test_support_bundle_uses_explicit_target_home_when_state_is_missing || true
+    test_support_bundle_does_not_fall_back_to_current_home_when_explicit_target_is_unresolved || true
     test_support_can_be_sourced_without_running_main || true
     test_onboard_cli_aliases_work_in_zero_lessons_mode || true
     test_onboard_repairs_malformed_progress_before_showing_lesson || true
@@ -9677,6 +10743,8 @@ main() {
     test_onboard_auth_checks_find_target_binaries_outside_current_path || true
     test_onboard_auth_checks_ignore_poisoned_current_path_and_env_bin_dir || true
     test_onboard_auth_checks_ignore_other_user_home_bin_dir_from_state || true
+    test_onboard_auth_checks_use_explicit_target_user_when_no_authoritative_runtime_home_exists || true
+    test_onboard_auth_checks_do_not_fall_back_to_current_home_when_explicit_target_user_is_unresolved || true
     test_onboard_gemini_vertex_auth_finds_target_google_cloud_sdk_bin_outside_current_path || true
     test_onboard_gemini_vertex_auth_finds_target_gcloud_outside_current_path || true
     test_onboard_copy_install_uses_system_state_under_root_home || true
@@ -9700,6 +10768,8 @@ main() {
     test_doctor_ignores_relative_home_state_trap || true
     test_doctor_uses_system_state_target_home_when_installed_state_is_stale || true
     test_doctor_prefers_target_home_over_poisoned_acfs_home || true
+    test_acfs_wrappers_prefer_passwd_home_over_mismatched_absolute_home || true
+    test_acfs_wrappers_ignore_poisoned_current_user_path_tools || true
     test_doctor_manifest_checks_prefer_system_bins_over_current_shell_path || true
     test_doctor_manifest_checks_fail_closed_when_target_home_is_unresolved || true
     test_doctor_manifest_checks_reject_invalid_target_user_before_sudo || true
@@ -9719,6 +10789,8 @@ main() {
     test_acfs_update_wrapper_prefers_explicit_acfs_home_over_current_home_when_system_state_is_missing || true
     test_acfs_update_wrapper_ignores_poisoned_bin_dir_after_runtime_resolution || true
     test_acfs_update_wrapper_ignores_stale_system_state_bin_dir_after_runtime_resolution || true
+    test_acfs_update_wrapper_ignores_other_user_home_bin_dir_from_state || true
+    test_acfs_update_wrapper_ignores_other_user_home_env_bin_dir_after_runtime_resolution || true
     test_acfs_update_wrapper_ignores_stale_home_adjacent_target_user || true
     test_acfs_update_wrapper_uses_installed_layout_state_context || true
     test_acfs_global_wrapper_uses_system_state_target_home_when_getent_unavailable || true
@@ -9729,6 +10801,8 @@ main() {
     test_acfs_global_wrapper_prefers_state_bin_dir_over_poisoned_env || true
     test_acfs_global_wrapper_discards_invalid_env_bin_dir_on_direct_exec || true
     test_acfs_global_wrapper_discards_invalid_env_state_file_on_direct_exec || true
+    test_acfs_global_wrapper_ignores_other_user_home_bin_dir_from_state || true
+    test_acfs_global_wrapper_ignores_other_user_home_env_bin_dir_after_runtime_resolution || true
     test_acfs_global_wrapper_ignores_relative_home_state_trap || true
     test_acfs_global_wrapper_does_not_guess_current_home_when_target_home_is_unresolved || true
     test_acfs_global_wrapper_ignores_stale_explicit_acfs_home_when_system_state_points_to_live_install || true
@@ -9746,5 +10820,6 @@ main() {
 
     harness_summary
 }
+
 
 main "$@"

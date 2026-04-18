@@ -22,6 +22,25 @@ ACFS_CHECKSUMS_REF="${ACFS_CHECKSUMS_REF:-main}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+_update_initial_existing_home() {
+    local home_candidate="${1:-}"
+
+    [[ -n "$home_candidate" ]] || return 1
+    home_candidate="${home_candidate%/}"
+    [[ -n "$home_candidate" ]] || return 1
+    [[ "$home_candidate" == /* ]] || return 1
+    [[ "$home_candidate" != "/" ]] || return 1
+    [[ -d "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
+}
+
+_UPDATE_EARLY_TARGET_HOME="$(_update_initial_existing_home "${TARGET_HOME:-}" 2>/dev/null || true)"
+if [[ -n "$_UPDATE_EARLY_TARGET_HOME" ]]; then
+    HOME="$_UPDATE_EARLY_TARGET_HOME"
+    export HOME
+fi
+unset _UPDATE_EARLY_TARGET_HOME
+
 # Discover ACFS_REPO_ROOT: prefer a real git repo over the tarball install dir.
 # On fleet machines, update.sh runs from ~/.acfs/scripts/lib/ (no .git) but
 # the authoritative source repo lives at /data/projects/agentic_coding_flywheel_setup.
@@ -416,6 +435,36 @@ update_runtime_acfs_home() {
     fi
 
     printf '%s\n' "$runtime_home/.acfs"
+}
+
+update_runtime_shell_home() {
+    local target_user_raw="${TARGET_USER:-}"
+    local target_user=""
+    local current_user=""
+    local target_home=""
+    local runtime_home=""
+
+    target_user="$(update_target_user 2>/dev/null || true)"
+    current_user="$(update_current_user)"
+    if [[ -n "$target_user" ]]; then
+        target_home="$(update_target_home "$target_user" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "$target_home"
+        return 0
+    fi
+
+    if [[ -n "$target_user_raw" && -z "$target_user" ]]; then
+        return 1
+    fi
+    if [[ -n "$target_user" ]] && [[ -n "$current_user" ]] && [[ "$target_user" != "$current_user" ]]; then
+        return 1
+    fi
+
+    runtime_home="$(update_existing_home "${HOME:-}" 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 1
+    printf '%s\n' "$runtime_home"
 }
 
 update_binary_exists() {
@@ -1611,12 +1660,16 @@ update_run_in_target_context() {
 # Clean up legacy git_safety_guard artifacts from pre-DCG installations
 # This runs on every update to ensure stale files are removed
 cleanup_legacy_git_safety_guard() {
+    local runtime_home=""
+    runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 0
+
     if update_is_read_only_mode; then
         local would_clean=false
         local hooks_dir=""
         local legacy_file=""
 
-        for hooks_dir in "$HOME/.acfs/claude/hooks" "$HOME/.claude/hooks"; do
+        for hooks_dir in "$runtime_home/.acfs/claude/hooks" "$runtime_home/.claude/hooks"; do
             for legacy_file in git_safety_guard.py git_safety_guard.sh; do
                 if [[ -f "$hooks_dir/$legacy_file" ]]; then
                     would_clean=true
@@ -1624,7 +1677,7 @@ cleanup_legacy_git_safety_guard() {
             done
         done
 
-        if [[ -f "$HOME/.claude/settings.json" ]] && grep -q "git_safety_guard" "$HOME/.claude/settings.json" 2>/dev/null; then
+        if [[ -f "$runtime_home/.claude/settings.json" ]] && grep -q "git_safety_guard" "$runtime_home/.claude/settings.json" 2>/dev/null; then
             would_clean=true
         fi
 
@@ -1636,8 +1689,8 @@ cleanup_legacy_git_safety_guard() {
 
     local cleaned=false
     local hooks_dirs=(
-        "$HOME/.acfs/claude/hooks"
-        "$HOME/.claude/hooks"
+        "$runtime_home/.acfs/claude/hooks"
+        "$runtime_home/.claude/hooks"
     )
     local legacy_files=(
         "git_safety_guard.py"
@@ -1660,7 +1713,7 @@ cleanup_legacy_git_safety_guard() {
     done
 
     # Clean parent directories if empty
-    for parent in "$HOME/.acfs/claude" "$HOME/.claude"; do
+    for parent in "$runtime_home/.acfs/claude" "$runtime_home/.claude"; do
         if [[ -d "$parent" ]] && [[ -z "$(ls -A "$parent" 2>/dev/null)" ]]; then
             rmdir "$parent" 2>/dev/null || true
             log_to_file "Removed empty directory: $parent"
@@ -1668,7 +1721,7 @@ cleanup_legacy_git_safety_guard() {
     done
 
     # Clean git_safety_guard from Claude settings.json if present
-    local settings_file="$HOME/.claude/settings.json"
+    local settings_file="$runtime_home/.claude/settings.json"
     if [[ -f "$settings_file" ]] && command -v jq &>/dev/null; then
         if jq -e '.hooks // empty' "$settings_file" &>/dev/null; then
             # Check if git_safety_guard is referenced in hooks
@@ -1694,7 +1747,10 @@ cleanup_legacy_git_safety_guard() {
 }
 
 cleanup_legacy_bv_alias() {
-    local zshrc_local="$HOME/.zshrc.local"
+    local runtime_home=""
+    runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 0
+    local zshrc_local="$runtime_home/.zshrc.local"
     [[ -f "$zshrc_local" ]] || return 0
 
     if update_is_read_only_mode; then
@@ -1742,7 +1798,10 @@ cleanup_legacy_bv_alias() {
 # Fix stale aliases in deployed acfs.zshrc
 # Older versions aliased br='bun run dev', which shadows beads_rust (br).
 cleanup_legacy_br_alias() {
-    local deployed="$HOME/.acfs/zsh/acfs.zshrc"
+    local runtime_home=""
+    runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 0
+    local deployed="$runtime_home/.acfs/zsh/acfs.zshrc"
     [[ -f "$deployed" ]] || return 0
 
     if update_is_read_only_mode; then
@@ -1765,7 +1824,10 @@ cleanup_legacy_br_alias() {
 # Re-deploy acfs.zshrc from repo to ~/.acfs/ if repo copy is newer
 sync_acfs_zshrc() {
     local repo_zshrc="$ACFS_REPO_ROOT/acfs/zsh/acfs.zshrc"
-    local deployed_zshrc="$HOME/.acfs/zsh/acfs.zshrc"
+    local runtime_home=""
+    runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 0
+    local deployed_zshrc="$runtime_home/.acfs/zsh/acfs.zshrc"
 
     [[ -f "$repo_zshrc" ]] || return 0
 
@@ -1786,7 +1848,10 @@ sync_acfs_zshrc() {
 }
 
 sync_acfs_zsh_loader() {
-    local user_zshrc="$HOME/.zshrc"
+    local runtime_home=""
+    runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 0
+    local user_zshrc="$runtime_home/.zshrc"
     local acfs_loader_source='source "$HOME/.acfs/zsh/acfs.zshrc"'
     local stale_local_source='[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
 
@@ -1811,7 +1876,10 @@ sync_acfs_zsh_loader() {
 }
 
 sync_acfs_profile_paths() {
-    local user_profile="$HOME/.profile"
+    local runtime_home=""
+    runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 0
+    local user_profile="$runtime_home/.profile"
     local legacy_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
     local current_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 
@@ -1832,7 +1900,10 @@ sync_acfs_profile_paths() {
 }
 
 sync_acfs_zprofile_paths() {
-    local user_zprofile="$HOME/.zprofile"
+    local runtime_home=""
+    runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
+    [[ -n "$runtime_home" ]] || return 0
+    local user_zprofile="$runtime_home/.zprofile"
     local legacy_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
     local current_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 

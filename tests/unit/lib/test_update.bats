@@ -1030,6 +1030,203 @@ EOF
     refute_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
 }
 
+@test "sync_acfs_profile_paths: respects TARGET_HOME when HOME differs" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+
+    cat > "$current_home/.profile" <<'EOF'
+# current profile
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+EOF
+
+    cat > "$target_home/.profile" <<'EOF'
+# target profile
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+EOF
+
+    run sync_acfs_profile_paths
+    assert_success
+
+    run cat "$target_home/.profile"
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+
+    run cat "$current_home/.profile"
+    refute_output --partial '.atuin/bin'
+}
+
+@test "sync_acfs_profile_paths: does not touch current HOME for unresolved explicit target" {
+    local current_home
+    current_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="/"
+
+    cat > "$current_home/.profile" <<'EOF'
+# current profile
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+EOF
+
+    getent() {
+        return 2
+    }
+
+    run sync_acfs_profile_paths
+    assert_success
+
+    run cat "$current_home/.profile"
+    refute_output --partial '.atuin/bin'
+}
+
+@test "sync_acfs_zprofile_paths: respects TARGET_HOME when HOME differs" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+
+    cat > "$current_home/.zprofile" <<'EOF'
+# current zprofile
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+EOF
+
+    cat > "$target_home/.zprofile" <<'EOF'
+# target zprofile
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+EOF
+
+    run sync_acfs_zprofile_paths
+    assert_success
+
+    run cat "$target_home/.zprofile"
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+
+    run cat "$current_home/.zprofile"
+    refute_output --partial '.atuin/bin'
+}
+
+@test "sync_acfs_zsh_loader: respects TARGET_HOME when HOME differs" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+
+    cat > "$current_home/.zshrc" <<'EOF'
+# current zshrc
+source "$HOME/.acfs/zsh/acfs.zshrc"
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
+EOF
+
+    cat > "$target_home/.zshrc" <<'EOF'
+# target zshrc
+source "$HOME/.acfs/zsh/acfs.zshrc"
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
+EOF
+
+    run sync_acfs_zsh_loader
+    assert_success
+
+    run cat "$target_home/.zshrc"
+    refute_output --partial '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
+
+    run cat "$current_home/.zshrc"
+    assert_output --partial '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
+}
+
+@test "cleanup_legacy_git_safety_guard: respects TARGET_HOME when HOME differs" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+
+    mkdir -p "$current_home/.claude/hooks" "$target_home/.claude/hooks"
+    printf 'current\n' > "$current_home/.claude/hooks/git_safety_guard.sh"
+    printf 'target\n' > "$target_home/.claude/hooks/git_safety_guard.sh"
+
+    run cleanup_legacy_git_safety_guard
+    assert_success
+
+    [[ -f "$current_home/.claude/hooks/git_safety_guard.sh" ]]
+    [[ ! -e "$target_home/.claude/hooks/git_safety_guard.sh" ]]
+}
+
+@test "cleanup_legacy_bv_alias: respects TARGET_HOME when HOME differs" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+
+    cat > "$current_home/.zshrc.local" <<'EOF'
+alias bv="current"
+EOF
+
+    cat > "$target_home/.zshrc.local" <<'EOF'
+alias bv="target"
+EOF
+
+    run cleanup_legacy_bv_alias
+    assert_success
+
+    run cat "$current_home/.zshrc.local"
+    assert_output --partial 'alias bv="current"'
+
+    run cat "$target_home/.zshrc.local"
+    refute_output --partial 'alias bv='
+}
+
+@test "cleanup_legacy_br_alias: respects TARGET_HOME when HOME differs" {
+    local current_home
+    local target_home
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    export HOME="$current_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+
+    mkdir -p "$current_home/.acfs/zsh" "$target_home/.acfs/zsh"
+    cat > "$current_home/.acfs/zsh/acfs.zshrc" <<'EOF'
+alias br='bun run dev'
+EOF
+
+    cat > "$target_home/.acfs/zsh/acfs.zshrc" <<'EOF'
+alias br='bun run dev'
+EOF
+
+    run cleanup_legacy_br_alias
+    assert_success
+
+    run cat "$current_home/.acfs/zsh/acfs.zshrc"
+    assert_output --partial "alias br='bun run dev'"
+
+    run grep -n "^alias br='bun run dev'$" "$target_home/.acfs/zsh/acfs.zshrc"
+    assert_failure
+
+    run cat "$target_home/.acfs/zsh/acfs.zshrc"
+    assert_output --partial "# alias br='bun run dev'"
+}
+
 @test "generated install_shell: uses minimal loader and Atuin-aware login paths" {
     local generated="$PROJECT_ROOT/scripts/generated/install_shell.sh"
 
@@ -1320,8 +1517,24 @@ EOF
     assert_success
 }
 
+setup_nightly_update_identity_stubs() {
+    init_stub_dir
+
+    cat > "$STUB_DIR/id" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    cat > "$STUB_DIR/getent" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    chmod +x "$STUB_DIR/id" "$STUB_DIR/getent"
+    printf '%s\n' "$STUB_DIR:/usr/bin:/bin"
+}
+
 @test "nightly update honors explicit system state and repairs target runtime home" {
     local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local nightly_path
     local root_home
     local target_home
     local system_state
@@ -1356,7 +1569,8 @@ printf 'CHILD_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" 
 EOF
     chmod +x "$target_home/.local/bin/acfs-update"
 
-    run env HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
+    nightly_path="$(setup_nightly_update_identity_stubs)"
+    run env -i PATH="$nightly_path" HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
 
     assert_success
     assert_output --partial "Running: $target_home/.local/bin/acfs-update --yes --quiet --no-self-update"
@@ -1366,6 +1580,7 @@ EOF
 
 @test "nightly update prefers live target-home updater over stale persisted bin dir" {
     local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local nightly_path
     local root_home
     local target_home
     local stale_home
@@ -1394,17 +1609,16 @@ EOF
 EOF
     cat > "$target_home/.acfs/bin/acfs-update" <<'EOF'
 #!/usr/bin/env bash
-printf 'LIVE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s
-' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+printf 'LIVE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
 EOF
     cat > "$stale_home/.local/bin/acfs-update" <<'EOF'
 #!/usr/bin/env bash
-printf 'STALE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s
-' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+printf 'STALE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
 EOF
     chmod +x "$target_home/.acfs/bin/acfs-update" "$stale_home/.local/bin/acfs-update"
 
-    run env HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
+    nightly_path="$(setup_nightly_update_identity_stubs)"
+    run env -i PATH="$nightly_path" HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
 
     assert_success
     assert_output --partial "Running: $target_home/.acfs/bin/acfs-update --yes --quiet --no-self-update"
@@ -1415,6 +1629,7 @@ EOF
 
 @test "nightly update falls back to target home binaries when system state omits bin dir" {
     local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local nightly_path
     local root_home
     local target_home
     local system_state
@@ -1448,12 +1663,154 @@ printf 'CHILD_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" 
 EOF
     chmod +x "$target_home/.acfs/bin/acfs-update"
 
-    run env HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
+    nightly_path="$(setup_nightly_update_identity_stubs)"
+    run env -i PATH="$nightly_path" HOME="$root_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
 
     assert_success
     assert_output --partial "Running: $target_home/.acfs/bin/acfs-update --yes --quiet --no-self-update"
     assert_output --partial "CHILD_HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
     [[ -f "$target_home/.acfs/logs/updates/nightly-2025-01-01.log" ]]
+}
+
+@test "nightly update honors explicit TARGET_HOME over stale system state" {
+    local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local nightly_path
+    local root_home
+    local target_home
+    local stale_home
+    local system_state
+
+    root_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$root_home/system-state.json"
+
+    mkdir -p         "$root_home/.acfs/scripts/lib"         "$target_home/.acfs/scripts/lib"         "$target_home/.acfs/logs/updates"         "$target_home/.local/bin"         "$stale_home/.acfs/scripts/lib"         "$stale_home/.acfs/logs/updates"         "$stale_home/.local/bin"
+
+    cat > "$root_home/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$target_home/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$stale_home/.acfs/scripts/lib/notify.sh" <<'EOF'
+acfs_notify_update_success() { :; }
+acfs_notify_update_failure() { :; }
+EOF
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$stale_home",
+  "bin_dir": "$stale_home/.local/bin"
+}
+EOF
+    cat > "$target_home/.local/bin/acfs-update" <<'EOF'
+#!/usr/bin/env bash
+printf 'LIVE_NIGHTLY HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    cat > "$stale_home/.local/bin/acfs-update" <<'EOF'
+#!/usr/bin/env bash
+printf 'STALE_NIGHTLY HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    chmod +x "$target_home/.local/bin/acfs-update" "$stale_home/.local/bin/acfs-update"
+
+    nightly_path="$(setup_nightly_update_identity_stubs)"
+    run env -i PATH="$nightly_path" HOME="$root_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$nightly"
+
+    assert_success
+    assert_output --partial "Running: $target_home/.local/bin/acfs-update --yes --quiet --no-self-update"
+    refute_output --partial "STALE_NIGHTLY"
+    assert_output --partial "LIVE_NIGHTLY HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
+    [[ -f "$target_home/.acfs/logs/updates/nightly-2025-01-01.log" ]]
+}
+
+@test "acfs-update wrapper honors explicit TARGET_HOME over stale system state" {
+    local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
+    local wrapper_dir
+    local root_home
+    local target_home
+    local stale_home
+    local system_state
+    local current_user
+
+    wrapper_dir="$(create_temp_dir)"
+    root_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$BATS_TEST_TMPDIR/update-wrapper-system-state.json"
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p "$target_home/.acfs/scripts/lib" "$stale_home/.acfs/scripts/lib"
+    cp "$update_wrapper" "$wrapper_dir/acfs-update"
+    chmod +x "$wrapper_dir/acfs-update"
+
+    cat > "$target_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'LIVE_SCRIPT HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    cat > "$stale_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'STALE_SCRIPT HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    chmod +x "$target_home/.acfs/scripts/lib/update.sh" "$stale_home/.acfs/scripts/lib/update.sh"
+
+    cat > "$system_state" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$stale_home"
+}
+EOF
+
+    run env HOME="$root_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$wrapper_dir/acfs-update"
+
+    assert_success
+    refute_output --partial "STALE_SCRIPT"
+    assert_output --partial "LIVE_SCRIPT HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
+}
+
+@test "acfs global wrapper honors explicit TARGET_HOME over stale system state" {
+    local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"
+    local wrapper_dir
+    local root_home
+    local target_home
+    local stale_home
+    local system_state
+    local current_user
+
+    wrapper_dir="$(create_temp_dir)"
+    root_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$BATS_TEST_TMPDIR/global-wrapper-system-state.json"
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p "$target_home/.local/bin" "$target_home/.acfs" "$stale_home/.local/bin" "$stale_home/.acfs"
+    cp "$global_wrapper" "$wrapper_dir/acfs"
+    chmod +x "$wrapper_dir/acfs"
+
+    cat > "$target_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'LIVE_ACFS HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    cat > "$stale_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'STALE_ACFS HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    chmod +x "$target_home/.local/bin/acfs" "$stale_home/.local/bin/acfs"
+
+    cat > "$system_state" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$stale_home"
+}
+EOF
+
+    run env HOME="$root_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$wrapper_dir/acfs"
+
+    assert_success
+    refute_output --partial "STALE_ACFS"
+    assert_output --partial "LIVE_ACFS HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
 }
 
 @test "username helpers and wrappers allow dotted usernames and validate before re-exec" {
@@ -1671,6 +2028,181 @@ EOF
     assert_output ""
 }
 
+@test "remaining helpers: resolve_current_home prefers passwd home over mismatched absolute HOME" {
+    local current_user
+    local passwd_home
+    local poisoned_home
+    local failures=""
+    local label
+    local script
+    local func
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    passwd_home="$(create_temp_dir)"
+    poisoned_home="$(create_temp_dir)"
+    mkdir -p "$passwd_home" "$poisoned_home"
+    export ACFS_TEST_CURRENT_USER="$current_user"
+    export ACFS_TEST_PASSWD_HOME="$passwd_home"
+
+    getent() {
+        if [[ "${1:-}" == "passwd" ]] && [[ "${2:-}" == "$ACFS_TEST_CURRENT_USER" ]]; then
+            printf '%s:x:1000:1000::%s:/bin/bash
+' "$ACFS_TEST_CURRENT_USER" "$ACFS_TEST_PASSWD_HOME"
+            return 0
+        fi
+        return 2
+    }
+
+    id() {
+        if [[ "${1:-}" == "-un" ]]; then
+            printf '%s
+' "$ACFS_TEST_CURRENT_USER"
+            return 0
+        fi
+        command id "$@"
+    }
+
+    whoami() {
+        printf '%s
+' "$ACFS_TEST_CURRENT_USER"
+    }
+
+    while IFS='|' read -r label script func; do
+        [[ -n "$label" ]] || continue
+
+        case "$label" in
+            preflight)
+                eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$script")"
+                ;;
+            services-setup)
+                eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^services_setup_resolve_current_home()/,/^}$/p' "$script")"
+                ;;
+            notifications)
+                eval "$(sed -n '/^notifications_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^notifications_resolve_current_home()/,/^}$/p' "$script")"
+                ;;
+            notify)
+                eval "$(sed -n '/^_acfs_notify_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_notify_resolve_current_home()/,/^}$/p' "$script")"
+                ;;
+            webhook)
+                eval "$(sed -n '/^webhook_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^webhook_resolve_current_home()/,/^}$/p' "$script")"
+                ;;
+            doctor)
+                eval "$(sed -n '/^_acfs_doctor_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_doctor_resolve_current_home()/,/^}$/p' "$script")"
+                ;;
+            doctor-fix)
+                eval "$(sed -n '/^doctor_fix_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^doctor_fix_is_valid_username()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^doctor_fix_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^doctor_fix_resolve_home_for_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^doctor_fix_resolve_current_home()/,/^}$/p' "$script")"
+                ;;
+            nightly-update)
+                eval "$(sed -n '/^sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$script")"
+                ;;
+            smoke)
+                local smoke_bin_dir="$BATS_TEST_TMPDIR/smoke-bin"
+                mkdir -p "$smoke_bin_dir"
+                cat > "$smoke_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    printf '%s\\n' "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$smoke_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+printf '%s\\n' "$current_user"
+EOF
+                cat > "$smoke_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\\n' "$current_user" "$passwd_home"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$smoke_bin_dir/id" "$smoke_bin_dir/whoami" "$smoke_bin_dir/getent"
+                eval "$(sed -n '/^_smoke_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_smoke_system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_smoke_getent_passwd_entry()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_smoke_resolve_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_smoke_passwd_home_from_entry()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_smoke_resolve_current_home()/,/^}$/p' "$script")"
+                _smoke_system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    printf '%s/%s\n' "$smoke_bin_dir" "$name"
+                }
+                ;;
+            state)
+                eval "$(sed -n '/^state_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^state_resolve_current_home()/,/^}$/p' "$script")"
+                ;;
+        esac
+
+        HOME="$poisoned_home"
+        run "$func"
+        if [[ "$status" -ne 0 ]] || [[ "$output" != "$passwd_home" ]]; then
+            printf -v failures '%s%s: status=%s output=%s\n' "$failures" "$label" "$status" "$output"
+        fi
+    done <<EOF
+preflight|$PROJECT_ROOT/scripts/preflight.sh|resolve_current_home
+services-setup|$PROJECT_ROOT/scripts/services-setup.sh|services_setup_resolve_current_home
+notifications|$PROJECT_ROOT/scripts/lib/notifications.sh|notifications_resolve_current_home
+notify|$PROJECT_ROOT/scripts/lib/notify.sh|_acfs_notify_resolve_current_home
+webhook|$PROJECT_ROOT/scripts/lib/webhook.sh|webhook_resolve_current_home
+doctor|$PROJECT_ROOT/scripts/lib/doctor.sh|_acfs_doctor_resolve_current_home
+doctor-fix|$PROJECT_ROOT/scripts/lib/doctor_fix.sh|doctor_fix_resolve_current_home
+nightly-update|$PROJECT_ROOT/scripts/lib/nightly_update.sh|resolve_current_home
+smoke|$PROJECT_ROOT/scripts/lib/smoke_test.sh|_smoke_resolve_current_home
+state|$PROJECT_ROOT/scripts/lib/state.sh|state_resolve_current_home
+EOF
+
+    if [[ -n "$failures" ]]; then
+        printf '%s' "$failures" >&2
+        return 1
+    fi
+}
+
+@test "state: resolve_current_home fails closed when HOME is invalid and passwd lookup fails" {
+    local state_lib="$PROJECT_ROOT/scripts/lib/state.sh"
+
+    eval "$(sed -n '/^state_sanitize_abs_nonroot_path()/,/^}$/p' "$state_lib")"
+    eval "$(sed -n '/^state_resolve_current_home()/,/^}$/p' "$state_lib")"
+
+    export HOME="relative-home"
+
+    getent() {
+        return 2
+    }
+
+    id() {
+        if [[ "${1:-}" == "-un" ]]; then
+            printf 'tester\n'
+            return 0
+        fi
+        command id "$@"
+    }
+
+    whoami() {
+        printf 'tester\n'
+    }
+
+    run state_resolve_current_home
+    assert_failure
+    assert_output ""
+}
+
 @test "preflight: resolve_current_home fails closed when HOME is invalid and passwd lookup fails" {
     local preflight="$PROJECT_ROOT/scripts/preflight.sh"
 
@@ -1835,6 +2367,25 @@ EOF
     run _github_api_runtime_home
     assert_success
     assert_output "$runtime_home"
+}
+
+@test "update init honors explicit TARGET_HOME for early runtime paths" {
+    local update="$PROJECT_ROOT/scripts/lib/update.sh"
+    local current_home
+    local target_home
+
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" bash -c '
+        source "$1" >/dev/null 2>&1
+        printf "HOME=%s\nUPDATE_LOG_DIR=%s\nCHECKSUMS_LOCAL=%s\n" "$HOME" "$UPDATE_LOG_DIR" "$CHECKSUMS_LOCAL"
+    ' _ "$update"
+
+    assert_success
+    assert_output --partial "HOME=$target_home"
+    assert_output --partial "UPDATE_LOG_DIR=$target_home/.acfs/logs/updates"
+    assert_output --partial "CHECKSUMS_LOCAL=$target_home/.acfs/checksums.yaml"
 }
 
 @test "agent mail MCP path detection prefers target install over current-shell am" {

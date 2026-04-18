@@ -43,38 +43,118 @@ _status_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
-_status_resolve_current_home() {
-    local current_user=""
-    local home_candidate=""
-    local passwd_entry=""
+_status_existing_abs_home() {
+    local path_value=""
 
-    home_candidate="$(_status_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
+    path_value="$(_status_sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+    [[ -d "$path_value" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+_status_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
         return 0
+    done
+
+    return 1
+}
+
+_status_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(_status_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(_status_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+_status_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+
+    getent_bin="$(_status_system_binary_path getent 2>/dev/null || true)"
+    [[ -n "$getent_bin" ]] || return 1
+
+    if [[ -n "$user" ]]; then
+        "$getent_bin" passwd "$user" 2>/dev/null
+    else
+        "$getent_bin" passwd 2>/dev/null
+    fi
+}
+_status_is_valid_username() {
+    local username="${1:-}"
+    [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+_status_resolve_current_home() {
+    local current_user=""
+    local fallback_home=""
+    local passwd_entry=""
+    local passwd_home=""
+    fallback_home="$(_status_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ "${_STATUS_WAS_SOURCED:-false}" == "true" ]]; then
+        fallback_home="$(_status_sanitize_abs_nonroot_path "${_STATUS_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+    fi
+    current_user="$(_status_resolve_current_user 2>/dev/null || true)"
+
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
-    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(_status_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(_status_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
+            passwd_home="$(_status_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
                 return 0
             fi
         fi
     fi
 
-    return 1
+    [[ -n "$fallback_home" ]] || return 1
+    printf '%s\n' "$fallback_home"
 }
+_status_initial_current_home() {
+    local cached_home=""
 
-_STATUS_CURRENT_HOME="$(_status_resolve_current_home 2>/dev/null || true)"
+    if [[ "${_STATUS_WAS_SOURCED:-false}" == "true" ]]; then
+        cached_home="$(_status_sanitize_abs_nonroot_path "${_STATUS_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
+
+    _status_resolve_current_home
+}
+_STATUS_CURRENT_HOME="$(_status_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_STATUS_CURRENT_HOME" ]]; then
     HOME="$_STATUS_CURRENT_HOME"
     export HOME
@@ -88,6 +168,9 @@ _STATUS_SYSTEM_STATE_FILE="$(_status_sanitize_abs_nonroot_path "${ACFS_SYSTEM_ST
 if [[ -z "$_STATUS_SYSTEM_STATE_FILE" ]]; then
     _STATUS_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
 fi
+_STATUS_EXPLICIT_TARGET_HOME_RAW="${TARGET_HOME:-}"
+_STATUS_EXPLICIT_TARGET_USER_RAW="${TARGET_USER:-}"
+_STATUS_EXPLICIT_TARGET_HOME="$(_status_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
 _STATUS_RESOLVED_ACFS_HOME=""
 
 _status_reset_options() {
@@ -181,7 +264,14 @@ _status_prepend_user_paths() {
 }
 
 _status_ensure_path() {
-    _status_prepend_user_paths "$_STATUS_CURRENT_HOME"
+    local current_user=""
+
+    current_user="$(_status_resolve_current_user 2>/dev/null || true)"
+    if [[ -n "$_STATUS_CURRENT_HOME" ]]; then
+        if [[ -z "${TARGET_USER:-}" ]] || [[ -n "$current_user" && "${TARGET_USER:-}" == "$current_user" ]]; then
+            _status_prepend_user_paths "$_STATUS_CURRENT_HOME"
+        fi
+    fi
 
     if [[ -n "${TARGET_HOME:-}" ]] && [[ "$TARGET_HOME" != "$_STATUS_CURRENT_HOME" ]]; then
         _status_prepend_user_paths "$TARGET_HOME"
@@ -190,25 +280,44 @@ _status_ensure_path() {
 
 _status_binary_path() {
     local name="${1:-}"
-    local base_home="${TARGET_HOME:-${_STATUS_CURRENT_HOME:-}}"
+    local base_home=""
+    local current_user=""
     local primary_bin_dir=""
     local candidate=""
 
     [[ -n "$name" ]] || return 1
-    [[ -n "$base_home" ]] || return 1
-    primary_bin_dir="$(_status_preferred_bin_dir "$base_home" 2>/dev/null || true)"
-    [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"
+    if [[ -n "${TARGET_HOME:-}" ]]; then
+        base_home="${TARGET_HOME%/}"
+    elif [[ -n "${TARGET_USER:-}" ]]; then
+        current_user="$(_status_resolve_current_user 2>/dev/null || true)"
+        if [[ -n "$current_user" ]] && [[ "${TARGET_USER:-}" == "$current_user" ]]; then
+            base_home="${_STATUS_CURRENT_HOME:-}"
+        fi
+    else
+        base_home="${_STATUS_CURRENT_HOME:-}"
+    fi
+
+    if [[ -n "$base_home" ]]; then
+        primary_bin_dir="$(_status_preferred_bin_dir "$base_home" 2>/dev/null || true)"
+        [[ -n "$primary_bin_dir" ]] || primary_bin_dir="$base_home/.local/bin"
+
+        for candidate in \
+            "$primary_bin_dir/$name" \
+            "$base_home/.local/bin/$name" \
+            "$base_home/.acfs/bin/$name" \
+            "$base_home/.bun/bin/$name" \
+            "$base_home/.cargo/bin/$name" \
+            "$base_home/.atuin/bin/$name" \
+            "$base_home/go/bin/$name" \
+            "$base_home/google-cloud-sdk/bin/$name" \
+            "$base_home/bin/$name"; do
+            [[ -x "$candidate" ]] || continue
+            printf '%s\n' "$candidate"
+            return 0
+        done
+    fi
 
     for candidate in \
-        "$primary_bin_dir/$name" \
-        "$base_home/.local/bin/$name" \
-        "$base_home/.acfs/bin/$name" \
-        "$base_home/.bun/bin/$name" \
-        "$base_home/.cargo/bin/$name" \
-        "$base_home/.atuin/bin/$name" \
-        "$base_home/go/bin/$name" \
-        "$base_home/google-cloud-sdk/bin/$name" \
-        "$base_home/bin/$name" \
         "/usr/local/bin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
@@ -235,28 +344,26 @@ _status_home_for_user() {
 
     [[ -n "$user" ]] || return 1
 
-    if command -v getent &>/dev/null; then
-        passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
-        if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(_status_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
-                return 0
-            fi
-        fi
-    fi
-
     if [[ "$user" == "root" ]]; then
-        echo "/root"
+        printf '/root\n'
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(_status_resolve_current_user 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
         home_candidate="${_STATUS_CURRENT_HOME:-}"
         if [[ -z "$home_candidate" ]]; then
             home_candidate="$(_status_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
         fi
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
+    fi
+
+    passwd_entry="$(_status_getent_passwd_entry "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        home_candidate="$(_status_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -546,11 +653,20 @@ _status_resolve_target_home() {
         return 0
     fi
 
-    if [[ -n "$system_home" ]] && { [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]]; }; then
-        if [[ -n "$path_home" ]] || [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]] || [[ -z "$_STATUS_EXPLICIT_ACFS_HOME" ]] || [[ "$state_file" != "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]]; then
-            printf '%s\n' "$system_home"
+    if [[ -n "$state_home" ]]; then
+        if [[ "$state_file" == "$_STATUS_SYSTEM_STATE_FILE" ]]; then
+            printf '%s\n' "$state_home"
             return 0
         fi
+        if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]]; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$system_home" ]]; then
+        printf '%s\n' "$system_home"
+        return 0
     fi
 
     if [[ -n "$state_home" ]]; then
@@ -630,6 +746,7 @@ _status_resolve_acfs_home() {
     local candidate=""
     local target_home=""
     local target_user=""
+    local explicit_target_home=""
 
     candidate=$(_status_script_acfs_home 2>/dev/null || true)
     if [[ -n "$candidate" ]] && [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
@@ -669,13 +786,35 @@ _status_resolve_acfs_home() {
         fi
     fi
 
-    if [[ -n "$_ACFS_HOME" ]] && [[ -f "$_ACFS_HOME/state.json" || -f "$_ACFS_HOME/VERSION" || -d "$_ACFS_HOME/onboard" ]]; then
-        _STATUS_RESOLVED_ACFS_HOME="$_ACFS_HOME"
+    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_STATUS_EXPLICIT_ACFS_HOME/state.json" || -f "$_STATUS_EXPLICIT_ACFS_HOME/VERSION" || -d "$_STATUS_EXPLICIT_ACFS_HOME/onboard" ]]; then
+        _STATUS_RESOLVED_ACFS_HOME="$_STATUS_EXPLICIT_ACFS_HOME"
         printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
         return 0
     fi
 
-    _STATUS_RESOLVED_ACFS_HOME="$_ACFS_HOME"
+    explicit_target_home="$(_status_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+            _STATUS_RESOLVED_ACFS_HOME="$candidate"
+            printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_STATUS_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_STATUS_EXPLICIT_TARGET_USER_RAW" ]]; then
+        _STATUS_RESOLVED_ACFS_HOME=""
+        printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    if [[ -n "$_STATUS_DEFAULT_ACFS_HOME" ]] && [[ -f "$_STATUS_DEFAULT_ACFS_HOME/state.json" || -f "$_STATUS_DEFAULT_ACFS_HOME/VERSION" || -d "$_STATUS_DEFAULT_ACFS_HOME/onboard" ]]; then
+        _STATUS_RESOLVED_ACFS_HOME="$_STATUS_DEFAULT_ACFS_HOME"
+        printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    _STATUS_RESOLVED_ACFS_HOME="$_STATUS_DEFAULT_ACFS_HOME"
     printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
 }
 
@@ -700,12 +839,25 @@ _status_resolve_state_file() {
 }
 
 _status_prepare_context() {
-    _ACFS_HOME="$(_status_resolve_acfs_home)"
     local state_file=""
+    local explicit_target_home=""
+
+    _ACFS_HOME="$(_status_resolve_acfs_home 2>/dev/null || true)"
     state_file="$(_status_resolve_state_file)"
+    explicit_target_home="$(_status_resolve_explicit_target_home 2>/dev/null || true)"
+
+    if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "$explicit_target_home" ]]; then
+        TARGET_HOME="$explicit_target_home"
+        export TARGET_HOME
+    fi
 
     if [[ -z "${TARGET_USER:-}" ]]; then
         TARGET_USER=$(_status_resolve_target_user "$state_file" 2>/dev/null || true)
+        [[ -n "${TARGET_USER:-}" ]] && export TARGET_USER
+    fi
+
+    if [[ -z "${TARGET_USER:-}" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
+        TARGET_USER="$(_status_read_user_for_home "$TARGET_HOME" 2>/dev/null || true)"
         [[ -n "${TARGET_USER:-}" ]] && export TARGET_USER
     fi
 
@@ -713,8 +865,13 @@ _status_prepare_context() {
         TARGET_HOME=$(_status_resolve_target_home "$state_file" 2>/dev/null || true)
     fi
 
+    if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "$explicit_target_home" ]]; then
+        TARGET_HOME="$explicit_target_home"
+        export TARGET_HOME
+    fi
+
     if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "${TARGET_USER:-}" ]]; then
-        if _status_allow_target_home_fallback_from_user "$state_file"; then
+        if [[ "${TARGET_USER:-}" == "$_STATUS_EXPLICIT_TARGET_USER_RAW" ]] || _status_allow_target_home_fallback_from_user "$state_file"; then
             TARGET_HOME=$(_status_home_for_user "$TARGET_USER" 2>/dev/null || true)
             [[ -n "${TARGET_HOME:-}" ]] && export TARGET_HOME
         fi

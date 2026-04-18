@@ -37,38 +37,118 @@ support_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
-support_resolve_current_home() {
-    local current_user=""
-    local home_candidate=""
-    local passwd_entry=""
+support_existing_abs_home() {
+    local path_value=""
 
-    home_candidate="$(support_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
+    path_value="$(support_sanitize_abs_nonroot_path "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+    [[ -d "$path_value" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+support_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
         return 0
+    done
+
+    return 1
+}
+
+support_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(support_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(support_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+support_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+
+    getent_bin="$(support_system_binary_path getent 2>/dev/null || true)"
+    [[ -n "$getent_bin" ]] || return 1
+
+    if [[ -n "$user" ]]; then
+        "$getent_bin" passwd "$user" 2>/dev/null
+    else
+        "$getent_bin" passwd 2>/dev/null
+    fi
+}
+support_is_valid_username() {
+    local username="${1:-}"
+    [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
+}
+
+support_resolve_current_home() {
+    local current_user=""
+    local fallback_home=""
+    local passwd_entry=""
+    local passwd_home=""
+    fallback_home="$(support_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ "${_SUPPORT_WAS_SOURCED:-false}" == "true" ]]; then
+        fallback_home="$(support_sanitize_abs_nonroot_path "${_SUPPORT_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+    fi
+    current_user="$(support_resolve_current_user 2>/dev/null || true)"
+
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
-    if [[ -n "$current_user" ]] && command -v getent &>/dev/null; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+    if [[ -n "$current_user" ]]; then
+        passwd_entry="$(support_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
+            passwd_home="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
                 return 0
             fi
         fi
     fi
 
-    return 1
+    [[ -n "$fallback_home" ]] || return 1
+    printf '%s\n' "$fallback_home"
 }
+support_initial_current_home() {
+    local cached_home=""
 
-_SUPPORT_CURRENT_HOME="$(support_resolve_current_home 2>/dev/null || true)"
+    if [[ "${_SUPPORT_WAS_SOURCED:-false}" == "true" ]]; then
+        cached_home="$(support_sanitize_abs_nonroot_path "${_SUPPORT_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
+
+    support_resolve_current_home
+}
+_SUPPORT_CURRENT_HOME="$(support_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_SUPPORT_CURRENT_HOME" ]]; then
     HOME="$_SUPPORT_CURRENT_HOME"
     export HOME
@@ -79,6 +159,10 @@ _SUPPORT_EXPLICIT_ACFS_HOME="$(support_sanitize_abs_nonroot_path "${ACFS_HOME:-}
 _SUPPORT_DEFAULT_ACFS_HOME=""
 [[ -n "$_SUPPORT_CURRENT_HOME" ]] && _SUPPORT_DEFAULT_ACFS_HOME="${_SUPPORT_CURRENT_HOME}/.acfs"
 _SUPPORT_ACFS_HOME="$_SUPPORT_EXPLICIT_ACFS_HOME"
+_SUPPORT_ACFS_HOME_SOURCE=""
+_SUPPORT_EXPLICIT_TARGET_HOME_RAW="${TARGET_HOME:-}"
+_SUPPORT_EXPLICIT_TARGET_USER_RAW="${TARGET_USER:-}"
+_SUPPORT_EXPLICIT_TARGET_HOME="$(support_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
 
 # Source logging utilities
 if [[ -f "$_SUPPORT_SCRIPT_DIR/logging.sh" ]]; then
@@ -176,23 +260,12 @@ support_home_for_user() {
 
     [[ -n "$user" ]] || return 1
 
-    if command -v getent &>/dev/null; then
-        passwd_entry=$(getent passwd "$user" 2>/dev/null || true)
-        if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
-                return 0
-            fi
-        fi
-    fi
-
     if [[ "$user" == "root" ]]; then
-        echo "/root"
+        printf '/root\n'
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(support_resolve_current_user 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
         home_candidate="${_SUPPORT_CURRENT_HOME:-}"
         if [[ -z "$home_candidate" ]]; then
@@ -202,6 +275,35 @@ support_home_for_user() {
             printf '%s\n' "$home_candidate"
             return 0
         fi
+    fi
+
+    passwd_entry="$(support_getent_passwd_entry "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        home_candidate="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+support_resolve_explicit_target_home() {
+    local target_home=""
+
+    target_home="$_SUPPORT_EXPLICIT_TARGET_HOME"
+    if [[ -n "$target_home" ]]; then
+        printf '%s\n' "${target_home%/}"
+        return 0
+    fi
+
+    if [[ -n "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
+        support_is_valid_username "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" || return 1
+        target_home="$(support_existing_abs_home "$(support_home_for_user "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" 2>/dev/null || true)" 2>/dev/null || true)"
+        [[ -n "$target_home" ]] || return 1
+        printf '%s\n' "${target_home%/}"
+        return 0
     fi
 
     return 1
@@ -316,15 +418,32 @@ support_read_target_home_from_state() {
 
 support_resolve_target_home() {
     local state_file="${1:-}"
-    local target_home=""
+    local state_home=""
+    local system_home=""
 
-    target_home=$(support_read_target_home_from_state "$SUPPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
-    if [[ -z "$target_home" ]] && [[ -n "$state_file" ]]; then
-        target_home=$(support_read_target_home_from_state "$state_file" 2>/dev/null || true)
+    if [[ -n "$state_file" ]]; then
+        state_home=$(support_read_target_home_from_state "$state_file" 2>/dev/null || true)
+    fi
+    system_home=$(support_read_target_home_from_state "$SUPPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
+
+    if [[ -n "$state_home" ]]; then
+        if [[ "$state_file" == "$SUPPORT_SYSTEM_STATE_FILE" ]]; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
+        if [[ -n "$_SUPPORT_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_SUPPORT_EXPLICIT_ACFS_HOME/state.json" ]]; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
     fi
 
-    [[ -n "$target_home" ]] || return 1
-    printf '%s\n' "$target_home"
+    if [[ -n "$system_home" ]]; then
+        printf '%s\n' "$system_home"
+        return 0
+    fi
+
+    [[ -n "$state_home" ]] || return 1
+    printf '%s\n' "$state_home"
 }
 
 support_get_install_state_file() {
@@ -351,9 +470,13 @@ support_resolve_acfs_home() {
     local target_home=""
     local candidate=""
     local target_user=""
+    local explicit_target_home=""
+
+    _SUPPORT_ACFS_HOME_SOURCE=""
 
     candidate=$(support_script_acfs_home 2>/dev/null || true)
     if support_candidate_has_acfs_data "$candidate"; then
+        _SUPPORT_ACFS_HOME_SOURCE="script_acfs_home"
         printf '%s\n' "$candidate"
         return 0
     fi
@@ -362,6 +485,7 @@ support_resolve_acfs_home() {
         target_home=$(support_home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && support_candidate_has_acfs_data "$candidate"; then
+            _SUPPORT_ACFS_HOME_SOURCE="sudo_user_home"
             printf '%s\n' "$candidate"
             return 0
         fi
@@ -371,6 +495,7 @@ support_resolve_acfs_home() {
     if [[ -n "$target_home" ]]; then
         candidate="${target_home}/.acfs"
         if support_candidate_has_acfs_data "$candidate"; then
+            _SUPPORT_ACFS_HOME_SOURCE="system_state_target_home"
             printf '%s\n' "$candidate"
             return 0
         fi
@@ -381,16 +506,39 @@ support_resolve_acfs_home() {
         target_home=$(support_home_for_user "$target_user" || true)
         candidate="${target_home}/.acfs"
         if [[ -n "$target_home" ]] && support_candidate_has_acfs_data "$candidate"; then
+            _SUPPORT_ACFS_HOME_SOURCE="system_state_target_user"
             printf '%s\n' "$candidate"
             return 0
         fi
     fi
 
     if [[ -n "$_SUPPORT_ACFS_HOME" ]] && support_candidate_has_acfs_data "$_SUPPORT_ACFS_HOME"; then
+        _SUPPORT_ACFS_HOME_SOURCE="explicit_acfs_home"
         printf '%s\n' "$_SUPPORT_ACFS_HOME"
         return 0
     fi
 
+    explicit_target_home="$(support_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if support_candidate_has_acfs_data "$candidate"; then
+            _SUPPORT_ACFS_HOME_SOURCE="explicit_target_home"
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$_SUPPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
+        return 1
+    fi
+
+    if [[ -n "$_SUPPORT_DEFAULT_ACFS_HOME" ]] && support_candidate_has_acfs_data "$_SUPPORT_DEFAULT_ACFS_HOME"; then
+        _SUPPORT_ACFS_HOME_SOURCE="current_home"
+        printf '%s\n' "$_SUPPORT_DEFAULT_ACFS_HOME"
+        return 0
+    fi
+
+    _SUPPORT_ACFS_HOME_SOURCE="current_home"
     printf '%s\n' "${_SUPPORT_CURRENT_HOME:+${_SUPPORT_CURRENT_HOME}/.acfs}"
 }
 
@@ -407,6 +555,8 @@ support_infer_target_home_from_acfs_home() {
         :
     elif [[ -n "$_SUPPORT_DEFAULT_ACFS_HOME" ]] && [[ "$acfs_home_candidate" == "$_SUPPORT_DEFAULT_ACFS_HOME" ]]; then
         :
+    elif [[ "${_SUPPORT_ACFS_HOME_SOURCE:-}" == "explicit_target_home" ]]; then
+        :
     else
         return 1
     fi
@@ -420,17 +570,71 @@ support_initialize_context() {
     local state_file=""
     local path_home=""
     local detected_user=""
+    local state_target_user=""
+    local resolved_target_home=""
+    local explicit_target_home=""
+    local target_home_source=""
 
-    _SUPPORT_ACFS_HOME=$(support_resolve_acfs_home)
+    SUPPORT_TARGET_USER=""
+    SUPPORT_TARGET_HOME=""
+    _SUPPORT_ACFS_HOME=$(support_resolve_acfs_home 2>/dev/null || true)
     state_file=$(support_get_install_state_file)
     path_home="$(support_infer_target_home_from_acfs_home 2>/dev/null || true)"
+    explicit_target_home="$(support_resolve_explicit_target_home 2>/dev/null || true)"
+    state_target_user="$(support_read_target_user_from_state "$SUPPORT_SYSTEM_STATE_FILE" 2>/dev/null || support_read_target_user_from_state "$state_file" 2>/dev/null || true)"
 
     if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
         SUPPORT_TARGET_HOME="$path_home"
+        target_home_source="path_home"
     fi
 
-    if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
-        SUPPORT_TARGET_USER="$SUDO_USER"
+    if [[ -z "$SUPPORT_TARGET_HOME" ]]; then
+        resolved_target_home="$(support_resolve_target_home "$state_file" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            SUPPORT_TARGET_HOME="$resolved_target_home"
+            target_home_source="state_target_home"
+        fi
+    fi
+
+    if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ -n "$state_target_user" ]]; then
+        resolved_target_home="$(support_existing_abs_home "$(support_home_for_user "$state_target_user" 2>/dev/null || true)" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            SUPPORT_TARGET_HOME="$resolved_target_home"
+            target_home_source="state_target_user"
+        fi
+    fi
+
+    if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
+        SUPPORT_TARGET_HOME="$path_home"
+        target_home_source="path_home"
+    fi
+
+    if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ "$_SUPPORT_ACFS_HOME" == */.acfs ]]; then
+        resolved_target_home="$(support_existing_abs_home "${_SUPPORT_ACFS_HOME%/.acfs}" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            SUPPORT_TARGET_HOME="$resolved_target_home"
+            target_home_source="acfs_home_path"
+        fi
+    fi
+
+    if [[ -n "$_SUPPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
+        if [[ -n "$explicit_target_home" ]]; then
+            if [[ -z "$SUPPORT_TARGET_HOME" ]] || [[ "$target_home_source" == "current_home" ]]; then
+                SUPPORT_TARGET_HOME="$explicit_target_home"
+                target_home_source="explicit_target_home"
+            fi
+        elif [[ -z "$SUPPORT_TARGET_HOME" ]]; then
+            log_error "Explicit TARGET_HOME/TARGET_USER did not resolve to an installed home; refusing to fall back to current HOME"
+            return 1
+        fi
+    fi
+
+    if [[ -z "$SUPPORT_TARGET_HOME" ]]; then
+        resolved_target_home="$(support_existing_abs_home "${_SUPPORT_CURRENT_HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            SUPPORT_TARGET_HOME="$resolved_target_home"
+            target_home_source="current_home"
+        fi
     fi
 
     if [[ -z "$SUPPORT_TARGET_USER" ]] && [[ -n "$SUPPORT_TARGET_HOME" ]]; then
@@ -440,31 +644,21 @@ support_initialize_context() {
         fi
     fi
 
-    if [[ -z "$SUPPORT_TARGET_USER" ]] && [[ -n "$path_home" ]]; then
-        detected_user="$(support_read_target_user_from_state "$state_file" 2>/dev/null || true)"
-        if [[ -n "$detected_user" ]]; then
-            SUPPORT_TARGET_USER="$detected_user"
-        fi
+    if [[ -z "$SUPPORT_TARGET_USER" ]] && [[ "$target_home_source" != "explicit_target_home" ]] && [[ -n "$state_target_user" ]]; then
+        SUPPORT_TARGET_USER="$state_target_user"
+    fi
+
+    if [[ -z "$SUPPORT_TARGET_USER" ]] && support_is_valid_username "$_SUPPORT_EXPLICIT_TARGET_USER_RAW"; then
+        SUPPORT_TARGET_USER="$_SUPPORT_EXPLICIT_TARGET_USER_RAW"
+    fi
+
+    if [[ -z "$SUPPORT_TARGET_USER" ]] && [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
+        SUPPORT_TARGET_USER="$SUDO_USER"
     fi
 
     if [[ -z "$SUPPORT_TARGET_USER" ]]; then
-        SUPPORT_TARGET_USER=$(support_read_target_user_from_state ||             support_read_target_user_from_state "$state_file" ||             whoami 2>/dev/null || echo unknown)
+        SUPPORT_TARGET_USER="$(whoami 2>/dev/null || echo unknown)"
     fi
-
-    if [[ -z "$SUPPORT_TARGET_HOME" ]]; then
-        SUPPORT_TARGET_HOME=$(support_resolve_target_home "$state_file" || true)
-    fi
-    if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ -n "$SUPPORT_TARGET_USER" ]]; then
-        SUPPORT_TARGET_HOME=$(support_home_for_user "$SUPPORT_TARGET_USER" || true)
-    fi
-    if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ -n "$path_home" ]]; then
-        SUPPORT_TARGET_HOME="$path_home"
-    fi
-    if [[ -z "$SUPPORT_TARGET_HOME" ]] && [[ "$_SUPPORT_ACFS_HOME" == */.acfs ]]; then
-        SUPPORT_TARGET_HOME="${_SUPPORT_ACFS_HOME%/.acfs}"
-    fi
-
-    [[ -n "$SUPPORT_TARGET_HOME" ]] || SUPPORT_TARGET_HOME="${_SUPPORT_CURRENT_HOME:-}"
 
     if [[ "$OUTPUT_BASE_EXPLICIT" != "true" ]]; then
         if [[ -n "$_SUPPORT_ACFS_HOME" ]]; then
@@ -474,6 +668,7 @@ support_initialize_context() {
         fi
     fi
 }
+
 # Record a bundle-relative path in the manifest file list exactly once.
 # Usage: record_bundle_file <relative_path>
 record_bundle_file() {
@@ -532,7 +727,7 @@ capture_doctor_json() {
     local bundle_dir="$1"
 
     local doctor_script=""
-    if [[ -f "$_SUPPORT_ACFS_HOME/scripts/lib/doctor.sh" ]]; then
+    if [[ -n "$_SUPPORT_ACFS_HOME" ]] && [[ -f "$_SUPPORT_ACFS_HOME/scripts/lib/doctor.sh" ]]; then
         doctor_script="$_SUPPORT_ACFS_HOME/scripts/lib/doctor.sh"
     elif [[ -f "$_SUPPORT_SCRIPT_DIR/doctor.sh" ]]; then
         doctor_script="$_SUPPORT_SCRIPT_DIR/doctor.sh"
@@ -639,7 +834,7 @@ capture_env_summary() {
     fi
 
     local acfs_version="unknown"
-    if [[ -f "$_SUPPORT_ACFS_HOME/VERSION" ]]; then
+    if [[ -n "$_SUPPORT_ACFS_HOME" ]] && [[ -f "$_SUPPORT_ACFS_HOME/VERSION" ]]; then
         acfs_version=$(cat "$_SUPPORT_ACFS_HOME/VERSION" 2>/dev/null) || acfs_version="unknown"
     fi
 
@@ -851,13 +1046,16 @@ main() {
     log_detail "Collecting ACFS state files..."
     if [[ -n "$_SUPPORT_ACFS_HOME" ]]; then
         collect_file "$_SUPPORT_ACFS_HOME/state.json" "$bundle_dir" "state.json" || true
+        collect_file "$_SUPPORT_ACFS_HOME/VERSION" "$bundle_dir" "VERSION" || true
+        collect_file "$_SUPPORT_ACFS_HOME/checksums.yaml" "$bundle_dir" "checksums.yaml" || true
     fi
-    collect_file "$_SUPPORT_ACFS_HOME/VERSION" "$bundle_dir" "VERSION" || true
-    collect_file "$_SUPPORT_ACFS_HOME/checksums.yaml" "$bundle_dir" "checksums.yaml" || true
 
     # --- Collect install logs ---
     log_detail "Collecting install logs..."
-    local logs_dir="$_SUPPORT_ACFS_HOME/logs"
+    local logs_dir=""
+    if [[ -n "$_SUPPORT_ACFS_HOME" ]]; then
+        logs_dir="$_SUPPORT_ACFS_HOME/logs"
+    fi
     if [[ -d "$logs_dir" ]]; then
         mkdir -p "$bundle_dir/logs"
         # Collect recent install logs
@@ -917,7 +1115,9 @@ main() {
     # --- Collect configuration ---
     log_detail "Collecting configuration..."
     collect_file "${SUPPORT_TARGET_HOME}/.zshrc" "$bundle_dir" "config/.zshrc" ".zshrc" || true
-    collect_file "$_SUPPORT_ACFS_HOME/acfs.manifest.yaml" "$bundle_dir" "config/acfs.manifest.yaml" "acfs.manifest.yaml" || true
+    if [[ -n "$_SUPPORT_ACFS_HOME" ]]; then
+        collect_file "$_SUPPORT_ACFS_HOME/acfs.manifest.yaml" "$bundle_dir" "config/acfs.manifest.yaml" "acfs.manifest.yaml" || true
+    fi
 
     # --- Redact sensitive data ---
     redact_bundle "$bundle_dir"

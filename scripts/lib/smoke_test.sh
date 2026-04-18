@@ -147,15 +147,14 @@ _smoke_passwd_shell_from_entry() {
 
 _smoke_resolve_current_home() {
     local current_user=""
-    local home_candidate=""
+    local fallback_home=""
     local passwd_entry=""
+    local passwd_home=""
 
-    home_candidate="$(_smoke_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
+    fallback_home="$(_smoke_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ "${_SMOKE_WAS_SOURCED:-false}" == "true" ]]; then
+        fallback_home="$(_smoke_sanitize_abs_nonroot_path "${_SMOKE_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
     fi
-
     current_user="$(_smoke_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
@@ -165,21 +164,35 @@ _smoke_resolve_current_home() {
     if [[ -n "$current_user" ]]; then
         passwd_entry="$(_smoke_getent_passwd_entry "$current_user" || true)"
         if [[ -n "$passwd_entry" ]]; then
-            home_candidate="$(_smoke_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
-            home_candidate="$(_smoke_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
-            if [[ -n "$home_candidate" ]]; then
-                printf '%s\n' "$home_candidate"
+            passwd_home="$(_smoke_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+            passwd_home="$(_smoke_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
                 return 0
             fi
         fi
-
     fi
 
-    return 1
+    [[ -n "$fallback_home" ]] || return 1
+    printf '%s\n' "$fallback_home"
+}
+
+_smoke_initial_current_home() {
+    local cached_home=""
+
+    if [[ "${_SMOKE_WAS_SOURCED:-false}" == "true" ]]; then
+        cached_home="$(_smoke_sanitize_abs_nonroot_path "${_SMOKE_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
+
+    _smoke_resolve_current_home
 }
 
 _SMOKE_CURRENT_USER="$(_smoke_resolve_current_user 2>/dev/null || true)"
-_SMOKE_CURRENT_HOME="$(_smoke_resolve_current_home 2>/dev/null || true)"
+_SMOKE_CURRENT_HOME="$(_smoke_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_SMOKE_CURRENT_HOME" ]]; then
     HOME="$_SMOKE_CURRENT_HOME"
     export HOME

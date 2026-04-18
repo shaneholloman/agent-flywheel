@@ -119,23 +119,21 @@ doctor_fix_validate_bin_dir_for_home() {
 doctor_fix_resolve_current_home() {
     local current_user=""
     local home_candidate=""
+    local passwd_home=""
 
     home_candidate="$(doctor_fix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
-    fi
 
     current_user="$(doctor_fix_current_user 2>/dev/null || true)"
     if [[ -n "$current_user" ]]; then
-        home_candidate="$(doctor_fix_resolve_home_for_user "$current_user" 2>/dev/null || true)"
-        if [[ -n "$home_candidate" ]]; then
-            printf '%s\n' "$home_candidate"
+        passwd_home="$(doctor_fix_resolve_home_for_user "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_home" ]]; then
+            printf '%s\n' "$passwd_home"
             return 0
         fi
     fi
 
-    return 1
+    [[ -n "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
 }
 
 doctor_fix_runtime_home() {

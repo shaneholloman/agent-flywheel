@@ -157,23 +157,50 @@ resolve_home_for_user() {
   return 1
 }
 
+current_home_matches_update_install() {
+  local candidate_home="$1"
+  local current_user=""
+  local state_user=""
+
+  candidate_home="$(sanitize_abs_nonroot_path "$candidate_home" 2>/dev/null || true)"
+  [[ -n "$candidate_home" ]] || return 1
+  [[ -f "$candidate_home/.acfs/state.json" ]] || return 1
+  find_update_script_for_home "$candidate_home" >/dev/null 2>&1 || return 1
+
+  current_user="$(resolve_current_user 2>/dev/null || true)"
+  [[ -n "$current_user" ]] || return 1
+  state_user="$(read_target_user_from_state_hint "$candidate_home/.acfs/state.json" 2>/dev/null || true)"
+  [[ -n "$state_user" ]] || return 1
+  [[ "$state_user" == "$current_user" ]]
+}
+
 resolve_current_home() {
   local current_user=""
   local home_candidate=""
+  local passwd_home=""
 
   home_candidate="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-  if [[ -n "$home_candidate" ]]; then
-    printf '%s\n' "$home_candidate"
-    return 0
-  fi
-
   current_user="$(resolve_current_user 2>/dev/null || true)"
   if [[ -n "$current_user" ]]; then
-    home_candidate="$(resolve_home_for_user "$current_user" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
+    passwd_home="$(resolve_home_for_user "$current_user" 2>/dev/null || true)"
+    if [[ -n "$passwd_home" ]]; then
+      printf '%s\n' "$passwd_home"
+      return 0
+    fi
+  fi
+
+  if [[ -n "$home_candidate" ]]; then
+    if current_home_matches_update_install "$home_candidate"; then
       printf '%s\n' "$home_candidate"
       return 0
     fi
+
+    if [[ -e "$home_candidate/.acfs/state.json" ]] || [[ -e "$home_candidate/.acfs/bin/update.sh" ]] || [[ -e "$home_candidate/.local/bin/update.sh" ]] || [[ -e "$home_candidate/.acfs/scripts/lib/update.sh" ]]; then
+      return 1
+    fi
+
+    printf '%s\n' "$home_candidate"
+    return 0
   fi
 
   return 1
@@ -611,6 +638,12 @@ resolve_direct_exec_target_home() {
     fi
   fi
 
+  candidate_home="$(existing_abs_nonroot_dir "${TARGET_HOME:-}" 2>/dev/null || true)"
+  if [[ -n "$candidate_home" ]]; then
+    printf '%s\n' "$candidate_home"
+    return 0
+  fi
+
   for state_candidate in "${ACFS_STATE_FILE:-}" "${ACFS_SYSTEM_STATE_FILE:-}"; do
     candidate_home="$(resolve_target_home_from_state_hint "$state_candidate" 2>/dev/null || true)"
     [[ -n "$candidate_home" ]] || continue
@@ -624,9 +657,7 @@ resolve_direct_exec_target_home() {
     return 0
   fi
 
-  candidate_home="$(existing_abs_nonroot_dir "${TARGET_HOME:-}" 2>/dev/null || true)"
-  [[ -n "$candidate_home" ]] || return 1
-  printf '%s\n' "$candidate_home"
+  return 1
 }
 
 resolve_direct_exec_acfs_home() {
@@ -719,17 +750,18 @@ find_update_script_for_user() {
   local user="$1"
   local user_home=""
   local current_user=""
+  local target_home=""
 
-  user_home="$(resolve_home_for_user "$user" || true)"
-  if [[ -n "$user_home" ]] && find_update_script_for_home "$user_home" >/dev/null 2>&1; then
-    find_update_script_for_home "$user_home"
+  target_home="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+  if [[ -n "$target_home" ]] && [[ "$(validated_target_user_for_dispatch "$user" "$target_home" 2>/dev/null || true)" == "$user" ]]     && find_update_script_for_home "$target_home" >/dev/null 2>&1; then
+    find_update_script_for_home "$target_home"
     return 0
   fi
 
   current_user="$(resolve_current_user 2>/dev/null || true)"
-  if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-    user_home="${HOME%/}"
-    if find_update_script_for_home "$user_home" >/dev/null 2>&1; then
+  if [[ "$current_user" == "$user" ]]; then
+    user_home="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$user_home" ]] && current_home_matches_update_install "$user_home"; then
       find_update_script_for_home "$user_home"
       return 0
     fi
@@ -774,12 +806,22 @@ detect_target_user() {
   local wrapper_home=""
   local candidate_home=""
   local current_home=""
+  local explicit_target_home=""
 
   current_home="$(resolve_current_home 2>/dev/null || true)"
 
   wrapper_home="$(find_wrapper_installed_home 2>/dev/null || true)"
   if [[ -n "$wrapper_home" ]]; then
     candidate_user="$(read_user_for_home "$wrapper_home" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]]; then
+      printf '%s\n' "$candidate_user"
+      return 0
+    fi
+  fi
+
+  explicit_target_home="$(existing_abs_nonroot_dir "${TARGET_HOME:-}" 2>/dev/null || true)"
+  if [[ -n "$explicit_target_home" ]]; then
+    candidate_user="$(read_user_for_home "$explicit_target_home" 2>/dev/null || true)"
     if [[ -n "$candidate_user" ]]; then
       printf '%s\n' "$candidate_user"
       return 0
@@ -957,24 +999,37 @@ main() {
     fi
   fi
 
-  if [[ -z "$update_script" ]] && [[ -n "${ACFS_STATE_FILE:-}" ]]; then
-    candidate_script="$(find_update_script_for_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"
+  if [[ -z "$update_script" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
+    candidate_script="$(find_update_script_for_home "${TARGET_HOME}" 2>/dev/null || true)"
     [[ -n "$candidate_script" ]] && update_script="$candidate_script"
   fi
 
-  if [[ -z "$update_script" ]]; then
-    candidate_script="$(find_update_script_for_state_file "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
-    [[ -n "$candidate_script" ]] && update_script="$candidate_script"
+  if [[ -z "$update_script" ]] && [[ -n "${ACFS_STATE_FILE:-}" ]]; then
+    if [[ -z "${TARGET_HOME:-}" ]] || state_file_matches_target_home "$ACFS_STATE_FILE" "${TARGET_HOME}"; then
+      candidate_script="$(find_update_script_for_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"
+      [[ -n "$candidate_script" ]] && update_script="$candidate_script"
+    fi
+  fi
+
+  if [[ -z "$update_script" ]] && [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]]; then
+    if [[ -z "${TARGET_HOME:-}" ]] || state_file_matches_target_home "$ACFS_SYSTEM_STATE_FILE" "${TARGET_HOME}"; then
+      candidate_script="$(find_update_script_for_state_file "$ACFS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+      [[ -n "$candidate_script" ]] && update_script="$candidate_script"
+    fi
   fi
 
   if [[ -z "$update_script" ]] && [[ -n "${ACFS_HOME:-}" ]]; then
-    candidate_script="$(find_update_script_for_state_file "${ACFS_HOME}/state.json" 2>/dev/null || true)"
-    [[ -n "$candidate_script" ]] && update_script="$candidate_script"
+    if [[ -z "${TARGET_HOME:-}" ]] || state_file_matches_target_home "${ACFS_HOME}/state.json" "${TARGET_HOME}"; then
+      candidate_script="$(find_update_script_for_state_file "${ACFS_HOME}/state.json" 2>/dev/null || true)"
+      [[ -n "$candidate_script" ]] && update_script="$candidate_script"
+    fi
   fi
 
   if [[ -z "$update_script" ]] && [[ -n "$current_home" ]]; then
-    candidate_script="$(find_update_script_for_state_file "$current_home/.acfs/state.json" 2>/dev/null || true)"
-    [[ -n "$candidate_script" ]] && update_script="$candidate_script"
+    if [[ -z "${TARGET_HOME:-}" ]] || state_file_matches_target_home "$current_home/.acfs/state.json" "${TARGET_HOME}"; then
+      candidate_script="$(find_update_script_for_state_file "$current_home/.acfs/state.json" 2>/dev/null || true)"
+      [[ -n "$candidate_script" ]] && update_script="$candidate_script"
+    fi
   fi
 
   if [[ -z "$update_script" ]] && [[ -n "$target_user" ]]; then
