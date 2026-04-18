@@ -288,13 +288,44 @@ _smoke_resolve_bootstrap_state_file() {
     printf '%s\n' "$candidate"
 }
 
+_smoke_home_for_user() {
+    local user="${1:-}"
+    local passwd_entry=""
+    local home_candidate=""
+
+    [[ -n "$user" ]] || return 1
+
+    passwd_entry="$(_smoke_getent_passwd_entry "$user" || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        home_candidate="$(_smoke_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+        home_candidate="$(_smoke_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+        if [[ -n "$home_candidate" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
+    fi
+
+    if [[ "$user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "${_SMOKE_CURRENT_USER:-}" ]] && [[ "$user" == "$_SMOKE_CURRENT_USER" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
+        printf '%s\n' "$_SMOKE_CURRENT_HOME"
+        return 0
+    fi
+
+    return 1
+}
+
 _smoke_read_user_for_home() {
     local user_home="$1"
     local candidate_user=""
+    local current_home=""
     local getent_bin=""
-    local stat_bin=""
     local passwd_line=""
     local passwd_home=""
+    local state_file=""
 
     user_home="$(_smoke_sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
     [[ -n "$user_home" ]] || return 1
@@ -303,6 +334,7 @@ _smoke_read_user_for_home() {
     if [[ -n "$getent_bin" ]]; then
         while IFS= read -r passwd_line; do
             passwd_home="$(_smoke_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+            passwd_home="$(_smoke_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
             [[ "$passwd_home" == "$user_home" ]] || continue
             candidate_user="${passwd_line%%:*}"
             if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
@@ -315,6 +347,7 @@ _smoke_read_user_for_home() {
     if [[ -r /etc/passwd ]]; then
         while IFS= read -r passwd_line; do
             passwd_home="$(_smoke_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+            passwd_home="$(_smoke_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
             [[ "$passwd_home" == "$user_home" ]] || continue
             candidate_user="${passwd_line%%:*}"
             if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
@@ -324,10 +357,22 @@ _smoke_read_user_for_home() {
         done < /etc/passwd
     fi
 
-    stat_bin="$(_smoke_system_binary_path stat 2>/dev/null || true)"
-    if [[ -n "$stat_bin" ]]; then
-        candidate_user="$("$stat_bin" -c '%U' "$user_home" 2>/dev/null || "$stat_bin" -f '%Su' "$user_home" 2>/dev/null || true)"
-        if [[ -n "$candidate_user" ]] && [[ "$candidate_user" != "UNKNOWN" ]] && [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+    current_home="${_SMOKE_CURRENT_HOME:-}"
+    if [[ -n "${_SMOKE_CURRENT_USER:-}" ]] && [[ -n "$current_home" ]] && [[ "$user_home" == "$current_home" ]]; then
+        printf '%s\n' "$_SMOKE_CURRENT_USER"
+        return 0
+    fi
+
+    if [[ "$user_home" == "/root" ]]; then
+        printf 'root\n'
+        return 0
+    fi
+
+    state_file="$user_home/.acfs/state.json"
+    candidate_user="$(_smoke_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]]; then
+        current_home="$(_smoke_home_for_user "$candidate_user" 2>/dev/null || true)"
+        if [[ -n "$current_home" ]] && [[ "$current_home" == "$user_home" ]]; then
             printf '%s\n' "$candidate_user"
             return 0
         fi
@@ -410,17 +455,17 @@ _smoke_resolve_state_file() {
         fi
     fi
 
-    if [[ -f "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
-        printf '%s\n' "$_SMOKE_SYSTEM_STATE_FILE"
-        return 0
-    fi
-
     if [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]]; then
         explicit_state_file="$_SMOKE_EXPLICIT_ACFS_HOME/state.json"
         if [[ -f "$explicit_state_file" ]]; then
             printf '%s\n' "$explicit_state_file"
             return 0
         fi
+    fi
+
+    if [[ -f "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
+        printf '%s\n' "$_SMOKE_SYSTEM_STATE_FILE"
+        return 0
     fi
 
     if [[ -n "$_SMOKE_DEFAULT_ACFS_HOME" ]]; then
@@ -440,6 +485,116 @@ _smoke_resolve_state_file() {
     candidate="${env_state_file:-${current_state_file:-${target_state_file:-$explicit_state_file}}}"
     printf '%s\n' "$candidate"
 }
+
+_smoke_state_file_path_target_home() {
+    local state_file="${1:-}"
+    local data_home=""
+
+    [[ "$state_file" == */.acfs/state.json ]] || return 1
+    data_home="${state_file%/state.json}"
+    data_home="$(_smoke_sanitize_abs_nonroot_path "$data_home" 2>/dev/null || true)"
+    [[ -n "$data_home" ]] || return 1
+    printf '%s\n' "${data_home%/.acfs}"
+}
+
+_smoke_repair_target_context_from_resolved_state() {
+    local state_file=""
+    local default_state_file=""
+    local candidate_user=""
+    local candidate_home=""
+    local resolved_home=""
+    local path_home=""
+    local state_candidate_user=""
+    local state_home=""
+    local system_home=""
+    local system_user=""
+
+    state_file="$(_smoke_resolve_state_file 2>/dev/null || true)"
+    [[ -n "$state_file" ]] || return 0
+
+    if [[ -n "$_SMOKE_DEFAULT_ACFS_HOME" ]]; then
+        default_state_file="$_SMOKE_DEFAULT_ACFS_HOME/state.json"
+    fi
+    if [[ -n "$default_state_file" ]] && [[ "$state_file" == "$default_state_file" ]]         && [[ "$_SMOKE_TARGET_USER_DEFAULTED" != true ]]         && [[ -z "${TARGET_HOME:-}" ]]         && [[ -z "$_SMOKE_EXPLICIT_ACFS_HOME" ]]         && [[ ! -f "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
+        return 0
+    fi
+
+    state_home="$(_smoke_read_state_string "$state_file" "target_home" 2>/dev/null || true)"
+    state_home="$(_smoke_sanitize_abs_nonroot_path "$state_home" 2>/dev/null || true)"
+    path_home="$(_smoke_state_file_path_target_home "$state_file" 2>/dev/null || true)"
+    system_home="$(_smoke_read_state_string "$_SMOKE_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)"
+    system_home="$(_smoke_sanitize_abs_nonroot_path "$system_home" 2>/dev/null || true)"
+    system_user="$(_smoke_read_state_string "$_SMOKE_SYSTEM_STATE_FILE" "target_user" 2>/dev/null || true)"
+
+    if [[ -n "$system_user" ]] && [[ -n "$system_home" ]]; then
+        if [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]] || [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; then
+            candidate_user="$system_user"
+            resolved_home="$system_home"
+        fi
+    fi
+
+    if [[ -z "$candidate_user" ]] && [[ -n "$path_home" ]]; then
+        candidate_user="$(_smoke_read_user_for_home "$path_home" 2>/dev/null || true)"
+        if [[ -n "$candidate_user" ]]; then
+            resolved_home="$path_home"
+        fi
+    fi
+
+    if [[ -z "$candidate_user" ]] && [[ -n "$state_home" ]] && [[ -z "$path_home" || "$state_home" == "$path_home" ]]; then
+        candidate_user="$(_smoke_read_user_for_home "$state_home" 2>/dev/null || true)"
+        if [[ -n "$candidate_user" ]]; then
+            resolved_home="$state_home"
+        fi
+    fi
+
+    state_candidate_user="$(_smoke_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+    if [[ -z "$candidate_user" ]] && [[ -n "$state_candidate_user" ]]; then
+        if [[ -z "$state_home" ]]; then
+            candidate_user="$state_candidate_user"
+        else
+            candidate_home="$(_smoke_home_for_user "$state_candidate_user" 2>/dev/null || true)"
+            if [[ -n "$path_home" ]] && [[ "$candidate_home" == "$path_home" ]]; then
+                candidate_user="$state_candidate_user"
+                resolved_home="$path_home"
+            elif [[ -n "$state_home" ]] && [[ "$candidate_home" == "$state_home" ]]; then
+                candidate_user="$state_candidate_user"
+                resolved_home="$state_home"
+            elif [[ -n "$_SMOKE_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_SMOKE_EXPLICIT_ACFS_HOME/state.json" ]]; then
+                candidate_user="$state_candidate_user"
+                if [[ -n "$state_home" ]]; then
+                    resolved_home="$state_home"
+                elif [[ -n "$path_home" ]]; then
+                    resolved_home="$path_home"
+                fi
+            fi
+        fi
+    fi
+
+    if [[ -z "$candidate_user" ]] && [[ -n "$system_user" ]] && [[ -z "$system_home" ]]; then
+        candidate_user="$system_user"
+    fi
+
+    if [[ -z "$resolved_home" ]] && [[ -n "$system_home" ]] && { [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]] || [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; }; then
+        resolved_home="$system_home"
+    fi
+    if [[ -z "$resolved_home" ]] && [[ -n "$state_home" ]]; then
+        resolved_home="$state_home"
+    fi
+    if [[ -z "$resolved_home" ]] && [[ -n "$candidate_user" ]]; then
+        resolved_home="$(_smoke_home_for_user "$candidate_user" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$candidate_user" ]] && [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        _SMOKE_TARGET_USER="$candidate_user"
+        _SMOKE_TARGET_USER_DEFAULTED=false
+    fi
+
+    if [[ -n "$resolved_home" ]]; then
+        _SMOKE_TARGET_HOME="$resolved_home"
+    fi
+}
+
+_smoke_repair_target_context_from_resolved_state
 
 _smoke_read_bin_dir_from_state() {
     local state_file="${1:-}"

@@ -299,17 +299,207 @@ _status_read_bin_dir_from_state() {
     printf '%s\n' "$bin_dir"
 }
 
-_status_resolve_target_home() {
+_status_state_file_path_target_home() {
     local state_file="${1:-}"
-    local target_home=""
+    local data_home=""
 
-    target_home=$(_status_read_target_home_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)
-    if [[ -z "$target_home" ]] && [[ -n "$state_file" ]]; then
-        target_home=$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)
+    [[ "$state_file" == */.acfs/state.json ]] || return 1
+    data_home="${state_file%/state.json}"
+    data_home="$(_status_sanitize_abs_nonroot_path "$data_home" 2>/dev/null || true)"
+    [[ -n "$data_home" ]] || return 1
+    printf '%s\n' "${data_home%/.acfs}"
+}
+
+_status_read_user_for_home() {
+    local user_home="${1:-}"
+    local candidate_user=""
+    local candidate_home=""
+    local current_user=""
+    local current_home=""
+    local passwd_line=""
+    local passwd_home=""
+    local state_file=""
+
+    user_home="$(_status_sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
+    [[ -n "$user_home" ]] || return 1
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_status_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ "$passwd_home" == "$user_home" ]] || continue
+            candidate_user="${passwd_line%%:*}"
+            if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+                printf '%s\n' "$candidate_user"
+                return 0
+            fi
+        done < <(getent passwd 2>/dev/null || true)
     fi
 
-    [[ -n "$target_home" ]] || return 1
-    printf '%s\n' "$target_home"
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(_status_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ "$passwd_home" == "$user_home" ]] || continue
+            candidate_user="${passwd_line%%:*}"
+            if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+                printf '%s\n' "$candidate_user"
+                return 0
+            fi
+        done < /etc/passwd
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_home="${_STATUS_CURRENT_HOME:-}"
+    if [[ -z "$current_home" ]]; then
+        current_home="$(_status_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    fi
+    if [[ -n "$current_user" ]] && [[ -n "$current_home" ]] && [[ "$user_home" == "$current_home" ]]; then
+        printf '%s\n' "$current_user"
+        return 0
+    fi
+
+    if [[ "$user_home" == "/root" ]]; then
+        printf 'root\n'
+        return 0
+    fi
+
+    state_file="$user_home/.acfs/state.json"
+    candidate_user="$(_status_read_target_user_from_state "$state_file" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]]; then
+        candidate_home="$(_status_home_for_user "$candidate_user" 2>/dev/null || true)"
+        if [[ -n "$candidate_home" ]] && [[ "$candidate_home" == "$user_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+_status_resolve_target_user() {
+    local state_file="${1:-}"
+    local candidate_user=""
+    local candidate_home=""
+    local path_home=""
+    local state_home=""
+    local system_home=""
+    local system_user=""
+
+    state_home="$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)"
+    path_home="$(_status_state_file_path_target_home "$state_file" 2>/dev/null || true)"
+    system_home="$(_status_read_target_home_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+    system_user="$(_status_read_target_user_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+
+    if [[ -n "$system_user" ]] && [[ -n "$system_home" ]]; then
+        if [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]] || [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; then
+            printf '%s\n' "$system_user"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$path_home" ]]; then
+        candidate_user="$(_status_read_user_for_home "$path_home" 2>/dev/null || true)"
+        if [[ -n "$candidate_user" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$state_home" ]] && [[ -z "$path_home" || "$state_home" == "$path_home" ]]; then
+        candidate_user="$(_status_read_user_for_home "$state_home" 2>/dev/null || true)"
+        if [[ -n "$candidate_user" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    candidate_user="$(_status_read_target_user_from_state "$state_file" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]]; then
+        if [[ -z "$state_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+
+        candidate_home="$(_status_home_for_user "$candidate_user" 2>/dev/null || true)"
+        if [[ -n "$path_home" ]] && [[ "$candidate_home" == "$path_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+        if [[ -n "$state_home" ]] && [[ "$candidate_home" == "$state_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+
+        if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$system_user" ]] && [[ -z "$system_home" ]]; then
+        printf '%s\n' "$system_user"
+        return 0
+    fi
+
+    return 1
+}
+
+_status_resolve_target_home() {
+    local state_file="${1:-}"
+    local path_home=""
+    local state_home=""
+    local system_home=""
+
+    path_home="$(_status_state_file_path_target_home "$state_file" 2>/dev/null || true)"
+    state_home="$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)"
+    system_home="$(_status_read_target_home_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+
+    if [[ -n "$system_home" ]] && { [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]] || [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; }; then
+        printf '%s\n' "$system_home"
+        return 0
+    fi
+
+    if [[ -n "$state_home" ]]; then
+        if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]]; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
+
+        if [[ -z "$path_home" ]] || [[ "$path_home" == "$state_home" ]]; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+_status_allow_target_home_fallback_from_user() {
+    local state_file="${1:-}"
+    local path_home=""
+    local state_home=""
+    local script_acfs_home=""
+
+    path_home="$(_status_state_file_path_target_home "$state_file" 2>/dev/null || true)"
+    state_home="$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)"
+    script_acfs_home="$(_status_script_acfs_home 2>/dev/null || true)"
+
+    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]]; then
+        return 0
+    fi
+
+    if [[ -n "$script_acfs_home" ]] && [[ "$state_file" == "$script_acfs_home/state.json" ]]; then
+        return 0
+    fi
+
+    if [[ "$state_file" == "$_STATUS_SYSTEM_STATE_FILE" ]]; then
+        return 0
+    fi
+
+    if [[ -n "$state_home" ]] && { [[ -z "$path_home" ]] || [[ "$path_home" == "$state_home" ]]; }; then
+        return 0
+    fi
+
+    return 1
 }
 
 _status_preferred_bin_dir() {
@@ -426,8 +616,7 @@ _status_prepare_context() {
     state_file="$(_status_resolve_state_file)"
 
     if [[ -z "${TARGET_USER:-}" ]]; then
-        TARGET_USER=$(_status_read_target_user_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || \
-            _status_read_target_user_from_state "$state_file" 2>/dev/null || true)
+        TARGET_USER=$(_status_resolve_target_user "$state_file" 2>/dev/null || true)
         [[ -n "${TARGET_USER:-}" ]] && export TARGET_USER
     fi
 
@@ -436,8 +625,10 @@ _status_prepare_context() {
     fi
 
     if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "${TARGET_USER:-}" ]]; then
-        TARGET_HOME=$(_status_home_for_user "$TARGET_USER" 2>/dev/null || true)
-        [[ -n "${TARGET_HOME:-}" ]] && export TARGET_HOME
+        if _status_allow_target_home_fallback_from_user "$state_file"; then
+            TARGET_HOME=$(_status_home_for_user "$TARGET_USER" 2>/dev/null || true)
+            [[ -n "${TARGET_HOME:-}" ]] && export TARGET_HOME
+        fi
     fi
 
     [[ -n "${TARGET_HOME:-}" ]] && export TARGET_HOME

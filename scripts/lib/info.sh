@@ -248,17 +248,178 @@ info_read_bin_dir_from_state() {
     printf '%s\n' "$bin_dir"
 }
 
-info_resolve_target_home() {
+info_state_file_path_target_home() {
     local state_file="${1:-}"
-    local target_home=""
+    local data_home=""
 
-    target_home=$(info_read_target_home_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || true)
-    if [[ -z "$target_home" ]] && [[ -n "$state_file" ]]; then
-        target_home=$(info_read_target_home_from_state "$state_file" 2>/dev/null || true)
+    [[ "$state_file" == */.acfs/state.json ]] || return 1
+    data_home="${state_file%/state.json}"
+    data_home="$(info_sanitize_abs_nonroot_path "$data_home" 2>/dev/null || true)"
+    [[ -n "$data_home" ]] || return 1
+    printf '%s\n' "${data_home%/.acfs}"
+}
+
+info_read_user_for_home() {
+    local user_home="${1:-}"
+    local candidate_user=""
+    local candidate_home=""
+    local current_user=""
+    local current_home=""
+    local passwd_line=""
+    local passwd_home=""
+    local state_file=""
+
+    user_home="$(info_sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
+    [[ -n "$user_home" ]] || return 1
+
+    if command -v getent &>/dev/null; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(info_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ "$passwd_home" == "$user_home" ]] || continue
+            candidate_user="${passwd_line%%:*}"
+            if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+                printf '%s\n' "$candidate_user"
+                return 0
+            fi
+        done < <(getent passwd 2>/dev/null || true)
     fi
 
-    [[ -n "$target_home" ]] || return 1
-    printf '%s\n' "$target_home"
+    if [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            passwd_home="$(info_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
+            [[ "$passwd_home" == "$user_home" ]] || continue
+            candidate_user="${passwd_line%%:*}"
+            if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+                printf '%s\n' "$candidate_user"
+                return 0
+            fi
+        done < /etc/passwd
+    fi
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_home="${_INFO_CURRENT_HOME:-}"
+    if [[ -z "$current_home" ]]; then
+        current_home="$(info_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    fi
+    if [[ -n "$current_user" ]] && [[ -n "$current_home" ]] && [[ "$user_home" == "$current_home" ]]; then
+        printf '%s\n' "$current_user"
+        return 0
+    fi
+
+    if [[ "$user_home" == "/root" ]]; then
+        printf 'root\n'
+        return 0
+    fi
+
+    state_file="$user_home/.acfs/state.json"
+    candidate_user="$(info_read_target_user_from_state "$state_file" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]]; then
+        candidate_home="$(info_home_for_user "$candidate_user" 2>/dev/null || true)"
+        if [[ -n "$candidate_home" ]] && [[ "$candidate_home" == "$user_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+info_resolve_target_user() {
+    local state_file="${1:-}"
+    local candidate_user=""
+    local candidate_home=""
+    local path_home=""
+    local state_home=""
+    local system_home=""
+    local system_user=""
+
+    state_home="$(info_read_target_home_from_state "$state_file" 2>/dev/null || true)"
+    path_home="$(info_state_file_path_target_home "$state_file" 2>/dev/null || true)"
+    system_home="$(info_read_target_home_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+    system_user="$(info_read_target_user_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+
+    if [[ -n "$system_user" ]] && [[ -n "$system_home" ]]; then
+        if [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]] || [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; then
+            printf '%s\n' "$system_user"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$path_home" ]]; then
+        candidate_user="$(info_read_user_for_home "$path_home" 2>/dev/null || true)"
+        if [[ -n "$candidate_user" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$state_home" ]] && [[ -z "$path_home" || "$state_home" == "$path_home" ]]; then
+        candidate_user="$(info_read_user_for_home "$state_home" 2>/dev/null || true)"
+        if [[ -n "$candidate_user" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    candidate_user="$(info_read_target_user_from_state "$state_file" 2>/dev/null || true)"
+    if [[ -n "$candidate_user" ]]; then
+        if [[ -z "$state_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+
+        candidate_home="$(info_home_for_user "$candidate_user" 2>/dev/null || true)"
+        if [[ -n "$path_home" ]] && [[ "$candidate_home" == "$path_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+        if [[ -n "$state_home" ]] && [[ "$candidate_home" == "$state_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+
+        if [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_INFO_EXPLICIT_ACFS_HOME/state.json" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$system_user" ]] && [[ -z "$system_home" ]]; then
+        printf '%s\n' "$system_user"
+        return 0
+    fi
+
+    return 1
+}
+
+info_resolve_target_home() {
+    local state_file="${1:-}"
+    local path_home=""
+    local state_home=""
+    local system_home=""
+
+    path_home="$(info_state_file_path_target_home "$state_file" 2>/dev/null || true)"
+    state_home="$(info_read_target_home_from_state "$state_file" 2>/dev/null || true)"
+    system_home="$(info_read_target_home_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+
+    if [[ -n "$system_home" ]] && { [[ -z "$path_home" ]] || [[ "$path_home" == "$system_home" ]] || [[ -z "$state_home" ]] || [[ "$state_home" == "$system_home" ]]; }; then
+        printf '%s\n' "$system_home"
+        return 0
+    fi
+
+    if [[ -n "$state_home" ]]; then
+        if [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_INFO_EXPLICIT_ACFS_HOME/state.json" ]]; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
+
+        if [[ -z "$path_home" ]] || [[ "$path_home" == "$state_home" ]]; then
+            printf '%s\n' "$state_home"
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 info_preferred_bin_dir() {
@@ -438,8 +599,7 @@ info_prepare_context() {
     state_file=$(info_get_install_state_file)
 
     if [[ -z "${TARGET_USER:-}" ]]; then
-        TARGET_USER=$(info_read_target_user_from_state "$_INFO_SYSTEM_STATE_FILE" 2>/dev/null || \
-            info_read_target_user_from_state "$state_file" 2>/dev/null || true)
+        TARGET_USER=$(info_resolve_target_user "$state_file" 2>/dev/null || true)
         [[ -n "${TARGET_USER:-}" ]] && export TARGET_USER
     fi
 

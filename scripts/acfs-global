@@ -220,6 +220,26 @@ read_bin_dir_from_state_file() {
     return 1
 }
 
+state_file_path_user_home() {
+    local state_file="$1"
+    local state_home=""
+    local candidate_user=""
+    local resolved_home=""
+
+    [[ "$state_file" == */.acfs/state.json ]] || return 1
+    state_home="${state_file%/.acfs/state.json}"
+    state_home="$(sanitize_abs_nonroot_path "$state_home" 2>/dev/null || true)"
+    [[ -n "$state_home" ]] || return 1
+
+    candidate_user="$(read_user_for_home "$state_home" 2>/dev/null || true)"
+    [[ -n "$candidate_user" ]] || return 1
+    resolved_home="$(resolve_home_for_user "$candidate_user" 2>/dev/null || true)"
+    [[ -n "$resolved_home" ]] || return 1
+    [[ "$resolved_home" == "$state_home" ]] || return 1
+
+    printf '%s\n' "$state_home"
+}
+
 state_file_matches_target_home() {
     local state_file="$1"
     local expected_home="$2"
@@ -229,10 +249,8 @@ state_file_matches_target_home() {
     expected_home="$(sanitize_abs_nonroot_path "$expected_home" 2>/dev/null || true)"
     [[ -n "$expected_home" ]] || return 1
 
-    if [[ "$state_file" == */.acfs/state.json ]]; then
-        state_home="${state_file%/.acfs/state.json}"
-        state_home="$(sanitize_abs_nonroot_path "$state_home" 2>/dev/null || true)"
-    else
+    state_home="$(state_file_path_user_home "$state_file" 2>/dev/null || true)"
+    if [[ -z "$state_home" ]]; then
         state_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
     fi
 
@@ -295,8 +313,9 @@ find_acfs_bin_for_home() {
     return 1
 }
 
-home_from_acfs_bin() {
+acfs_home_from_acfs_bin() {
     local acfs_bin="$1"
+    local acfs_home=""
     local user_home=""
 
     [[ -n "$acfs_bin" ]] || return 1
@@ -304,33 +323,97 @@ home_from_acfs_bin() {
     case "$acfs_bin" in
         */.local/bin/acfs)
             user_home="${acfs_bin%/.local/bin/acfs}"
+            acfs_home="$user_home/.acfs"
             ;;
         */.acfs/bin/acfs)
-            user_home="${acfs_bin%/.acfs/bin/acfs}"
+            acfs_home="${acfs_bin%/bin/acfs}"
             ;;
         *)
             return 1
             ;;
     esac
 
-    [[ -n "$user_home" ]] || return 1
-    [[ "$user_home" == /* ]] || return 1
-    [[ "$user_home" != "/" ]] || return 1
-    printf '%s\n' "${user_home%/}"
+    acfs_home="$(sanitize_abs_nonroot_path "$acfs_home" 2>/dev/null || true)"
+    [[ -n "$acfs_home" ]] || return 1
+    printf '%s\n' "$acfs_home"
 }
 
-prepare_runtime_context_from_home() {
-    local user_home="$1"
+validated_target_user_for_dispatch() {
+    local candidate_user="$1"
+    local expected_home="${2:-}"
+    local current_user=""
+    local resolved_home=""
+
+    [[ -n "$candidate_user" ]] || return 1
+    is_valid_username "$candidate_user" || return 1
+
+    current_user="$(resolve_current_user 2>/dev/null || true)"
+    if [[ -n "$current_user" ]] && [[ "$current_user" == "$candidate_user" ]]; then
+        printf '%s\n' "$candidate_user"
+        return 0
+    fi
+
+    resolved_home="$(resolve_home_for_user "$candidate_user" 2>/dev/null || true)"
+    [[ -n "$resolved_home" ]] || return 1
+
+    expected_home="$(sanitize_abs_nonroot_path "$expected_home" 2>/dev/null || true)"
+    if [[ -n "$expected_home" ]] && [[ "$resolved_home" != "$expected_home" ]]; then
+        return 1
+    fi
+
+    printf '%s\n' "$candidate_user"
+}
+
+acfs_home_path_target_home() {
+    local acfs_home="$1"
+    local candidate_home=""
+
+    [[ "$acfs_home" == */.acfs ]] || return 1
+    candidate_home="${acfs_home%/.acfs}"
+    candidate_home="$(sanitize_abs_nonroot_path "$candidate_home" 2>/dev/null || true)"
+    [[ -n "$candidate_home" ]] || return 1
+
+    printf '%s\n' "$candidate_home"
+}
+
+prepare_runtime_context_from_acfs_home() {
+    local acfs_home="$1"
+    local state_file=""
     local state_bin_dir=""
+    local runtime_target_home=""
+    local runtime_target_user=""
+    local validated_target_user=""
 
-    user_home="$(sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
-    [[ -n "$user_home" ]] || return 1
+    ACFS_RUNTIME_TARGET_USER=""
 
-    TARGET_HOME="$user_home"
-    ACFS_HOME="$user_home/.acfs"
-    ACFS_STATE_FILE="$ACFS_HOME/state.json"
+    acfs_home="$(sanitize_abs_nonroot_path "$acfs_home" 2>/dev/null || true)"
+    [[ -n "$acfs_home" ]] || return 1
+    state_file="$acfs_home/state.json"
+
+    runtime_target_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
+    runtime_target_user="$(read_target_user_from_state_file "$state_file" 2>/dev/null || true)"
+
+    runtime_target_home="$(sanitize_abs_nonroot_path "$runtime_target_home" 2>/dev/null || true)"
+    if [[ -n "$runtime_target_home" ]] && [[ ! -d "$runtime_target_home" ]]; then
+        runtime_target_home=""
+    fi
+
+    if [[ -z "$runtime_target_home" ]]; then
+        runtime_target_home="$(acfs_home_path_target_home "$acfs_home" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$runtime_target_user" ]] && [[ -n "$runtime_target_home" ]]; then
+        runtime_target_user="$(read_user_for_home "$runtime_target_home" 2>/dev/null || true)"
+    fi
+
+    validated_target_user="$(validated_target_user_for_dispatch "$runtime_target_user" "$runtime_target_home" 2>/dev/null || true)"
+
+    [[ -n "$runtime_target_home" ]] && TARGET_HOME="$runtime_target_home"
+    ACFS_HOME="$acfs_home"
+    ACFS_STATE_FILE="$state_file"
     state_bin_dir="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"
     ACFS_BIN_DIR="${state_bin_dir:-}"
+    ACFS_RUNTIME_TARGET_USER="${validated_target_user:-}"
 
     export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_BIN_DIR
 }
@@ -388,20 +471,18 @@ read_target_user_from_state_hint() {
 
     [[ -f "$state_file" ]] || return 1
 
-    if [[ "$state_file" == */.acfs/state.json ]]; then
-        state_home="${state_file%/.acfs/state.json}"
-        state_home="${state_home%/}"
-        if [[ -n "$state_home" ]] && [[ "$state_home" == /* ]] && [[ "$state_home" != "/" ]]; then
-            candidate_user="$(read_user_for_home "$state_home" 2>/dev/null || true)"
-            if [[ -n "$candidate_user" ]] && find_acfs_bin_for_home "$state_home" >/dev/null 2>&1; then
-                printf '%s\n' "$candidate_user"
-                return 0
-            fi
-
-            # For home-adjacent state files, refuse to trust mismatched target_user
-            # values from stale copies. The path itself is the stronger signal.
-            return 1
+    state_home="$(state_file_path_user_home "$state_file" 2>/dev/null || true)"
+    if [[ -n "$state_home" ]] && find_acfs_bin_for_home "$state_home" >/dev/null 2>&1; then
+        candidate_user="$(read_user_for_home "$state_home" 2>/dev/null || true)"
+        if [[ -n "$candidate_user" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
         fi
+
+        # For genuine home-adjacent state files, refuse to trust mismatched
+        # target_user values from stale copies. The path itself is the stronger
+        # signal once it has been validated as a real user home.
+        return 1
     fi
 
     state_home="$(read_target_home_from_state_file "$state_file" 2>/dev/null || true)"
@@ -545,7 +626,7 @@ main() {
     local acfs_bin=""
     local bash_bin=""
     local current_user
-    local runtime_home=""
+    local runtime_acfs_home=""
     local runtime_user=""
     local candidate_bin=""
     local direct_acfs_home=""
@@ -652,12 +733,14 @@ main() {
         exit 1
     fi
 
-    runtime_home="$(home_from_acfs_bin "$acfs_bin" 2>/dev/null || true)"
-    if [[ -n "$runtime_home" ]]; then
-        prepare_runtime_context_from_home "$runtime_home"
-        runtime_user="$(read_user_for_home "$runtime_home" 2>/dev/null || true)"
-        if [[ -n "$runtime_user" ]]; then
-            target_user="$runtime_user"
+    ACFS_RUNTIME_TARGET_USER=""
+    runtime_acfs_home="$(acfs_home_from_acfs_bin "$acfs_bin" 2>/dev/null || true)"
+    if [[ -n "$runtime_acfs_home" ]]; then
+        if prepare_runtime_context_from_acfs_home "$runtime_acfs_home" >/dev/null 2>&1; then
+            runtime_user="${ACFS_RUNTIME_TARGET_USER:-}"
+            if [[ -z "$target_user" ]] && [[ -n "$runtime_user" ]]; then
+                target_user="$runtime_user"
+            fi
         fi
     fi
 
