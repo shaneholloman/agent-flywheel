@@ -126,6 +126,37 @@ teardown() {
         || fail "Expected run_as_target to extend PATH for target-user bins, got: $captured"
 }
 
+@test "run_as_target: preserves ACFS bootstrap context for generated child shells" {
+    export TARGET_USER="testuser"
+    export TARGET_HOME="/home/testuser"
+    export ACFS_HOME="/home/testuser/.acfs"
+    export ACFS_BIN_DIR="/home/testuser/.local/bin"
+    export ACFS_BOOTSTRAP_DIR="/tmp/acfs-bootstrap"
+    export ACFS_LIB_DIR="/tmp/acfs-bootstrap/scripts/lib"
+    export ACFS_GENERATED_DIR="/tmp/acfs-bootstrap/scripts/generated"
+    export ACFS_ASSETS_DIR="/tmp/acfs-bootstrap/acfs"
+    export ACFS_CHECKSUMS_YAML="/tmp/acfs-bootstrap/checksums.yaml"
+    export ACFS_MANIFEST_YAML="/tmp/acfs-bootstrap/acfs.manifest.yaml"
+    export CHECKSUMS_FILE="/tmp/acfs-bootstrap/checksums.yaml"
+    export ACFS_REF="main"
+
+    spy_command "sudo"
+
+    run run_as_target env
+    assert_success
+
+    local captured
+    captured="$(cat "$STUB_DIR/sudo.log")"
+    [[ "$captured" == *"ACFS_BOOTSTRAP_DIR=/tmp/acfs-bootstrap"* ]] || fail "Missing ACFS_BOOTSTRAP_DIR: $captured"
+    [[ "$captured" == *"ACFS_LIB_DIR=/tmp/acfs-bootstrap/scripts/lib"* ]] || fail "Missing ACFS_LIB_DIR: $captured"
+    [[ "$captured" == *"ACFS_GENERATED_DIR=/tmp/acfs-bootstrap/scripts/generated"* ]] || fail "Missing ACFS_GENERATED_DIR: $captured"
+    [[ "$captured" == *"ACFS_ASSETS_DIR=/tmp/acfs-bootstrap/acfs"* ]] || fail "Missing ACFS_ASSETS_DIR: $captured"
+    [[ "$captured" == *"ACFS_CHECKSUMS_YAML=/tmp/acfs-bootstrap/checksums.yaml"* ]] || fail "Missing ACFS_CHECKSUMS_YAML: $captured"
+    [[ "$captured" == *"ACFS_MANIFEST_YAML=/tmp/acfs-bootstrap/acfs.manifest.yaml"* ]] || fail "Missing ACFS_MANIFEST_YAML: $captured"
+    [[ "$captured" == *"CHECKSUMS_FILE=/tmp/acfs-bootstrap/checksums.yaml"* ]] || fail "Missing CHECKSUMS_FILE: $captured"
+    [[ "$captured" == *"ACFS_REF=main"* ]] || fail "Missing ACFS_REF: $captured"
+}
+
 @test "_acfs_resolve_target_home: fails closed when NSS cannot resolve another user" {
     stub_command "getent" "" 2
     export HOME="$BATS_TEST_TMPDIR/current-home"

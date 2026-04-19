@@ -181,6 +181,13 @@ dashboard_resolve_current_home() {
 }
 dashboard_initial_current_home() {
     local cached_home=""
+    local resolved_home=""
+
+    resolved_home="$(dashboard_resolve_current_home 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "$resolved_home"
+        return 0
+    fi
 
     if [[ "${_DASHBOARD_WAS_SOURCED:-false}" == "true" ]]; then
         cached_home="$(dashboard_sanitize_abs_nonroot_path "${_DASHBOARD_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
@@ -190,7 +197,7 @@ dashboard_initial_current_home() {
         fi
     fi
 
-    dashboard_resolve_current_home
+    return 1
 }
 _DASHBOARD_CURRENT_HOME="$(dashboard_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_DASHBOARD_CURRENT_HOME" ]]; then

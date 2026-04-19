@@ -158,30 +158,32 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
 
     MODE="${MODE:-vibe}"
 
-    if [[ -z "${TARGET_HOME:-}" ]]; then
-        if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
-            TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"
+    _ACFS_RESOLVED_TARGET_HOME=""
+    if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
+        _ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"
+    else
+        if [[ "${TARGET_USER}" == "root" ]]; then
+            _ACFS_RESOLVED_TARGET_HOME="/root"
         else
-            if [[ "${TARGET_USER}" == "root" ]]; then
-                TARGET_HOME="/root"
+            _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER}" 2>/dev/null || true)"
+            if [[ -n "$_acfs_passwd_entry" ]]; then
+                _ACFS_RESOLVED_TARGET_HOME="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
             else
-                _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER}" 2>/dev/null || true)"
-                if [[ -n "$_acfs_passwd_entry" ]]; then
-                    _acfs_passwd_entry="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
-                    if [[ -n "$_acfs_passwd_entry" ]]; then
-                        TARGET_HOME="${_acfs_passwd_entry%/}"
-                    fi
-                else
-                    _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-                    if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                        TARGET_HOME="${HOME%/}"
-                    fi
-                    unset _acfs_current_user
+                _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+                if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+                    _ACFS_RESOLVED_TARGET_HOME="${HOME%/}"
                 fi
-                unset _acfs_passwd_entry
+                unset _acfs_current_user
             fi
+            unset _acfs_passwd_entry
         fi
     fi
+    if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then
+        TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"
+    elif [[ -n "${TARGET_HOME:-}" ]]; then
+        TARGET_HOME="${TARGET_HOME%/}"
+    fi
+    unset _ACFS_RESOLVED_TARGET_HOME
 
     if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
         log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
@@ -289,7 +291,7 @@ INSTALL_BASE_FILESYSTEM
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if [[ -z \"\$target_home\" ]]; then (root)"
+        log_info "dry-run: install: if [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
 # Generated helper functions used by this child shell.
@@ -391,26 +393,28 @@ acfs_generated_passwd_home_from_entry() {
     return 1
 }
 
-target_home="${TARGET_HOME:-}"
-if [[ -z "$target_home" ]]; then
-  if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
-    target_home="/root"
+target_home=""
+if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
+  target_home="/root"
+else
+  _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+  if [[ -n "$_acfs_passwd_entry" ]]; then
+    target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
   else
-    _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
-    if [[ -n "$_acfs_passwd_entry" ]]; then
-      target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
-    else
-      current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-      if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-        target_home="${HOME}"
-      else
-        echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
-        exit 1
-      fi
-      unset current_user
+    current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+    if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+      target_home="${HOME%/}"
     fi
-    unset _acfs_passwd_entry
+    unset current_user
   fi
+  unset _acfs_passwd_entry
+fi
+if [[ -z "$target_home" && -n "${TARGET_HOME:-}" ]]; then
+  target_home="${TARGET_HOME%/}"
+fi
+if [[ -z "$target_home" ]]; then
+  echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
+  exit 1
 fi
 if [[ -z "$target_home" || "$target_home" == "/" || "$target_home" != /* ]]; then
   echo "ERROR: Invalid TARGET_HOME: '${target_home:-<empty>}'" >&2
@@ -425,7 +429,7 @@ mkdir -p "$target_home/.acfs"
 chown -hR "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" "$target_home/.acfs"
 INSTALL_BASE_FILESYSTEM
         then
-            log_error "base.filesystem: install command failed: if [[ -z \"\$target_home\" ]]; then"
+            log_error "base.filesystem: install command failed: if [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then"
             return 1
         fi
     fi
@@ -454,7 +458,7 @@ INSTALL_BASE_FILESYSTEM
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: if [[ -z \"\$target_home\" ]]; then (root)"
+        log_info "dry-run: verify: if [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
 # Generated helper functions used by this child shell.
@@ -556,26 +560,28 @@ acfs_generated_passwd_home_from_entry() {
     return 1
 }
 
-target_home="${TARGET_HOME:-}"
-if [[ -z "$target_home" ]]; then
-  if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
-    target_home="/root"
+target_home=""
+if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
+  target_home="/root"
+else
+  _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+  if [[ -n "$_acfs_passwd_entry" ]]; then
+    target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
   else
-    _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
-    if [[ -n "$_acfs_passwd_entry" ]]; then
-      target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
-    else
-      current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-      if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-        target_home="${HOME}"
-      else
-        echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
-        exit 1
-      fi
-      unset current_user
+    current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+    if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+      target_home="${HOME%/}"
     fi
-    unset _acfs_passwd_entry
+    unset current_user
   fi
+  unset _acfs_passwd_entry
+fi
+if [[ -z "$target_home" && -n "${TARGET_HOME:-}" ]]; then
+  target_home="${TARGET_HOME%/}"
+fi
+if [[ -z "$target_home" ]]; then
+  echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
+  exit 1
 fi
 if [[ -z "$target_home" || "$target_home" == "/" || "$target_home" != /* ]]; then
   echo "ERROR: Invalid TARGET_HOME: '${target_home:-<empty>}'" >&2
@@ -584,7 +590,7 @@ fi
 test -d "$target_home/.acfs"
 INSTALL_BASE_FILESYSTEM
         then
-            log_error "base.filesystem: verify failed: if [[ -z \"\$target_home\" ]]; then"
+            log_error "base.filesystem: verify failed: if [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then"
             return 1
         fi
     fi

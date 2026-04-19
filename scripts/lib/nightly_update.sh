@@ -145,6 +145,7 @@ resolve_current_home() {
 }
 
 # Resolve home directory (systemd %h may not set HOME reliably)
+explicit_system_state_file="${ACFS_SYSTEM_STATE_FILE:-}"
 HOME="$(resolve_current_home)" || {
     echo "ERROR: Unable to resolve a valid HOME for nightly update" >&2
     exit 1
@@ -154,6 +155,7 @@ TARGET_HOME="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)
 ACFS_HOME="$(sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
 ACFS_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_STATE_FILE:-}" 2>/dev/null || true)"
 ACFS_SYSTEM_STATE_FILE="$(sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
+explicit_system_state_file="$(sanitize_abs_nonroot_path "$explicit_system_state_file" 2>/dev/null || true)"
 ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
 explicit_target_home="${TARGET_HOME:-}"
 if [[ -n "$explicit_target_home" ]]; then
@@ -282,12 +284,15 @@ state_target_home=""
 if [[ -n "${ACFS_STATE_FILE:-}" ]]; then
     state_candidates+=("$ACFS_STATE_FILE")
 fi
+if [[ -n "$explicit_system_state_file" ]]; then
+    state_candidates+=("$ACFS_SYSTEM_STATE_FILE")
+fi
 if [[ "$HOME" == "/root" ]]; then
-    [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && state_candidates+=("$ACFS_SYSTEM_STATE_FILE")
+    [[ -z "$explicit_system_state_file" && -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && state_candidates+=("$ACFS_SYSTEM_STATE_FILE")
     state_candidates+=("$HOME/.acfs/state.json")
 else
     state_candidates+=("$HOME/.acfs/state.json")
-    [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && state_candidates+=("$ACFS_SYSTEM_STATE_FILE")
+    [[ -z "$explicit_system_state_file" && -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && state_candidates+=("$ACFS_SYSTEM_STATE_FILE")
 fi
 
 for state_candidate in "${state_candidates[@]}"; do

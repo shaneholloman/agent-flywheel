@@ -191,9 +191,13 @@ user_home_for_user() {
 # Target user for ACFS installations
 TARGET_USER="${TARGET_USER:-ubuntu}"
 user_require_valid_target_user "$TARGET_USER"
-if [[ -z "${TARGET_HOME:-}" ]]; then
-    TARGET_HOME="$(user_home_for_user "$TARGET_USER" || true)"
+_ACFS_USER_RESOLVED_TARGET_HOME="$(user_home_for_user "$TARGET_USER" 2>/dev/null || true)"
+if [[ -n "$_ACFS_USER_RESOLVED_TARGET_HOME" ]]; then
+    TARGET_HOME="$_ACFS_USER_RESOLVED_TARGET_HOME"
+elif [[ -n "${TARGET_HOME:-}" ]]; then
+    TARGET_HOME="${TARGET_HOME%/}"
 fi
+unset _ACFS_USER_RESOLVED_TARGET_HOME
 
 # Generate a random password robustly
 _generate_random_password() {
@@ -306,14 +310,15 @@ migrate_ssh_keys() {
         return 0
     fi
 
+    target_home="$(user_home_for_user "$target" 2>/dev/null || true)"
     if [[ -z "$target_home" ]]; then
-        target_home="$(user_home_for_user "$target" || true)"
+        target_home="${TARGET_HOME:-}"
     fi
-    if [[ -z "$target_home" ]]; then
+    if [[ -z "$target_home" || "$target_home" == "/" || "$target_home" != /* ]]; then
         log_error "Unable to resolve TARGET_HOME for '$target'; cannot migrate SSH keys safely"
         return 1
     fi
-    TARGET_HOME="$target_home"
+    TARGET_HOME="${target_home%/}"
 
     local source_keys=""
 
@@ -475,7 +480,7 @@ set_default_shell() {
         done < /etc/passwd
     fi
 
-    if [[ -z "$target_home" ]] && [[ -n "$passwd_entry" ]]; then
+    if [[ -n "$passwd_entry" ]]; then
         target_home="$(user_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
     fi
 

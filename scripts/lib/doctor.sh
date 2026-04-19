@@ -501,17 +501,22 @@ if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
     ACFS_BIN_DIR="$(_acfs_doctor_validate_bin_dir_for_home "$_ACFS_DOCTOR_ENV_BIN_DIR" "${TARGET_HOME:-}" 2>/dev/null || true)"
 fi
 
-if [[ -z "${TARGET_HOME:-}" ]]; then
+_acfs_doctor_resolved_target_home=""
+if [[ "$TARGET_USER" == "root" ]]; then
+    _acfs_doctor_resolved_target_home="/root"
+else
     _acfs_passwd_entry="$(_acfs_doctor_getent_passwd_entry "$TARGET_USER" 2>/dev/null || true)"
     if [[ -n "$_acfs_passwd_entry" ]]; then
-        TARGET_HOME="$(_acfs_doctor_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
-    elif [[ "$TARGET_USER" == "root" ]]; then
-        TARGET_HOME="/root"
+        _acfs_doctor_resolved_target_home="$(_acfs_doctor_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
     elif [[ "$TARGET_USER" == "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
-        TARGET_HOME="$_acfs_doctor_current_home"
+        _acfs_doctor_resolved_target_home="$_acfs_doctor_current_home"
     fi
     unset _acfs_passwd_entry
 fi
+if [[ -n "$_acfs_doctor_resolved_target_home" ]]; then
+    TARGET_HOME="$_acfs_doctor_resolved_target_home"
+fi
+unset _acfs_doctor_resolved_target_home
 
 if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "${_ACFS_DOCTOR_ENV_TARGET_HOME:-}" ]]; then
     TARGET_HOME="$_ACFS_DOCTOR_ENV_TARGET_HOME"

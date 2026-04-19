@@ -779,6 +779,12 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
 
         # Pass ACFS context variables to the target user environment when available.
         [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && env_args+=("ACFS_BOOTSTRAP_DIR=$ACFS_BOOTSTRAP_DIR")
+        [[ -n "${ACFS_LIB_DIR:-}" ]] && env_args+=("ACFS_LIB_DIR=$ACFS_LIB_DIR")
+        [[ -n "${ACFS_GENERATED_DIR:-}" ]] && env_args+=("ACFS_GENERATED_DIR=$ACFS_GENERATED_DIR")
+        [[ -n "${ACFS_ASSETS_DIR:-}" ]] && env_args+=("ACFS_ASSETS_DIR=$ACFS_ASSETS_DIR")
+        [[ -n "${ACFS_CHECKSUMS_YAML:-}" ]] && env_args+=("ACFS_CHECKSUMS_YAML=$ACFS_CHECKSUMS_YAML")
+        [[ -n "${ACFS_MANIFEST_YAML:-}" ]] && env_args+=("ACFS_MANIFEST_YAML=$ACFS_MANIFEST_YAML")
+        [[ -n "${CHECKSUMS_FILE:-}" ]] && env_args+=("CHECKSUMS_FILE=$CHECKSUMS_FILE")
         [[ -n "${SCRIPT_DIR:-}" ]] && env_args+=("SCRIPT_DIR=$SCRIPT_DIR")
         [[ -n "${ACFS_RAW:-}" ]] && env_args+=("ACFS_RAW=$ACFS_RAW")
         [[ -n "${ACFS_VERSION:-}" ]] && env_args+=("ACFS_VERSION=$ACFS_VERSION")
@@ -959,6 +965,18 @@ run_as_root_shell() {
     [[ -n "${TARGET_USER:-}" ]] && env_args+=("TARGET_USER=$TARGET_USER")
     [[ -n "${TARGET_HOME:-}" ]] && env_args+=("TARGET_HOME=$TARGET_HOME")
     [[ -n "${ACFS_HOME:-}" ]] && env_args+=("ACFS_HOME=$ACFS_HOME")
+    [[ -n "${ACFS_BIN_DIR:-}" ]] && env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")
+    [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && env_args+=("ACFS_BOOTSTRAP_DIR=$ACFS_BOOTSTRAP_DIR")
+    [[ -n "${ACFS_LIB_DIR:-}" ]] && env_args+=("ACFS_LIB_DIR=$ACFS_LIB_DIR")
+    [[ -n "${ACFS_GENERATED_DIR:-}" ]] && env_args+=("ACFS_GENERATED_DIR=$ACFS_GENERATED_DIR")
+    [[ -n "${ACFS_ASSETS_DIR:-}" ]] && env_args+=("ACFS_ASSETS_DIR=$ACFS_ASSETS_DIR")
+    [[ -n "${ACFS_CHECKSUMS_YAML:-}" ]] && env_args+=("ACFS_CHECKSUMS_YAML=$ACFS_CHECKSUMS_YAML")
+    [[ -n "${ACFS_MANIFEST_YAML:-}" ]] && env_args+=("ACFS_MANIFEST_YAML=$ACFS_MANIFEST_YAML")
+    [[ -n "${CHECKSUMS_FILE:-}" ]] && env_args+=("CHECKSUMS_FILE=$CHECKSUMS_FILE")
+    [[ -n "${SCRIPT_DIR:-}" ]] && env_args+=("SCRIPT_DIR=$SCRIPT_DIR")
+    [[ -n "${ACFS_RAW:-}" ]] && env_args+=("ACFS_RAW=$ACFS_RAW")
+    [[ -n "${ACFS_VERSION:-}" ]] && env_args+=("ACFS_VERSION=$ACFS_VERSION")
+    [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
 
     if [[ ${#env_args[@]} -gt 0 ]]; then
         env_cmd=(env "${env_args[@]}")

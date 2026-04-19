@@ -176,6 +176,13 @@ export_resolve_current_home() {
 }
 export_initial_current_home() {
     local cached_home=""
+    local resolved_home=""
+
+    resolved_home="$(export_resolve_current_home 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "$resolved_home"
+        return 0
+    fi
 
     if [[ "${_EXPORT_WAS_SOURCED:-false}" == "true" ]]; then
         cached_home="$(export_sanitize_abs_nonroot_path "${_EXPORT_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
@@ -185,7 +192,7 @@ export_initial_current_home() {
         fi
     fi
 
-    export_resolve_current_home
+    return 1
 }
 _EXPORT_CURRENT_HOME="$(export_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_EXPORT_CURRENT_HOME" ]]; then
@@ -673,6 +680,7 @@ prepare_target_context() {
     local path_home=""
     local state_user=""
     local state_user_home=""
+    local resolved_target_home=""
 
     refresh_acfs_paths
     path_home="$(infer_target_home_from_acfs_home 2>/dev/null || true)"
@@ -713,6 +721,13 @@ prepare_target_context() {
             if [[ -n "$detected_user" ]]; then
                 export TARGET_USER="$detected_user"
             fi
+        fi
+    fi
+
+    if [[ -n "${TARGET_USER:-}" ]]; then
+        resolved_target_home="$(home_for_user "$TARGET_USER" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            export TARGET_HOME="$resolved_target_home"
         fi
     fi
 

@@ -158,30 +158,32 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
 
     MODE="${MODE:-vibe}"
 
-    if [[ -z "${TARGET_HOME:-}" ]]; then
-        if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
-            TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"
+    _ACFS_RESOLVED_TARGET_HOME=""
+    if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
+        _ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"
+    else
+        if [[ "${TARGET_USER}" == "root" ]]; then
+            _ACFS_RESOLVED_TARGET_HOME="/root"
         else
-            if [[ "${TARGET_USER}" == "root" ]]; then
-                TARGET_HOME="/root"
+            _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER}" 2>/dev/null || true)"
+            if [[ -n "$_acfs_passwd_entry" ]]; then
+                _ACFS_RESOLVED_TARGET_HOME="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
             else
-                _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER}" 2>/dev/null || true)"
-                if [[ -n "$_acfs_passwd_entry" ]]; then
-                    _acfs_passwd_entry="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
-                    if [[ -n "$_acfs_passwd_entry" ]]; then
-                        TARGET_HOME="${_acfs_passwd_entry%/}"
-                    fi
-                else
-                    _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-                    if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                        TARGET_HOME="${HOME%/}"
-                    fi
-                    unset _acfs_current_user
+                _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+                if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+                    _ACFS_RESOLVED_TARGET_HOME="${HOME%/}"
                 fi
-                unset _acfs_passwd_entry
+                unset _acfs_current_user
             fi
+            unset _acfs_passwd_entry
         fi
     fi
+    if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then
+        TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"
+    elif [[ -n "${TARGET_HOME:-}" ]]; then
+        TARGET_HOME="${TARGET_HOME%/}"
+    fi
+    unset _ACFS_RESOLVED_TARGET_HOME
 
     if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
         log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
@@ -254,7 +256,7 @@ declare -a MANIFEST_CHECKS=(
     "users.ubuntu.2	Ensure target user + passwordless sudo + ssh keys	[[ \"\${MODE:-vibe}\" != \"vibe\" ]] || runuser -u \"\${TARGET_USER:-ubuntu}\" -- sudo -n true	required	root"
     "base.filesystem.1	Create workspace and ACFS directories	test -d /data/projects	required	root"
     "base.filesystem.2	Create workspace and ACFS directories	test -f /data/projects/AGENTS.md	required	root"
-    "base.filesystem.3	Create workspace and ACFS directories	target_home=\"\${TARGET_HOME:-}\"\\nif [[ -z \"\$target_home\" ]]; then\\n  if [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then\\n    target_home=\"/root\"\\n  else\\n    _acfs_passwd_entry=\"\$(acfs_generated_getent_passwd_entry \"\${TARGET_USER:-ubuntu}\" 2>/dev/null || true)\"\\n    if [[ -n \"\$_acfs_passwd_entry\" ]]; then\\n      target_home=\"\$(acfs_generated_passwd_home_from_entry \"\$_acfs_passwd_entry\" 2>/dev/null || true)\"\\n    else\\n      current_user=\"\$(acfs_generated_resolve_current_user 2>/dev/null || true)\"\\n      if [[ -n \"\$current_user\" ]] && [[ \"\$current_user\" == \"\${TARGET_USER:-ubuntu}\" ]] && [[ -n \"\${HOME:-}\" ]] && [[ \"\${HOME}\" == /* ]]; then\\n        target_home=\"\${HOME}\"\\n      else\\n        echo \"ERROR: Unable to resolve TARGET_HOME for '\${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly\" >&2\\n        exit 1\\n      fi\\n      unset current_user\\n    fi\\n    unset _acfs_passwd_entry\\n  fi\\nfi\\nif [[ -z \"\$target_home\" || \"\$target_home\" == \"/\" || \"\$target_home\" != /* ]]; then\\n  echo \"ERROR: Invalid TARGET_HOME: '\${target_home:-<empty>}'\" >&2\\n  exit 1\\nfi\\ntest -d \"\$target_home/.acfs\"	required	root"
+    "base.filesystem.3	Create workspace and ACFS directories	target_home=\"\"\\nif [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then\\n  target_home=\"/root\"\\nelse\\n  _acfs_passwd_entry=\"\$(acfs_generated_getent_passwd_entry \"\${TARGET_USER:-ubuntu}\" 2>/dev/null || true)\"\\n  if [[ -n \"\$_acfs_passwd_entry\" ]]; then\\n    target_home=\"\$(acfs_generated_passwd_home_from_entry \"\$_acfs_passwd_entry\" 2>/dev/null || true)\"\\n  else\\n    current_user=\"\$(acfs_generated_resolve_current_user 2>/dev/null || true)\"\\n    if [[ -n \"\$current_user\" ]] && [[ \"\$current_user\" == \"\${TARGET_USER:-ubuntu}\" ]] && [[ -n \"\${HOME:-}\" ]] && [[ \"\${HOME}\" == /* ]] && [[ \"\${HOME}\" != \"/\" ]]; then\\n      target_home=\"\${HOME%/}\"\\n    fi\\n    unset current_user\\n  fi\\n  unset _acfs_passwd_entry\\nfi\\nif [[ -z \"\$target_home\" && -n \"\${TARGET_HOME:-}\" ]]; then\\n  target_home=\"\${TARGET_HOME%/}\"\\nfi\\nif [[ -z \"\$target_home\" ]]; then\\n  echo \"ERROR: Unable to resolve TARGET_HOME for '\${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly\" >&2\\n  exit 1\\nfi\\nif [[ -z \"\$target_home\" || \"\$target_home\" == \"/\" || \"\$target_home\" != /* ]]; then\\n  echo \"ERROR: Invalid TARGET_HOME: '\${target_home:-<empty>}'\" >&2\\n  exit 1\\nfi\\ntest -d \"\$target_home/.acfs\"	required	root"
     "shell.zsh	Zsh shell package	zsh --version	required	root"
     "shell.omz.1	Oh My Zsh + Powerlevel10k + plugins + ACFS config	test -d ~/.oh-my-zsh	required	target_user"
     "shell.omz.2	Oh My Zsh + Powerlevel10k + plugins + ACFS config	test -f ~/.acfs/zsh/acfs.zshrc	required	target_user"
@@ -354,6 +356,7 @@ run_manifest_check_command() {
     local cmd="$2"
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home="${TARGET_HOME:-}"
+    local resolved_target_home=""
     local target_path=""
     local current_user=""
     local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
@@ -365,28 +368,28 @@ run_manifest_check_command() {
         return 1
     fi
 
-    if [[ -z "$target_home" ]]; then
-        if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
-            target_home="$(_acfs_resolve_target_home "$target_user" || true)"
-        elif [[ "$target_user" == "root" ]]; then
-            target_home="/root"
+    if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
+        resolved_target_home="$(_acfs_resolve_target_home "$target_user" || true)"
+    elif [[ "$target_user" == "root" ]]; then
+        resolved_target_home="/root"
+    else
+        local _acfs_passwd_entry=""
+        _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "$target_user" 2>/dev/null || true)"
+        if [[ -n "$_acfs_passwd_entry" ]]; then
+            resolved_target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
         else
-            local _acfs_passwd_entry=""
-            _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "$target_user" 2>/dev/null || true)"
-            if [[ -n "$_acfs_passwd_entry" ]]; then
-                _acfs_passwd_entry="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
-                if [[ -n "$_acfs_passwd_entry" ]]; then
-                    target_home="${_acfs_passwd_entry%/}"
-                fi
-            else
-                _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-                if [[ "${_acfs_current_user:-}" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                    target_home="${HOME%/}"
-                fi
-                unset _acfs_current_user
+            _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+            if [[ "${_acfs_current_user:-}" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+                resolved_target_home="${HOME%/}"
             fi
-            unset _acfs_passwd_entry
+            unset _acfs_current_user
         fi
+        unset _acfs_passwd_entry
+    fi
+    if [[ -n "$resolved_target_home" ]]; then
+        target_home="${resolved_target_home%/}"
+    elif [[ -n "$target_home" ]]; then
+        target_home="${target_home%/}"
     fi
 
     if [[ "$cmd" == *"acfs_generated_"* ]]; then

@@ -188,6 +188,13 @@ continue_resolve_current_home() {
 }
 continue_initial_current_home() {
     local cached_home=""
+    local resolved_home=""
+
+    resolved_home="$(continue_resolve_current_home 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "$resolved_home"
+        return 0
+    fi
 
     if [[ "${_CONTINUE_WAS_SOURCED:-false}" == "true" ]]; then
         cached_home="$(continue_sanitize_abs_nonroot_path "${_CONTINUE_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
@@ -197,7 +204,7 @@ continue_initial_current_home() {
         fi
     fi
 
-    continue_resolve_current_home
+    return 1
 }
 _CONTINUE_CURRENT_HOME="$(continue_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_CONTINUE_CURRENT_HOME" ]]; then

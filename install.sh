@@ -74,7 +74,7 @@ fi
 ACFS_RAW="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/${ACFS_REF}"
 ACFS_CHECKSUMS_RAW="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/${ACFS_CHECKSUMS_REF}"
 export ACFS_RAW ACFS_CHECKSUMS_REF ACFS_CHECKSUMS_RAW ACFS_VERSION
-export CHECKSUMS_FILE="${ACFS_CHECKSUMS_YAML:-}"
+export CHECKSUMS_FILE="${ACFS_CHECKSUMS_YAML:-${CHECKSUMS_FILE:-}}"
 ACFS_COMMIT_SHA=""       # Short SHA for display (12 chars)
 ACFS_COMMIT_SHA_FULL=""  # Full SHA for pinning resume scripts (40 chars)
 
@@ -2540,9 +2540,16 @@ run_as_target() {
     if [[ -n "${ACFS_HOME:-}" ]]; then env_args+=("ACFS_HOME=$ACFS_HOME"); fi
     if [[ -n "${ACFS_BIN_DIR:-}" ]]; then env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR"); fi
     if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]]; then env_args+=("ACFS_BOOTSTRAP_DIR=$ACFS_BOOTSTRAP_DIR"); fi
+    if [[ -n "${ACFS_LIB_DIR:-}" ]]; then env_args+=("ACFS_LIB_DIR=$ACFS_LIB_DIR"); fi
+    if [[ -n "${ACFS_GENERATED_DIR:-}" ]]; then env_args+=("ACFS_GENERATED_DIR=$ACFS_GENERATED_DIR"); fi
+    if [[ -n "${ACFS_ASSETS_DIR:-}" ]]; then env_args+=("ACFS_ASSETS_DIR=$ACFS_ASSETS_DIR"); fi
+    if [[ -n "${ACFS_CHECKSUMS_YAML:-}" ]]; then env_args+=("ACFS_CHECKSUMS_YAML=$ACFS_CHECKSUMS_YAML"); fi
+    if [[ -n "${ACFS_MANIFEST_YAML:-}" ]]; then env_args+=("ACFS_MANIFEST_YAML=$ACFS_MANIFEST_YAML"); fi
+    if [[ -n "${CHECKSUMS_FILE:-}" ]]; then env_args+=("CHECKSUMS_FILE=$CHECKSUMS_FILE"); fi
     if [[ -n "${SCRIPT_DIR:-}" ]]; then env_args+=("SCRIPT_DIR=$SCRIPT_DIR"); fi
     if [[ -n "${ACFS_RAW:-}" ]]; then env_args+=("ACFS_RAW=$ACFS_RAW"); fi
     if [[ -n "${ACFS_VERSION:-}" ]]; then env_args+=("ACFS_VERSION=$ACFS_VERSION"); fi
+    if [[ -n "${ACFS_REF:-}" ]]; then env_args+=("ACFS_REF=$ACFS_REF"); fi
 
     # Already the target user
     current_user="$(acfs_early_resolve_current_user 2>/dev/null || true)"
@@ -3108,10 +3115,15 @@ acfs_home_for_user() {
 init_target_paths() {
     validate_target_user
 
-    # Respect an explicit TARGET_HOME env override; otherwise resolve the
-    # target user's actual home directory through NSS/getent first.
-    if [[ -z "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="$(acfs_home_for_user "$TARGET_USER" || true)"
+    # Resolve the target user's actual home directory through NSS/getent first;
+    # inherited TARGET_HOME is only a fallback for unusual systems where the
+    # target user cannot be resolved yet.
+    local resolved_target_home=""
+    resolved_target_home="$(acfs_home_for_user "$TARGET_USER" 2>/dev/null || true)"
+    if [[ -n "$resolved_target_home" ]]; then
+        TARGET_HOME="$resolved_target_home"
+    elif [[ -n "${TARGET_HOME:-}" ]]; then
+        TARGET_HOME="${TARGET_HOME%/}"
     fi
 
     if [[ -z "$TARGET_HOME" ]]; then

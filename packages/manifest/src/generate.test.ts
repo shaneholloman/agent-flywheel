@@ -269,6 +269,25 @@ describe('Generated verified installer args', () => {
     );
   });
 
+  test('agent wrapper/link install heredocs include primary-bin helpers in child shell', () => {
+    const agentsPath = resolve(GENERATED_DIR, 'install_agents.sh');
+    expect(existsSync(agentsPath)).toBe(true);
+    const agentsContent = readFileSync(agentsPath, 'utf-8');
+
+    const preludeIndex = agentsContent.indexOf('# Primary-bin helper functions used by this child shell.');
+    const linkIndex = agentsContent.indexOf('acfs_link_primary_bin_command "$claude_candidate" "claude"');
+    const installIndex = agentsContent.indexOf('acfs_install_executable_into_primary_bin "$wrapper_tmp" "codex"');
+
+    expect(preludeIndex).toBeGreaterThanOrEqual(0);
+    expect(linkIndex).toBeGreaterThan(preludeIndex);
+    expect(installIndex).toBeGreaterThan(preludeIndex);
+    expect(agentsContent).toContain('acfs_child_primary_bin_dir() {');
+    expect(agentsContent).toContain('ACFS_BIN_DIR is unset and HOME is not a usable absolute path');
+    expect(agentsContent).not.toContain('${ACFS_BIN_DIR:-${HOME:-}/.local/bin}');
+    expect(agentsContent).toContain('acfs_install_executable_into_primary_bin() {');
+    expect(agentsContent).toContain('acfs_link_primary_bin_command() {');
+  });
+
   test('stack.meta_skill falls back to cargo source install on Linux ARM64', () => {
     const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
     expect(existsSync(stackPath)).toBe(true);
@@ -337,6 +356,35 @@ describe('Generated filesystem script hardening', () => {
     expect(filesystemContent).toContain(
       "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly"
     );
+  });
+
+  test('prefers trusted passwd home over inherited TARGET_HOME', () => {
+    const trustedHomeIndex = filesystemContent.indexOf(
+      'target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"'
+    );
+    const inheritedHomeIndex = filesystemContent.indexOf('target_home="${TARGET_HOME%/}"');
+
+    expect(filesystemContent).toContain('target_home=""');
+    expect(filesystemContent).toContain('if [[ -z "$target_home" && -n "${TARGET_HOME:-}" ]]; then');
+    expect(filesystemContent).not.toContain('target_home="${TARGET_HOME:-}"\nif [[ -z "$target_home" ]]; then');
+    expect(trustedHomeIndex).toBeGreaterThanOrEqual(0);
+    expect(inheritedHomeIndex).toBeGreaterThanOrEqual(0);
+    expect(trustedHomeIndex).toBeLessThan(inheritedHomeIndex);
+  });
+
+  test('direct generated installers repair TARGET_HOME before inherited fallback', () => {
+    const resolvedHomeIndex = filesystemContent.indexOf(
+      '_ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"'
+    );
+    const inheritedHomeIndex = filesystemContent.indexOf('TARGET_HOME="${TARGET_HOME%/}"');
+
+    expect(filesystemContent).toContain('_ACFS_RESOLVED_TARGET_HOME=""');
+    expect(filesystemContent).toContain('if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then');
+    expect(filesystemContent).toContain('TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"');
+    expect(filesystemContent).toContain('elif [[ -n "${TARGET_HOME:-}" ]]; then');
+    expect(resolvedHomeIndex).toBeGreaterThanOrEqual(0);
+    expect(inheritedHomeIndex).toBeGreaterThanOrEqual(0);
+    expect(resolvedHomeIndex).toBeLessThan(inheritedHomeIndex);
   });
 
   test('does not recursively chown /data (avoid over-broad ownership changes)', () => {
@@ -419,11 +467,27 @@ describe('doctor_checks.sh content', () => {
   });
 
   test('run_manifest_check_command resolves target homes without /home guesses', () => {
-    expect(doctorContent).toContain('target_home="$(_acfs_resolve_target_home "$target_user" || true)"');
+    expect(doctorContent).toContain('resolved_target_home="$(_acfs_resolve_target_home "$target_user" || true)"');
     expect(doctorContent).not.toContain('target_home="/home/$target_user"');
     expect(doctorContent).toContain(
       'log_error "Invalid TARGET_HOME for \'$target_user\': ${target_home:-<empty>} (must be an absolute path and cannot be \'/\')"'
     );
+  });
+
+  test('run_manifest_check_command repairs target_home before inherited fallback', () => {
+    const resolvedHomeIndex = doctorContent.indexOf(
+      'resolved_target_home="$(_acfs_resolve_target_home "$target_user" || true)"'
+    );
+    const inheritedHomeIndex = doctorContent.indexOf('target_home="${target_home%/}"');
+
+    expect(doctorContent).toContain('local resolved_target_home=""');
+    expect(doctorContent).toContain('if [[ -n "$resolved_target_home" ]]; then');
+    expect(doctorContent).toContain('target_home="${resolved_target_home%/}"');
+    expect(doctorContent).toContain('elif [[ -n "$target_home" ]]; then');
+    expect(doctorContent).not.toContain('if [[ -z "$target_home" ]]; then\n        if declare -f _acfs_resolve_target_home');
+    expect(resolvedHomeIndex).toBeGreaterThanOrEqual(0);
+    expect(inheritedHomeIndex).toBeGreaterThanOrEqual(0);
+    expect(resolvedHomeIndex).toBeLessThan(inheritedHomeIndex);
   });
 
   test('target_user doctor checks receive TARGET_USER and TARGET_HOME env', () => {

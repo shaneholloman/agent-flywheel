@@ -196,6 +196,13 @@ _smoke_resolve_current_home() {
 
 _smoke_initial_current_home() {
     local cached_home=""
+    local resolved_home=""
+
+    resolved_home="$(_smoke_resolve_current_home 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "$resolved_home"
+        return 0
+    fi
 
     if [[ "${_SMOKE_WAS_SOURCED:-false}" == "true" ]]; then
         cached_home="$(_smoke_sanitize_abs_nonroot_path "${_SMOKE_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
@@ -205,7 +212,7 @@ _smoke_initial_current_home() {
         fi
     fi
 
-    _smoke_resolve_current_home
+    return 1
 }
 
 _SMOKE_CURRENT_USER="$(_smoke_resolve_current_user 2>/dev/null || true)"
@@ -424,21 +431,22 @@ if [[ -z "${_SMOKE_TARGET_USER:-}" ]]; then
     _SMOKE_TARGET_USER_DEFAULTED=true
 fi
 
-_SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+_SMOKE_TARGET_HOME=""
+_smoke_target_passwd_entry="$(_smoke_getent_passwd_entry "$_SMOKE_TARGET_USER" || true)"
+if [[ -n "$_smoke_target_passwd_entry" ]]; then
+    _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "$(_smoke_passwd_home_from_entry "$_smoke_target_passwd_entry" 2>/dev/null || true)" 2>/dev/null || true)"
+elif [[ "${_SMOKE_TARGET_USER}" == "root" ]]; then
+    _SMOKE_TARGET_HOME="/root"
+elif [[ -n "${_SMOKE_CURRENT_USER:-}" ]] && [[ "${_SMOKE_TARGET_USER}" == "${_SMOKE_CURRENT_USER}" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
+    _SMOKE_TARGET_HOME="$_SMOKE_CURRENT_HOME"
+fi
+unset _smoke_target_passwd_entry
+if [[ -z "${_SMOKE_TARGET_HOME:-}" ]]; then
+    _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+fi
 if [[ -z "${_SMOKE_TARGET_HOME:-}" ]]; then
     _SMOKE_TARGET_HOME="$(_smoke_read_state_string "$_SMOKE_BOOTSTRAP_STATE_FILE" "target_home" 2>/dev/null || true)"
     _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${_SMOKE_TARGET_HOME:-}" 2>/dev/null || true)"
-fi
-if [[ -z "${_SMOKE_TARGET_HOME:-}" ]]; then
-    _smoke_target_passwd_entry="$(_smoke_getent_passwd_entry "$_SMOKE_TARGET_USER" || true)"
-    if [[ -n "$_smoke_target_passwd_entry" ]]; then
-        _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "$(_smoke_passwd_home_from_entry "$_smoke_target_passwd_entry" 2>/dev/null || true)" 2>/dev/null || true)"
-    elif [[ "${_SMOKE_TARGET_USER}" == "root" ]]; then
-        _SMOKE_TARGET_HOME="/root"
-    elif [[ -n "${_SMOKE_CURRENT_USER:-}" ]] && [[ "${_SMOKE_TARGET_USER}" == "${_SMOKE_CURRENT_USER}" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
-        _SMOKE_TARGET_HOME="$_SMOKE_CURRENT_HOME"
-    fi
-    unset _smoke_target_passwd_entry
 fi
 if [[ "${_SMOKE_TARGET_HOME:-}" != /* ]]; then
     if [[ "${_SMOKE_TARGET_USER}" == "root" ]]; then

@@ -193,6 +193,13 @@ info_resolve_current_home() {
 }
 info_initial_current_home() {
     local cached_home=""
+    local resolved_home=""
+
+    resolved_home="$(info_resolve_current_home 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "$resolved_home"
+        return 0
+    fi
 
     if [[ "${_INFO_WAS_SOURCED:-false}" == "true" ]]; then
         cached_home="$(info_sanitize_abs_nonroot_path "${_INFO_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
@@ -202,7 +209,7 @@ info_initial_current_home() {
         fi
     fi
 
-    info_resolve_current_home
+    return 1
 }
 _INFO_CURRENT_HOME="$(info_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_INFO_CURRENT_HOME" ]]; then
@@ -844,6 +851,7 @@ info_prepare_context() {
     local data_home=""
     local state_file=""
     local target_home=""
+    local resolved_target_home=""
 
     data_home=$(info_get_data_home)
     _INFO_RESOLVED_ACFS_HOME="$data_home"
@@ -852,6 +860,14 @@ info_prepare_context() {
     if [[ -z "${TARGET_USER:-}" ]]; then
         TARGET_USER=$(info_resolve_target_user "$state_file" 2>/dev/null || true)
         [[ -n "${TARGET_USER:-}" ]] && export TARGET_USER
+    fi
+
+    if [[ -n "${TARGET_USER:-}" ]]; then
+        resolved_target_home="$(info_home_for_user "$TARGET_USER" 2>/dev/null || true)"
+        if [[ -n "$resolved_target_home" ]]; then
+            TARGET_HOME="$resolved_target_home"
+            export TARGET_HOME
+        fi
     fi
 
     if [[ -z "${TARGET_HOME:-}" ]]; then

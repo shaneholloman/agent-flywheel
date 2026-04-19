@@ -1623,6 +1623,83 @@ EOF
     assert_output "$current_home"
 }
 
+@test "services-setup: init_target_context repairs stale TARGET_HOME from trusted passwd data" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local test_current_user
+    local test_trusted_home
+    local test_stale_home
+    local stale_bun
+    local trusted_bun
+    local env_home_output
+
+    test_current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    test_trusted_home="$(create_temp_dir)"
+    test_stale_home="$(create_temp_dir)"
+    stale_bun="$test_stale_home/.local/bin/bun"
+    trusted_bun="$test_trusted_home/.local/bin/bun"
+    mkdir -p "$test_trusted_home/.local/bin" "$test_stale_home/.local/bin"
+    touch "$stale_bun" "$trusted_bun"
+    chmod +x "$stale_bun" "$trusted_bun"
+
+    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_valid_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_passwd_home_from_entry()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_bin_dir_for_home()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^find_user_bin()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^init_target_context()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^run_as_user()/,/^}$/p' "$services_setup")"
+
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+
+    services_setup_resolve_current_user() {
+        printf '%s\n' "$test_current_user"
+    }
+
+    services_setup_getent_passwd_entry() {
+        if [[ -z "${1:-}" ]]; then
+            printf '%s:x:1000:1000::%s:/bin/bash\n' "$test_current_user" "$test_trusted_home"
+            printf 'stale-user:x:1001:1001::%s:/bin/bash\n' "$test_stale_home"
+            return 0
+        fi
+        if [[ "${1:-}" == "$test_current_user" ]]; then
+            printf '%s:x:1000:1000::%s:/bin/bash\n' "$test_current_user" "$test_trusted_home"
+            return 0
+        fi
+        return 1
+    }
+
+    export TARGET_USER="$test_current_user"
+    export TARGET_HOME="$test_stale_home"
+    export HOME="$test_stale_home"
+    export ACFS_BIN_DIR="$test_stale_home/.local/bin"
+    export BUN_BIN="$stale_bun"
+
+    init_target_context
+
+    [[ "$TARGET_HOME" == "$test_trusted_home" ]] || {
+        printf 'TARGET_HOME was not repaired: %s\n' "$TARGET_HOME" >&2
+        return 1
+    }
+    [[ "$ACFS_BIN_DIR" != "$test_stale_home/.local/bin" ]] || {
+        printf 'ACFS_BIN_DIR still points at stale home\n' >&2
+        return 1
+    }
+    [[ "$BUN_BIN" == "$trusted_bun" ]] || {
+        printf 'BUN_BIN was not repaired: %s\n' "$BUN_BIN" >&2
+        return 1
+    }
+
+    env_home_output="$(run_as_user bash -c 'printf "%s\n" "$HOME"')"
+    [[ "$env_home_output" == "$test_trusted_home" ]] || {
+        printf 'run_as_user HOME was not repaired: %s\n' "$env_home_output" >&2
+        return 1
+    }
+}
+
 @test "diagnostic helpers: prepend primary ACFS bin dir and ~/.acfs/bin" {
     local doctor="$PROJECT_ROOT/scripts/lib/doctor.sh"
     local info="$PROJECT_ROOT/scripts/lib/info.sh"
@@ -1771,7 +1848,7 @@ EOF
     assert_success
     run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$global_wrapper"
     assert_success
-    run grep -F 'state_bin_dir="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"' "$global_wrapper"
+    run grep -F 'state_bin_dir="$(read_validated_bin_dir_from_state_file "$ACFS_STATE_FILE" "$runtime_target_home" 2>/dev/null || true)"' "$global_wrapper"
     assert_success
     run grep -F 'ACFS_BIN_DIR="${state_bin_dir:-}"' "$global_wrapper"
     assert_success
@@ -1780,6 +1857,8 @@ EOF
     run grep -F '[[ -n "$sanitized_state_file" ]] && env_args+=("ACFS_STATE_FILE=$sanitized_state_file")' "$global_wrapper"
     assert_success
     run grep -F '[[ -n "$sanitized_system_state_file" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$sanitized_system_state_file")' "$global_wrapper"
+    assert_success
+    run grep -F '[[ -n "$sanitized_target_home" ]] && env_args+=("HOME=$sanitized_target_home" "TARGET_HOME=$sanitized_target_home")' "$global_wrapper"
     assert_success
 
     run grep -F 'sanitize_abs_nonroot_path()' "$update_wrapper"
@@ -1792,7 +1871,7 @@ EOF
     assert_success
     run grep -F 'ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"' "$update_wrapper"
     assert_success
-    run grep -F 'state_bin_dir="$(read_bin_dir_from_state_file "$ACFS_STATE_FILE" 2>/dev/null || true)"' "$update_wrapper"
+    run grep -F 'state_bin_dir="$(read_validated_bin_dir_from_state_file "$ACFS_STATE_FILE" "$runtime_target_home" 2>/dev/null || true)"' "$update_wrapper"
     assert_success
     run grep -F 'ACFS_BIN_DIR="${state_bin_dir:-}"' "$update_wrapper"
     assert_success
@@ -1801,6 +1880,8 @@ EOF
     run grep -F '[[ -n "$sanitized_state_file" ]] && env_args+=("ACFS_STATE_FILE=$sanitized_state_file")' "$update_wrapper"
     assert_success
     run grep -F '[[ -n "$sanitized_system_state_file" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$sanitized_system_state_file")' "$update_wrapper"
+    assert_success
+    run grep -F '[[ -n "$sanitized_target_home" ]] && env_args+=("HOME=$sanitized_target_home" "TARGET_HOME=$sanitized_target_home")' "$update_wrapper"
     assert_success
 }
 
@@ -2686,45 +2767,41 @@ EOF_DASHBOARD_SERVE
 }
 
 @test "helper home resolvers ignore stale explicit TARGET_HOME" {
+    local current_user
     local resolved_home
     local stale_home
-    resolved_home="$(create_temp_dir)"
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || fail "Unable to resolve current user"
+    resolved_home="$(getent passwd "$current_user" | cut -d: -f6)"
+    [[ -n "$resolved_home" && -d "$resolved_home" ]] || fail "Unable to resolve current user home"
     stale_home="$BATS_TEST_TMPDIR/stale-target-home"
 
-    export TARGET_USER="tester"
+    export TARGET_USER="$current_user"
     export TARGET_HOME="$stale_home"
     export HOME="$stale_home"
 
-    getent() {
-        if [[ "$1" == "passwd" && "$2" == "tester" ]]; then
-            printf 'tester:x:1000:1000::%s:/bin/bash\n' "$resolved_home"
-            return 0
-        fi
-        command getent "$@"
-    }
-
     source_lib "cli_tools"
-    run _cli_target_home "tester"
+    run _cli_target_home "$current_user"
     assert_success
     assert_output "$resolved_home"
 
     source_lib "agents"
-    run _agent_target_home "tester"
+    run _agent_target_home "$current_user"
     assert_success
     assert_output "$resolved_home"
 
     source_lib "languages"
-    run _lang_target_home "tester"
+    run _lang_target_home "$current_user"
     assert_success
     assert_output "$resolved_home"
 
     source_lib "cloud_db"
-    run _cloud_target_home "tester"
+    run _cloud_target_home "$current_user"
     assert_success
     assert_output "$resolved_home"
 
     source_lib "stack"
-    run _stack_target_home "tester"
+    run _stack_target_home "$current_user"
     assert_success
     assert_output "$resolved_home"
 }
@@ -3762,6 +3839,37 @@ EOF
     assert_success
 }
 
+@test "install execution helpers preserve ACFS bootstrap context" {
+    local installer="$PROJECT_ROOT/install.sh"
+    local install_helpers="$PROJECT_ROOT/scripts/lib/install_helpers.sh"
+
+    for context_var in \
+        ACFS_BOOTSTRAP_DIR \
+        ACFS_LIB_DIR \
+        ACFS_GENERATED_DIR \
+        ACFS_ASSETS_DIR \
+        ACFS_CHECKSUMS_YAML \
+        ACFS_MANIFEST_YAML \
+        CHECKSUMS_FILE \
+        SCRIPT_DIR \
+        ACFS_RAW \
+        ACFS_VERSION \
+        ACFS_REF
+    do
+        local expected="env_args+=(\"$context_var=\$$context_var\")"
+
+        run grep -F "$expected" "$installer"
+        assert_success
+
+        run bash -c 'grep -F "$1" "$2" | wc -l' _ "$expected" "$install_helpers"
+        assert_success
+        [[ "$output" -ge 2 ]] || fail "Expected $context_var in both target and root helper env allowlists"
+    done
+
+    run grep -F 'export CHECKSUMS_FILE="${ACFS_CHECKSUMS_YAML:-${CHECKSUMS_FILE:-}}"' "$installer"
+    assert_success
+}
+
 @test "install.sh: target install checks avoid inherited PATH leaks" {
     local installer="$PROJECT_ROOT/install.sh"
 
@@ -4263,7 +4371,7 @@ EOF
     local expected_path=""
     mkdir -p "$test_home/.local/bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
 
-    run env HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'source "$1"; ACFS_BIN_DIR=""; PATH=""; ensure_path; printf "%s\n" "$PATH"' _ "$update"
+    run env -u TARGET_HOME -u ACFS_BIN_DIR HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'source "$1"; ACFS_BIN_DIR=""; PATH=""; ensure_path; printf "%s\n" "$PATH"' _ "$update"
     assert_success
 
     expected_path="$test_home/.local/bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
@@ -4277,7 +4385,7 @@ EOF
     local expected_path=""
     mkdir -p "$test_home/.local/bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin" "$cwd/relative/bin"
 
-    run env HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'cd "$3"; source "$1"; ACFS_BIN_DIR="relative/bin"; PATH=""; ensure_path; printf "%s\n" "$PATH"' _ "$update" unused "$cwd"
+    run env -u TARGET_HOME -u ACFS_BIN_DIR HOME="$test_home" PATH="/usr/bin:/bin" bash -c 'cd "$3"; source "$1"; ACFS_BIN_DIR="relative/bin"; PATH=""; ensure_path; printf "%s\n" "$PATH"' _ "$update" unused "$cwd"
     assert_success
 
     expected_path="$test_home/.local/bin:$test_home/.acfs/bin:$test_home/google-cloud-sdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
@@ -4310,6 +4418,140 @@ EOF
     eval "$(sed -n '/^_acfs_doctor_current_home="\$(_acfs_doctor_resolve_current_home/,/^export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR$/p' "$doctor_lib")"
 
     [[ "$ACFS_SYSTEM_STATE_FILE" == "/var/lib/acfs/state.json" ]]
+}
+
+@test "doctor.sh: passwd target home repairs stale inherited TARGET_HOME" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local test_current_user
+    local test_trusted_home
+    local test_stale_home
+
+    test_current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    test_trusted_home="$(create_temp_dir)"
+    test_stale_home="$(create_temp_dir)"
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_sanitize_abs_nonroot_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_passwd_home_from_entry()/,/^}$/p' "$doctor_lib")"
+
+    _acfs_doctor_getent_passwd_entry() {
+        if [[ "${1:-}" == "$test_current_user" ]]; then
+            printf '%s:x:1000:1000::%s:/bin/bash\n' "$test_current_user" "$test_trusted_home"
+            return 0
+        fi
+        return 1
+    }
+
+    _acfs_doctor_resolve_current_user() {
+        printf '%s\n' "$test_current_user"
+    }
+
+    TARGET_USER="$test_current_user"
+    TARGET_HOME="$test_stale_home"
+    _ACFS_DOCTOR_ENV_TARGET_HOME="$test_stale_home"
+    _acfs_doctor_current_home="$test_stale_home"
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_resolved_target_home=""/,/^unset _acfs_doctor_resolved_target_home$/p' "$doctor_lib")"
+
+    [[ "$TARGET_HOME" == "$test_trusted_home" ]] || {
+        printf 'doctor TARGET_HOME was not repaired: %s\n' "$TARGET_HOME" >&2
+        return 1
+    }
+}
+
+@test "read-only context helpers repair stale TARGET_HOME for current target user" {
+    local current_user
+    local current_home
+    local stale_home
+    local label
+    local script
+    local prepare_cmd
+    local target_var
+    local failures=""
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    current_home="$(command getent passwd "$current_user" 2>/dev/null | cut -d: -f6)"
+    [[ -n "$current_user" && -n "$current_home" ]] || skip "Could not resolve current user home"
+    stale_home="$(create_temp_dir)"
+
+    while IFS='|' read -r label script prepare_cmd target_var; do
+        [[ -n "$label" ]] || continue
+        run env \
+            TARGET_USER="$current_user" \
+            TARGET_HOME="$stale_home" \
+            HOME="$stale_home" \
+            PATH="/usr/bin:/bin" \
+            bash -c '
+                set -euo pipefail
+                source "$1"
+                eval "$2"
+                printf "%s\n" "${!3}"
+            ' _ "$script" "$prepare_cmd" "$target_var"
+
+        if [[ "$status" -ne 0 || "$output" != "$current_home" ]]; then
+            printf -v failures '%s%s: status=%s output=%s\n' "$failures" "$label" "$status" "$output"
+        fi
+    done <<EOF
+status|$PROJECT_ROOT/scripts/lib/status.sh|_status_prepare_context|TARGET_HOME
+info|$PROJECT_ROOT/scripts/lib/info.sh|info_prepare_context|TARGET_HOME
+export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|prepare_target_context|TARGET_HOME
+smoke|$PROJECT_ROOT/scripts/lib/smoke_test.sh|:|_SMOKE_TARGET_HOME
+EOF
+
+    if [[ -n "$failures" ]]; then
+        printf '%s' "$failures" >&2
+        return 1
+    fi
+}
+
+@test "sourced current-home helpers prefer passwd home over stale HOME" {
+    local current_user
+    local current_home
+    local stale_home
+    local label
+    local script
+    local target_var
+    local failures=""
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    current_home="$(command getent passwd "$current_user" 2>/dev/null | cut -d: -f6)"
+    [[ -n "$current_user" && -n "$current_home" ]] || skip "Could not resolve current user home"
+    stale_home="$(create_temp_dir)"
+
+    while IFS='|' read -r label script target_var; do
+        [[ -n "$label" ]] || continue
+        run env \
+            TARGET_USER="$current_user" \
+            TARGET_HOME="$stale_home" \
+            HOME="$stale_home" \
+            PATH="/usr/bin:/bin" \
+            bash -c '
+                set -euo pipefail
+                source "$1" >/dev/null
+                printf "%s\n" "${!2}"
+            ' _ "$script" "$target_var"
+
+        if [[ "$status" -ne 0 || "$output" != "$current_home" ]]; then
+            printf -v failures '%s%s: status=%s output=%s\n' "$failures" "$label" "$status" "$output"
+        fi
+    done <<EOF
+support|$PROJECT_ROOT/scripts/lib/support.sh|_SUPPORT_CURRENT_HOME
+status|$PROJECT_ROOT/scripts/lib/status.sh|_STATUS_CURRENT_HOME
+dashboard|$PROJECT_ROOT/scripts/lib/dashboard.sh|_DASHBOARD_CURRENT_HOME
+info|$PROJECT_ROOT/scripts/lib/info.sh|_INFO_CURRENT_HOME
+continue|$PROJECT_ROOT/scripts/lib/continue.sh|_CONTINUE_CURRENT_HOME
+cheatsheet|$PROJECT_ROOT/scripts/lib/cheatsheet.sh|_CHEATSHEET_CURRENT_HOME
+changelog|$PROJECT_ROOT/scripts/lib/changelog.sh|_CHANGELOG_CURRENT_HOME
+export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|_EXPORT_CURRENT_HOME
+smoke|$PROJECT_ROOT/scripts/lib/smoke_test.sh|_SMOKE_CURRENT_HOME
+EOF
+
+    if [[ -n "$failures" ]]; then
+        printf '%s' "$failures" >&2
+        return 1
+    fi
 }
 
 @test "doctor.sh: ensure_path restores system PATH when empty" {

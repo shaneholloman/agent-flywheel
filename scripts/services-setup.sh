@@ -301,16 +301,20 @@ BUN_BIN="${BUN_BIN:-}"
 
 init_target_context() {
     local bun_bin_dir=""
+    local resolved_target_home=""
 
     services_setup_validate_target_user "$TARGET_USER" || return 1
 
-    if [[ -z "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="$(resolve_home_dir "$TARGET_USER")"
+    resolved_target_home="$(resolve_home_dir "$TARGET_USER" 2>/dev/null || true)"
+    TARGET_HOME="$(services_setup_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$resolved_target_home" ]]; then
+        TARGET_HOME="$resolved_target_home"
     fi
     if [[ -z "${TARGET_HOME:-}" ]]; then
         log_error "Unable to determine home directory for user: $TARGET_USER"
         return 1
     fi
+    export TARGET_HOME
 
     ACFS_BIN_DIR="$(services_setup_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$TARGET_HOME" 2>/dev/null || true)"
     export ACFS_BIN_DIR

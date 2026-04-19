@@ -176,6 +176,13 @@ support_resolve_current_home() {
 }
 support_initial_current_home() {
     local cached_home=""
+    local resolved_home=""
+
+    resolved_home="$(support_resolve_current_home 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "$resolved_home"
+        return 0
+    fi
 
     if [[ "${_SUPPORT_WAS_SOURCED:-false}" == "true" ]]; then
         cached_home="$(support_sanitize_abs_nonroot_path "${_SUPPORT_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
@@ -185,7 +192,7 @@ support_initial_current_home() {
         fi
     fi
 
-    support_resolve_current_home
+    return 1
 }
 _SUPPORT_CURRENT_HOME="$(support_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_SUPPORT_CURRENT_HOME" ]]; then

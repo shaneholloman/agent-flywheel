@@ -158,30 +158,32 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
 
     MODE="${MODE:-vibe}"
 
-    if [[ -z "${TARGET_HOME:-}" ]]; then
-        if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
-            TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"
+    _ACFS_RESOLVED_TARGET_HOME=""
+    if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
+        _ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"
+    else
+        if [[ "${TARGET_USER}" == "root" ]]; then
+            _ACFS_RESOLVED_TARGET_HOME="/root"
         else
-            if [[ "${TARGET_USER}" == "root" ]]; then
-                TARGET_HOME="/root"
+            _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER}" 2>/dev/null || true)"
+            if [[ -n "$_acfs_passwd_entry" ]]; then
+                _ACFS_RESOLVED_TARGET_HOME="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
             else
-                _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER}" 2>/dev/null || true)"
-                if [[ -n "$_acfs_passwd_entry" ]]; then
-                    _acfs_passwd_entry="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
-                    if [[ -n "$_acfs_passwd_entry" ]]; then
-                        TARGET_HOME="${_acfs_passwd_entry%/}"
-                    fi
-                else
-                    _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-                    if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                        TARGET_HOME="${HOME%/}"
-                    fi
-                    unset _acfs_current_user
+                _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+                if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+                    _ACFS_RESOLVED_TARGET_HOME="${HOME%/}"
                 fi
-                unset _acfs_passwd_entry
+                unset _acfs_current_user
             fi
+            unset _acfs_passwd_entry
         fi
     fi
+    if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then
+        TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"
+    elif [[ -n "${TARGET_HOME:-}" ]]; then
+        TARGET_HOME="${TARGET_HOME%/}"
+    fi
+    unset _ACFS_RESOLVED_TARGET_HOME
 
     if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
         log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
@@ -269,6 +271,108 @@ INSTALL_CLOUD_WRANGLER
         log_info "dry-run: install: if [[ ! -x \"\$HOME/.bun/bin/wrangler\" ]] || command -v node >/dev/null 2>&1; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_CLOUD_WRANGLER'
+# Primary-bin helper functions used by this child shell.
+acfs_child_log_error() {
+    if declare -f log_error >/dev/null 2>&1; then
+        log_error "$@"
+    else
+        echo "[ERROR] $*" >&2
+    fi
+}
+
+acfs_child_primary_bin_dir() {
+    local primary_bin_dir="${ACFS_BIN_DIR:-}"
+    local fallback_home="${HOME:-}"
+
+    if [[ -z "$primary_bin_dir" ]]; then
+        if [[ -z "$fallback_home" ]] || [[ "$fallback_home" == "/" ]] || [[ "$fallback_home" != /* ]]; then
+            acfs_child_log_error "ACFS_BIN_DIR is unset and HOME is not a usable absolute path"
+            return 1
+        fi
+        primary_bin_dir="$fallback_home/.local/bin"
+    fi
+
+    if [[ -z "$primary_bin_dir" ]] || [[ "$primary_bin_dir" == "/" ]] || [[ "$primary_bin_dir" != /* ]]; then
+        acfs_child_log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${primary_bin_dir:-<empty>})"
+        return 1
+    fi
+
+    printf '%s\n' "$primary_bin_dir"
+}
+
+acfs_child_primary_bin_requires_root() {
+    local primary_bin_dir="$1"
+    local target_home="${TARGET_HOME:-${HOME:-}}"
+
+    [[ -n "$target_home" && "$target_home" == /* && "$target_home" != "/" ]] || return 0
+    case "$primary_bin_dir" in
+        "$target_home"|"$target_home"/*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+acfs_child_run_root_bin_command() {
+    if [[ $EUID -eq 0 ]]; then
+        "$@"
+        return $?
+    fi
+
+    if command -v sudo >/dev/null 2>&1; then
+        sudo -n "$@"
+        return $?
+    fi
+
+    acfs_child_log_error "Primary bin dir requires root, but sudo is unavailable: ${ACFS_BIN_DIR:-<unset>}"
+    return 1
+}
+
+acfs_child_ensure_primary_bin_dir() {
+    local primary_bin_dir="$1"
+
+    if acfs_child_primary_bin_requires_root "$primary_bin_dir"; then
+        acfs_child_run_root_bin_command mkdir -p "$primary_bin_dir"
+        return $?
+    fi
+
+    mkdir -p "$primary_bin_dir"
+}
+
+acfs_link_primary_bin_command() {
+    local source_path="$1"
+    local command_name="$2"
+    local primary_bin_dir=""
+    local dest_path=""
+
+    primary_bin_dir="$(acfs_child_primary_bin_dir)" || return 1
+    dest_path="$primary_bin_dir/$command_name"
+    acfs_child_ensure_primary_bin_dir "$primary_bin_dir" || return 1
+
+    if acfs_child_primary_bin_requires_root "$primary_bin_dir"; then
+        acfs_child_run_root_bin_command ln -sf "$source_path" "$dest_path"
+        return $?
+    fi
+
+    ln -sf "$source_path" "$dest_path"
+}
+
+acfs_install_executable_into_primary_bin() {
+    local src_path="$1"
+    local command_name="$2"
+    local primary_bin_dir=""
+    local dest_path=""
+
+    primary_bin_dir="$(acfs_child_primary_bin_dir)" || return 1
+    dest_path="$primary_bin_dir/$command_name"
+    acfs_child_ensure_primary_bin_dir "$primary_bin_dir" || return 1
+
+    if acfs_child_primary_bin_requires_root "$primary_bin_dir"; then
+        acfs_child_run_root_bin_command install -m 0755 "$src_path" "$dest_path"
+        return $?
+    fi
+
+    install -m 0755 "$src_path" "$dest_path"
+}
+
 if [[ ! -x "$HOME/.bun/bin/wrangler" ]] || command -v node >/dev/null 2>&1; then
   exit 0
 fi
@@ -322,6 +426,108 @@ install_cloud_supabase() {
         log_info "dry-run: install: case \"\$(uname -m)\" in (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_CLOUD_SUPABASE'
+# Primary-bin helper functions used by this child shell.
+acfs_child_log_error() {
+    if declare -f log_error >/dev/null 2>&1; then
+        log_error "$@"
+    else
+        echo "[ERROR] $*" >&2
+    fi
+}
+
+acfs_child_primary_bin_dir() {
+    local primary_bin_dir="${ACFS_BIN_DIR:-}"
+    local fallback_home="${HOME:-}"
+
+    if [[ -z "$primary_bin_dir" ]]; then
+        if [[ -z "$fallback_home" ]] || [[ "$fallback_home" == "/" ]] || [[ "$fallback_home" != /* ]]; then
+            acfs_child_log_error "ACFS_BIN_DIR is unset and HOME is not a usable absolute path"
+            return 1
+        fi
+        primary_bin_dir="$fallback_home/.local/bin"
+    fi
+
+    if [[ -z "$primary_bin_dir" ]] || [[ "$primary_bin_dir" == "/" ]] || [[ "$primary_bin_dir" != /* ]]; then
+        acfs_child_log_error "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${primary_bin_dir:-<empty>})"
+        return 1
+    fi
+
+    printf '%s\n' "$primary_bin_dir"
+}
+
+acfs_child_primary_bin_requires_root() {
+    local primary_bin_dir="$1"
+    local target_home="${TARGET_HOME:-${HOME:-}}"
+
+    [[ -n "$target_home" && "$target_home" == /* && "$target_home" != "/" ]] || return 0
+    case "$primary_bin_dir" in
+        "$target_home"|"$target_home"/*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+acfs_child_run_root_bin_command() {
+    if [[ $EUID -eq 0 ]]; then
+        "$@"
+        return $?
+    fi
+
+    if command -v sudo >/dev/null 2>&1; then
+        sudo -n "$@"
+        return $?
+    fi
+
+    acfs_child_log_error "Primary bin dir requires root, but sudo is unavailable: ${ACFS_BIN_DIR:-<unset>}"
+    return 1
+}
+
+acfs_child_ensure_primary_bin_dir() {
+    local primary_bin_dir="$1"
+
+    if acfs_child_primary_bin_requires_root "$primary_bin_dir"; then
+        acfs_child_run_root_bin_command mkdir -p "$primary_bin_dir"
+        return $?
+    fi
+
+    mkdir -p "$primary_bin_dir"
+}
+
+acfs_link_primary_bin_command() {
+    local source_path="$1"
+    local command_name="$2"
+    local primary_bin_dir=""
+    local dest_path=""
+
+    primary_bin_dir="$(acfs_child_primary_bin_dir)" || return 1
+    dest_path="$primary_bin_dir/$command_name"
+    acfs_child_ensure_primary_bin_dir "$primary_bin_dir" || return 1
+
+    if acfs_child_primary_bin_requires_root "$primary_bin_dir"; then
+        acfs_child_run_root_bin_command ln -sf "$source_path" "$dest_path"
+        return $?
+    fi
+
+    ln -sf "$source_path" "$dest_path"
+}
+
+acfs_install_executable_into_primary_bin() {
+    local src_path="$1"
+    local command_name="$2"
+    local primary_bin_dir=""
+    local dest_path=""
+
+    primary_bin_dir="$(acfs_child_primary_bin_dir)" || return 1
+    dest_path="$primary_bin_dir/$command_name"
+    acfs_child_ensure_primary_bin_dir "$primary_bin_dir" || return 1
+
+    if acfs_child_primary_bin_requires_root "$primary_bin_dir"; then
+        acfs_child_run_root_bin_command install -m 0755 "$src_path" "$dest_path"
+        return $?
+    fi
+
+    install -m 0755 "$src_path" "$dest_path"
+}
+
 # Install Supabase CLI from GitHub release (verified via sha256 checksums)
 arch=""
 case "$(uname -m)" in

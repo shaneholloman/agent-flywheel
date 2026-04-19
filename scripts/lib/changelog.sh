@@ -205,6 +205,13 @@ changelog_resolve_current_home() {
 }
 changelog_initial_current_home() {
     local cached_home=""
+    local resolved_home=""
+
+    resolved_home="$(changelog_resolve_current_home 2>/dev/null || true)"
+    if [[ -n "$resolved_home" ]]; then
+        printf '%s\n' "$resolved_home"
+        return 0
+    fi
 
     if [[ "${_CHANGELOG_WAS_SOURCED:-false}" == "true" ]]; then
         cached_home="$(changelog_sanitize_abs_nonroot_path "${_CHANGELOG_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
@@ -214,7 +221,7 @@ changelog_initial_current_home() {
         fi
     fi
 
-    changelog_resolve_current_home
+    return 1
 }
 _CHANGELOG_CURRENT_HOME="$(changelog_initial_current_home 2>/dev/null || true)"
 if [[ -n "$_CHANGELOG_CURRENT_HOME" ]]; then

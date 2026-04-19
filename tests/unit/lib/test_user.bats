@@ -132,6 +132,33 @@ EOF
     assert_equal "$(cat "$ACFS_TARGET_HOME/.ssh/authorized_keys")" "ssh-rsa TESTKEY"
 }
 
+@test "migrate_ssh_keys: repairs stale TARGET_HOME from resolved target home" {
+    local stale_home
+    local resolved_home
+
+    stale_home="$(create_temp_dir)"
+    resolved_home="$(create_temp_dir)"
+    export TARGET_HOME="$stale_home"
+
+    mkdir -p "$HOME/.ssh"
+    echo "ssh-rsa TESTKEY" > "$HOME/.ssh/authorized_keys"
+
+    user_resolve_current_user() {
+        printf '%s\n' "otheruser"
+    }
+
+    user_home_for_user() {
+        [[ "${1:-}" == "testuser" ]] || return 1
+        printf '%s\n' "$resolved_home"
+    }
+
+    run migrate_ssh_keys
+    assert_success
+
+    assert_equal "$(cat "$resolved_home/.ssh/authorized_keys")" "ssh-rsa TESTKEY"
+    [[ ! -f "$stale_home/.ssh/authorized_keys" ]]
+}
+
 @test "migrate_ssh_keys: skips if already target user" {
     user_resolve_current_user() {
         printf "%s\n" "testuser"
@@ -195,6 +222,28 @@ EOF
     run user_home_for_user "$current_user"
     assert_success
     assert_output "$current_home"
+}
+
+@test "set_default_shell: external handoff uses passwd home over stale TARGET_HOME" {
+    local managed_user="acfs-managed-user"
+    local stale_home
+    local resolved_home
+
+    stale_home="$(create_temp_dir)"
+    resolved_home="$(create_temp_dir)"
+    export TARGET_USER="$managed_user"
+    export TARGET_HOME="$stale_home"
+
+    user_getent_passwd_entry() {
+        [[ "${1:-}" == "$managed_user" ]] || return 1
+        printf '%s:x:1000:1000::%s:/bin/bash\n' "$managed_user" "$resolved_home"
+    }
+
+    run set_default_shell /bin/bash
+    assert_success
+
+    grep -q 'ACFS externally-managed shell handoff' "$resolved_home/.bashrc"
+    [[ ! -f "$stale_home/.bashrc" ]]
 }
 
 @test "user.sh: sourcing leaves TARGET_HOME empty when unresolved" {
