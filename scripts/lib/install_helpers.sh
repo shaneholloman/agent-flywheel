@@ -881,9 +881,10 @@ acfs_ensure_primary_bin_dir() {
 acfs_link_primary_bin_command() {
     local source_path="$1"
     local command_name="$2"
-    local dest_path="${ACFS_BIN_DIR:-$HOME/.local/bin}/$command_name"
+    local dest_path=""
 
     acfs_ensure_primary_bin_dir || return 1
+    dest_path="$ACFS_BIN_DIR/$command_name"
 
     if acfs_primary_bin_dir_uses_root; then
         _acfs_run_root_bin_command ln -sf "$source_path" "$dest_path"
@@ -896,9 +897,10 @@ acfs_link_primary_bin_command() {
 acfs_install_executable_into_primary_bin() {
     local src_path="$1"
     local command_name="$2"
-    local dest_path="${ACFS_BIN_DIR:-$HOME/.local/bin}/$command_name"
+    local dest_path=""
 
     acfs_ensure_primary_bin_dir || return 1
+    dest_path="$ACFS_BIN_DIR/$command_name"
 
     if acfs_primary_bin_dir_uses_root; then
         _acfs_run_root_bin_command install -m 0755 "$src_path" "$dest_path"

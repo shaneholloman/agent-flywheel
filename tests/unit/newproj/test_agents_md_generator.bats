@@ -56,11 +56,13 @@ teardown() {
 }
 
 @test "is_section_required returns false for nodejs_toolchain" {
-    ! is_section_required "nodejs_toolchain"
+    run is_section_required "nodejs_toolchain"
+    assert_failure
 }
 
 @test "is_section_required returns false for unknown section" {
-    ! is_section_required "nonexistent_section"
+    run is_section_required "nonexistent_section"
+    assert_failure
 }
 
 @test "get_section_title returns correct title for header" {

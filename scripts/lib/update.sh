@@ -34,12 +34,95 @@ _update_initial_existing_home() {
     printf '%s\n' "$home_candidate"
 }
 
-_UPDATE_EARLY_TARGET_HOME="$(_update_initial_existing_home "${TARGET_HOME:-}" 2>/dev/null || true)"
-if [[ -n "$_UPDATE_EARLY_TARGET_HOME" ]]; then
-    HOME="$_UPDATE_EARLY_TARGET_HOME"
+_update_early_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+    for candidate in "/usr/bin/$name" "/bin/$name" "/usr/local/bin/$name" "/usr/local/sbin/$name" "/usr/sbin/$name" "/sbin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+    return 1
+}
+
+_update_early_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(_update_early_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(_update_early_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+_update_early_passwd_home_for_user() {
+    local user="${1:-}"
+    local passwd_entry=""
+    local passwd_line=""
+    local passwd_home=""
+    local getent_bin=""
+
+    [[ -n "$user" ]] || return 1
+    getent_bin="$(_update_early_system_binary_path getent 2>/dev/null || true)"
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    _update_initial_existing_home "$passwd_home"
+}
+
+_update_early_runtime_home() {
+    local runtime_home=""
+    local current_user=""
+
+    runtime_home="$(_update_initial_existing_home "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
+
+    runtime_home="$(_update_initial_existing_home "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
+
+    current_user="$(_update_early_current_user 2>/dev/null || true)"
+    if [[ -n "$current_user" ]]; then
+        _update_early_passwd_home_for_user "$current_user"
+        return $?
+    fi
+
+    return 1
+}
+
+_UPDATE_EARLY_HOME="$(_update_early_runtime_home 2>/dev/null || true)"
+if [[ -n "$_UPDATE_EARLY_HOME" ]]; then
+    HOME="$_UPDATE_EARLY_HOME"
     export HOME
 fi
-unset _UPDATE_EARLY_TARGET_HOME
+unset _UPDATE_EARLY_HOME
 
 # Discover ACFS_REPO_ROOT: prefer a real git repo over the tarball install dir.
 # On fleet machines, update.sh runs from ~/.acfs/scripts/lib/ (no .git) but
@@ -58,9 +141,11 @@ _acfs_discover_repo_root() {
     # Search well-known locations for a git-based ACFS checkout
     local -a candidates=(
         "/data/projects/agentic_coding_flywheel_setup"
-        "$HOME/agentic_coding_flywheel_setup"
         "/dp/agentic_coding_flywheel_setup"
     )
+    if [[ -n "${HOME:-}" ]]; then
+        candidates+=("$HOME/agentic_coding_flywheel_setup")
+    fi
     for candidate in "${candidates[@]}"; do
         if [[ -d "$candidate/.git" ]] && [[ -f "$candidate/scripts/lib/update.sh" ]]; then
             printf '%s\n' "$candidate"
@@ -136,7 +221,7 @@ ABORT_ON_FAILURE=false
 REBOOT_REQUIRED=false
 
 # Logging
-UPDATE_LOG_DIR="${HOME}/.acfs/logs/updates"
+UPDATE_LOG_DIR="${UPDATE_LOG_DIR:-${HOME:-/tmp}/.acfs/logs/updates}"
 UPDATE_LOG_FILE=""
 
 # Version tracking

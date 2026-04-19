@@ -62,6 +62,49 @@ teardown() {
     assert_output --partial "positive integer"
 }
 
+@test "session library: sources under set -u without HOME" {
+    run env -i PATH="/usr/bin:/bin" bash -c 'set -euo pipefail; source "$1"; printf "<%s>\n" "${ACFS_SESSIONS_DIR:-}"' _ "$PROJECT_ROOT/scripts/lib/session.sh"
+    assert_success
+    assert_output "<>"
+}
+
+@test "session library: uses TARGET_HOME fallback when HOME is absent" {
+    local target_home
+    target_home="$(create_temp_dir)"
+
+    run env -i PATH="/usr/bin:/bin" TARGET_HOME="$target_home" bash -c 'set -euo pipefail; source "$1"; printf "%s\n" "$ACFS_SESSIONS_DIR"' _ "$PROJECT_ROOT/scripts/lib/session.sh"
+    assert_success
+    assert_output "$target_home/.acfs/sessions"
+}
+
+@test "session library: TARGET_HOME beats caller HOME for default storage" {
+    local caller_home target_home
+    caller_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    run env -i PATH="/usr/bin:/bin" HOME="$caller_home" TARGET_HOME="$target_home" bash -c 'set -euo pipefail; source "$1"; printf "%s\n" "$ACFS_SESSIONS_DIR"' _ "$PROJECT_ROOT/scripts/lib/session.sh"
+    assert_success
+    assert_output "$target_home/.acfs/sessions"
+}
+
+@test "native session helpers fail clearly without any home context" {
+    run env -i PATH="/usr/bin:/bin" bash -c 'set -euo pipefail; source "$1"; session_project_dir_key_gemini "/tmp/acfs-project"' _ "$PROJECT_ROOT/scripts/lib/session.sh"
+    assert_failure
+    assert_output --partial "Unable to resolve GEMINI_HOME"
+    refute_output --partial "unbound variable"
+}
+
+@test "native session helpers use TARGET_HOME when caller HOME is absent" {
+    local target_home
+    target_home="$(create_temp_dir)"
+
+    run env -i PATH="/usr/bin:/bin" TARGET_HOME="$target_home" bash -c 'set -euo pipefail; source "$1"; acfs_session_provider_home_dir CLAUDE_HOME ".claude"; acfs_session_provider_home_dir CODEX_HOME ".codex"; acfs_session_provider_home_dir GEMINI_HOME ".gemini"' _ "$PROJECT_ROOT/scripts/lib/session.sh"
+    assert_success
+    assert_output "$target_home/.claude
+$target_home/.codex
+$target_home/.gemini"
+}
+
 @test "export_session: streams output" {
     local file=$(create_temp_file "dummy session")
     local output_file=$(create_temp_file)

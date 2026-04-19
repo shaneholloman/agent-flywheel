@@ -497,7 +497,8 @@ teardown() {
 
     # nodejs (priority 1) should come before docker (priority 2)
     # docker (priority 2) should come before python-legacy (priority 3)
-    local output_array=($output)
+    local output_array=()
+    read -r -a output_array <<< "$output"
     [[ "${output_array[0]}" == "nodejs" ]]
 }
 

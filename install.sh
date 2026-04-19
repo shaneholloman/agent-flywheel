@@ -830,11 +830,13 @@ acfs_summary_emit() {
     # Require jq (installed by ensure_base_deps before phases run)
     command -v jq &>/dev/null || return 1
 
-    local resolved_target_home="${TARGET_HOME:-}"
+    local resolved_target_home=""
+    resolved_target_home="$(acfs_home_for_user "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
     if [[ -z "$resolved_target_home" ]]; then
-        resolved_target_home="$(acfs_home_for_user "${TARGET_USER:-ubuntu}" || true)"
+        resolved_target_home="${TARGET_HOME:-}"
     fi
-    if [[ -z "$resolved_target_home" ]] || [[ "$resolved_target_home" != /* ]]; then
+    resolved_target_home="${resolved_target_home%/}"
+    if [[ -z "$resolved_target_home" ]] || [[ "$resolved_target_home" == "/" ]] || [[ "$resolved_target_home" != /* ]]; then
         return 1
     fi
 

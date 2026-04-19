@@ -2379,15 +2379,29 @@ _doctor_run_manifest_check() {
         return 1
     fi
 
-    if [[ -z "$target_home" ]]; then
+    local resolved_target_home=""
+    if [[ "$target_user" == "root" ]]; then
+        resolved_target_home="/root"
+    else
         local passwd_entry=""
         passwd_entry="$(_acfs_doctor_getent_passwd_entry "$target_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            target_home="$(_acfs_doctor_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
-        elif [[ "$target_user" == "root" ]]; then
-            target_home="/root"
+            resolved_target_home="$(_acfs_doctor_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
         elif [[ "$target_user" == "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
-            target_home="$_acfs_doctor_current_home"
+            resolved_target_home="$_acfs_doctor_current_home"
+        fi
+    fi
+    if [[ -n "$resolved_target_home" ]]; then
+        if [[ "$resolved_target_home" == /* ]] && [[ "$resolved_target_home" != "/" ]]; then
+            target_home="${resolved_target_home%/}"
+        else
+            target_home=""
+        fi
+    elif [[ -n "$target_home" ]]; then
+        if [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+            target_home="${target_home%/}"
+        else
+            target_home=""
         fi
     fi
 

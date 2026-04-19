@@ -719,7 +719,8 @@ test_services_setup_globals_are_initialized_under_set_u() {
     local output=""
     output=$(bash -c '
         set -u
-        source "$1"
+        load_services_setup() { source "$1"; }
+        load_services_setup "$1"
         printf "services=%s\n" "${#SERVICE_STATUS[@]}"
     ' _ "$SERVICES_SETUP_SH" 2>&1 || true)
 
@@ -10142,6 +10143,29 @@ test_onboard_can_be_sourced_without_mutating_caller_env() {
     cleanup_mock_env
 }
 
+test_onboard_globals_survive_function_scoped_source_under_set_u() {
+    setup_mock_env
+
+    local output=""
+    output=$(HOME="$TEST_HOME" \
+        ACFS_HOME="$TEST_ACFS" \
+        ACFS_LESSONS_DIR="$REPO_ROOT/acfs/onboard/lessons" \
+        bash -c '
+            set -u
+            load_onboard() { source "$1"; }
+            load_onboard "$1"
+            printf "lessons=%s files=%s auth=%s\n" "${#LESSON_TITLES[@]}" "${#LESSON_FILES[@]}" "${#AUTH_SERVICES[@]}"
+        ' _ "$ONBOARD_SH" 2>&1 || true)
+
+    if [[ "$output" == lessons=*files=*auth=* ]] && [[ "$output" != *"unbound variable"* ]]; then
+        harness_pass "onboard globals survive function-scoped source under set -u"
+    else
+        harness_fail "onboard globals survive function-scoped source under set -u" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_onboard_copy_install_ignores_relative_home_trap() {
     setup_system_state_target_home_only_env
     setup_relative_home_trap
@@ -10753,6 +10777,7 @@ main() {
     test_onboard_repo_local_prefers_live_home_adjacent_acfs_path_over_stale_state_target_home || true
     test_onboard_repo_local_ignores_stale_explicit_runtime_hints_when_system_state_points_to_live_install || true
     test_onboard_can_be_sourced_without_mutating_caller_env || true
+    test_onboard_globals_survive_function_scoped_source_under_set_u || true
     test_onboard_copy_install_ignores_relative_home_trap || true
 
     harness_section "Runtime Helper Libs"

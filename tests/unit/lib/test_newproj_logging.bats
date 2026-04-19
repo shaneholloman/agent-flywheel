@@ -63,6 +63,21 @@ teardown() {
     [[ -f "$ACFS_SESSION_LOG" ]]
 }
 
+@test "newproj_logging sources and initializes under set -u without HOME" {
+    run env -i PATH="/usr/bin:/bin" TMPDIR="$TEST_LOG_DIR" bash -c '
+        set -euo pipefail
+        source "$1"
+        printf "dir=%s\n" "$ACFS_LOG_DIR"
+        init_logging
+        grep -q "Home: <unset>" "$ACFS_SESSION_LOG"
+        log_env_snapshot
+    ' _ "$PROJECT_ROOT/scripts/lib/newproj_logging.sh"
+
+    assert_success
+    assert_output --partial "$TEST_LOG_DIR/acfs-state/acfs/logs"
+    refute_output --partial "unbound variable"
+}
+
 # ============================================================
 # Log Level Tests
 # ============================================================
@@ -112,7 +127,8 @@ teardown() {
     log_warn "Should appear"
     log_error "Should also appear"
 
-    ! grep -q "Should not appear" "$ACFS_SESSION_LOG"
+    run grep -q "Should not appear" "$ACFS_SESSION_LOG"
+    assert_failure
     grep -q "Should appear" "$ACFS_SESSION_LOG"
     grep -q "Should also appear" "$ACFS_SESSION_LOG"
 }
@@ -159,7 +175,8 @@ teardown() {
     log_input "api_key" "sk-1234567890abcdef"
 
     grep -q "sk-\*\*\*" "$ACFS_SESSION_LOG"
-    ! grep -q "1234567890abcdef" "$ACFS_SESSION_LOG"
+    run grep -q "1234567890abcdef" "$ACFS_SESSION_LOG"
+    assert_failure
 }
 
 @test "log_key records key presses" {
@@ -337,7 +354,8 @@ teardown() {
     export ACFS_LOG_LEVEL=$ACFS_LOG_INFO
     init_logging
 
-    ! is_verbose
+    run is_verbose
+    assert_failure
 }
 
 # ============================================================

@@ -135,7 +135,8 @@ teardown() {
 @test "state_has returns false for empty values" {
     state_set "project_name" ""
 
-    ! state_has "project_name"
+    run state_has "project_name"
+    assert_failure
 }
 
 @test "state_reset clears all state" {
@@ -233,7 +234,8 @@ teardown() {
     SCREEN_HISTORY=()
     CURRENT_SCREEN="welcome"
 
-    ! navigate_back
+    run navigate_back
+    assert_failure
 }
 
 # ============================================================

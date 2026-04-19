@@ -719,9 +719,9 @@ done
 # Dynamic lesson discovery
 # Finds all *.md files in LESSONS_DIR, sorted by filename
 # Extracts titles from the first "# Title" line in each file
-declare -a LESSON_TITLES=()
-declare -a LESSON_FILES=()
-declare -a LESSON_NUMBERS=()
+declare -ga LESSON_TITLES=()
+declare -ga LESSON_FILES=()
+declare -ga LESSON_NUMBERS=()
 declare -gA LESSON_INDEX_BY_NUMBER=()
 
 extract_lesson_number() {
@@ -819,7 +819,7 @@ declare -gA LESSON_SUMMARIES=(
 NUM_LESSONS=${#LESSON_TITLES[@]}
 
 # Service definitions for authentication flow
-declare -a AUTH_SERVICES=(
+declare -ga AUTH_SERVICES=(
     "tailscale"
     "claude"
     "codex"
@@ -1168,7 +1168,7 @@ build_completed_csv() {
     local entry
     local i
     local -a ordered=()
-    declare -A seen=()
+    local -A seen=()
 
     existing_csv=$(get_completed | tr -d '[:space:]')
     if [[ -n "$existing_csv" ]]; then

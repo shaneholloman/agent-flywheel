@@ -83,11 +83,32 @@ _stack_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+_stack_home_from_user_bin_dir() {
+    local bin_dir="${1:-}"
+    local hinted_home=""
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+        *) return 1 ;;
+    esac
+
+    hinted_home="$(_stack_existing_abs_home "$hinted_home" 2>/dev/null || true)"
+    [[ -n "$hinted_home" ]] || return 1
+    printf '%s\n' "$hinted_home"
+}
+
 _stack_target_bin_dir() {
     local target_user="${1:-${TARGET_USER:-ubuntu}}"
     local target_home=""
     local configured_bin=""
     local candidate_home=""
+    local hinted_home=""
     local getent_bin=""
 
     target_home="$(_stack_target_home "$target_user" 2>/dev/null || true)"
@@ -100,8 +121,13 @@ _stack_target_bin_dir() {
             return 0
         fi
 
+        hinted_home="$(_stack_home_from_user_bin_dir "$configured_bin" 2>/dev/null || true)"
+        if [[ -n "$hinted_home" ]] && [[ "$hinted_home" != "$target_home" ]]; then
+            configured_bin=""
+        fi
+
         getent_bin="$(_stack_system_binary_path getent 2>/dev/null || true)"
-        if [[ -n "$getent_bin" ]]; then
+        if [[ -n "$configured_bin" ]] && [[ -n "$getent_bin" ]]; then
             while IFS=: read -r _ _ _ _ _ candidate_home _; do
                 candidate_home="$(_stack_existing_abs_home "$candidate_home" 2>/dev/null || true)"
                 [[ -n "$candidate_home" ]] || continue

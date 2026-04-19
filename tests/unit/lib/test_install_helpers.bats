@@ -126,6 +126,18 @@ teardown() {
         || fail "Expected run_as_target to extend PATH for target-user bins, got: $captured"
 }
 
+@test "primary bin helpers fail clearly without HOME or ACFS_BIN_DIR" {
+    run env -i PATH="/usr/bin:/bin" bash -c 'set -euo pipefail; source "$1"; source "$2"; acfs_link_primary_bin_command /tmp/source cmd' _ "$PROJECT_ROOT/scripts/lib/logging.sh" "$PROJECT_ROOT/scripts/lib/install_helpers.sh"
+    assert_failure
+    assert_output --partial "ACFS_BIN_DIR must be an absolute path"
+    refute_output --partial "unbound variable"
+
+    run env -i PATH="/usr/bin:/bin" bash -c 'set -euo pipefail; source "$1"; source "$2"; acfs_install_executable_into_primary_bin /tmp/source cmd' _ "$PROJECT_ROOT/scripts/lib/logging.sh" "$PROJECT_ROOT/scripts/lib/install_helpers.sh"
+    assert_failure
+    assert_output --partial "ACFS_BIN_DIR must be an absolute path"
+    refute_output --partial "unbound variable"
+}
+
 @test "run_as_target: preserves ACFS bootstrap context for generated child shells" {
     export TARGET_USER="testuser"
     export TARGET_HOME="/home/testuser"

@@ -206,6 +206,8 @@ _EXPORT_EXPLICIT_ACFS_HOME="$(export_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 
 _EXPORT_DEFAULT_ACFS_HOME=""
 [[ -n "$_EXPORT_CURRENT_HOME" ]] && _EXPORT_DEFAULT_ACFS_HOME="${_EXPORT_CURRENT_HOME}/.acfs"
 _EXPORT_ACFS_HOME="${_EXPORT_EXPLICIT_ACFS_HOME:-$_EXPORT_DEFAULT_ACFS_HOME}"
+_EXPORT_SYSTEM_STATE_WAS_EXPLICIT=false
+[[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && [[ "${ACFS_SYSTEM_STATE_FILE%/}" != "/var/lib/acfs/state.json" ]] && _EXPORT_SYSTEM_STATE_WAS_EXPLICIT=true
 _EXPORT_SYSTEM_STATE_FILE="$(export_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_EXPORT_SYSTEM_STATE_FILE" ]]; then
     _EXPORT_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
@@ -447,12 +449,6 @@ resolve_acfs_home() {
         return 0
     fi
 
-    if [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" || -f "$_EXPORT_EXPLICIT_ACFS_HOME/VERSION" || -d "$_EXPORT_EXPLICIT_ACFS_HOME/onboard" ]]; then
-        _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_EXPLICIT_ACFS_HOME"
-        printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
     explicit_target_home="$(resolve_explicit_target_home 2>/dev/null || true)"
     if [[ -n "$explicit_target_home" ]]; then
         candidate="${explicit_target_home}/.acfs"
@@ -461,6 +457,12 @@ resolve_acfs_home() {
             printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
             return 0
         fi
+    fi
+
+    if [[ "$_EXPORT_SYSTEM_STATE_WAS_EXPLICIT" != true ]] && [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" || -f "$_EXPORT_EXPLICIT_ACFS_HOME/VERSION" || -d "$_EXPORT_EXPLICIT_ACFS_HOME/onboard" ]]; then
+        _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_EXPLICIT_ACFS_HOME"
+        printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+        return 0
     fi
 
     if [[ -n "$_EXPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_EXPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
@@ -498,6 +500,12 @@ resolve_acfs_home() {
             printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
             return 0
         fi
+    fi
+
+    if [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" || -f "$_EXPORT_EXPLICIT_ACFS_HOME/VERSION" || -d "$_EXPORT_EXPLICIT_ACFS_HOME/onboard" ]]; then
+        _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_EXPLICIT_ACFS_HOME"
+        printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+        return 0
     fi
 
     if [[ -n "$_EXPORT_DEFAULT_ACFS_HOME" ]] && [[ -f "$_EXPORT_DEFAULT_ACFS_HOME/state.json" || -f "$_EXPORT_DEFAULT_ACFS_HOME/VERSION" || -d "$_EXPORT_DEFAULT_ACFS_HOME/onboard" ]]; then

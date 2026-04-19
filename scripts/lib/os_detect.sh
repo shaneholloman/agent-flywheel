@@ -159,27 +159,34 @@ is_fresh_vps() {
 
     # Check for default ubuntu user without customization
     local target_user="${TARGET_USER:-ubuntu}"
-    local target_home="${TARGET_HOME:-}"
-    if [[ -n "$target_home" ]]; then
-        if [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-            target_home="${target_home%/}"
-        else
-            target_home=""
+    local target_home=""
+    local resolved_target_home=""
+    local passwd_entry=""
+    passwd_entry="$(os_detect_getent_passwd_entry "$target_user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        resolved_target_home="$(os_detect_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+    elif [[ "$target_user" == "root" ]]; then
+        resolved_target_home="/root"
+    elif [[ "$target_user" == "$(os_detect_resolve_current_user 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        resolved_target_home="${HOME%/}"
+    fi
+    if [[ -n "$resolved_target_home" ]]; then
+        if [[ "$resolved_target_home" == /* ]] && [[ "$resolved_target_home" != "/" ]]; then
+            target_home="${resolved_target_home%/}"
+        fi
+    else
+        target_home="${TARGET_HOME:-}"
+        if [[ -n "$target_home" ]]; then
+            if [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
+                target_home="${target_home%/}"
+            else
+                target_home=""
+            fi
         fi
     fi
     if [[ -z "$target_home" ]]; then
-        local passwd_entry=""
-        passwd_entry="$(os_detect_getent_passwd_entry "$target_user" 2>/dev/null || true)"
-        if [[ -n "$passwd_entry" ]]; then
-            target_home="$(os_detect_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
-        elif [[ "$target_user" == "root" ]]; then
-            target_home="/root"
-        elif [[ "$target_user" == "$(os_detect_resolve_current_user 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-            target_home="${HOME%/}"
-        fi
+        return 1
     fi
-
-    [[ -n "$target_home" ]] || return 1
 
     if [[ -f "$target_home/.bashrc" ]] && ! grep -q "ACFS" "$target_home/.bashrc" 2>/dev/null; then
         ((indicators += 1))

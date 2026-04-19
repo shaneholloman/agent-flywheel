@@ -908,6 +908,85 @@ session_now_iso() {
     date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
+acfs_session_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+acfs_session_home_base() {
+    local base_home=""
+
+    base_home="$(acfs_session_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -z "$base_home" ]]; then
+        base_home="$(acfs_session_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    fi
+    [[ -n "$base_home" ]] || return 1
+
+    printf '%s\n' "$base_home"
+}
+
+acfs_session_provider_home_dir() {
+    local env_name="$1"
+    local default_leaf="$2"
+    local explicit_home="${!env_name-}"
+    local home_dir=""
+
+    if [[ -n "$explicit_home" ]]; then
+        home_dir="$(acfs_session_sanitize_abs_nonroot_path "$explicit_home" 2>/dev/null || true)"
+        if [[ -z "$home_dir" ]]; then
+            log_error "Invalid $env_name: $explicit_home"
+            return 1
+        fi
+        printf '%s\n' "$home_dir"
+        return 0
+    fi
+
+    local base_home=""
+    base_home="$(acfs_session_home_base 2>/dev/null || true)"
+    if [[ -z "$base_home" ]]; then
+        log_error "Unable to resolve $env_name; set $env_name, TARGET_HOME, or HOME"
+        return 1
+    fi
+
+    printf '%s/%s\n' "$base_home" "$default_leaf"
+}
+
+acfs_session_default_sessions_dir() {
+    local base_home=""
+
+    base_home="$(acfs_session_home_base 2>/dev/null || true)"
+    [[ -n "$base_home" ]] || return 1
+
+    printf '%s/.acfs/sessions\n' "$base_home"
+}
+
+acfs_session_storage_dir() {
+    local sessions_dir=""
+
+    if [[ -n "${ACFS_SESSIONS_DIR:-}" ]]; then
+        sessions_dir="$(acfs_session_sanitize_abs_nonroot_path "$ACFS_SESSIONS_DIR" 2>/dev/null || true)"
+        if [[ -z "$sessions_dir" ]]; then
+            log_error "Invalid ACFS_SESSIONS_DIR: $ACFS_SESSIONS_DIR"
+            return 1
+        fi
+    else
+        sessions_dir="$(acfs_session_default_sessions_dir 2>/dev/null || true)"
+        if [[ -z "$sessions_dir" ]]; then
+            log_error "Unable to resolve session storage directory; set HOME, TARGET_HOME, or ACFS_SESSIONS_DIR"
+            return 1
+        fi
+    fi
+
+    ACFS_SESSIONS_DIR="$sessions_dir"
+    printf '%s\n' "$ACFS_SESSIONS_DIR"
+}
+
 session_project_dir_key_claude() {
     local workspace="${1:-/tmp}"
     printf '%s' "$workspace" | sed -E 's/[^[:alnum:]]/-/g'
@@ -929,7 +1008,8 @@ session_project_hash_gemini() {
 
 session_project_dir_key_gemini() {
     local workspace="${1:-/tmp}"
-    local home_dir="${GEMINI_HOME:-$HOME/.gemini}"
+    local home_dir=""
+    home_dir="$(acfs_session_provider_home_dir GEMINI_HOME ".gemini")" || return 1
     local tmp_root="$home_dir/tmp"
 
     # Prefer an existing native project directory keyed by .project_root.
@@ -1112,7 +1192,8 @@ write_native_claude_from_canonical() {
     local target_session_id="$3"
     local dry_run="$4"
 
-    local home_dir="${CLAUDE_HOME:-$HOME/.claude}"
+    local home_dir=""
+    home_dir="$(acfs_session_provider_home_dir CLAUDE_HOME ".claude")" || return 1
     local dir_key
     dir_key="$(session_project_dir_key_claude "$workspace")" || return 1
     local target_dir="$home_dir/projects/$dir_key"
@@ -1232,7 +1313,8 @@ write_native_codex_from_canonical() {
     local target_session_id="$3"
     local dry_run="$4"
 
-    local home_dir="${CODEX_HOME:-$HOME/.codex}"
+    local home_dir=""
+    home_dir="$(acfs_session_provider_home_dir CODEX_HOME ".codex")" || return 1
     local now_slug date_path now_iso
     now_slug="$(date -u +%Y-%m-%dT%H-%M-%S)"
     date_path="$(date -u +%Y/%m/%d)"
@@ -1321,7 +1403,8 @@ write_native_gemini_from_canonical() {
     local target_session_id="$3"
     local dry_run="$4"
 
-    local home_dir="${GEMINI_HOME:-$HOME/.gemini}"
+    local home_dir=""
+    home_dir="$(acfs_session_provider_home_dir GEMINI_HOME ".gemini")" || return 1
     local hash
     hash="$(jq -r '.project_hash // ""' "$canonical_file" 2>/dev/null || true)"
     if [[ -z "$hash" || "$hash" == "null" ]]; then
@@ -1666,7 +1749,9 @@ convert_session_native() {
 # ============================================================
 
 # Default session storage directory
-ACFS_SESSIONS_DIR="${ACFS_SESSIONS_DIR:-${HOME}/.acfs/sessions}"
+if [[ -z "${ACFS_SESSIONS_DIR:-}" ]]; then
+    ACFS_SESSIONS_DIR="$(acfs_session_default_sessions_dir 2>/dev/null || true)"
+fi
 
 # Infer agent type from a CASS export JSON file.
 # CASS exports include per-message models (for assistant turns), which is a
@@ -1724,6 +1809,7 @@ generate_session_id() {
 import_session() {
     local file=""
     local dry_run=false
+    local sessions_dir=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1817,14 +1903,18 @@ import_session() {
         echo ""; echo "(Dry run - nothing imported)"; return 0
     fi
 
-    mkdir -p "$ACFS_SESSIONS_DIR"
+    sessions_dir="$(acfs_session_storage_dir)" || return 1
+    if ! mkdir -p "$sessions_dir"; then
+        log_error "Failed to create session storage directory: $sessions_dir"
+        return 1
+    fi
     local local_id; local_id=$(generate_session_id)
-    local dest="$ACFS_SESSIONS_DIR/${local_id}.json"
+    local dest="$sessions_dir/${local_id}.json"
 
     if [[ "$is_cass" == "true" ]]; then
         local tmp_dest
-        tmp_dest=$(mktemp "${ACFS_SESSIONS_DIR}/.${local_id}.XXXXXX.tmp" 2>/dev/null) || {
-            log_error "Failed to create temp file for import in: $ACFS_SESSIONS_DIR"
+        tmp_dest=$(mktemp "${sessions_dir}/.${local_id}.XXXXXX.tmp" 2>/dev/null) || {
+            log_error "Failed to create temp file for import in: $sessions_dir"
             return 1
         }
         trap 'rm -f -- "$tmp_dest" 2>/dev/null || true' RETURN
@@ -1849,8 +1939,8 @@ import_session() {
         fi
     else
         local tmp_dest
-        tmp_dest=$(mktemp "${ACFS_SESSIONS_DIR}/.${local_id}.XXXXXX.tmp" 2>/dev/null) || {
-            log_error "Failed to create temp file for import in: $ACFS_SESSIONS_DIR"
+        tmp_dest=$(mktemp "${sessions_dir}/.${local_id}.XXXXXX.tmp" 2>/dev/null) || {
+            log_error "Failed to create temp file for import in: $sessions_dir"
             return 1
         }
         trap 'rm -f -- "$tmp_dest" 2>/dev/null || true' RETURN
@@ -1884,6 +1974,7 @@ import_session() {
 # Usage: show_session <id> [--format json|markdown|summary]
 show_session() {
     local session_id="" format="summary"
+    local sessions_dir=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1905,7 +1996,9 @@ show_session() {
         return 1
     fi
 
-    local file="$ACFS_SESSIONS_DIR/${session_id}.json"
+    sessions_dir="$(acfs_session_storage_dir)" || return 1
+
+    local file="$sessions_dir/${session_id}.json"
     if [[ ! -f "$file" ]]; then
         log_error "Session not found: $session_id"
         return 1
@@ -1940,7 +2033,10 @@ show_session() {
 
 # List imported sessions
 list_imported_sessions() {
-    if [[ ! -d "$ACFS_SESSIONS_DIR" ]]; then
+    local sessions_dir=""
+    sessions_dir="$(acfs_session_storage_dir 2>/dev/null || true)"
+
+    if [[ -z "$sessions_dir" ]] || [[ ! -d "$sessions_dir" ]]; then
         echo "No imported sessions. Import with: import_session <file.json>"
         return 0
     fi
@@ -1950,7 +2046,7 @@ list_imported_sessions() {
     printf "  %-10s %-12s %-20s\n" "ID" "AGENT" "SESSION_ID"
     echo "  $(printf '%.0s-' {1..50})"
 
-    for f in "$ACFS_SESSIONS_DIR"/*.json; do
+    for f in "$sessions_dir"/*.json; do
         [[ -f "$f" ]] || continue
         local id; id=$(basename "$f" .json)
         jq -r '"  \("'"$id"'")   \(.agent[:12])   \(.session_id)"' "$f" 2>/dev/null

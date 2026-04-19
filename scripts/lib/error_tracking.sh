@@ -962,11 +962,53 @@ clear_install_tracking() {
     ACFS_SUCCESSFUL_TOOLS=()
 }
 
+error_tracking_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+error_tracking_default_retry_file_path() {
+    local base_home=""
+
+    base_home="$(error_tracking_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ -z "$base_home" ]]; then
+        base_home="$(error_tracking_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    fi
+    if [[ -z "$base_home" ]]; then
+        if type -t log_error &>/dev/null; then
+            log_error "Unable to resolve failed-tools retry file; set TARGET_HOME, HOME, or pass an explicit file path"
+        else
+            echo "ERROR: Unable to resolve failed-tools retry file; set TARGET_HOME, HOME, or pass an explicit file path" >&2
+        fi
+        return 1
+    fi
+
+    printf '%s/.acfs/failed_tools.txt\n' "$base_home"
+}
+
+error_tracking_retry_file_path() {
+    local file_path="${1:-}"
+
+    if [[ -n "$file_path" ]]; then
+        printf '%s\n' "$file_path"
+        return 0
+    fi
+
+    error_tracking_default_retry_file_path
+}
+
 # Save failed tools to file for retry
 # Usage: save_failed_tools_for_retry [file_path]
 # Default file: $HOME/.acfs/failed_tools.txt
 save_failed_tools_for_retry() {
-    local file_path="${1:-$HOME/.acfs/failed_tools.txt}"
+    local file_path
+    file_path="$(error_tracking_retry_file_path "${1:-}")" || return 1
 
     if [[ ${#ACFS_FAILED_TOOLS[@]} -eq 0 ]]; then
         rm -f "$file_path" 2>/dev/null || true
@@ -981,7 +1023,8 @@ save_failed_tools_for_retry() {
 # Usage: load_failed_tools_for_retry [file_path]
 # Returns: 0 if file exists and loaded, 1 otherwise
 load_failed_tools_for_retry() {
-    local file_path="${1:-$HOME/.acfs/failed_tools.txt}"
+    local file_path
+    file_path="$(error_tracking_retry_file_path "${1:-}")" || return 1
 
     if [[ ! -f "$file_path" ]]; then
         return 1

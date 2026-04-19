@@ -188,6 +188,18 @@ EOF
     assert_failure
 }
 
+@test "update.sh: sources under set -u without HOME" {
+    local update="$PROJECT_ROOT/scripts/lib/update.sh"
+
+    run env -i PATH="/usr/bin:/bin" bash -c 'set -euo pipefail; source "$1"; printf "home=%s\nlog=%s\n" "${HOME:-}" "$UPDATE_LOG_DIR"' _ "$update"
+    assert_success
+    refute_output --partial "unbound variable"
+    assert_output --partial ".acfs/logs/updates"
+
+    run grep -F 'if [[ -n "${HOME:-}" ]]; then' "$update"
+    assert_success
+}
+
 @test "update_preferred_user_bin_dir: falls back to target home when HOME differs" {
     local current_home
     local target_home
@@ -3870,6 +3882,31 @@ EOF
     assert_success
 }
 
+@test "install.sh target-home contexts repair stale TARGET_HOME from passwd" {
+    local installer="$PROJECT_ROOT/install.sh"
+
+    run grep -F 'resolved_target_home="$(acfs_home_for_user "$TARGET_USER" 2>/dev/null || true)"' "$installer"
+    assert_success
+
+    run grep -F 'resolved_target_home="$(acfs_home_for_user "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"' "$installer"
+    assert_success
+
+    run grep -F 'TARGET_HOME="${TARGET_HOME%/}"' "$installer"
+    assert_success
+
+    run grep -F 'resolved_target_home="${resolved_target_home%/}"' "$installer"
+    assert_success
+
+    run bash -c 'sed -n "/^acfs_summary_emit()/,/^}/p" "$1" | grep -F "[[ \"\$resolved_target_home\" == \"/\" ]]"' _ "$installer"
+    assert_success
+
+    run bash -c 'sed -n "/^init_target_paths()/,/^}/p" "$1" | grep -F "if [[ -z \"\${TARGET_HOME:-}\" ]]; then"' _ "$installer"
+    assert_failure
+
+    run bash -c 'sed -n "/^acfs_summary_emit()/,/^}/p" "$1" | grep -F "local resolved_target_home=\"\${TARGET_HOME:-}\""' _ "$installer"
+    assert_failure
+}
+
 @test "install.sh: target install checks avoid inherited PATH leaks" {
     local installer="$PROJECT_ROOT/install.sh"
 
@@ -4459,6 +4496,29 @@ EOF
         printf 'doctor TARGET_HOME was not repaired: %s\n' "$TARGET_HOME" >&2
         return 1
     }
+}
+
+@test "doctor manifest checks and fresh-vps heuristic repair stale TARGET_HOME" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local os_detect_lib="$PROJECT_ROOT/scripts/lib/os_detect.sh"
+
+    run grep -F 'local resolved_target_home=""' "$doctor_lib"
+    assert_success
+    run grep -F 'resolved_target_home="$(_acfs_doctor_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"' "$doctor_lib"
+    assert_success
+    run grep -F 'target_home="${resolved_target_home%/}"' "$doctor_lib"
+    assert_success
+    run grep -F 'target_home="${target_home%/}"' "$doctor_lib"
+    assert_success
+    run grep -F 'if [[ -z "$target_home" ]]; then' "$doctor_lib"
+    assert_failure
+
+    run grep -F 'resolved_target_home="$(os_detect_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"' "$os_detect_lib"
+    assert_success
+    run grep -F 'target_home="${resolved_target_home%/}"' "$os_detect_lib"
+    assert_success
+    run grep -F 'target_home="${TARGET_HOME:-}"' "$os_detect_lib"
+    assert_success
 }
 
 @test "read-only context helpers repair stale TARGET_HOME for current target user" {

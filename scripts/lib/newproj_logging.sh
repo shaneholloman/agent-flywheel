@@ -23,8 +23,43 @@ readonly ACFS_LOG_ERROR=3
 # Current log level (can be overridden via env var or --verbose flag)
 export ACFS_LOG_LEVEL="${ACFS_LOG_LEVEL:-$ACFS_LOG_INFO}"
 
+newproj_logging_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+newproj_logging_default_state_dir() {
+    local state_home=""
+    local home_dir=""
+    local tmp_dir=""
+
+    state_home="$(newproj_logging_sanitize_abs_nonroot_path "${XDG_STATE_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$state_home" ]]; then
+        printf '%s\n' "$state_home"
+        return 0
+    fi
+
+    home_dir="$(newproj_logging_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$home_dir" ]]; then
+        printf '%s/.local/state\n' "$home_dir"
+        return 0
+    fi
+
+    tmp_dir="$(newproj_logging_sanitize_abs_nonroot_path "${TMPDIR:-/tmp}" 2>/dev/null || true)"
+    if [[ -z "$tmp_dir" ]]; then
+        tmp_dir="/tmp"
+    fi
+    printf '%s/acfs-state\n' "$tmp_dir"
+}
+
 # Log directory (XDG compliant)
-export ACFS_LOG_DIR="${ACFS_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/acfs/logs}"
+export ACFS_LOG_DIR="${ACFS_LOG_DIR:-$(newproj_logging_default_state_dir)/acfs/logs}"
 
 # Session log file (set by init_logging)
 export ACFS_SESSION_LOG=""
@@ -87,7 +122,7 @@ init_logging() {
         echo "Started: $(date -Iseconds)"
         echo "PID: $$"
         echo "User: $(whoami)"
-        echo "Home: $HOME"
+        echo "Home: ${HOME:-<unset>}"
         echo "Shell: ${SHELL:-unknown}"
         echo "Terminal: ${TERM:-unknown}"
         echo "Terminal size: $(tput cols 2>/dev/null || echo '?')x$(tput lines 2>/dev/null || echo '?')"
@@ -469,12 +504,12 @@ log_env_snapshot() {
 
     {
         echo "[$timestamp] [ENV  ] Environment snapshot:"
-        echo "    PATH=${PATH:0:200}..."
-        echo "    TERM=$TERM"
-        echo "    LANG=$LANG"
+        echo "    PATH=${PATH:-}"
+        echo "    TERM=${TERM:-unset}"
+        echo "    LANG=${LANG:-unset}"
         echo "    LC_ALL=${LC_ALL:-unset}"
-        echo "    HOME=$HOME"
-        echo "    PWD=$PWD"
+        echo "    HOME=${HOME:-unset}"
+        echo "    PWD=${PWD:-unset}"
         echo "    ACFS_LOG_LEVEL=$ACFS_LOG_LEVEL"
     } >> "$ACFS_SESSION_LOG" 2>/dev/null || true
 }

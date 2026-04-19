@@ -301,13 +301,16 @@ BUN_BIN="${BUN_BIN:-}"
 
 init_target_context() {
     local bun_bin_dir=""
+    local explicit_target_home=""
     local resolved_target_home=""
 
     services_setup_validate_target_user "$TARGET_USER" || return 1
 
+    explicit_target_home="$(services_setup_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
     resolved_target_home="$(resolve_home_dir "$TARGET_USER" 2>/dev/null || true)"
-    TARGET_HOME="$(services_setup_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$resolved_target_home" ]]; then
+    if [[ -n "$explicit_target_home" ]]; then
+        TARGET_HOME="$explicit_target_home"
+    elif [[ -n "$resolved_target_home" ]]; then
         TARGET_HOME="$resolved_target_home"
     fi
     if [[ -z "${TARGET_HOME:-}" ]]; then
@@ -330,7 +333,7 @@ init_target_context() {
 }
 
 # Service status tracking
-declare -A SERVICE_STATUS=()
+declare -gA SERVICE_STATUS=()
 
 # ============================================================
 # Helper Functions
