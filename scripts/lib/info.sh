@@ -222,6 +222,8 @@ _INFO_EXPLICIT_ACFS_HOME="$(info_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/d
 _INFO_DEFAULT_ACFS_HOME=""
 [[ -n "$_INFO_CURRENT_HOME" ]] && _INFO_DEFAULT_ACFS_HOME="${_INFO_CURRENT_HOME}/.acfs"
 _INFO_ACFS_HOME="${_INFO_EXPLICIT_ACFS_HOME:-$_INFO_DEFAULT_ACFS_HOME}"
+_INFO_SYSTEM_STATE_WAS_EXPLICIT=false
+[[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && [[ "${ACFS_SYSTEM_STATE_FILE%/}" != "/var/lib/acfs/state.json" ]] && _INFO_SYSTEM_STATE_WAS_EXPLICIT=true
 _INFO_SYSTEM_STATE_FILE="$(info_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_INFO_SYSTEM_STATE_FILE" ]]; then
     _INFO_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
@@ -680,7 +682,7 @@ info_get_data_home() {
         return 0
     fi
 
-    if [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_EXPLICIT_ACFS_HOME"; then
+    if [[ "$_INFO_SYSTEM_STATE_WAS_EXPLICIT" != true ]] && [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_EXPLICIT_ACFS_HOME"; then
         _INFO_RESOLVED_ACFS_HOME="$_INFO_EXPLICIT_ACFS_HOME"
         echo "$_INFO_RESOLVED_ACFS_HOME"
         return 0

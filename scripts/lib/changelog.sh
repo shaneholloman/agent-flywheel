@@ -239,6 +239,8 @@ _CHANGELOG_DEFAULT_ACFS_HOME=""
 _CHANGELOG_ACFS_HOME="${_CHANGELOG_EXPLICIT_ACFS_HOME:-$_CHANGELOG_DEFAULT_ACFS_HOME}"
 _CHANGELOG_EXPLICIT_ACFS_REPO="$(changelog_sanitize_abs_nonroot_path "${ACFS_REPO:-}" 2>/dev/null || true)"
 _CHANGELOG_ACFS_REPO="${_CHANGELOG_EXPLICIT_ACFS_REPO:-$_CHANGELOG_ACFS_HOME}"
+_CHANGELOG_SYSTEM_STATE_WAS_EXPLICIT=false
+[[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && [[ "${ACFS_SYSTEM_STATE_FILE%/}" != "/var/lib/acfs/state.json" ]] && _CHANGELOG_SYSTEM_STATE_WAS_EXPLICIT=true
 _CHANGELOG_SYSTEM_STATE_FILE="$(changelog_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_CHANGELOG_SYSTEM_STATE_FILE" ]]; then
     _CHANGELOG_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
@@ -430,7 +432,7 @@ resolve_changelog_acfs_home() {
         return 0
     fi
 
-    if [[ -n "$_CHANGELOG_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/state.json" || -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/VERSION" || -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/CHANGELOG.md" ]]; then
+    if [[ "$_CHANGELOG_SYSTEM_STATE_WAS_EXPLICIT" != true ]] && [[ -n "$_CHANGELOG_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/state.json" || -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/VERSION" || -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/CHANGELOG.md" ]]; then
         _CHANGELOG_RESOLVED_ACFS_HOME="$_CHANGELOG_EXPLICIT_ACFS_HOME"
         printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
         return 0

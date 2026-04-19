@@ -203,6 +203,8 @@ _CHEATSHEET_EXPLICIT_ACFS_HOME="$(cheatsheet_sanitize_abs_nonroot_path "${ACFS_H
 _CHEATSHEET_DEFAULT_ACFS_HOME=""
 [[ -n "$_CHEATSHEET_CURRENT_HOME" ]] && _CHEATSHEET_DEFAULT_ACFS_HOME="${_CHEATSHEET_CURRENT_HOME}/.acfs"
 _CHEATSHEET_ACFS_HOME="${_CHEATSHEET_EXPLICIT_ACFS_HOME:-$_CHEATSHEET_DEFAULT_ACFS_HOME}"
+_CHEATSHEET_SYSTEM_STATE_WAS_EXPLICIT=false
+[[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && [[ "${ACFS_SYSTEM_STATE_FILE%/}" != "/var/lib/acfs/state.json" ]] && _CHEATSHEET_SYSTEM_STATE_WAS_EXPLICIT=true
 _CHEATSHEET_VERSION="${ACFS_VERSION:-0.1.0}"
 CHEATSHEET_DELIM=$'\t'
 _CHEATSHEET_SYSTEM_STATE_FILE="$(cheatsheet_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
@@ -475,7 +477,7 @@ cheatsheet_resolve_acfs_home() {
     return 0
   fi
 
-  if [[ -n "$_CHEATSHEET_EXPLICIT_ACFS_HOME" ]] && cheatsheet_candidate_has_acfs_data "$_CHEATSHEET_EXPLICIT_ACFS_HOME"; then
+  if [[ "$_CHEATSHEET_SYSTEM_STATE_WAS_EXPLICIT" != true ]] && [[ -n "$_CHEATSHEET_EXPLICIT_ACFS_HOME" ]] && cheatsheet_candidate_has_acfs_data "$_CHEATSHEET_EXPLICIT_ACFS_HOME"; then
     _CHEATSHEET_RESOLVED_ACFS_HOME="$_CHEATSHEET_EXPLICIT_ACFS_HOME"
     _CHEATSHEET_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
     printf '%s\n' "$_CHEATSHEET_RESOLVED_ACFS_HOME"

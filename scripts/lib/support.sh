@@ -234,6 +234,8 @@ OUTPUT_BASE=""
 OUTPUT_BASE_EXPLICIT=false
 REDACTION_COUNT=0
 DOCTOR_TIMEOUT="${SUPPORT_BUNDLE_DOCTOR_TIMEOUT:-120}"
+SUPPORT_SYSTEM_STATE_WAS_EXPLICIT=false
+[[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && [[ "${ACFS_SYSTEM_STATE_FILE%/}" != "/var/lib/acfs/state.json" ]] && SUPPORT_SYSTEM_STATE_WAS_EXPLICIT=true
 SUPPORT_SYSTEM_STATE_FILE="$(support_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$SUPPORT_SYSTEM_STATE_FILE" ]]; then
     SUPPORT_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
@@ -528,7 +530,7 @@ support_resolve_acfs_home() {
         return 0
     fi
 
-    if [[ -n "$_SUPPORT_ACFS_HOME" ]] && support_candidate_has_acfs_data "$_SUPPORT_ACFS_HOME"; then
+    if [[ "$SUPPORT_SYSTEM_STATE_WAS_EXPLICIT" != true ]] && [[ -n "$_SUPPORT_ACFS_HOME" ]] && support_candidate_has_acfs_data "$_SUPPORT_ACFS_HOME"; then
         _SUPPORT_ACFS_HOME_SOURCE="explicit_acfs_home"
         printf '%s\n' "$_SUPPORT_ACFS_HOME"
         return 0

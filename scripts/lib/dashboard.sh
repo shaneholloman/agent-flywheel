@@ -209,6 +209,8 @@ _DASHBOARD_EXPLICIT_ACFS_HOME="$(dashboard_sanitize_abs_nonroot_path "${ACFS_HOM
 _DASHBOARD_DEFAULT_ACFS_HOME=""
 [[ -n "$_DASHBOARD_CURRENT_HOME" ]] && _DASHBOARD_DEFAULT_ACFS_HOME="${_DASHBOARD_CURRENT_HOME}/.acfs"
 _DASHBOARD_ACFS_HOME="${_DASHBOARD_EXPLICIT_ACFS_HOME:-$_DASHBOARD_DEFAULT_ACFS_HOME}"
+_DASHBOARD_SYSTEM_STATE_WAS_EXPLICIT=false
+[[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && [[ "${ACFS_SYSTEM_STATE_FILE%/}" != "/var/lib/acfs/state.json" ]] && _DASHBOARD_SYSTEM_STATE_WAS_EXPLICIT=true
 _DASHBOARD_SYSTEM_STATE_FILE="$(dashboard_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
 if [[ -z "$_DASHBOARD_SYSTEM_STATE_FILE" ]]; then
     _DASHBOARD_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
@@ -395,7 +397,7 @@ dashboard_resolve_acfs_home() {
         return 0
     fi
 
-    if [[ -n "$_DASHBOARD_EXPLICIT_ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$_DASHBOARD_EXPLICIT_ACFS_HOME"; then
+    if [[ "$_DASHBOARD_SYSTEM_STATE_WAS_EXPLICIT" != true ]] && [[ -n "$_DASHBOARD_EXPLICIT_ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$_DASHBOARD_EXPLICIT_ACFS_HOME"; then
         _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_EXPLICIT_ACFS_HOME"
         _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
         printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
