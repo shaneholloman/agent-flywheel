@@ -206,7 +206,9 @@ describe('Generated verified installer args', () => {
     expect(existsSync(stackPath)).toBe(true);
     const stackContent = readFileSync(stackPath, 'utf-8');
 
-    expect(stackContent).toContain('_ACFS_DETECTED_USER="${SUDO_USER:-$(whoami)}"');
+    expect(stackContent).toContain('_ACFS_DETECTED_USER="${SUDO_USER:-}"');
+    expect(stackContent).toContain('_ACFS_DETECTED_USER="$(acfs_generated_resolve_current_user 2>/dev/null || true)"');
+    expect(stackContent).not.toContain('_ACFS_DETECTED_USER="${SUDO_USER:-$(whoami)}"');
     expect(stackContent).not.toContain('TARGET_USER="${TARGET_USER:-ubuntu}"');
   });
 

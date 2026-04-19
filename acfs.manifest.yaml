@@ -99,14 +99,18 @@ modules:
             if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
               target_home="/root"
             else
-              _acfs_passwd_entry="$(getent passwd "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+              _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
               if [[ -n "$_acfs_passwd_entry" ]]; then
-                target_home="$(printf '%s\n' "$_acfs_passwd_entry" | cut -d: -f6)"
-              elif [[ "$(whoami 2>/dev/null || true)" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-                target_home="${HOME}"
+                target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
               else
-                echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
-                exit 1
+                current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+                if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
+                  target_home="${HOME}"
+                else
+                  echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
+                  exit 1
+                fi
+                unset current_user
               fi
               unset _acfs_passwd_entry
             fi
@@ -131,17 +135,25 @@ modules:
             if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
               target_home="/root"
             else
-              _acfs_passwd_entry="$(getent passwd "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+              _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
               if [[ -n "$_acfs_passwd_entry" ]]; then
-                target_home="$(printf '%s\n' "$_acfs_passwd_entry" | cut -d: -f6)"
-              elif [[ "$(whoami 2>/dev/null || true)" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
-                target_home="${HOME}"
+                target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
               else
-                echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
-                exit 1
+                current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+                if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]]; then
+                  target_home="${HOME}"
+                else
+                  echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
+                  exit 1
+                fi
+                unset current_user
               fi
               unset _acfs_passwd_entry
             fi
+          fi
+          if [[ -z "$target_home" || "$target_home" == "/" || "$target_home" != /* ]]; then
+            echo "ERROR: Invalid TARGET_HOME: '${target_home:-<empty>}'" >&2
+            exit 1
           fi
           test -d "$target_home/.acfs"
     notes:
@@ -278,10 +290,15 @@ modules:
             echo "WARN: zsh not found; cannot set default shell automatically." >&2
             exit 0
           fi
-          passwd_entry="$(getent passwd "$(whoami)" 2>/dev/null || true)"
+          current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+          if [[ -z "$current_user" ]]; then
+            echo "WARN: Unable to resolve current user; skipping default shell change." >&2
+            exit 0
+          fi
+          passwd_entry="$(acfs_generated_getent_passwd_entry "$current_user" 2>/dev/null || true)"
           local_entry=""
           if [[ -r /etc/passwd ]]; then
-            local_entry="$(awk -F: -v user="$(whoami)" '$1 == user { print $0; exit }' /etc/passwd 2>/dev/null || true)"
+            local_entry="$(awk -F: -v user="$current_user" '$1 == user { print $0; exit }' /etc/passwd 2>/dev/null || true)"
           fi
           if [[ -n "$passwd_entry" ]] && [[ -z "$local_entry" ]]; then
             if ! grep -q 'ACFS externally-managed shell handoff' ~/.bashrc 2>/dev/null; then
@@ -299,9 +316,9 @@ modules:
                 echo 'fi'
               } >> ~/.bashrc
             fi
-            echo "WARN: $(whoami) is managed outside /etc/passwd; installed a bash-to-zsh handoff instead of using chsh." >&2
+            echo "WARN: $current_user is managed outside /etc/passwd; installed a bash-to-zsh handoff instead of using chsh." >&2
           elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-            sudo chsh -s "$zsh_path" "$(whoami)"
+            sudo chsh -s "$zsh_path" "$current_user"
           else
             if [[ -t 0 ]]; then
               if ! chsh -s "$zsh_path"; then

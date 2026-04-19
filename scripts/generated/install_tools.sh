@@ -29,6 +29,105 @@ if [[ -f "$ACFS_GENERATED_SCRIPT_DIR/../lib/install_helpers.sh" ]]; then
     source "$ACFS_GENERATED_SCRIPT_DIR/../lib/install_helpers.sh"
 fi
 
+acfs_generated_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in         "/usr/local/bin/$name"         "/usr/bin/$name"         "/bin/$name"         "/usr/sbin/$name"         "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s
+' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+acfs_generated_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(acfs_generated_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(acfs_generated_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s
+' "$current_user"
+}
+
+acfs_generated_getent_passwd_entry() {
+    local user="${1-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
+
+    getent_bin="$(acfs_generated_system_binary_path getent 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s
+' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
+
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s
+' "$passwd_line"
+        done < /etc/passwd
+        return 0
+    fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s
+' "$passwd_entry"
+}
+
+acfs_generated_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    if [[ -n "$passwd_home" ]] && [[ "$passwd_home" == /* ]] && [[ "$passwd_home" != "/" ]]; then
+        printf '%s
+' "${passwd_home%/}"
+        return 0
+    fi
+
+    return 1
+}
+
 # When running a generated installer directly (not sourced by install.sh),
 # set sane defaults and derive ACFS paths from the script location so
 # contract validation passes and local assets are discoverable.
@@ -38,7 +137,14 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
         if [[ $EUID -eq 0 ]] && [[ -z "${SUDO_USER:-}" ]]; then
             _ACFS_DETECTED_USER="ubuntu"
         else
-            _ACFS_DETECTED_USER="${SUDO_USER:-$(whoami)}"
+            _ACFS_DETECTED_USER="${SUDO_USER:-}"
+            if [[ -z "$_ACFS_DETECTED_USER" ]]; then
+                _ACFS_DETECTED_USER="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+            fi
+            if [[ -z "$_ACFS_DETECTED_USER" ]]; then
+                log_error "Unable to resolve the current user for TARGET_USER"
+                exit 1
+            fi
         fi
         TARGET_USER="$_ACFS_DETECTED_USER"
     fi
@@ -60,14 +166,18 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
             if [[ "${TARGET_USER}" == "root" ]]; then
                 TARGET_HOME="/root"
             else
-                _acfs_passwd_entry="$(getent passwd "${TARGET_USER}" 2>/dev/null || true)"
+                _acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER}" 2>/dev/null || true)"
                 if [[ -n "$_acfs_passwd_entry" ]]; then
-                    _acfs_passwd_entry="$(printf '%s\n' "$_acfs_passwd_entry" | cut -d: -f6)"
-                    if [[ -n "$_acfs_passwd_entry" ]] && [[ "$_acfs_passwd_entry" == /* ]] && [[ "$_acfs_passwd_entry" != "/" ]]; then
+                    _acfs_passwd_entry="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
+                    if [[ -n "$_acfs_passwd_entry" ]]; then
                         TARGET_HOME="${_acfs_passwd_entry%/}"
                     fi
-                elif [[ "$(id -un 2>/dev/null || true)" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                    TARGET_HOME="${HOME%/}"
+                else
+                    _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
+                    if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+                        TARGET_HOME="${HOME%/}"
+                    fi
+                    unset _acfs_current_user
                 fi
                 unset _acfs_passwd_entry
             fi
