@@ -540,7 +540,12 @@ dashboard_prepare_context() {
     state_file="$(dashboard_resolve_state_file)"
     path_home="$(dashboard_infer_target_home_from_acfs_home 2>/dev/null || true)"
     explicit_target_home="$(dashboard_resolve_explicit_target_home 2>/dev/null || true)"
-    state_target_user="$(dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null ||         dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+    if [[ -n "$path_home" ]]; then
+        state_target_user="$(dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+    fi
+    if [[ -z "$state_target_user" ]]; then
+        state_target_user="$(dashboard_read_state_string "$_DASHBOARD_SYSTEM_STATE_FILE" "target_user" 2>/dev/null ||         dashboard_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+    fi
 
     if [[ -n "$_DASHBOARD_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then
         if [[ -n "$explicit_target_home" ]]; then

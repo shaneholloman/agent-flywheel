@@ -653,7 +653,12 @@ support_initialize_context() {
     state_file=$(support_get_install_state_file)
     path_home="$(support_infer_target_home_from_acfs_home 2>/dev/null || true)"
     explicit_target_home="$(support_resolve_explicit_target_home 2>/dev/null || true)"
-    state_target_user="$(support_read_target_user_from_state "$SUPPORT_SYSTEM_STATE_FILE" 2>/dev/null || support_read_target_user_from_state "$state_file" 2>/dev/null || true)"
+    if [[ -n "$path_home" ]]; then
+        state_target_user="$(support_read_target_user_from_state "$state_file" 2>/dev/null || true)"
+    fi
+    if [[ -z "$state_target_user" ]]; then
+        state_target_user="$(support_read_target_user_from_state "$SUPPORT_SYSTEM_STATE_FILE" 2>/dev/null || support_read_target_user_from_state "$state_file" 2>/dev/null || true)"
+    fi
 
     if [[ -n "$_SUPPORT_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_SUPPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
         if [[ -n "$explicit_target_home" ]]; then

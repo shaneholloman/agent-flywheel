@@ -452,6 +452,12 @@ info_state_file_path_target_home() {
     [[ -n "$data_home" ]] || return 1
     path_home="${data_home%/.acfs}"
 
+    if { [[ -n "$_INFO_RESOLVED_ACFS_HOME" ]] && [[ "$data_home" == "$_INFO_RESOLVED_ACFS_HOME" ]]; } ||
+        { [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && [[ "$data_home" == "$_INFO_EXPLICIT_ACFS_HOME" ]]; }; then
+        printf '%s\n' "$path_home"
+        return 0
+    fi
+
     candidate_user="$(info_read_user_for_home "$path_home" 2>/dev/null || true)"
     if [[ -n "$candidate_user" ]]; then
         printf '%s\n' "$path_home"

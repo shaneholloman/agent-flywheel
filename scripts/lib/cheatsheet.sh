@@ -660,7 +660,12 @@ cheatsheet_prepare_context() {
   state_file="$(cheatsheet_resolve_state_file)"
   path_home="$(cheatsheet_infer_target_home_from_acfs_home 2>/dev/null || true)"
   explicit_target_home="$(cheatsheet_resolve_explicit_target_home 2>/dev/null || true)"
-  state_target_user="$(cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_user" 2>/dev/null ||     cheatsheet_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+  if [[ -n "$path_home" ]]; then
+    state_target_user="$(cheatsheet_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+  fi
+  if [[ -z "$state_target_user" ]]; then
+    state_target_user="$(cheatsheet_read_state_string "$_CHEATSHEET_SYSTEM_STATE_FILE" "target_user" 2>/dev/null ||     cheatsheet_read_state_string "$state_file" "target_user" 2>/dev/null || true)"
+  fi
 
   if [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_CHEATSHEET_EXPLICIT_TARGET_USER_RAW" ]]; then
     if [[ -n "$explicit_target_home" ]]; then
