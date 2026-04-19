@@ -129,12 +129,12 @@ EOF
     export TARGET_HOME="/"
     export HOME="/"
 
-    getent() {
-        if [[ "$1" == "passwd" && "$2" == "tester" ]]; then
+    update_getent_passwd_entry() {
+        if [[ "${1:-}" == "tester" ]]; then
             printf 'tester:x:1000:1000::%s:/bin/bash\n' "$resolved_home"
             return 0
         fi
-        command getent "$@"
+        return 2
     }
 
     run update_target_home "tester"
@@ -151,12 +151,12 @@ EOF
     export TARGET_HOME="$stale_home"
     export HOME="$stale_home"
 
-    getent() {
-        if [[ "$1" == "passwd" && "$2" == "tester" ]]; then
+    update_getent_passwd_entry() {
+        if [[ "${1:-}" == "tester" ]]; then
             printf 'tester:x:1000:1000::%s:/bin/bash\n' "$resolved_home"
             return 0
         fi
-        command getent "$@"
+        return 2
     }
 
     run update_target_home "tester"
@@ -180,7 +180,7 @@ EOF
     export TARGET_HOME="/"
     export HOME="/"
 
-    getent() {
+    update_getent_passwd_entry() {
         return 2
     }
 
@@ -1304,6 +1304,251 @@ EOF
     assert_success
 }
 
+@test "scripts/lib/zsh.sh: resolves shell user via trusted helpers" {
+    local zsh_lib="$PROJECT_ROOT/scripts/lib/zsh.sh"
+
+    run grep -F 'current_user="$(zsh_resolve_current_user 2>/dev/null || true)"' "$zsh_lib"
+    assert_success
+
+    run grep -F 'passwd_entry="$(zsh_getent_passwd_entry "$current_user" 2>/dev/null || true)"' "$zsh_lib"
+    assert_success
+
+    run grep -F 'if zsh_is_externally_managed_user "$current_user"; then' "$zsh_lib"
+    assert_success
+
+    run grep -F '$SUDO "$chsh_path" -s "$zsh_path" "$current_user"' "$zsh_lib"
+    assert_success
+
+    run grep -F 'getent passwd "$(whoami)"' "$zsh_lib"
+    assert_failure
+}
+
+@test "scripts/preflight.sh: resolves identity and passwd data via trusted helpers" {
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
+
+    run grep -F 'id_bin="$(preflight_system_binary_path id 2>/dev/null || true)"' "$preflight"
+    assert_success
+
+    run grep -F 'whoami_bin="$(preflight_system_binary_path whoami 2>/dev/null || true)"' "$preflight"
+    assert_success
+
+    run grep -F 'done < <(preflight_getent_passwd_entry 2>/dev/null || true)' "$preflight"
+    assert_success
+
+    run grep -F 'passwd_entry="$(preflight_getent_passwd_entry "$user" 2>/dev/null || true)"' "$preflight"
+    assert_success
+
+    run grep -F 'current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"' "$preflight"
+    assert_failure
+
+    run grep -F 'getent passwd "$user"' "$preflight"
+    assert_failure
+}
+
+@test "scripts/lib/smoke_test.sh: validates bin dirs via trusted passwd helpers" {
+    local smoke_lib="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
+
+    run grep -F 'if [[ -z "$user" ]]; then' "$smoke_lib"
+    assert_success
+
+    run grep -F 'done < <(_smoke_getent_passwd_entry 2>/dev/null || true)' "$smoke_lib"
+    assert_success
+
+    run grep -F 'done < <(getent passwd 2>/dev/null || true)' "$smoke_lib"
+    assert_failure
+}
+
+@test "scripts/lib/github_api.sh: validates bin dirs via trusted passwd helpers" {
+    local github_api="$PROJECT_ROOT/scripts/lib/github_api.sh"
+
+    run grep -F '_github_api_system_binary_path() {' "$github_api"
+    assert_success
+
+    run grep -F '_github_api_getent_passwd_entry() {' "$github_api"
+    assert_success
+
+    run grep -F 'done < <(_github_api_getent_passwd_entry 2>/dev/null || true)' "$github_api"
+    assert_success
+
+    run grep -F 'done < <(getent passwd 2>/dev/null || true)' "$github_api"
+    assert_failure
+}
+
+@test "services-setup and wrappers parse passwd homes via helpers" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
+    local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"
+
+    run grep -F 'services_setup_passwd_home_from_entry() {' "$services_setup"
+    assert_success
+
+    run grep -F 'home="$(services_setup_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"' "$services_setup"
+    assert_success
+
+    run grep -F 'done < <(services_setup_getent_passwd_entry 2>/dev/null || true)' "$services_setup"
+    assert_success
+
+    run grep -F 'cut -d: -f6' "$services_setup"
+    assert_failure
+
+    run grep -F 'awk -F: -v u=' "$services_setup"
+    assert_failure
+
+    run grep -F 'done < <(getent_passwd_entry 2>/dev/null || true)' "$update_wrapper"
+    assert_success
+
+    run grep -F 'done < <(getent_passwd_entry 2>/dev/null || true)' "$global_wrapper"
+    assert_success
+
+    run grep -F 'cut -d: -f6' "$update_wrapper"
+    assert_failure
+
+    run grep -F 'cut -d: -f6' "$global_wrapper"
+    assert_failure
+}
+
+@test "auxiliary libs parse passwd homes via helpers" {
+    local support="$PROJECT_ROOT/scripts/lib/support.sh"
+    local status_lib="$PROJECT_ROOT/scripts/lib/status.sh"
+    local info="$PROJECT_ROOT/scripts/lib/info.sh"
+    local dashboard="$PROJECT_ROOT/scripts/lib/dashboard.sh"
+    local export_config="$PROJECT_ROOT/scripts/lib/export-config.sh"
+    local cheatsheet="$PROJECT_ROOT/scripts/lib/cheatsheet.sh"
+    local continue_lib="$PROJECT_ROOT/scripts/lib/continue.sh"
+    local changelog_lib="$PROJECT_ROOT/scripts/lib/changelog.sh"
+    local notifications_lib="$PROJECT_ROOT/scripts/lib/notifications.sh"
+    local notify_lib="$PROJECT_ROOT/scripts/lib/notify.sh"
+    local webhook_lib="$PROJECT_ROOT/scripts/lib/webhook.sh"
+    local agents_lib="$PROJECT_ROOT/scripts/lib/agents.sh"
+    local cli_tools_lib="$PROJECT_ROOT/scripts/lib/cli_tools.sh"
+    local languages_lib="$PROJECT_ROOT/scripts/lib/languages.sh"
+    local cloud_db_lib="$PROJECT_ROOT/scripts/lib/cloud_db.sh"
+    local stack_lib="$PROJECT_ROOT/scripts/lib/stack.sh"
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local doctor_fix_lib="$PROJECT_ROOT/scripts/lib/doctor_fix.sh"
+    local user_lib="$PROJECT_ROOT/scripts/lib/user.sh"
+
+    run grep -F 'support_passwd_home_from_entry() {' "$support"
+    assert_success
+
+    run grep -F 'done < <(support_getent_passwd_entry 2>/dev/null || true)' "$support"
+    assert_success
+
+    run grep -F '_status_passwd_home_from_entry() {' "$status_lib"
+    assert_success
+
+    run grep -F 'done < <(_status_getent_passwd_entry 2>/dev/null || true)' "$status_lib"
+    assert_success
+
+    run grep -F 'info_passwd_home_from_entry() {' "$info"
+    assert_success
+
+    run grep -F 'done < <(info_getent_passwd_entry 2>/dev/null || true)' "$info"
+    assert_success
+
+    run grep -F 'dashboard_passwd_home_from_entry() {' "$dashboard"
+    assert_success
+
+    run grep -F 'done < <(dashboard_getent_passwd_entry 2>/dev/null || true)' "$dashboard"
+    assert_success
+
+    run grep -F 'export_passwd_home_from_entry() {' "$export_config"
+    assert_success
+
+    run grep -F 'done < <(export_getent_passwd_entry 2>/dev/null || true)' "$export_config"
+    assert_success
+
+    run grep -F 'cheatsheet_passwd_home_from_entry() {' "$cheatsheet"
+    assert_success
+
+    run grep -F 'done < <(cheatsheet_getent_passwd_entry 2>/dev/null || true)' "$cheatsheet"
+    assert_success
+
+    run grep -F 'continue_passwd_home_from_entry() {' "$continue_lib"
+    assert_success
+
+    run grep -F 'continue_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$continue_lib"
+    assert_success
+
+    run grep -F 'changelog_passwd_home_from_entry() {' "$changelog_lib"
+    assert_success
+
+    run grep -F 'changelog_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$changelog_lib"
+    assert_success
+
+    run grep -F 'notifications_passwd_home_from_entry() {' "$notifications_lib"
+    assert_success
+
+    run grep -F 'notifications_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$notifications_lib"
+    assert_success
+
+    run grep -F '_acfs_notify_passwd_home_from_entry() {' "$notify_lib"
+    assert_success
+
+    run grep -F '_acfs_notify_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$notify_lib"
+    assert_success
+
+    run grep -F 'webhook_passwd_home_from_entry() {' "$webhook_lib"
+    assert_success
+
+    run grep -F 'webhook_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$webhook_lib"
+    assert_success
+
+    run grep -F '_agent_passwd_home_from_entry() {' "$agents_lib"
+    assert_success
+
+    run grep -F 'done < <(_agent_getent_passwd_entry 2>/dev/null || true)' "$agents_lib"
+    assert_success
+
+    run grep -F '_cli_passwd_home_from_entry() {' "$cli_tools_lib"
+    assert_success
+
+    run grep -F 'done < <(_cli_getent_passwd_entry 2>/dev/null || true)' "$cli_tools_lib"
+    assert_success
+
+    run grep -F '_lang_passwd_home_from_entry() {' "$languages_lib"
+    assert_success
+
+    run grep -F '_lang_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$languages_lib"
+    assert_success
+
+    run grep -F '_cloud_passwd_home_from_entry() {' "$cloud_db_lib"
+    assert_success
+
+    run grep -F '_cloud_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$cloud_db_lib"
+    assert_success
+
+    run grep -F '_stack_passwd_home_from_entry() {' "$stack_lib"
+    assert_success
+
+    run grep -F '_stack_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$stack_lib"
+    assert_success
+
+    run grep -F '_acfs_doctor_passwd_home_from_entry() {' "$doctor_lib"
+    assert_success
+
+    run grep -F '_acfs_doctor_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$doctor_lib"
+    assert_success
+
+    run grep -F 'doctor_fix_passwd_home_from_entry() {' "$doctor_fix_lib"
+    assert_success
+
+    run grep -F 'doctor_fix_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$doctor_fix_lib"
+    assert_success
+
+    run grep -F 'user_passwd_home_from_entry() {' "$user_lib"
+    assert_success
+
+    run grep -F 'user_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true' "$user_lib"
+    assert_success
+
+    run rg -n 'cut -d: -f6' "$support" "$status_lib" "$info" "$dashboard" "$export_config" "$cheatsheet" "$continue_lib" "$changelog_lib" "$notifications_lib" "$notify_lib" "$webhook_lib" "$agents_lib" "$cli_tools_lib" "$languages_lib" "$cloud_db_lib" "$stack_lib" "$doctor_lib" "$doctor_fix_lib" "$user_lib"
+    assert_failure
+
+    run rg -n 'awk -F: -v u=|awk -F: -v user=' "$doctor_lib" "$doctor_fix_lib" "$user_lib"
+    assert_failure
+}
+
 @test "services-setup: probes custom and ACFS bin dirs for target-user commands" {
     local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
     local preflight="$PROJECT_ROOT/scripts/preflight.sh"
@@ -1334,6 +1579,48 @@ EOF
 
     run grep -F "printf '/home/%s\n' \"\$target_user\"" "$preflight"
     assert_failure
+}
+
+@test "services-setup: run_as_user ignores function-poisoned whoami on same-user fast path" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local current_user
+    local current_home
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        current_home="/root"
+    else
+        current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    fi
+    current_home="${current_home%/}"
+    mkdir -p "$current_home/.local/bin"
+
+    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_valid_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_system_binary_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_getent_passwd_entry()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_bin_dir_for_home()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_resolve_current_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^run_as_user()/,/^}$/p' "$services_setup")"
+
+    export TARGET_USER="$current_user"
+    export TARGET_HOME="$current_home"
+    export HOME="$current_home"
+    export ACFS_BIN_DIR="$current_home/.local/bin"
+
+    whoami() {
+        printf 'poisoned-user\n'
+    }
+
+    sudo() {
+        echo 'sudo should not run' >&2
+        return 1
+    }
+
+    run run_as_user bash -c 'printf "%s\n" "$HOME"'
+    assert_success
+    assert_output "$current_home"
 }
 
 @test "diagnostic helpers: prepend primary ACFS bin dir and ~/.acfs/bin" {
@@ -1980,53 +2267,53 @@ EOF
     chmod +x "$fake_bin/id" "$fake_bin/whoami" "$fake_bin/getent"
 
     while IFS='|' read -r label script func current_home_var; do
-        run env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$fake_home" bash -c '
-            script="$1"
-            label="$2"
-            func="$3"
-            current_home="$4"
-            current_home_var="$5"
-            case "$label" in
-                status)
-                    eval "$(sed -n '/^_status_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^_status_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^_status_resolve_current_user()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^_status_read_user_for_home()/,/^}$/p' "$script")"
-                    ;;
-                support)
-                    eval "$(sed -n '/^support_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^support_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^support_resolve_current_user()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^support_read_user_for_home()/,/^}$/p' "$script")"
-                    ;;
-                info)
-                    eval "$(sed -n '/^info_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^info_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^info_resolve_current_user()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^info_read_user_for_home()/,/^}$/p' "$script")"
-                    ;;
-                export-config)
-                    eval "$(sed -n '/^export_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^export_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^export_resolve_current_user()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^read_user_for_home()/,/^}$/p' "$script")"
-                    ;;
-                dashboard)
-                    eval "$(sed -n '/^dashboard_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^dashboard_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^dashboard_resolve_current_user()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^dashboard_read_user_for_home()/,/^}$/p' "$script")"
-                    ;;
-                cheatsheet)
-                    eval "$(sed -n '/^cheatsheet_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^cheatsheet_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^cheatsheet_resolve_current_user()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^cheatsheet_read_user_for_home()/,/^}$/p' "$script")"
-                    ;;
-            esac
-            export "$current_home_var=$current_home"
-            "$func" "$current_home"
-        ' _ "$script" "$label" "$func" "$current_home" "$current_home_var"
+        run env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$fake_home" bash -s -- "$script" "$label" "$func" "$current_home" "$current_home_var" <<'EOF_HELPER'
+script="$1"
+label="$2"
+func="$3"
+current_home="$4"
+current_home_var="$5"
+case "$label" in
+    status)
+        eval "$(sed -n "/^_status_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^_status_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^_status_resolve_current_user()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^_status_read_user_for_home()/,/^}$/p" "$script")"
+        ;;
+    support)
+        eval "$(sed -n "/^support_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^support_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^support_resolve_current_user()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^support_read_user_for_home()/,/^}$/p" "$script")"
+        ;;
+    info)
+        eval "$(sed -n "/^info_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^info_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^info_resolve_current_user()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^info_read_user_for_home()/,/^}$/p" "$script")"
+        ;;
+    export-config)
+        eval "$(sed -n "/^export_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^export_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^export_resolve_current_user()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^read_user_for_home()/,/^}$/p" "$script")"
+        ;;
+    dashboard)
+        eval "$(sed -n "/^dashboard_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^dashboard_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^dashboard_resolve_current_user()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^dashboard_read_user_for_home()/,/^}$/p" "$script")"
+        ;;
+    cheatsheet)
+        eval "$(sed -n "/^cheatsheet_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^cheatsheet_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^cheatsheet_resolve_current_user()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^cheatsheet_read_user_for_home()/,/^}$/p" "$script")"
+        ;;
+esac
+export "$current_home_var=$current_home"
+"$func" "$current_home"
+EOF_HELPER
         assert_success
         assert_output "$current_user"
     done <<EOF
@@ -2058,9 +2345,9 @@ EOF
     current_home="${current_home%/}"
 
     fake_home="$(create_temp_dir)"
-    fake_bin_dir="$fake_home/.local/bin"
+    fake_bin_dir="$current_home/.local/bin"
     fake_bin="$BATS_TEST_TMPDIR/validate-path-poison-bin"
-    mkdir -p "$fake_bin_dir" "$fake_bin"
+    mkdir -p "$fake_bin"
 
     cat > "$fake_bin/getent" <<EOF
 #!/usr/bin/env bash
@@ -2073,36 +2360,36 @@ EOF
     chmod +x "$fake_bin/getent"
 
     while IFS='|' read -r label script func; do
-        run env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$current_home" bash -c '
-            script="$1"
-            label="$2"
-            func="$3"
-            fake_bin_dir="$4"
-            current_home="$5"
-            case "$label" in
-                status)
-                    eval "$(sed -n '/^_status_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^_status_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^_status_validate_bin_dir_for_home()/,/^}$/p' "$script")"
-                    ;;
-                info)
-                    eval "$(sed -n '/^info_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^info_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^info_validate_bin_dir_for_home()/,/^}$/p' "$script")"
-                    ;;
-                export-config)
-                    eval "$(sed -n '/^export_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^export_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^export_validate_bin_dir_for_home()/,/^}$/p' "$script")"
-                    ;;
-                cheatsheet)
-                    eval "$(sed -n '/^cheatsheet_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^cheatsheet_system_binary_path()/,/^}$/p' "$script")"
-                    eval "$(sed -n '/^cheatsheet_validate_bin_dir_for_home()/,/^}$/p' "$script")"
-                    ;;
-            esac
-            "$func" "$fake_bin_dir" "$current_home"
-        ' _ "$script" "$label" "$func" "$fake_bin_dir" "$current_home"
+        run env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$current_home" bash -s -- "$script" "$label" "$func" "$fake_bin_dir" "$current_home" <<'EOF_VALIDATOR'
+script="$1"
+label="$2"
+func="$3"
+fake_bin_dir="$4"
+current_home="$5"
+case "$label" in
+    status)
+        eval "$(sed -n "/^_status_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^_status_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^_status_validate_bin_dir_for_home()/,/^}$/p" "$script")"
+        ;;
+    info)
+        eval "$(sed -n "/^info_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^info_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^info_validate_bin_dir_for_home()/,/^}$/p" "$script")"
+        ;;
+    export-config)
+        eval "$(sed -n "/^export_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^export_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^export_validate_bin_dir_for_home()/,/^}$/p" "$script")"
+        ;;
+    cheatsheet)
+        eval "$(sed -n "/^cheatsheet_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^cheatsheet_system_binary_path()/,/^}$/p" "$script")"
+        eval "$(sed -n "/^cheatsheet_validate_bin_dir_for_home()/,/^}$/p" "$script")"
+        ;;
+esac
+"$func" "$fake_bin_dir" "$current_home"
+EOF_VALIDATOR
         assert_success
         assert_output "$fake_bin_dir"
     done <<EOF
@@ -2111,6 +2398,158 @@ info|$PROJECT_ROOT/scripts/lib/info.sh|info_validate_bin_dir_for_home
 export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|export_validate_bin_dir_for_home
 cheatsheet|$PROJECT_ROOT/scripts/lib/cheatsheet.sh|cheatsheet_validate_bin_dir_for_home
 EOF
+}
+
+
+@test "continue state-file scan ignores PATH-poisoned getent output" {
+    local safe_home
+    local poisoned_home
+    local safe_bin
+    local poison_bin
+
+    safe_home="$(create_temp_dir)"
+    poisoned_home="$(create_temp_dir)"
+    safe_bin="$BATS_TEST_TMPDIR/continue-safe-bin"
+    poison_bin="$BATS_TEST_TMPDIR/continue-poison-bin"
+
+    mkdir -p "$safe_home/.acfs" "$poisoned_home/.acfs" "$safe_bin" "$poison_bin"
+    printf '{}\n' > "$safe_home/.acfs/state.json"
+    printf '{}\n' > "$poisoned_home/.acfs/state.json"
+
+    cat > "$safe_bin/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]]; then
+    printf 'safe-user:x:1000:1000::%s:/bin/bash\n' "$safe_home"
+    exit 0
+fi
+exit 2
+EOF
+    cat > "$poison_bin/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]]; then
+    printf 'poisoned-user:x:1000:1000::%s:/bin/bash\n' "$poisoned_home"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$safe_bin/getent" "$poison_bin/getent"
+
+    run env -i PATH="$poison_bin:/usr/bin:/bin" SAFE_BIN="$safe_bin" bash -s -- "$PROJECT_ROOT/scripts/lib/continue.sh" <<'EOF_CONTINUE_SCAN'
+script="$1"
+eval "$(sed -n "/^find_scanned_install_state_file()/,/^}$/p" "$script")"
+continue_system_binary_path() {
+    local name="${1:-}"
+    [[ "$name" == "getent" ]] || return 1
+    printf '%s\n' "$SAFE_BIN/getent"
+}
+find_scanned_install_state_file
+EOF_CONTINUE_SCAN
+    assert_success
+    assert_output "$safe_home/.acfs/state.json"
+}
+
+@test "support environment summary ignores PATH-poisoned whoami fallback" {
+    local current_user
+    local current_home
+    local fake_bin
+    local bundle_dir
+    local acfs_home
+    local jq_real
+
+    jq_real="$(command -v jq 2>/dev/null || true)"
+    [[ -n "$jq_real" ]] || skip "jq required"
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        current_home="/root"
+    else
+        current_home="$(getent passwd "$current_user" | cut -d: -f6)"
+    fi
+    current_home="${current_home%/}"
+
+    fake_bin="$BATS_TEST_TMPDIR/support-path-poison-bin"
+    bundle_dir="$(create_temp_dir)"
+    acfs_home="$(create_temp_dir)/.acfs"
+    mkdir -p "$fake_bin" "$bundle_dir" "$acfs_home"
+
+    cat > "$fake_bin/whoami" <<'EOF'
+#!/usr/bin/env bash
+printf 'poisoned-user\n'
+EOF
+    cat > "$fake_bin/jq" <<EOF
+#!/usr/bin/env bash
+exec "$jq_real" "\$@"
+EOF
+    chmod +x "$fake_bin/whoami" "$fake_bin/jq"
+    printf '0.0.0-test\n' > "$acfs_home/VERSION"
+
+    run env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$current_home" SHELL="/bin/bash" bash -s -- "$PROJECT_ROOT/scripts/lib/support.sh" "$bundle_dir" "$acfs_home" <<'EOF_SUPPORT_ENV'
+script="$1"
+bundle_dir="$2"
+acfs_home="$3"
+record_bundle_file() { :; }
+log_warn() { :; }
+eval "$(sed -n "/^support_system_binary_path()/,/^}$/p" "$script")"
+eval "$(sed -n "/^support_resolve_current_user()/,/^}$/p" "$script")"
+eval "$(sed -n "/^capture_env_summary()/,/^}$/p" "$script")"
+_SUPPORT_CURRENT_HOME="$HOME"
+_SUPPORT_ACFS_HOME="$acfs_home"
+SUPPORT_TARGET_HOME="$HOME"
+SUPPORT_TARGET_USER=""
+capture_env_summary "$bundle_dir"
+jq -r '.user' "$bundle_dir/environment.json"
+EOF_SUPPORT_ENV
+    assert_success
+    assert_output "$current_user"
+}
+
+@test "dashboard serve banner ignores PATH-poisoned whoami fallback" {
+    local current_user
+    local current_home
+    local fake_bin
+    local acfs_home
+    local port
+
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        current_home="/root"
+    else
+        current_home="$(getent passwd "$current_user" | cut -d: -f6)"
+    fi
+    current_home="${current_home%/}"
+
+    fake_bin="$BATS_TEST_TMPDIR/dashboard-path-poison-bin"
+    acfs_home="$(create_temp_dir)/.acfs"
+    port=18080
+    mkdir -p "$fake_bin" "$acfs_home/dashboard"
+    printf '<html></html>\n' > "$acfs_home/dashboard/index.html"
+
+    cat > "$fake_bin/whoami" <<'EOF'
+#!/usr/bin/env bash
+printf 'poisoned-user\n'
+EOF
+    cat > "$fake_bin/python3" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$fake_bin/whoami" "$fake_bin/python3"
+
+    run env -i PATH="$fake_bin:/usr/bin:/bin" HOME="$current_home" bash -s -- "$PROJECT_ROOT/scripts/lib/dashboard.sh" "$acfs_home" "$port" <<'EOF_DASHBOARD_SERVE'
+script="$1"
+acfs_home="$2"
+port="$3"
+validate_port() { return 0; }
+dashboard_generate() { return 0; }
+eval "$(sed -n "/^dashboard_system_binary_path()/,/^}$/p" "$script")"
+eval "$(sed -n "/^dashboard_resolve_current_user()/,/^}$/p" "$script")"
+eval "$(sed -n "/^dashboard_serve()/,/^}$/p" "$script")"
+_DASHBOARD_ACFS_HOME="$acfs_home"
+_DASHBOARD_RESOLVED_TARGET_USER=""
+dashboard_serve --port "$port"
+EOF_DASHBOARD_SERVE
+    assert_success
+    [[ "$output" == *"${current_user}@"* ]]
+    [[ "$output" != *"poisoned-user@"* ]]
 }
 
 @test "username helpers and wrappers allow dotted usernames and validate before re-exec" {
@@ -2138,8 +2577,30 @@ EOF
     run grep -F '[[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]' "$services_setup"
     assert_success
 
+    run grep -F 'onboard_passwd_home_from_entry() {' "$onboard"
+    assert_success
+
     run grep -F 'home_candidate="$(onboard_lookup_passwd_home "$user" 2>/dev/null || true)"' "$onboard"
     assert_success
+
+    run grep -F 'home_candidate="$(onboard_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"' "$onboard"
+    assert_success
+
+    run grep -F 'done < <(onboard_getent_passwd_entry 2>/dev/null || true)' "$onboard"
+    assert_success
+
+    run grep -F 'jq_bin="$(onboard_system_binary_path jq 2>/dev/null || true)"' "$onboard"
+    assert_success
+
+    run grep -F 'sed_bin="$(onboard_system_binary_path sed 2>/dev/null || true)"' "$onboard"
+    assert_success
+
+    run grep -F 'cut -d: -f6' "$onboard"
+    assert_failure
+
+    run grep -F 'awk -F: -v u=' "$onboard"
+    assert_failure
+
     run grep -F "printf '/home/%s\n' \"\$user\"" "$onboard"
     assert_failure
 }
@@ -2268,30 +2729,183 @@ EOF
     assert_output "$resolved_home"
 }
 
-@test "services-setup: resolve_home_dir prefers current HOME over guessed standard path" {
-    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
-    local resolved_home
-    resolved_home="$(create_temp_dir)"
+@test "helper home resolvers ignore function-poisoned passwd and identity shims" {
+    local current_user
+    local current_home
+    local poisoned_home
 
-    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
-    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$services_setup")"
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    [[ "$current_user" != "root" ]] || skip "requires non-root current user"
+    current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    current_home="${current_home%/}"
+    poisoned_home="$(create_temp_dir)"
 
-    export HOME="$resolved_home"
+    export TARGET_USER=""
+    export TARGET_HOME=""
+    export HOME="$current_home"
 
     getent() {
-        return 2
+        if [[ "$1" == "passwd" && "$2" == "$current_user" ]]; then
+            printf '%s:x:1000:1000::%s:/bin/bash\n' "$current_user" "$poisoned_home"
+            return 0
+        fi
+        command getent "$@"
     }
 
     id() {
         if [[ "$1" == "-un" ]]; then
-            printf 'tester\n'
+            printf 'poisoned-user\n'
             return 0
         fi
         command id "$@"
     }
 
     whoami() {
+        printf 'poisoned-user\n'
+    }
+
+    source_lib "cli_tools"
+    run _cli_target_home "$current_user"
+    assert_success
+    assert_output "$current_home"
+
+    source_lib "agents"
+    run _agent_target_home "$current_user"
+    assert_success
+    assert_output "$current_home"
+
+    source_lib "languages"
+    run _lang_target_home "$current_user"
+    assert_success
+    assert_output "$current_home"
+
+    source_lib "cloud_db"
+    run _cloud_target_home "$current_user"
+    assert_success
+    assert_output "$current_home"
+
+    source_lib "stack"
+    run _stack_target_home "$current_user"
+    assert_success
+    assert_output "$current_home"
+}
+
+@test "run-as-user helper libs ignore function-poisoned whoami on same-user fast path" {
+    local current_user
+    local current_home
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    [[ "$current_user" != "root" ]] || skip "requires non-root current user"
+    current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    current_home="${current_home%/}"
+    mkdir -p "$current_home/.local/bin"
+
+    export TARGET_USER="$current_user"
+    export TARGET_HOME="$current_home"
+    export HOME="$current_home"
+    export ACFS_BIN_DIR="$current_home/.local/bin"
+
+    whoami() {
+        printf 'poisoned-user\n'
+    }
+
+    source_lib "cli_tools"
+    spy_command "sudo"
+    run _cli_run_as_user 'printf "%s\n" "$HOME"'
+    assert_success
+    assert_output "$current_home"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_cli_run_as_user should not invoke sudo for same-user fast path"
+
+    source_lib "agents"
+    : > "$STUB_DIR/sudo.log"
+    run _agent_run_as_user 'printf "%s\n" "$HOME"'
+    assert_success
+    assert_output "$current_home"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_agent_run_as_user should not invoke sudo for same-user fast path"
+
+    source_lib "languages"
+    : > "$STUB_DIR/sudo.log"
+    run _lang_run_as_user 'printf "%s\n" "$HOME"'
+    assert_success
+    assert_output "$current_home"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_lang_run_as_user should not invoke sudo for same-user fast path"
+
+    source_lib "cloud_db"
+    : > "$STUB_DIR/sudo.log"
+    run _cloud_run_as_user 'printf "%s\n" "$HOME"'
+    assert_success
+    assert_output "$current_home"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_cloud_run_as_user should not invoke sudo for same-user fast path"
+
+    source_lib "stack"
+    : > "$STUB_DIR/sudo.log"
+    run _stack_run_as_user 'printf "%s\n" "$HOME"'
+    assert_success
+    assert_output "$current_home"
+    [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_stack_run_as_user should not invoke sudo for same-user fast path"
+}
+
+@test "helper bin-dir selectors ignore function-poisoned getent passwd streams" {
+    local current_user
+    local current_home
+    local fake_home
+    local fake_bin_dir
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    current_home="${current_home%/}"
+    fake_home="$(create_temp_dir)"
+    fake_bin_dir="$fake_home/.local/bin"
+    mkdir -p "$fake_bin_dir" "$current_home/.local/bin"
+
+    export TARGET_USER="$current_user"
+    export TARGET_HOME="$current_home"
+    export HOME="$current_home"
+    export ACFS_BIN_DIR="$fake_bin_dir"
+
+    getent() {
+        if [[ "$1" == "passwd" ]]; then
+            printf 'poisoned-user:x:1000:1000::%s:/bin/bash\n' "$fake_home"
+            return 0
+        fi
+        command getent "$@"
+    }
+
+    source_lib "cli_tools"
+    run _cli_validate_bin_dir_for_home "$fake_bin_dir" ""
+    assert_success
+    assert_output "$fake_bin_dir"
+
+    source_lib "agents"
+    run _agent_validate_bin_dir_for_home "$fake_bin_dir" ""
+    assert_success
+    assert_output "$fake_bin_dir"
+
+    source_lib "stack"
+    run _stack_target_bin_dir "$current_user"
+    assert_success
+    assert_output "$fake_bin_dir"
+}
+
+@test "services-setup: resolve_home_dir prefers current HOME over guessed standard path" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local resolved_home
+    resolved_home="$(create_temp_dir)"
+
+    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_system_binary_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_resolve_current_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_getent_passwd_entry()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$services_setup")"
+
+    export HOME="$resolved_home"
+
+    services_setup_resolve_current_user() {
         printf 'tester\n'
+    }
+
+    services_setup_getent_passwd_entry() {
+        return 1
     }
 
     run resolve_home_dir "tester"
@@ -2303,24 +2917,20 @@ EOF
     local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
 
     eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_system_binary_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_resolve_current_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_getent_passwd_entry()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_passwd_home_from_entry()/,/^}$/p' "$services_setup")"
     eval "$(sed -n '/^services_setup_resolve_current_home()/,/^}$/p' "$services_setup")"
 
     export HOME="relative-home"
 
-    getent() {
-        return 2
-    }
-
-    id() {
-        if [[ "$1" == "-un" ]]; then
-            printf 'tester\n'
-            return 0
-        fi
-        command id "$@"
-    }
-
-    whoami() {
+    services_setup_resolve_current_user() {
         printf 'tester\n'
+    }
+
+    services_setup_getent_passwd_entry() {
+        return 1
     }
 
     run services_setup_resolve_current_home
@@ -2369,41 +2979,298 @@ EOF
 
         case "$label" in
             preflight)
+                local preflight_bin_dir="$BATS_TEST_TMPDIR/preflight-bin"
+                mkdir -p "$preflight_bin_dir"
+                cat > "$preflight_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    echo "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$preflight_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+echo "$current_user"
+EOF
+                cat > "$preflight_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    echo "$current_user:x:1000:1000::$passwd_home:/bin/bash"
+    exit 0
+fi
+if [[ "\${1:-}" == "passwd" ]] && [[ -z "\${2:-}" ]]; then
+    echo "$current_user:x:1000:1000::$passwd_home:/bin/bash"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$preflight_bin_dir/id" "$preflight_bin_dir/whoami" "$preflight_bin_dir/getent"
                 eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^preflight_system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^preflight_getent_passwd_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$script")"
+                preflight_system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    echo "$preflight_bin_dir/$name"
+                }
                 ;;
             services-setup)
+                local services_bin_dir="$BATS_TEST_TMPDIR/services-setup-bin"
+                mkdir -p "$services_bin_dir"
+                cat > "$services_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    printf '%s\n' "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$services_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "$current_user"
+EOF
+                cat > "$services_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\n' "$current_user" "$passwd_home"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$services_bin_dir/id" "$services_bin_dir/whoami" "$services_bin_dir/getent"
                 eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^services_setup_system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^services_setup_resolve_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^services_setup_getent_passwd_entry()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^services_setup_passwd_home_from_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^services_setup_resolve_current_home()/,/^}$/p' "$script")"
+                services_setup_system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    printf '%s/%s\n' "$services_bin_dir" "$name"
+                }
                 ;;
             notifications)
+                local notifications_bin_dir="$BATS_TEST_TMPDIR/notifications-bin"
+                mkdir -p "$notifications_bin_dir"
+                cat > "$notifications_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    printf '%s\n' "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$notifications_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "$current_user"
+EOF
+                cat > "$notifications_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\n' "$current_user" "$passwd_home"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$notifications_bin_dir/id" "$notifications_bin_dir/whoami" "$notifications_bin_dir/getent"
                 eval "$(sed -n '/^notifications_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^notifications_system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^notifications_resolve_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^notifications_getent_passwd_entry()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^notifications_passwd_home_from_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^notifications_resolve_current_home()/,/^}$/p' "$script")"
+                notifications_system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    printf '%s/%s\n' "$notifications_bin_dir" "$name"
+                }
                 ;;
             notify)
+                local notify_bin_dir="$BATS_TEST_TMPDIR/notify-bin"
+                mkdir -p "$notify_bin_dir"
+                cat > "$notify_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    printf '%s\n' "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$notify_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "$current_user"
+EOF
+                cat > "$notify_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\n' "$current_user" "$passwd_home"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$notify_bin_dir/id" "$notify_bin_dir/whoami" "$notify_bin_dir/getent"
                 eval "$(sed -n '/^_acfs_notify_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_notify_system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_notify_resolve_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_notify_getent_passwd_entry()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_notify_passwd_home_from_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^_acfs_notify_resolve_current_home()/,/^}$/p' "$script")"
+                _acfs_notify_system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    printf '%s/%s\n' "$notify_bin_dir" "$name"
+                }
                 ;;
             webhook)
+                local webhook_bin_dir="$BATS_TEST_TMPDIR/webhook-bin"
+                mkdir -p "$webhook_bin_dir"
+                cat > "$webhook_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    printf '%s\n' "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$webhook_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "$current_user"
+EOF
+                cat > "$webhook_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\n' "$current_user" "$passwd_home"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$webhook_bin_dir/id" "$webhook_bin_dir/whoami" "$webhook_bin_dir/getent"
                 eval "$(sed -n '/^webhook_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^webhook_system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^webhook_resolve_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^webhook_getent_passwd_entry()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^webhook_passwd_home_from_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^webhook_resolve_current_home()/,/^}$/p' "$script")"
+                webhook_system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    printf '%s/%s\n' "$webhook_bin_dir" "$name"
+                }
                 ;;
             doctor)
+                local doctor_bin_dir="$BATS_TEST_TMPDIR/doctor-bin"
+                mkdir -p "$doctor_bin_dir"
+                cat > "$doctor_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    printf '%s\n' "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$doctor_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "$current_user"
+EOF
+                cat > "$doctor_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\n' "$current_user" "$passwd_home"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$doctor_bin_dir/id" "$doctor_bin_dir/whoami" "$doctor_bin_dir/getent"
                 eval "$(sed -n '/^_acfs_doctor_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_doctor_system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_doctor_resolve_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_doctor_getent_passwd_entry()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^_acfs_doctor_passwd_home_from_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^_acfs_doctor_resolve_current_home()/,/^}$/p' "$script")"
+                _acfs_doctor_system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    printf '%s/%s\n' "$doctor_bin_dir" "$name"
+                }
                 ;;
             doctor-fix)
+                local doctor_fix_bin_dir="$BATS_TEST_TMPDIR/doctor-fix-bin"
+                mkdir -p "$doctor_fix_bin_dir"
+                cat > "$doctor_fix_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    printf '%s\n' "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$doctor_fix_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "$current_user"
+EOF
+                cat > "$doctor_fix_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\n' "$current_user" "$passwd_home"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$doctor_fix_bin_dir/id" "$doctor_fix_bin_dir/whoami" "$doctor_fix_bin_dir/getent"
                 eval "$(sed -n '/^doctor_fix_sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^doctor_fix_is_valid_username()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^doctor_fix_system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^doctor_fix_getent_passwd_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^doctor_fix_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^doctor_fix_passwd_home_from_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^doctor_fix_resolve_home_for_user()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^doctor_fix_resolve_current_home()/,/^}$/p' "$script")"
+                doctor_fix_system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    printf '%s/%s\n' "$doctor_fix_bin_dir" "$name"
+                }
                 ;;
             nightly-update)
+                local nightly_bin_dir="$BATS_TEST_TMPDIR/nightly-update-bin"
+                mkdir -p "$nightly_bin_dir"
+                cat > "$nightly_bin_dir/id" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-un" ]]; then
+    printf '%s\n' "$current_user"
+    exit 0
+fi
+exit 2
+EOF
+                cat > "$nightly_bin_dir/whoami" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "$current_user"
+EOF
+                cat > "$nightly_bin_dir/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]] && [[ "\${2:-}" == "$current_user" ]]; then
+    printf '%s:x:1000:1000::%s:/bin/bash\n' "$current_user" "$passwd_home"
+    exit 0
+fi
+exit 2
+EOF
+                chmod +x "$nightly_bin_dir/id" "$nightly_bin_dir/whoami" "$nightly_bin_dir/getent"
                 eval "$(sed -n '/^sanitize_abs_nonroot_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^system_binary_path()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^getent_passwd_entry()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^passwd_home_from_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$script")"
+                system_binary_path() {
+                    local name="${1:-}"
+                    [[ -n "$name" ]] || return 1
+                    printf '%s/%s\n' "$nightly_bin_dir" "$name"
+                }
                 ;;
             smoke)
                 local smoke_bin_dir="$BATS_TEST_TMPDIR/smoke-bin"
@@ -2469,6 +3336,7 @@ EOF
                 eval "$(sed -n '/^state_system_binary_path()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^state_resolve_current_user()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^state_getent_passwd_entry()/,/^}$/p' "$script")"
+                eval "$(sed -n '/^state_passwd_home_from_entry()/,/^}$/p' "$script")"
                 eval "$(sed -n '/^state_resolve_current_home()/,/^}$/p' "$script")"
                 state_system_binary_path() {
                     local name="${1:-}"
@@ -2506,6 +3374,7 @@ EOF
     local state_lib="$PROJECT_ROOT/scripts/lib/state.sh"
 
     eval "$(sed -n '/^state_sanitize_abs_nonroot_path()/,/^}$/p' "$state_lib")"
+    eval "$(sed -n '/^state_passwd_home_from_entry()/,/^}$/p' "$state_lib")"
     eval "$(sed -n '/^state_resolve_current_home()/,/^}$/p' "$state_lib")"
 
     export HOME="relative-home"
@@ -2536,25 +3405,16 @@ EOF
 
     eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_system_binary_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_getent_passwd_entry()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$preflight")"
 
     export HOME="relative-home"
 
-    getent() {
-        return 2
-    }
-
-    id() {
-        if [[ "$1" == "-un" ]]; then
-            printf 'tester\n'
-            return 0
-        fi
-        command id "$@"
-    }
-
-    whoami() {
-        printf 'tester\n'
+    preflight_system_binary_path() {
+        return 1
     }
 
     run resolve_current_home
@@ -2567,6 +3427,8 @@ EOF
 
     eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_system_binary_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_getent_passwd_entry()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$preflight")"
@@ -2576,20 +3438,12 @@ EOF
     export TARGET_USER="missinguser"
     export TARGET_HOME="/"
 
-    getent() {
-        return 2
-    }
-
-    id() {
-        if [[ "$1" == "-un" ]]; then
-            printf 'tester\n'
-            return 0
-        fi
-        command id "$@"
-    }
-
-    whoami() {
+    resolve_current_user() {
         printf 'tester\n'
+    }
+
+    preflight_getent_passwd_entry() {
+        return 1
     }
 
     run resolve_install_target_home
@@ -2605,6 +3459,8 @@ EOF
 
     eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_system_binary_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_getent_passwd_entry()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^preflight_validate_bin_dir_for_home()/,/^}$/p' "$preflight")"
     eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$preflight")"
@@ -3015,6 +3871,78 @@ EOF
     assert_failure
 }
 
+@test "install.sh: resolves target user and shell via trusted helpers" {
+    local installer="$PROJECT_ROOT/install.sh"
+
+    run grep -F '_ACFS_DETECTED_USER="$(acfs_early_resolve_current_user 2>/dev/null || true)"' "$installer"
+    assert_success
+
+    run grep -F 'passwd_entry="$(acfs_early_getent_passwd_entry "$user" 2>/dev/null || true)"' "$installer"
+    assert_success
+
+    run grep -F 'current_user="$(acfs_early_resolve_current_user 2>/dev/null || true)"' "$installer"
+    assert_success
+
+    run grep -F 'current_shell_entry="$(acfs_early_getent_passwd_entry "$TARGET_USER" 2>/dev/null || true)"' "$installer"
+    assert_success
+
+    run grep -F '$SUDO "$chsh_path" -s "$zsh_path" "$TARGET_USER"' "$installer"
+    assert_success
+
+    run grep -F '_ACFS_DETECTED_USER="${SUDO_USER:-$(whoami)}"' "$installer"
+    assert_failure
+
+    run grep -F 'passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"' "$installer"
+    assert_failure
+
+    run grep -F 'current_shell=$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f7 || true)' "$installer"
+    assert_failure
+}
+
+@test "packages/manifest generator emits trusted passwd and identity helpers" {
+    local generator="$PROJECT_ROOT/packages/manifest/src/generate.ts"
+
+    run grep -F 'acfs_generated_getent_passwd_entry() {' "$generator"
+    assert_success
+
+    run grep -F 'acfs_generated_passwd_home_from_entry() {' "$generator"
+    assert_success
+
+    run grep -F '_ACFS_DETECTED_USER="\${SUDO_USER:-\$(whoami)}"' "$generator"
+    assert_failure
+
+    run grep -F 'cut -d: -f6' "$generator"
+    assert_failure
+
+    run grep -F 'current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"' "$generator"
+    assert_success
+}
+
+@test "acfs.manifest inline shell blocks use trusted passwd and identity helpers" {
+    local manifest="$PROJECT_ROOT/acfs.manifest.yaml"
+
+    run grep -F 'acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}"' "$manifest"
+    assert_success
+
+    run grep -F 'acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry"' "$manifest"
+    assert_success
+
+    run grep -F 'current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"' "$manifest"
+    assert_success
+
+    run grep -F '_acfs_passwd_entry="$(getent passwd "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"' "$manifest"
+    assert_failure
+
+    run grep -F 'target_home="$(printf '\''%s\n'\'' "$_acfs_passwd_entry" | cut -d: -f6)"' "$manifest"
+    assert_failure
+
+    run grep -F 'passwd_entry="$(getent passwd "$(whoami)" 2>/dev/null || true)"' "$manifest"
+    assert_failure
+
+    run grep -F 'sudo chsh -s "$zsh_path" "$(whoami)"' "$manifest"
+    assert_failure
+}
+
 @test "install.sh: binary_path ignores current-shell-only PATH entries" {
     local installer="$PROJECT_ROOT/install.sh"
 
@@ -3369,6 +4297,14 @@ EOF
     # shellcheck disable=SC1090
     eval "$(sed -n '/^_acfs_doctor_sanitize_abs_nonroot_path()/,/^}$/p' "$doctor_lib")"
     # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_system_binary_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_resolve_current_user()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_getent_passwd_entry()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_passwd_home_from_entry()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
     eval "$(sed -n '/^_acfs_doctor_resolve_current_home()/,/^}$/p' "$doctor_lib")"
     # shellcheck disable=SC1090
     eval "$(sed -n '/^_acfs_doctor_current_home="\$(_acfs_doctor_resolve_current_home/,/^export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR$/p' "$doctor_lib")"
@@ -3382,6 +4318,16 @@ EOF
     local expected_path=""
     mkdir -p "$test_home/.local/bin" "$test_home/.acfs/bin" "$test_home/google-cloud-sdk/bin"
 
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_sanitize_abs_nonroot_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_system_binary_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_getent_passwd_entry()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_passwd_home_from_entry()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_validate_bin_dir_for_home()/,/^}$/p' "$doctor_lib")"
     # shellcheck disable=SC1090
     eval "$(sed -n '/^ensure_path()/,/^}$/p' "$doctor_lib")"
 

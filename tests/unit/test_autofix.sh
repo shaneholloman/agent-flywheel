@@ -899,34 +899,91 @@ test_autofix_globals_are_initialized_under_set_u() {
 
 
 test_autofix_refresh_state_paths_falls_back_to_tmp_when_runtime_home_unresolved() {
-    local fake_bin=""
     local output=""
     local expected=""
 
-    fake_bin="$(mktemp -d)"
-    cat > "$fake_bin/getent" <<'EOF'
-#!/usr/bin/env bash
-exit 2
-EOF
-    chmod +x "$fake_bin/getent"
-
-    if ! output="$(env -u ACFS_STATE_DIR -u ACFS_CHANGES_FILE -u ACFS_UNDOS_FILE -u ACFS_BACKUPS_DIR -u ACFS_LOCK_FILE -u ACFS_INTEGRITY_FILE -u TARGET_HOME HOME="relative-home" TARGET_USER="tester" SUDO_USER="" PATH="$fake_bin:/usr/bin:/bin" bash -c '
+    if ! output="$(bash -c '
         source "$1"
-        printf "%s\n" "${ACFS_STATE_DIR:-unset}"
+        autofix_resolve_current_user() { return 1; }
+        autofix_home_for_user() { return 1; }
+        unset ACFS_STATE_DIR ACFS_CHANGES_FILE ACFS_UNDOS_FILE ACFS_BACKUPS_DIR ACFS_LOCK_FILE ACFS_INTEGRITY_FILE TARGET_HOME
+        HOME="relative-home"
+        TARGET_USER="tester"
+        SUDO_USER=""
+        autofix_refresh_state_paths
+        printf "%s
+" "${ACFS_STATE_DIR:-unset}"
     ' _ "$REPO_ROOT/scripts/lib/autofix.sh" 2>&1)"; then
-        echo "  Sourcing autofix.sh with unresolved runtime home failed: $output"
-        rm -rf "$fake_bin"
+        echo "  Recomputing autofix state paths with unresolved runtime home failed: $output"
         return 1
     fi
 
     expected="/tmp/acfs-autofix.$(id -u 2>/dev/null || echo unknown)"
     if [[ "$output" != "$expected" ]]; then
         echo "  Expected ACFS_STATE_DIR fallback '$expected', got: $output"
-        rm -rf "$fake_bin"
         return 1
     fi
 
-    rm -rf "$fake_bin"
+    return 0
+}
+test_autofix_resolve_current_home_ignores_path_poisoned_identity_shims() {
+    local current_user=""
+    local current_home=""
+    local poisoned_home=""
+    local fake_bin=""
+    local output=""
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    if [[ "$current_user" == "root" ]]; then
+        current_home="/root"
+    else
+        current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    fi
+    current_home="${current_home%/}"
+
+    poisoned_home="$(mktemp -d)"
+    fake_bin="$(mktemp -d)"
+    cat > "$fake_bin/id" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-un" ]]; then
+    printf 'poisoned-user
+'
+    exit 0
+fi
+exit 2
+EOF
+    cat > "$fake_bin/whoami" <<'EOF'
+#!/usr/bin/env bash
+printf 'poisoned-user
+'
+EOF
+    cat > "$fake_bin/getent" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "passwd" ]]; then
+    printf 'poisoned-user:x:1000:1000::%s:/bin/bash
+' "$poisoned_home"
+    exit 0
+fi
+exit 2
+EOF
+    chmod +x "$fake_bin/id" "$fake_bin/whoami" "$fake_bin/getent"
+
+    if ! output="$(env HOME="$poisoned_home" PATH="$fake_bin:/usr/bin:/bin" bash -c '
+        source "$1"
+        autofix_resolve_current_home
+    ' _ "$REPO_ROOT/scripts/lib/autofix.sh" 2>&1)"; then
+        echo "  autofix_resolve_current_home failed under PATH poisoning: $output"
+        rm -rf "$poisoned_home" "$fake_bin"
+        return 1
+    fi
+
+    if [[ "$output" != "$current_home" ]]; then
+        echo "  Expected current home '$current_home', got: $output"
+        rm -rf "$poisoned_home" "$fake_bin"
+        return 1
+    fi
+
+    rm -rf "$poisoned_home" "$fake_bin"
     return 0
 }
 
@@ -1956,6 +2013,7 @@ main() {
     run_test test_state_repair_fails_when_changes_rewrite_cannot_replace_file
     run_test test_autofix_globals_are_initialized_under_set_u
     run_test test_autofix_refresh_state_paths_falls_back_to_tmp_when_runtime_home_unresolved
+    run_test test_autofix_resolve_current_home_ignores_path_poisoned_identity_shims
     run_test test_init_autofix_state
     run_test test_init_autofix_state_fails_when_repair_fails
     run_test test_session_management

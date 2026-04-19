@@ -137,30 +137,31 @@ teardown() {
 
 @test "_acfs_resolve_target_home: ignores slash passwd homes and falls back to current HOME" {
     local current_user
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null)"
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null)"
     export HOME="$BATS_TEST_TMPDIR/current-home"
     mkdir -p "$HOME"
 
-    cat > "$STUB_DIR/getent" <<EOF
-#!/usr/bin/env bash
-if [[ "\$1" == "passwd" ]] && [[ "\$2" == "$current_user" ]]; then
-    printf '%s\n' '$current_user:x:1000:1000::/:/bin/bash'
-    exit 0
-fi
-exit 2
-EOF
-    chmod +x "$STUB_DIR/getent"
+    _acfs_getent_passwd_entry() {
+        if [[ "${1:-}" == "$current_user" ]]; then
+            printf '%s\n' "$current_user:x:1000:1000::/:/bin/bash"
+            return 0
+        fi
+        return 2
+    }
 
     run _acfs_resolve_target_home "$current_user"
     assert_success
     assert_output "$HOME"
 }
 
-@test "_acfs_resolve_target_home: rejects slash HOME for current user" {
+@test "_acfs_resolve_target_home: rejects slash HOME for current user when passwd resolution is unavailable" {
     local current_user
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null)"
-    stub_command "getent" "" 2
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null)"
     export HOME="/"
+
+    _acfs_getent_passwd_entry() {
+        return 2
+    }
 
     run _acfs_resolve_target_home "$current_user"
     assert_failure
@@ -207,6 +208,63 @@ EOF
 
     if [[ -f "$STUB_DIR/sudo.log" ]] && [[ -s "$STUB_DIR/sudo.log" ]]; then
         fail "run_as_target should not invoke sudo for invalid TARGET_USER"
+    fi
+}
+
+@test "_acfs_resolve_target_home: ignores function-poisoned passwd and identity shims" {
+    local current_user=""
+    local current_home=""
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null)"
+    [[ -n "$current_user" ]] || skip "Could not resolve current user"
+    [[ "$current_user" != "root" ]] || skip "Test requires a non-root current user"
+
+    current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    [[ -n "$current_home" ]] || skip "Could not resolve current home from passwd"
+    export HOME="$current_home"
+
+    getent() {
+        printf '%s\n' 'poisoned:x:0:0::/tmp/poisoned:/bin/bash'
+    }
+    id() {
+        printf '%s\n' 'poisoned'
+    }
+    whoami() {
+        printf '%s\n' 'poisoned'
+    }
+
+    run _acfs_resolve_target_home "$current_user"
+    assert_success
+    assert_output "$current_home"
+}
+
+@test "run_as_target: ignores function-poisoned whoami on same-user fast path" {
+    local current_user=""
+    local current_home=""
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null)"
+    [[ -n "$current_user" ]] || skip "Could not resolve current user"
+    [[ "$current_user" != "root" ]] || skip "Test requires a non-root current user"
+
+    current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    [[ -n "$current_home" ]] || skip "Could not resolve current home from passwd"
+
+    export TARGET_USER="$current_user"
+    export TARGET_HOME="$current_home"
+    unset ACFS_BIN_DIR ACFS_HOME
+
+    whoami() {
+        printf '%s\n' 'poisoned'
+    }
+
+    spy_command "sudo"
+
+    run run_as_target env
+    assert_success
+    assert_output --partial "HOME=$current_home"
+
+    if [[ -f "$STUB_DIR/sudo.log" ]] && [[ -s "$STUB_DIR/sudo.log" ]]; then
+        fail "run_as_target should not invoke sudo on the same-user fast path"
     fi
 }
 

@@ -421,15 +421,8 @@ test_target_home_resolution_current_user_home_fallback() {
     if result="$(
         unset TARGET_HOME
         HOME="/srv/alice"
-        getent() { return 2; }
-        id() {
-            if [[ "${1:-}" == "-un" ]]; then
-                printf '%s\n' 'alice'
-                return 0
-            fi
-            command id "$@"
-        }
-        whoami() { printf '%s\n' 'alice'; }
+        ubuntu_lookup_passwd_home() { return 1; }
+        ubuntu_resolve_current_user() { printf '%s\n' 'alice'; }
         ubuntu_resolve_target_home 'alice'
     )"; then
         assert_equals "/srv/alice" "$result" "current user HOME fallback works"
@@ -444,15 +437,8 @@ test_target_home_resolution_rejects_missing_user_guess() {
     if (
         unset TARGET_HOME
         HOME="/root"
-        getent() { return 2; }
-        id() {
-            if [[ "${1:-}" == "-un" ]]; then
-                printf '%s\n' 'root'
-                return 0
-            fi
-            command id "$@"
-        }
-        whoami() { printf '%s\n' 'root'; }
+        ubuntu_lookup_passwd_home() { return 1; }
+        ubuntu_resolve_current_user() { printf '%s\n' 'root'; }
         ubuntu_resolve_target_home 'missinguser' >/dev/null
     ); then
         log_fail "missing user should not synthesize /home/missinguser"
@@ -473,12 +459,12 @@ test_upgrade_setup_infrastructure_persists_resolved_target_home() {
         TARGET_USER="alice"
         unset TARGET_HOME ACFS_HOME ACFS_STATE_FILE
         HOME="/root"
-        getent() {
-            if [[ "${1:-}" == "passwd" && "${2:-}" == "alice" ]]; then
-                printf '%s\n' 'alice:x:1000:1000::/srv/alice:/bin/bash'
+        ubuntu_lookup_passwd_home() {
+            if [[ "${1:-}" == "alice" ]]; then
+                printf '%s\n' '/srv/alice'
                 return 0
             fi
-            return 2
+            return 1
         }
         cp() { :; }
         chmod() { :; }
@@ -509,15 +495,8 @@ test_upgrade_setup_infrastructure_rejects_unresolved_target_home() {
         TARGET_USER="missinguser"
         unset TARGET_HOME ACFS_HOME ACFS_STATE_FILE
         HOME="/root"
-        getent() { return 2; }
-        id() {
-            if [[ "${1:-}" == "-un" ]]; then
-                printf '%s\n' 'root'
-                return 0
-            fi
-            command id "$@"
-        }
-        whoami() { printf '%s\n' 'root'; }
+        ubuntu_lookup_passwd_home() { return 1; }
+        ubuntu_resolve_current_user() { printf '%s\n' 'root'; }
         upgrade_setup_infrastructure "$PROJECT_ROOT" --yes >/dev/null 2>&1
     ); then
         log_fail "resume infrastructure should fail when target home cannot be resolved"

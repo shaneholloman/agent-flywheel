@@ -128,9 +128,9 @@ setup_test_env() {
     export ORIGINAL_PATH="$PATH"
     export HOME="$TEST_HOME"
     unset TARGET_USER
-    unset TARGET_HOME
-    unset ACFS_HOME
-    unset ACFS_BIN_DIR
+    export TARGET_HOME="$TEST_HOME"
+    export ACFS_HOME="$TEST_HOME/.acfs"
+    export ACFS_BIN_DIR="$TEST_HOME/.local/bin"
     unset DOCTOR_FIX_SSHD_CONFIG
 }
 

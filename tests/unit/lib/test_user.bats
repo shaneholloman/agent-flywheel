@@ -114,8 +114,9 @@ EOF
     mkdir -p "$HOME/.ssh"
     echo "ssh-rsa TESTKEY" > "$HOME/.ssh/authorized_keys"
     
-    # Mock whoami to return something other than testuser
-    stub_command "whoami" "otheruser"
+    user_resolve_current_user() {
+        printf "%s\n" "otheruser"
+    }
     
     # Use real tee for this test (remove stub if it exists from previous tests? No, separate processes)
     # But wait, tee writes to a file owned by root usually?
@@ -132,7 +133,9 @@ EOF
 }
 
 @test "migrate_ssh_keys: skips if already target user" {
-    stub_command "whoami" "testuser"
+    user_resolve_current_user() {
+        printf "%s\n" "testuser"
+    }
     
     # Spy on mkdir to ensure it wasn't called
     spy_command "mkdir"
@@ -165,6 +168,33 @@ EOF
 
     run user_home_for_user "john.doe"
     assert_failure
+}
+
+@test "user_home_for_user: ignores function-poisoned passwd and identity shims" {
+    local current_user=""
+    local current_home=""
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null)"
+    [[ -n "$current_user" ]] || skip "Could not resolve current user"
+    [[ "$current_user" != "root" ]] || skip "Test requires a non-root current user"
+
+    current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    [[ -n "$current_home" ]] || skip "Could not resolve current home"
+    export HOME="$current_home"
+
+    getent() {
+        printf '%s\n' 'poisoned:x:0:0::/tmp/poisoned:/bin/bash'
+    }
+    id() {
+        printf '%s\n' 'poisoned'
+    }
+    whoami() {
+        printf '%s\n' 'poisoned'
+    }
+
+    run user_home_for_user "$current_user"
+    assert_success
+    assert_output "$current_home"
 }
 
 @test "user.sh: sourcing leaves TARGET_HOME empty when unresolved" {
