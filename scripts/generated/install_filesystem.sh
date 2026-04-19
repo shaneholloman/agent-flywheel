@@ -35,7 +35,12 @@ acfs_generated_system_binary_path() {
 
     [[ -n "$name" ]] || return 1
 
-    for candidate in         "/usr/local/bin/$name"         "/usr/bin/$name"         "/bin/$name"         "/usr/sbin/$name"         "/sbin/$name"
+    for candidate in \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
     do
         [[ -x "$candidate" ]] || continue
         printf '%s\n' "$candidate"
@@ -294,7 +299,12 @@ acfs_generated_system_binary_path() {
 
     [[ -n "$name" ]] || return 1
 
-    for candidate in         "/usr/local/bin/$name"         "/usr/bin/$name"         "/bin/$name"         "/usr/sbin/$name"         "/sbin/$name"
+    for candidate in \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
     do
         [[ -x "$candidate" ]] || continue
         printf '%s\n' "$candidate"
@@ -454,7 +464,12 @@ acfs_generated_system_binary_path() {
 
     [[ -n "$name" ]] || return 1
 
-    for candidate in         "/usr/local/bin/$name"         "/usr/bin/$name"         "/bin/$name"         "/usr/sbin/$name"         "/sbin/$name"
+    for candidate in \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
     do
         [[ -x "$candidate" ]] || continue
         printf '%s\n' "$candidate"
