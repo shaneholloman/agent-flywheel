@@ -128,16 +128,57 @@ onboard_resolve_current_user() {
 onboard_getent_passwd_entry() {
     local user="${1:-}"
     local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
 
     getent_bin="$(onboard_system_binary_path getent 2>/dev/null || true)"
-    [[ -n "$getent_bin" ]] || return 1
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
 
-    if [[ -n "$user" ]]; then
-        "$getent_bin" passwd "$user" 2>/dev/null
-    else
-        "$getent_bin" passwd 2>/dev/null
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
     fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
 }
+
+onboard_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local home_candidate=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ home_candidate _ <<< "$passwd_entry"
+    home_candidate="$(onboard_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+    [[ -n "$home_candidate" ]] || return 1
+
+    printf '%s\n' "$home_candidate"
+}
+
 onboard_lookup_passwd_home() {
     local user="$1"
     local passwd_entry=""
@@ -146,18 +187,14 @@ onboard_lookup_passwd_home() {
     [[ -n "$user" ]] || return 1
 
     passwd_entry="$(onboard_getent_passwd_entry "$user" 2>/dev/null || true)"
-    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
-        passwd_entry="$(awk -F: -v u="$user" '$1==u{print $0; exit}' /etc/passwd 2>/dev/null || true)"
-    fi
-
     [[ -n "$passwd_entry" ]] || return 1
 
-    home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-    home_candidate="$(onboard_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+    home_candidate="$(onboard_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
     [[ -n "$home_candidate" ]] || return 1
 
     printf '%s\n' "$home_candidate"
 }
+
 onboard_resolve_current_home() {
     local current_user=""
     local fallback_home=""
@@ -284,23 +321,25 @@ onboard_read_state_string() {
     local state_file="$1"
     local key="$2"
     local value=""
+    local jq_bin=""
+    local sed_bin=""
 
     [[ -f "$state_file" ]] || return 1
 
-    if command -v jq >/dev/null 2>&1; then
-        value="$(jq -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)"
+    jq_bin="$(onboard_system_binary_path jq 2>/dev/null || true)"
+    if [[ -n "$jq_bin" ]]; then
+        value="$("$jq_bin" -r --arg key "$key" '.[$key] // empty' "$state_file" 2>/dev/null || true)"
     else
-        value="$(sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$state_file" 2>/dev/null | head -n 1)"
+        sed_bin="$(onboard_system_binary_path sed 2>/dev/null || true)"
+        if [[ -n "$sed_bin" ]]; then
+            while IFS= read -r value; do
+                break
+            done < <("$sed_bin" -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$state_file" 2>/dev/null || true)
+        fi
     fi
 
     [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
     printf '%s\n' "$value"
-}
-
-onboard_candidate_has_acfs_data() {
-    local candidate="$1"
-    [[ -n "$candidate" ]] || return 1
-    [[ -d "$candidate/onboard" || -f "$candidate/state.json" || -f "$candidate/VERSION" ]]
 }
 
 onboard_script_acfs_home() {
@@ -352,27 +391,14 @@ onboard_validate_bin_dir_for_home() {
         return 1
     fi
 
-    if command -v getent >/dev/null 2>&1; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(onboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < <(getent passwd 2>/dev/null || true)
-    fi
-
-    if [[ -r /etc/passwd ]]; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(onboard_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < /etc/passwd
-    fi
+    while IFS= read -r passwd_line; do
+        passwd_home="$(onboard_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+        [[ -n "$passwd_home" ]] || continue
+        [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+        if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+            return 1
+        fi
+    done < <(onboard_getent_passwd_entry 2>/dev/null || true)
 
     printf '%s\n' "$bin_dir"
 }

@@ -29,6 +29,100 @@ _acfs_doctor_existing_abs_nonroot_dir() {
     printf '%s\n' "$path_value"
 }
 
+_acfs_doctor_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+_acfs_doctor_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(_acfs_doctor_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(_acfs_doctor_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+_acfs_doctor_getent_passwd_entry() {
+    local user="${1-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
+
+    getent_bin="$(_acfs_doctor_system_binary_path getent 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
+
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
+    fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+_acfs_doctor_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    passwd_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+    [[ -n "$passwd_home" ]] || return 1
+    printf '%s\n' "$passwd_home"
+}
+
 _acfs_doctor_resolve_current_home() {
     local current_user=""
     local home_candidate=""
@@ -36,17 +130,16 @@ _acfs_doctor_resolve_current_home() {
     local passwd_home=""
 
     home_candidate="$(_acfs_doctor_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(_acfs_doctor_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
     if [[ -n "$current_user" ]]; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        passwd_entry="$(_acfs_doctor_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            passwd_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            passwd_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            passwd_home="$(_acfs_doctor_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
             if [[ -n "$passwd_home" ]]; then
                 printf '%s\n' "$passwd_home"
                 return 0
@@ -236,27 +329,14 @@ _acfs_doctor_validate_bin_dir_for_home() {
         return 1
     fi
 
-    if command -v getent &>/dev/null; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < <(getent passwd 2>/dev/null || true)
-    fi
-
-    if [[ -r /etc/passwd ]]; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < /etc/passwd
-    fi
+    while IFS= read -r passwd_line; do
+        passwd_home="$(_acfs_doctor_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+        [[ -n "$passwd_home" ]] || continue
+        [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+        if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+            return 1
+        fi
+    done < <(_acfs_doctor_getent_passwd_entry 2>/dev/null || true)
 
     printf '%s\n' "$bin_dir"
 }
@@ -333,7 +413,7 @@ if [[ -z "${TARGET_USER:-}" ]] && [[ -n "${_ACFS_DOCTOR_ENV_TARGET_USER:-}" ]]; 
     TARGET_USER="$_ACFS_DOCTOR_ENV_TARGET_USER"
 fi
 if [[ -z "${TARGET_USER:-}" ]]; then
-    _acfs_current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    _acfs_current_user="$(_acfs_doctor_resolve_current_user 2>/dev/null || true)"
     if [[ -n "$_acfs_current_user" ]] && [[ "$_acfs_current_user" != "root" ]]; then
         TARGET_USER="$_acfs_current_user"
     fi
@@ -422,12 +502,12 @@ if [[ -z "${ACFS_BIN_DIR:-}" ]]; then
 fi
 
 if [[ -z "${TARGET_HOME:-}" ]]; then
-    _acfs_passwd_entry="$(getent passwd "$TARGET_USER" 2>/dev/null || true)"
+    _acfs_passwd_entry="$(_acfs_doctor_getent_passwd_entry "$TARGET_USER" 2>/dev/null || true)"
     if [[ -n "$_acfs_passwd_entry" ]]; then
-        TARGET_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "$(printf '%s\n' "$_acfs_passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+        TARGET_HOME="$(_acfs_doctor_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
     elif [[ "$TARGET_USER" == "root" ]]; then
         TARGET_HOME="/root"
-    elif [[ "$TARGET_USER" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
+    elif [[ "$TARGET_USER" == "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
         TARGET_HOME="$_acfs_doctor_current_home"
     fi
     unset _acfs_passwd_entry
@@ -442,7 +522,7 @@ fi
 if [[ -z "${TARGET_HOME:-}" ]]; then
     if [[ "$TARGET_USER" == "root" ]]; then
         TARGET_HOME="/root"
-    elif [[ -n "${_acfs_doctor_current_home:-}" ]] && [[ "$TARGET_USER" == "$(id -un 2>/dev/null || true)" ]]; then
+    elif [[ -n "${_acfs_doctor_current_home:-}" ]] && [[ "$TARGET_USER" == "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)" ]]; then
         TARGET_HOME="$_acfs_doctor_current_home"
     fi
 fi
@@ -1464,7 +1544,7 @@ check_identity() {
 
     # Check user
     local user
-    user=$(whoami)
+    user="$(_acfs_doctor_resolve_current_user 2>/dev/null || true)"
     if [[ "$user" == "$TARGET_USER" ]]; then
         check "identity.user_is_ubuntu" "Logged in as $TARGET_USER" "pass" "whoami=$user"
     else
@@ -2296,12 +2376,12 @@ _doctor_run_manifest_check() {
 
     if [[ -z "$target_home" ]]; then
         local passwd_entry=""
-        passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
+        passwd_entry="$(_acfs_doctor_getent_passwd_entry "$target_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            target_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            target_home="$(_acfs_doctor_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
         elif [[ "$target_user" == "root" ]]; then
             target_home="/root"
-        elif [[ "$target_user" == "$(id -un 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
+        elif [[ "$target_user" == "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
             target_home="$_acfs_doctor_current_home"
         fi
     fi
@@ -2351,7 +2431,7 @@ _doctor_run_manifest_check() {
             done
             target_path_prefix=$(IFS=:; echo "${target_path_entries[*]}")
             target_path="$target_path_prefix${PATH:+:$PATH}"
-            if [[ "$(id -un 2>/dev/null || true)" == "$target_user" ]]; then
+            if [[ "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)" == "$target_user" ]]; then
                 TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
                 return $?
             fi
@@ -3644,7 +3724,7 @@ print_json() {
   "timestamp": "$(json_escape "$(date -Iseconds)")",
   "mode": "$(json_escape "${ACFS_MODE:-vibe}")",
   "deep_mode": $DEEP_MODE,
-  "user": "$(json_escape "$(whoami)")",
+  "user": "$(json_escape "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)")",
   "os": {"id": "$(json_escape "$os_id")", "version": "$(json_escape "$os_version")"},
   "checks": [$checks_json],
   "summary": {"pass": $PASS_COUNT, "skip": $SKIP_COUNT, "warn": $WARN_COUNT, "fail": $FAIL_COUNT}$deep_summary_json
@@ -3946,12 +4026,12 @@ main() {
                 --margin "0 0 1 0" \
                 "$(gum style --foreground "$ACFS_ACCENT" --bold '🩺 ACFS Doctor') $(gum style --foreground "$ACFS_MUTED" "v$ACFS_VERSION")
 
-$(gum style --foreground "$ACFS_MUTED" "User:") $(gum style --foreground "$ACFS_TEAL" "$(whoami)")  $(gum style --foreground "$ACFS_MUTED" "Mode:") $(gum style --foreground "$ACFS_TEAL" "${ACFS_MODE:-vibe}")
+$(gum style --foreground "$ACFS_MUTED" "User:") $(gum style --foreground "$ACFS_TEAL" "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)")  $(gum style --foreground "$ACFS_MUTED" "Mode:") $(gum style --foreground "$ACFS_TEAL" "${ACFS_MODE:-vibe}")
 $(gum style --foreground "$ACFS_MUTED" "OS:") $(gum style --foreground "$ACFS_TEAL" "$os_pretty")"
         else
             echo ""
             echo "ACFS Doctor v$ACFS_VERSION"
-            echo "User: $(whoami)"
+            echo "User: $(_acfs_doctor_resolve_current_user 2>/dev/null || true)"
             echo "Mode: ${ACFS_MODE:-vibe}"
             echo "OS: $os_pretty"
             echo ""

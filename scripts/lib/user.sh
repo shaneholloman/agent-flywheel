@@ -44,6 +44,101 @@ user_require_valid_target_user() {
     log_fatal "Invalid TARGET_USER '$display' (expected: lowercase user name like 'ubuntu')"
 }
 
+user_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+user_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(user_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(user_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+user_getent_passwd_entry() {
+    local user="${1-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
+
+    getent_bin="$(user_system_binary_path getent 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
+
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
+    fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+user_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    [[ -n "$passwd_home" ]] || return 1
+    [[ "$passwd_home" == /* ]] || return 1
+    [[ "$passwd_home" != "/" ]] || return 1
+    printf '%s\n' "${passwd_home%/}"
+}
+
 user_lookup_passwd_home() {
     local user="${1:-}"
     local passwd_entry=""
@@ -51,21 +146,12 @@ user_lookup_passwd_home() {
 
     [[ -n "$user" ]] || return 1
 
-    if command -v getent >/dev/null 2>&1; then
-        passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
-    elif [[ -r /etc/passwd ]]; then
-        passwd_entry="$(awk -F: -v u="$user" '$1 == u { print $0; exit }' /etc/passwd 2>/dev/null || true)"
-    fi
-
+    passwd_entry="$(user_getent_passwd_entry "$user" 2>/dev/null || true)"
     [[ -n "$passwd_entry" ]] || return 1
 
-    home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-    if [[ -n "$home_candidate" ]] && [[ "$home_candidate" == /* ]] && [[ "$home_candidate" != "/" ]]; then
-        printf '%s\n' "${home_candidate%/}"
-        return 0
-    fi
-
-    return 1
+    home_candidate="$(user_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+    [[ -n "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
 }
 
 # Ensure SUDO is set (empty string for root, "sudo" otherwise)
@@ -93,7 +179,7 @@ user_home_for_user() {
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(user_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
         printf '%s\n' "${HOME%/}"
         return 0
@@ -208,7 +294,7 @@ enable_passwordless_sudo() {
 # Handles root -> ubuntu key migration common on fresh VPS
 migrate_ssh_keys() {
     local current_user
-    current_user=$(whoami)
+    current_user="$(user_resolve_current_user 2>/dev/null || true)"
     local target="$TARGET_USER"
     local target_home="${TARGET_HOME:-}"
 
@@ -381,18 +467,16 @@ set_default_shell() {
         return 1
     fi
 
-    passwd_entry="$(getent passwd "$target" 2>/dev/null || true)"
+    passwd_entry="$(user_getent_passwd_entry "$target" 2>/dev/null || true)"
     if [[ -r /etc/passwd ]]; then
-        local_entry="$(awk -F: -v user="$target" '$1 == user { print $0; exit }' /etc/passwd 2>/dev/null || true)"
+        while IFS= read -r local_entry; do
+            [[ "${local_entry%%:*}" == "$target" ]] || continue
+            break
+        done < /etc/passwd
     fi
 
     if [[ -z "$target_home" ]] && [[ -n "$passwd_entry" ]]; then
-        target_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-        if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then
-            target_home=""
-        else
-            target_home="${target_home%/}"
-        fi
+        target_home="$(user_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
     fi
 
     if [[ -n "$passwd_entry" ]] && [[ -z "$local_entry" ]]; then
@@ -410,7 +494,7 @@ set_default_shell() {
 
 # Get current user info
 get_current_user_info() {
-    echo "Current user: $(whoami)"
+    echo "Current user: $(user_resolve_current_user 2>/dev/null || true)"
     echo "Home: $HOME"
     echo "Shell: $SHELL"
     echo "UID: $EUID"

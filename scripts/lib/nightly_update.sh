@@ -27,24 +27,116 @@ sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in         "/usr/bin/$name"         "/bin/$name"         "/usr/local/bin/$name"         "/usr/local/sbin/$name"         "/usr/sbin/$name"         "/sbin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+getent_passwd_entry() {
+  local user="${1-}"
+  local getent_bin=""
+  local passwd_entry=""
+  local passwd_line=""
+  local printed_any=false
+
+  getent_bin="$(system_binary_path getent 2>/dev/null || true)"
+  if [[ -z "$user" ]]; then
+    if [[ -n "$getent_bin" ]]; then
+      while IFS= read -r passwd_line; do
+        printf '%s\n' "$passwd_line"
+        printed_any=true
+      done < <("$getent_bin" passwd 2>/dev/null || true)
+      if [[ "$printed_any" == true ]]; then
+        return 0
+      fi
+    fi
+
+    [[ -r /etc/passwd ]] || return 1
+    while IFS= read -r passwd_line; do
+      printf '%s\n' "$passwd_line"
+    done < /etc/passwd
+    return 0
+  fi
+
+  if [[ -n "$getent_bin" ]]; then
+    passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+    while IFS= read -r passwd_line; do
+      [[ "${passwd_line%%:*}" == "$user" ]] || continue
+      passwd_entry="$passwd_line"
+      break
+    done < /etc/passwd
+  fi
+
+  [[ -n "$passwd_entry" ]] || return 1
+  printf '%s\n' "$passwd_entry"
+}
+
+passwd_home_from_entry() {
+  local passwd_entry="${1:-}"
+  local passwd_home=""
+
+  [[ -n "$passwd_entry" ]] || return 1
+  IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+  passwd_home="$(sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+  [[ -n "$passwd_home" ]] || return 1
+  printf '%s\n' "$passwd_home"
+}
+
 resolve_current_home() {
     local current_user=""
     local home_candidate=""
+    local passwd_entry=""
     local passwd_home=""
 
     home_candidate="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    current_user="$(id -un 2>/dev/null || true)"
+    current_user="$(resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
     if [[ -n "$current_user" ]]; then
-        passwd_home="$(getent passwd "$current_user" 2>/dev/null | cut -d: -f6 | head -n 1)" || true
-        passwd_home="$(sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
-        if [[ -n "$passwd_home" ]]; then
-            printf '%s\n' "$passwd_home"
-            return 0
+        passwd_entry="$(getent_passwd_entry "$current_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            passwd_home="$(passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
+                return 0
+            fi
         fi
     fi
 
@@ -173,27 +265,14 @@ validate_bin_dir_for_home() {
         return 1
     fi
 
-    if command -v getent &>/dev/null; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < <(getent passwd 2>/dev/null || true)
-    fi
-
-    if [[ -r /etc/passwd ]]; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < /etc/passwd
-    fi
+    while IFS= read -r passwd_line; do
+        passwd_home="$(passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+        [[ -n "$passwd_home" ]] || continue
+        [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+        if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+            return 1
+        fi
+    done < <(getent_passwd_entry 2>/dev/null || true)
 
     printf '%s\n' "$bin_dir"
 }

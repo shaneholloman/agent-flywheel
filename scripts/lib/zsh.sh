@@ -39,9 +39,92 @@ ZSH_SYNTAX_HIGHLIGHTING_REPO="https://github.com/zsh-users/zsh-syntax-highlighti
 
 zsh_get_local_passwd_entry() {
     local user="${1:-}"
+    local passwd_line=""
+
     [[ -n "$user" ]] || return 1
     [[ -r /etc/passwd ]] || return 1
-    awk -F: -v user="$user" '$1 == user { print $0; exit }' /etc/passwd 2>/dev/null
+
+    while IFS= read -r passwd_line; do
+        [[ "${passwd_line%%:*}" == "$user" ]] || continue
+        printf '%s\n' "$passwd_line"
+        return 0
+    done < /etc/passwd
+
+    return 1
+}
+
+zsh_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in         "/usr/bin/$name"         "/bin/$name"         "/usr/local/bin/$name"         "/usr/local/sbin/$name"         "/usr/sbin/$name"         "/sbin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+zsh_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(zsh_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(zsh_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+zsh_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+    local passwd_entry=""
+
+    [[ -n "$user" ]] || return 1
+
+    getent_bin="$(zsh_system_binary_path getent 2>/dev/null || true)"
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]]; then
+        passwd_entry="$(zsh_get_local_passwd_entry "$user" 2>/dev/null || true)"
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+zsh_passwd_shell_from_entry() {
+    local passwd_entry="${1:-}"
+    local _passwd_user=""
+    local _passwd_pw=""
+    local _passwd_uid=""
+    local _passwd_gid=""
+    local _passwd_gecos=""
+    local _passwd_home=""
+    local passwd_shell=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=':' read -r _passwd_user _passwd_pw _passwd_uid _passwd_gid _passwd_gecos _passwd_home passwd_shell <<< "$passwd_entry"
+    [[ -n "$passwd_shell" ]] || return 1
+    [[ "$passwd_shell" == /* ]] || return 1
+    [[ "$passwd_shell" != / ]] || return 1
+    printf '%s\n' "$passwd_shell"
 }
 
 zsh_is_externally_managed_user() {
@@ -50,7 +133,7 @@ zsh_is_externally_managed_user() {
     local local_entry=""
 
     [[ -n "$user" ]] || return 1
-    passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
+    passwd_entry="$(zsh_getent_passwd_entry "$user" 2>/dev/null || true)"
     [[ -n "$passwd_entry" ]] || return 1
 
     local_entry="$(zsh_get_local_passwd_entry "$user" || true)"
@@ -286,22 +369,36 @@ EOF
 
 # Set zsh as default shell
 set_zsh_default() {
-    local current_shell
-    current_shell=$(getent passwd "$(whoami)" | cut -d: -f7)
-    local zsh_path
-    zsh_path=$(command -v zsh)
+    local current_shell=""
+    local current_user=""
+    local passwd_entry=""
+    local zsh_path=""
+    local chsh_path=""
+
+    current_user="$(zsh_resolve_current_user 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || log_fatal "Unable to resolve current user for zsh shell setup"
+
+    passwd_entry="$(zsh_getent_passwd_entry "$current_user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        current_shell="$(zsh_passwd_shell_from_entry "$passwd_entry" 2>/dev/null || true)"
+    fi
+
+    zsh_path="$(zsh_system_binary_path zsh 2>/dev/null || command -v zsh 2>/dev/null || true)"
+    [[ -n "$zsh_path" ]] || log_fatal "Unable to locate zsh binary"
 
     if [[ "$current_shell" == "$zsh_path" ]]; then
         log_detail "zsh is already the default shell"
         return 0
     fi
 
-    if zsh_is_externally_managed_user "$(whoami)"; then
+    if zsh_is_externally_managed_user "$current_user"; then
         log_warn "Shell is managed outside /etc/passwd; installing a bash-to-zsh handoff instead of using chsh"
         configure_external_shell_handoff
     else
         log_detail "Setting zsh as default shell..."
-        $SUDO chsh -s "$zsh_path" "$(whoami)"
+        chsh_path="$(zsh_system_binary_path chsh 2>/dev/null || true)"
+        [[ -n "$chsh_path" ]] || log_fatal "Unable to locate chsh binary"
+        $SUDO "$chsh_path" -s "$zsh_path" "$current_user"
     fi
 
     log_success "Default shell set to zsh"

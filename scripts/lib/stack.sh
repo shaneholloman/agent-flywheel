@@ -88,6 +88,7 @@ _stack_target_bin_dir() {
     local target_home=""
     local configured_bin=""
     local candidate_home=""
+    local getent_bin=""
 
     target_home="$(_stack_target_home "$target_user" 2>/dev/null || true)"
     [[ -n "$target_home" ]] || return 1
@@ -99,15 +100,18 @@ _stack_target_bin_dir() {
             return 0
         fi
 
-        while IFS=: read -r _ _ _ _ _ candidate_home _; do
-            candidate_home="$(_stack_existing_abs_home "$candidate_home" 2>/dev/null || true)"
-            [[ -n "$candidate_home" ]] || continue
-            [[ "$candidate_home" == "$target_home" ]] && continue
-            if [[ "$configured_bin" == "$candidate_home" || "$configured_bin" == "$candidate_home/"* ]]; then
-                configured_bin=""
-                break
-            fi
-        done < <(getent passwd 2>/dev/null || true)
+        getent_bin="$(_stack_system_binary_path getent 2>/dev/null || true)"
+        if [[ -n "$getent_bin" ]]; then
+            while IFS=: read -r _ _ _ _ _ candidate_home _; do
+                candidate_home="$(_stack_existing_abs_home "$candidate_home" 2>/dev/null || true)"
+                [[ -n "$candidate_home" ]] || continue
+                [[ "$candidate_home" == "$target_home" ]] && continue
+                if [[ "$configured_bin" == "$candidate_home" || "$configured_bin" == "$candidate_home/"* ]]; then
+                    configured_bin=""
+                    break
+                fi
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+        fi
 
         if [[ -n "$configured_bin" ]]; then
             printf '%s\n' "$configured_bin"
@@ -203,6 +207,100 @@ _stack_existing_abs_home() {
     printf '%s\n' "$home_candidate"
 }
 
+_stack_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+_stack_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(_stack_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(_stack_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+_stack_getent_passwd_entry() {
+    local user="${1-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
+
+    getent_bin="$(_stack_system_binary_path getent 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
+
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
+    fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+_stack_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    passwd_home="$(_stack_existing_abs_home "$passwd_home" 2>/dev/null || true)"
+    [[ -n "$passwd_home" ]] || return 1
+    printf '%s\n' "$passwd_home"
+}
+
 _stack_target_home() {
     local target_user="${1:-${TARGET_USER:-ubuntu}}"
     local explicit_home=""
@@ -221,7 +319,7 @@ _stack_target_home() {
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(_stack_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$target_user" ]]; then
         current_home="$(_stack_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
         if [[ -n "$current_home" ]]; then
@@ -230,10 +328,9 @@ _stack_target_home() {
         fi
     fi
 
-    passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
+    passwd_entry="$(_stack_getent_passwd_entry "$target_user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
-        passwd_entry="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-        passwd_entry="$(_stack_existing_abs_home "$passwd_entry" 2>/dev/null || true)"
+        passwd_entry="$(_stack_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
             printf '%s\n' "${passwd_entry%/}"
             return 0
@@ -432,7 +529,7 @@ _stack_run_as_user() {
     wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q ACFS_BIN_DIR=$acfs_bin_dir_q;"
     wrapped_cmd+=" export PATH=\"$target_path_prefix:$system_path_prefix:\$PATH\"; set -o pipefail; $cmd"
 
-    if [[ "$(whoami)" == "$target_user" ]]; then
+    if [[ "$(_stack_resolve_current_user 2>/dev/null || true)" == "$target_user" ]]; then
         bash -c "$wrapped_cmd"
         return $?
     fi

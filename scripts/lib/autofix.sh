@@ -27,19 +27,104 @@ autofix_validate_target_user() {
     [[ "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]
 }
 
+autofix_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in         "/usr/bin/$name"         "/bin/$name"         "/usr/local/bin/$name"         "/usr/local/sbin/$name"         "/usr/sbin/$name"         "/sbin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+autofix_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(autofix_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(autofix_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+autofix_getent_passwd_entry() {
+  local user="${1-}"
+  local getent_bin=""
+  local passwd_entry=""
+  local passwd_line=""
+  local printed_any=false
+
+  getent_bin="$(autofix_system_binary_path getent 2>/dev/null || true)"
+  if [[ -z "$user" ]]; then
+    if [[ -n "$getent_bin" ]]; then
+      while IFS= read -r passwd_line; do
+        printf '%s\n' "$passwd_line"
+        printed_any=true
+      done < <("$getent_bin" passwd 2>/dev/null || true)
+      if [[ "$printed_any" == true ]]; then
+        return 0
+      fi
+    fi
+
+    [[ -r /etc/passwd ]] || return 1
+    while IFS= read -r passwd_line; do
+      printf '%s\n' "$passwd_line"
+    done < /etc/passwd
+    return 0
+  fi
+
+  if [[ -n "$getent_bin" ]]; then
+    passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+    while IFS= read -r passwd_line; do
+      [[ "${passwd_line%%:*}" == "$user" ]] || continue
+      passwd_entry="$passwd_line"
+      break
+    done < /etc/passwd
+  fi
+
+  [[ -n "$passwd_entry" ]] || return 1
+  printf '%s\n' "$passwd_entry"
+}
+
+autofix_passwd_home_from_entry() {
+  local passwd_entry="${1:-}"
+  local passwd_home=""
+
+  [[ -n "$passwd_entry" ]] || return 1
+  IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+  passwd_home="$(autofix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+  [[ -n "$passwd_home" ]] || return 1
+  printf '%s\n' "$passwd_home"
+}
+
 autofix_lookup_passwd_home() {
     local user="${1:-}"
+    local passwd_entry=""
     local passwd_home=""
 
     [[ -n "$user" ]] || return 1
 
-    if command -v getent >/dev/null 2>&1; then
-        passwd_home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6 | head -n1 || true)"
-    elif [[ -r /etc/passwd ]]; then
-        passwd_home="$(awk -F: -v u="$user" '$1==u{print $6; exit}' /etc/passwd 2>/dev/null || true)"
-    fi
-
-    passwd_home="$(autofix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+    passwd_entry="$(autofix_getent_passwd_entry "$user" 2>/dev/null || true)"
+    passwd_home="$(autofix_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
     [[ -n "$passwd_home" ]] || return 1
 
     printf '%s\n' "$passwd_home"
@@ -62,7 +147,7 @@ autofix_home_for_user() {
         return 0
     fi
 
-    if [[ "$(whoami 2>/dev/null || true)" == "$user" ]]; then
+    if [[ "$(autofix_resolve_current_user 2>/dev/null || true)" == "$user" ]]; then
         passwd_home="$(autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
         if [[ -n "$passwd_home" ]]; then
             printf '%s\n' "$passwd_home"
@@ -76,14 +161,11 @@ autofix_home_for_user() {
 autofix_resolve_current_home() {
     local resolved_home=""
     local current_user=""
+    local home_candidate=""
 
-    resolved_home="$(autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$resolved_home" ]]; then
-        printf '%s\n' "$resolved_home"
-        return 0
-    fi
+    home_candidate="$(autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
 
-    current_user="$(whoami 2>/dev/null || id -un 2>/dev/null || true)"
+    current_user="$(autofix_resolve_current_user 2>/dev/null || true)"
     if [[ -n "$current_user" ]]; then
         resolved_home="$(autofix_home_for_user "$current_user" 2>/dev/null || true)"
         if [[ -n "$resolved_home" ]]; then
@@ -92,9 +174,9 @@ autofix_resolve_current_home() {
         fi
     fi
 
-    return 1
+    [[ -n "$home_candidate" ]] || return 1
+    printf '%s\n' "$home_candidate"
 }
-
 autofix_runtime_home() {
     local runtime_home=""
     local target_user="${TARGET_USER:-}"
@@ -134,7 +216,14 @@ autofix_refresh_state_paths() {
         if [[ -n "$runtime_home" ]]; then
             state_dir="$runtime_home/.acfs/autofix"
         else
-            state_dir="/tmp/acfs-autofix.$(id -u 2>/dev/null || echo unknown)"
+            local id_bin=""
+            local current_uid="unknown"
+            id_bin="$(autofix_system_binary_path id 2>/dev/null || true)"
+            if [[ -n "$id_bin" ]]; then
+                current_uid="$("$id_bin" -u 2>/dev/null || true)"
+            fi
+            [[ "$current_uid" =~ ^[0-9]+$ ]] || current_uid="unknown"
+            state_dir="/tmp/acfs-autofix.$current_uid"
         fi
     fi
 

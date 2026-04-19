@@ -67,10 +67,82 @@ preflight_is_valid_username() {
     [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
 }
 
+preflight_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+    case "$name" in
+        *[!A-Za-z0-9._+-]*)
+            return 1
+            ;;
+    esac
+
+    for candidate in \
+        "/usr/local/bin/$name" \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+preflight_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+    local passwd_line=""
+    local passwd_user=""
+
+    getent_bin="$(preflight_system_binary_path getent 2>/dev/null || true)"
+    if [[ -n "$getent_bin" ]]; then
+        if [[ -n "$user" ]]; then
+            "$getent_bin" passwd "$user" 2>/dev/null
+        else
+            "$getent_bin" passwd 2>/dev/null
+        fi
+        return $?
+    fi
+
+    [[ -r /etc/passwd ]] || return 1
+
+    if [[ -n "$user" ]]; then
+        while IFS= read -r passwd_line; do
+            IFS=: read -r passwd_user _ <<< "$passwd_line"
+            if [[ "$passwd_user" == "$user" ]]; then
+                printf '%s\n' "$passwd_line"
+                return 0
+            fi
+        done < /etc/passwd
+        return 1
+    fi
+
+    while IFS= read -r passwd_line; do
+        printf '%s\n' "$passwd_line"
+    done < /etc/passwd
+}
+
 resolve_current_user() {
     local current_user=""
+    local id_bin=""
+    local whoami_bin=""
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    id_bin="$(preflight_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(preflight_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
     [[ -n "$current_user" ]] || return 1
     printf '%s\n' "$current_user"
 }
@@ -105,29 +177,15 @@ preflight_validate_bin_dir_for_home() {
         return 1
     fi
 
-    if command -v getent &>/dev/null; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(printf '%s\n' "$passwd_line" | cut -d: -f6)"
-            passwd_home="$(preflight_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < <(getent passwd 2>/dev/null || true)
-    fi
-
-    if [[ -r /etc/passwd ]]; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(printf '%s\n' "$passwd_line" | cut -d: -f6)"
-            passwd_home="$(preflight_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < /etc/passwd
-    fi
+    while IFS= read -r passwd_line; do
+        IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_line"
+        passwd_home="$(preflight_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+        [[ -n "$passwd_home" ]] || continue
+        [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+        if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+            return 1
+        fi
+    done < <(preflight_getent_passwd_entry 2>/dev/null || true)
 
     printf '%s\n' "$bin_dir"
 }
@@ -135,6 +193,7 @@ preflight_validate_bin_dir_for_home() {
 resolve_home_dir() {
     local user="$1"
     local home=""
+    local passwd_entry=""
 
     if [[ -z "$user" ]]; then
         return 1
@@ -145,10 +204,9 @@ resolve_home_dir() {
         return 0
     fi
 
-    if command -v getent &>/dev/null; then
-        home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
-    elif [[ -r /etc/passwd ]]; then
-        home="$(awk -F: -v u="$user" '$1==u{print $6}' /etc/passwd)"
+    passwd_entry="$(preflight_getent_passwd_entry "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        IFS=: read -r _ _ _ _ _ home _ <<< "$passwd_entry"
     fi
 
     home="$(preflight_sanitize_abs_nonroot_path "$home" 2>/dev/null || true)"
@@ -196,7 +254,7 @@ resolve_install_target_home() {
         return 1
     fi
 
-    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    if [[ "$EUID" -eq 0 ]]; then
         preflight_is_valid_username "$target_user" || return 1
         target_home="$(resolve_home_dir "$target_user" 2>/dev/null || true)"
         if [[ -n "$target_home" ]]; then
@@ -755,7 +813,8 @@ check_user() {
         local target_user="${TARGET_USER:-ubuntu}"
         warn "Running as root" "ACFS will create and install for '${target_user}' user"
     else
-        pass "User: $(whoami)"
+        local current_user="$(resolve_current_user 2>/dev/null || printf unknown)"
+        pass "User: $current_user"
     fi
 
     if [[ -z "${HOME:-}" ]]; then

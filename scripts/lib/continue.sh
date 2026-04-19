@@ -97,18 +97,58 @@ continue_resolve_current_user() {
 }
 
 continue_getent_passwd_entry() {
-    local user="${1:-}"
+    local user="${1-}"
     local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
 
     getent_bin="$(continue_system_binary_path getent 2>/dev/null || true)"
-    [[ -n "$getent_bin" ]] || return 1
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
 
-    if [[ -n "$user" ]]; then
-        "$getent_bin" passwd "$user" 2>/dev/null
-    else
-        "$getent_bin" passwd 2>/dev/null
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
     fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
 }
+
+continue_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    passwd_home="$(continue_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+    [[ -n "$passwd_home" ]] || return 1
+    printf '%s\n' "$passwd_home"
+}
+
 continue_is_valid_username() {
     local username="${1:-}"
     [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
@@ -135,7 +175,7 @@ continue_resolve_current_home() {
     if [[ -n "$current_user" ]]; then
         passwd_entry="$(continue_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            passwd_home="$(continue_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            passwd_home="$(continue_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
             if [[ -n "$passwd_home" ]]; then
                 printf '%s\n' "$passwd_home"
                 return 0
@@ -250,7 +290,7 @@ home_for_user() {
 
     passwd_entry="$(continue_getent_passwd_entry "$user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
-        home_candidate="$(continue_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+        home_candidate="$(continue_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -332,6 +372,10 @@ find_scanned_install_state_file() {
     local newest=""
     local newest_mtime=-1
     local mtime=""
+    local getent_bin=""
+
+    getent_bin="$(continue_system_binary_path getent 2>/dev/null || true)"
+    [[ -n "$getent_bin" ]] || return 1
 
     while IFS=: read -r _ _ _ _ _ candidate_home _; do
         [[ -n "$candidate_home" ]] || continue
@@ -339,7 +383,7 @@ find_scanned_install_state_file() {
         candidate="${candidate_home%/}/.acfs/state.json"
         [[ -f "$candidate" ]] || continue
         matches+=("$candidate")
-    done < <(getent passwd 2>/dev/null || true)
+    done < <("$getent_bin" passwd 2>/dev/null || true)
 
     if [[ ${#matches[@]} -eq 1 ]]; then
         echo "${matches[0]}"

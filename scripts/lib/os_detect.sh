@@ -14,8 +14,100 @@ if ! declare -f log_fatal &>/dev/null; then
     log_success() { echo "OK: $1" >&2; }
 fi
 
-# Detect OS and version
-# Sets: OS_ID, OS_VERSION, OS_VERSION_MAJOR, OS_CODENAME
+os_detect_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+os_detect_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+os_detect_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(os_detect_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(os_detect_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+os_detect_getent_passwd_entry() {
+    local user="${1:-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+
+    [[ -n "$user" ]] || return 1
+
+    getent_bin="$(os_detect_system_binary_path getent 2>/dev/null || true)"
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+os_detect_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local _passwd_user=""
+    local _passwd_pw=""
+    local _passwd_uid=""
+    local _passwd_gid=""
+    local _passwd_gecos=""
+    local passwd_home=""
+    local _passwd_shell=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=':' read -r _passwd_user _passwd_pw _passwd_uid _passwd_gid _passwd_gecos passwd_home _passwd_shell <<< "$passwd_entry"
+    passwd_home="$(os_detect_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+    [[ -n "$passwd_home" ]] || return 1
+    printf '%s\n' "$passwd_home"
+}
+
 detect_os() {
     local os_release_file="${ACFS_OS_RELEASE_PATH:-/etc/os-release}"
 
@@ -77,17 +169,12 @@ is_fresh_vps() {
     fi
     if [[ -z "$target_home" ]]; then
         local passwd_entry=""
-        passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
+        passwd_entry="$(os_detect_getent_passwd_entry "$target_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            target_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then
-                target_home=""
-            else
-                target_home="${target_home%/}"
-            fi
+            target_home="$(os_detect_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
         elif [[ "$target_user" == "root" ]]; then
             target_home="/root"
-        elif [[ "$target_user" == "$(whoami 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        elif [[ "$target_user" == "$(os_detect_resolve_current_user 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
             target_home="${HOME%/}"
         fi
     fi

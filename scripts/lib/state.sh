@@ -195,17 +195,56 @@ state_resolve_current_user() {
 }
 
 state_getent_passwd_entry() {
-    local user="${1:-}"
-    local getent_bin=""
+  local user="${1-}"
+  local getent_bin=""
+  local passwd_entry=""
+  local passwd_line=""
+  local printed_any=false
 
-    getent_bin="$(state_system_binary_path getent 2>/dev/null || true)"
-    [[ -n "$getent_bin" ]] || return 1
-
-    if [[ -n "$user" ]]; then
-        "$getent_bin" passwd "$user" 2>/dev/null
-    else
-        "$getent_bin" passwd 2>/dev/null
+  getent_bin="$(state_system_binary_path getent 2>/dev/null || true)"
+  if [[ -z "$user" ]]; then
+    if [[ -n "$getent_bin" ]]; then
+      while IFS= read -r passwd_line; do
+        printf '%s\n' "$passwd_line"
+        printed_any=true
+      done < <("$getent_bin" passwd 2>/dev/null || true)
+      if [[ "$printed_any" == true ]]; then
+        return 0
+      fi
     fi
+
+    [[ -r /etc/passwd ]] || return 1
+    while IFS= read -r passwd_line; do
+      printf '%s\n' "$passwd_line"
+    done < /etc/passwd
+    return 0
+  fi
+
+  if [[ -n "$getent_bin" ]]; then
+    passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+    while IFS= read -r passwd_line; do
+      [[ "${passwd_line%%:*}" == "$user" ]] || continue
+      passwd_entry="$passwd_line"
+      break
+    done < /etc/passwd
+  fi
+
+  [[ -n "$passwd_entry" ]] || return 1
+  printf '%s\n' "$passwd_entry"
+}
+
+state_passwd_home_from_entry() {
+  local passwd_entry="${1:-}"
+  local passwd_home=""
+
+  [[ -n "$passwd_entry" ]] || return 1
+  IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+  passwd_home="$(state_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+  [[ -n "$passwd_home" ]] || return 1
+  printf '%s\n' "$passwd_home"
 }
 
 state_resolve_current_home() {
@@ -224,8 +263,7 @@ state_resolve_current_home() {
     if [[ -n "$current_user" ]]; then
         passwd_entry="$(state_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            passwd_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            passwd_home="$(state_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            passwd_home="$(state_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
             if [[ -n "$passwd_home" ]]; then
                 printf '%s\n' "$passwd_home"
                 return 0
@@ -255,7 +293,7 @@ state_resolve_target_home() {
         local passwd_entry=""
         passwd_entry="$(state_getent_passwd_entry "$TARGET_USER" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            resolved_home="$(state_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            resolved_home="$(state_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
             if [[ -n "$resolved_home" ]]; then
                 printf '%s\n' "$resolved_home"
                 return 0

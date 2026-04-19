@@ -626,6 +626,97 @@ if ! declare -f _acfs_validate_target_user >/dev/null 2>&1; then
     }
 fi
 
+if ! declare -f _acfs_system_binary_path >/dev/null 2>&1; then
+    _acfs_system_binary_path() {
+        local name="${1:-}"
+        local candidate=""
+
+        [[ -n "$name" ]] || return 1
+
+        for candidate in \
+            "/usr/bin/$name" \
+            "/bin/$name" \
+            "/usr/sbin/$name" \
+            "/sbin/$name"
+        do
+            [[ -x "$candidate" ]] || continue
+            printf '%s\n' "$candidate"
+            return 0
+        done
+
+        return 1
+    }
+fi
+
+if ! declare -f _acfs_resolve_current_user >/dev/null 2>&1; then
+    _acfs_resolve_current_user() {
+        local current_user=""
+        local id_bin=""
+        local whoami_bin=""
+
+        id_bin="$(_acfs_system_binary_path id 2>/dev/null || true)"
+        if [[ -n "$id_bin" ]]; then
+            current_user="$("$id_bin" -un 2>/dev/null || true)"
+        fi
+
+        if [[ -z "$current_user" ]]; then
+            whoami_bin="$(_acfs_system_binary_path whoami 2>/dev/null || true)"
+            if [[ -n "$whoami_bin" ]]; then
+                current_user="$("$whoami_bin" 2>/dev/null || true)"
+            fi
+        fi
+
+        [[ -n "$current_user" ]] || return 1
+        printf '%s\n' "$current_user"
+    }
+fi
+
+if ! declare -f _acfs_getent_passwd_entry >/dev/null 2>&1; then
+    _acfs_getent_passwd_entry() {
+        local user="${1:-}"
+        local getent_bin=""
+        local passwd_entry=""
+        local passwd_line=""
+
+        [[ -n "$user" ]] || return 1
+        getent_bin="$(_acfs_system_binary_path getent 2>/dev/null || true)"
+        if [[ -n "$getent_bin" ]]; then
+            passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+        fi
+
+        if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+            while IFS= read -r passwd_line; do
+                [[ "${passwd_line%%:*}" == "$user" ]] || continue
+                passwd_entry="$passwd_line"
+                break
+            done < /etc/passwd
+        fi
+
+        [[ -n "$passwd_entry" ]] || return 1
+        printf '%s\n' "$passwd_entry"
+    }
+fi
+
+if ! declare -f _acfs_passwd_home_from_entry >/dev/null 2>&1; then
+    _acfs_passwd_home_from_entry() {
+        local passwd_entry="${1:-}"
+        local _passwd_user=""
+        local _passwd_pw=""
+        local _passwd_uid=""
+        local _passwd_gid=""
+        local _passwd_gecos=""
+        local passwd_home=""
+        local _passwd_shell=""
+
+        [[ -n "$passwd_entry" ]] || return 1
+        IFS=':' read -r _passwd_user _passwd_pw _passwd_uid _passwd_gid _passwd_gecos passwd_home _passwd_shell <<< "$passwd_entry"
+        [[ -n "$passwd_home" ]] || return 1
+        [[ "$passwd_home" == /* ]] || return 1
+        [[ "$passwd_home" != / ]] || return 1
+        printf '%s\n' "${passwd_home%/}"
+    }
+fi
+
 if ! declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
     _acfs_resolve_target_home() {
         local user="${1:-ubuntu}"
@@ -637,17 +728,17 @@ if ! declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
             return 0
         fi
 
-        passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
+        passwd_entry="$(_acfs_getent_passwd_entry "$user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            passwd_entry="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            if [[ -n "$passwd_entry" ]] && [[ "$passwd_entry" == /* ]] && [[ "$passwd_entry" != "/" ]]; then
-                printf '%s\n' "${passwd_entry%/}"
+            passwd_entry="$(_acfs_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+            if [[ -n "$passwd_entry" ]]; then
+                printf '%s\n' "$passwd_entry"
                 return 0
             fi
         fi
 
-        current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
-        if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
+        current_user="$(_acfs_resolve_current_user 2>/dev/null || true)"
+        if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != / ]]; then
             printf '%s\n' "${HOME%/}"
             return 0
         fi
@@ -656,12 +747,6 @@ if ! declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
     }
 fi
 
-# Provide a default run_as_target implementation for generated scripts (and other callers)
-# when the orchestrator (install.sh) isn't in scope.
-#
-# IMPORTANT:
-# - Avoid `sudo -i` / login shells (they source profile files, which are not a stable API).
-# - Preserve stdin for heredocs/pipes.
 if ! declare -f run_as_target >/dev/null 2>&1; then
     run_as_target() {
         local user="${TARGET_USER:-ubuntu}"
@@ -700,7 +785,7 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
         [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
 
         # Already the target user
-        if [[ "$(whoami)" == "$user" ]]; then
+        if [[ "$(_acfs_resolve_current_user 2>/dev/null || true)" == "$user" ]]; then
             # Use explicit home path to avoid ambiguity if $HOME was mutated.
             if [[ -d "$user_home" ]]; then
                 cd "$user_home" || return 1

@@ -21,6 +21,101 @@ services_setup_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+services_setup_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in         "/usr/bin/$name"         "/bin/$name"         "/usr/local/bin/$name"         "/usr/local/sbin/$name"         "/usr/sbin/$name"         "/sbin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+services_setup_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(services_setup_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(services_setup_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+services_setup_getent_passwd_entry() {
+    local user="${1-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
+
+    getent_bin="$(services_setup_system_binary_path getent 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
+
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
+    fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+services_setup_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local _passwd_user=""
+    local _passwd_pw=""
+    local _passwd_uid=""
+    local _passwd_gid=""
+    local _passwd_gecos=""
+    local passwd_home=""
+    local _passwd_shell=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=':' read -r _passwd_user _passwd_pw _passwd_uid _passwd_gid _passwd_gecos passwd_home _passwd_shell <<< "$passwd_entry"
+    passwd_home="$(services_setup_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+    [[ -n "$passwd_home" ]] || return 1
+    printf '%s\n' "$passwd_home"
+}
+
 services_setup_resolve_current_home() {
     local current_user=""
     local home_candidate=""
@@ -28,17 +123,16 @@ services_setup_resolve_current_home() {
     local passwd_home=""
 
     home_candidate="$(services_setup_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(services_setup_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
 
     if [[ -n "$current_user" ]]; then
-        passwd_entry="$(getent passwd "$current_user" 2>/dev/null || true)"
+        passwd_entry="$(services_setup_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            passwd_home="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-            passwd_home="$(services_setup_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+            passwd_home="$(services_setup_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
             if [[ -n "$passwd_home" ]]; then
                 printf '%s\n' "$passwd_home"
                 return 0
@@ -50,6 +144,7 @@ services_setup_resolve_current_home() {
     printf '%s\n' "$home_candidate"
 }
 
+_SERVICES_SETUP_CURRENT_USER="$(services_setup_resolve_current_user 2>/dev/null || true)"
 _SERVICES_SETUP_CURRENT_HOME="$(services_setup_resolve_current_home 2>/dev/null || true)"
 if [[ -n "$_SERVICES_SETUP_CURRENT_HOME" ]]; then
     HOME="$_SERVICES_SETUP_CURRENT_HOME"
@@ -106,7 +201,7 @@ fi
 # Configuration
 # ============================================================
 
-TARGET_USER="${TARGET_USER:-${SUDO_USER:-$(whoami)}}"
+TARGET_USER="${TARGET_USER:-${SUDO_USER:-${_SERVICES_SETUP_CURRENT_USER:-}}}"
 SERVICES_SETUP_ACTION="${SERVICES_SETUP_ACTION:-}"
 SERVICES_SETUP_NONINTERACTIVE="${SERVICES_SETUP_NONINTERACTIVE:-false}"
 
@@ -132,15 +227,11 @@ resolve_home_dir() {
     local user="$1"
     local home=""
     local current_user=""
+    local passwd_entry=""
 
-    if command -v getent &>/dev/null; then
-        home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
-    elif [[ -r /etc/passwd ]]; then
-        home="$(awk -F: -v u="$user" '$1==u{print $6}' /etc/passwd)"
-    fi
-
-    if [[ -n "$home" ]]; then
-        home="$(services_setup_sanitize_abs_nonroot_path "$home" 2>/dev/null || true)"
+    passwd_entry="$(services_setup_getent_passwd_entry "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        home="$(services_setup_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
     fi
     if [[ -n "$home" ]]; then
         printf '%s' "$home"
@@ -152,7 +243,7 @@ resolve_home_dir() {
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(services_setup_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$user" ]]; then
         home="$(services_setup_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
         if [[ -n "$home" ]]; then
@@ -194,27 +285,14 @@ services_setup_validate_bin_dir_for_home() {
         return 1
     fi
 
-    if command -v getent &>/dev/null; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(services_setup_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < <(getent passwd 2>/dev/null || true)
-    fi
-
-    if [[ -r /etc/passwd ]]; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(services_setup_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < /etc/passwd
-    fi
+    while IFS= read -r passwd_line; do
+        passwd_home="$(services_setup_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+        [[ -n "$passwd_home" ]] || continue
+        [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+        if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+            return 1
+        fi
+    done < <(services_setup_getent_passwd_entry 2>/dev/null || true)
 
     printf '%s\n' "$bin_dir"
 }
@@ -271,7 +349,7 @@ run_as_user() {
     [[ -n "${ACFS_HOME:-}" ]] && env_cmd+=("ACFS_HOME=$ACFS_HOME")
     [[ -n "$primary_bin_dir" ]] && env_cmd+=("ACFS_BIN_DIR=$primary_bin_dir")
 
-    if [[ "$(whoami)" == "$TARGET_USER" ]]; then
+    if [[ "$(services_setup_resolve_current_user 2>/dev/null || true)" == "$TARGET_USER" ]]; then
         "${env_cmd[@]}" "$@"
         return $?
     fi
@@ -312,7 +390,7 @@ run_as_user_shell() {
     [[ -n "${ACFS_HOME:-}" ]] && env_cmd+=("ACFS_HOME=$ACFS_HOME")
     [[ -n "$primary_bin_dir" ]] && env_cmd+=("ACFS_BIN_DIR=$primary_bin_dir")
 
-    if [[ "$(whoami)" == "$TARGET_USER" ]]; then
+    if [[ "$(services_setup_resolve_current_user 2>/dev/null || true)" == "$TARGET_USER" ]]; then
         "${env_cmd[@]}" bash -c "$cmd"
     elif command -v sudo &>/dev/null; then
         sudo -u "$TARGET_USER" -H "${env_cmd[@]}" bash -c "$cmd"

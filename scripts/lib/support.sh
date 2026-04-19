@@ -88,17 +88,56 @@ support_resolve_current_user() {
 }
 
 support_getent_passwd_entry() {
-    local user="${1:-}"
+    local user="${1-}"
     local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
 
     getent_bin="$(support_system_binary_path getent 2>/dev/null || true)"
-    [[ -n "$getent_bin" ]] || return 1
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
 
-    if [[ -n "$user" ]]; then
-        "$getent_bin" passwd "$user" 2>/dev/null
-    else
-        "$getent_bin" passwd 2>/dev/null
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
     fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+support_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    passwd_home="$(support_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+    [[ -n "$passwd_home" ]] || return 1
+    printf '%s\n' "$passwd_home"
 }
 support_is_valid_username() {
     local username="${1:-}"
@@ -124,7 +163,7 @@ support_resolve_current_home() {
     if [[ -n "$current_user" ]]; then
         passwd_entry="$(support_getent_passwd_entry "$current_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
-            passwd_home="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+            passwd_home="$(support_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
             if [[ -n "$passwd_home" ]]; then
                 printf '%s\n' "$passwd_home"
                 return 0
@@ -279,7 +318,7 @@ support_home_for_user() {
 
     passwd_entry="$(support_getent_passwd_entry "$user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
-        home_candidate="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_entry" | cut -d: -f6)" 2>/dev/null || true)"
+        home_candidate="$(support_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -316,35 +355,19 @@ support_read_user_for_home() {
     local passwd_line=""
     local passwd_home=""
     local state_file=""
-    local getent_bin=""
 
     user_home="$(support_sanitize_abs_nonroot_path "$user_home" 2>/dev/null || true)"
     [[ -n "$user_home" ]] || return 1
 
-    getent_bin="$(support_system_binary_path getent 2>/dev/null || true)"
-    if [[ -n "$getent_bin" ]]; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ "$passwd_home" == "$user_home" ]] || continue
-            candidate_user="${passwd_line%%:*}"
-            if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-                printf '%s\n' "$candidate_user"
-                return 0
-            fi
-        done < <("$getent_bin" passwd 2>/dev/null || true)
-    fi
-
-    if [[ -r /etc/passwd ]]; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(support_sanitize_abs_nonroot_path "$(printf '%s\n' "$passwd_line" | cut -d: -f6)" 2>/dev/null || true)"
-            [[ "$passwd_home" == "$user_home" ]] || continue
-            candidate_user="${passwd_line%%:*}"
-            if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
-                printf '%s\n' "$candidate_user"
-                return 0
-            fi
-        done < /etc/passwd
-    fi
+    while IFS= read -r passwd_line; do
+        passwd_home="$(support_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+        [[ "$passwd_home" == "$user_home" ]] || continue
+        candidate_user="${passwd_line%%:*}"
+        if [[ "$candidate_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+    done < <(support_getent_passwd_entry 2>/dev/null || true)
 
     current_home="${_SUPPORT_CURRENT_HOME:-}"
     if [[ -n "$current_home" ]] && [[ "$user_home" == "$current_home" ]]; then
@@ -672,7 +695,7 @@ support_initialize_context() {
     fi
 
     if [[ -z "$SUPPORT_TARGET_USER" ]]; then
-        SUPPORT_TARGET_USER="$(whoami 2>/dev/null || echo unknown)"
+        SUPPORT_TARGET_USER="$(support_resolve_current_user 2>/dev/null || echo unknown)"
     fi
 
     if [[ "$OUTPUT_BASE_EXPLICIT" != "true" ]]; then
@@ -832,7 +855,7 @@ capture_env_summary() {
     local bundle_dir="$1"
     local env_file="$bundle_dir/environment.json"
     local support_home="${SUPPORT_TARGET_HOME:-${_SUPPORT_CURRENT_HOME:-}}"
-    local support_user="${SUPPORT_TARGET_USER:-$(whoami 2>/dev/null || echo unknown)}"
+    local support_user="${SUPPORT_TARGET_USER:-$(support_resolve_current_user 2>/dev/null || echo unknown)}"
 
     if ! command -v jq &>/dev/null; then
         log_warn "jq not available, skipping environment capture"

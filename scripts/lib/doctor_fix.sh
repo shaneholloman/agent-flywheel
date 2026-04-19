@@ -26,12 +26,93 @@ doctor_fix_is_valid_username() {
     [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
 }
 
+doctor_fix_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in         "/usr/bin/$name"         "/bin/$name"         "/usr/local/bin/$name"         "/usr/local/sbin/$name"         "/usr/sbin/$name"         "/sbin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+doctor_fix_getent_passwd_entry() {
+    local user="${1-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
+
+    getent_bin="$(doctor_fix_system_binary_path getent 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
+
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
+    fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
 doctor_fix_current_user() {
     local current_user=""
+    local id_bin=""
+    local whoami_bin=""
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    id_bin="$(doctor_fix_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(doctor_fix_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
     [[ -n "$current_user" ]] || return 1
     printf '%s\n' "$current_user"
+}
+
+doctor_fix_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    passwd_home="$(doctor_fix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+    [[ -n "$passwd_home" ]] || return 1
+    printf '%s\n' "$passwd_home"
 }
 
 doctor_fix_resolve_home_for_user() {
@@ -46,10 +127,9 @@ doctor_fix_resolve_home_for_user() {
         return 0
     fi
 
-    passwd_entry="$(getent passwd "$user" 2>/dev/null || true)"
+    passwd_entry="$(doctor_fix_getent_passwd_entry "$user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
-        home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-        home_candidate="$(doctor_fix_sanitize_abs_nonroot_path "$home_candidate" 2>/dev/null || true)"
+        home_candidate="$(doctor_fix_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
@@ -89,29 +169,14 @@ doctor_fix_validate_bin_dir_for_home() {
         return 1
     fi
 
-    if command -v getent &>/dev/null; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(printf '%s\n' "$passwd_line" | cut -d: -f6)"
-            passwd_home="$(doctor_fix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < <(getent passwd 2>/dev/null || true)
-    fi
-
-    if [[ -r /etc/passwd ]]; then
-        while IFS= read -r passwd_line; do
-            passwd_home="$(printf '%s\n' "$passwd_line" | cut -d: -f6)"
-            passwd_home="$(doctor_fix_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
-            [[ -n "$passwd_home" ]] || continue
-            [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
-            if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
-                return 1
-            fi
-        done < /etc/passwd
-    fi
+    while IFS= read -r passwd_line; do
+        passwd_home="$(doctor_fix_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+        [[ -n "$passwd_home" ]] || continue
+        [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+        if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+            return 1
+        fi
+    done < <(doctor_fix_getent_passwd_entry 2>/dev/null || true)
 
     printf '%s\n' "$bin_dir"
 }
@@ -190,12 +255,20 @@ doctor_fix_runtime_acfs_home() {
 }
 
 doctor_fix_runtime_user() {
+    local runtime_user=""
+
     if [[ -n "${TARGET_USER:-}" ]]; then
         printf '%s\n' "$TARGET_USER"
         return 0
     fi
 
-    id -un 2>/dev/null || whoami 2>/dev/null || printf 'ubuntu\n'
+    runtime_user="$(doctor_fix_current_user 2>/dev/null || true)"
+    if [[ -n "$runtime_user" ]]; then
+        printf '%s\n' "$runtime_user"
+        return 0
+    fi
+
+    printf 'ubuntu\n'
 }
 
 doctor_fix_runtime_bin_dir() {

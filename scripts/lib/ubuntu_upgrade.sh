@@ -34,6 +34,95 @@ declare -f log_step &>/dev/null || log_step() { echo "[*] $1" >&2; }
 declare -f log_section &>/dev/null || log_section() { echo ""; echo "=== $1 ===" >&2; }
 declare -f log_info &>/dev/null || log_info() { log_detail "$1"; }
 
+ubuntu_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in         "/usr/bin/$name"         "/bin/$name"         "/usr/local/bin/$name"         "/usr/local/sbin/$name"         "/usr/sbin/$name"         "/sbin/$name"; do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+ubuntu_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(ubuntu_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(ubuntu_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+ubuntu_getent_passwd_entry() {
+    local target_user="${1:-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+
+    [[ -n "$target_user" ]] || return 1
+
+    getent_bin="$(ubuntu_system_binary_path getent 2>/dev/null || true)"
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$target_user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$target_user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+ubuntu_sanitize_abs_nonroot_path() {
+    local path_value="${1:-}"
+
+    [[ -n "$path_value" ]] || return 1
+    path_value="${path_value%/}"
+    [[ -n "$path_value" ]] || return 1
+    [[ "$path_value" == /* ]] || return 1
+    [[ "$path_value" != "/" ]] || return 1
+    printf '%s\n' "$path_value"
+}
+
+ubuntu_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local _passwd_user=""
+    local _passwd_pw=""
+    local _passwd_uid=""
+    local _passwd_gid=""
+    local _passwd_gecos=""
+    local passwd_home=""
+    local _passwd_shell=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=':' read -r _passwd_user _passwd_pw _passwd_uid _passwd_gid _passwd_gecos passwd_home _passwd_shell <<< "$passwd_entry"
+    passwd_home="$(ubuntu_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+    [[ -n "$passwd_home" ]] || return 1
+    printf '%s\n' "$passwd_home"
+}
+
 ubuntu_lookup_passwd_home() {
     local target_user="${1:-}"
     local passwd_entry=""
@@ -41,17 +130,10 @@ ubuntu_lookup_passwd_home() {
 
     [[ -n "$target_user" ]] || return 1
 
-    if command -v getent >/dev/null 2>&1; then
-        passwd_entry="$(getent passwd "$target_user" 2>/dev/null || true)"
-    elif [[ -r /etc/passwd ]]; then
-        passwd_entry="$(awk -F: -v u="$target_user" '$1==u{print $0; exit}' /etc/passwd 2>/dev/null || true)"
-    fi
-
-    [[ -n "$passwd_entry" ]] || return 1
-
-    home_candidate="$(printf '%s\n' "$passwd_entry" | cut -d: -f6)"
-    if [[ -n "$home_candidate" ]] && [[ "$home_candidate" == /* ]] && [[ "$home_candidate" != "/" ]]; then
-        printf '%s\n' "${home_candidate%/}"
+    passwd_entry="$(ubuntu_getent_passwd_entry "$target_user" 2>/dev/null || true)"
+    home_candidate="$(ubuntu_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
         return 0
     fi
 
@@ -79,7 +161,7 @@ ubuntu_resolve_target_home() {
         return 0
     fi
 
-    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+    current_user="$(ubuntu_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
         printf '%s\n' "${HOME%/}"
         return 0
