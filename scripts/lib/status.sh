@@ -541,8 +541,7 @@ _status_state_file_path_target_home() {
     [[ -n "$data_home" ]] || return 1
     path_home="${data_home%/.acfs}"
 
-    if { [[ -n "${_ACFS_HOME:-}" ]] && [[ "$data_home" == "$_ACFS_HOME" ]]; } ||
-        { [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$data_home" == "$_STATUS_EXPLICIT_ACFS_HOME" ]]; }; then
+    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$data_home" == "$_STATUS_EXPLICIT_ACFS_HOME" ]]; then
         printf '%s\n' "$path_home"
         return 0
     fi
