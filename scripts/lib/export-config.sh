@@ -449,6 +449,29 @@ resolve_acfs_home() {
         return 0
     fi
 
+    if [[ "$_EXPORT_SYSTEM_STATE_WAS_EXPLICIT" == true ]]; then
+        detected_home=$(read_target_home_from_state "$_EXPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
+        if [[ -n "$detected_home" ]]; then
+            candidate="${detected_home}/.acfs"
+            if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+                _EXPORT_RESOLVED_ACFS_HOME="$candidate"
+                printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+                return 0
+            fi
+        fi
+
+        detected_user=$(read_target_user_from_state "$_EXPORT_SYSTEM_STATE_FILE" 2>/dev/null || true)
+        if [[ -n "$detected_user" ]]; then
+            detected_home=$(home_for_user "$detected_user" 2>/dev/null || true)
+            candidate="${detected_home}/.acfs"
+            if [[ -n "$detected_home" ]] && [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+                _EXPORT_RESOLVED_ACFS_HOME="$candidate"
+                printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
+                return 0
+            fi
+        fi
+    fi
+
     explicit_target_home="$(resolve_explicit_target_home 2>/dev/null || true)"
     if [[ -n "$explicit_target_home" ]]; then
         candidate="${explicit_target_home}/.acfs"
@@ -459,7 +482,7 @@ resolve_acfs_home() {
         fi
     fi
 
-    if [[ "$_EXPORT_SYSTEM_STATE_WAS_EXPLICIT" != true ]] && [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" || -f "$_EXPORT_EXPLICIT_ACFS_HOME/VERSION" || -d "$_EXPORT_EXPLICIT_ACFS_HOME/onboard" ]]; then
+    if [[ -n "$_EXPORT_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_EXPORT_EXPLICIT_ACFS_HOME/state.json" || -f "$_EXPORT_EXPLICIT_ACFS_HOME/VERSION" || -d "$_EXPORT_EXPLICIT_ACFS_HOME/onboard" ]]; then
         _EXPORT_RESOLVED_ACFS_HOME="$_EXPORT_EXPLICIT_ACFS_HOME"
         printf '%s\n' "$_EXPORT_RESOLVED_ACFS_HOME"
         return 0

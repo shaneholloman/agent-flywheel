@@ -682,7 +682,30 @@ info_get_data_home() {
         return 0
     fi
 
-    if [[ "$_INFO_SYSTEM_STATE_WAS_EXPLICIT" != true ]] && [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_EXPLICIT_ACFS_HOME"; then
+    if [[ "$_INFO_SYSTEM_STATE_WAS_EXPLICIT" == true ]]; then
+        target_home=$(info_read_target_home_from_state || true)
+        if [[ -n "$target_home" ]]; then
+            candidate="${target_home}/.acfs"
+            if info_candidate_has_acfs_data "$candidate"; then
+                _INFO_RESOLVED_ACFS_HOME="$candidate"
+                echo "$_INFO_RESOLVED_ACFS_HOME"
+                return 0
+            fi
+        fi
+
+        target_user=$(info_read_target_user_from_state || true)
+        if [[ -n "$target_user" ]]; then
+            target_home=$(info_home_for_user "$target_user" || true)
+            candidate="${target_home}/.acfs"
+            if [[ -n "$target_home" ]] && info_candidate_has_acfs_data "$candidate"; then
+                _INFO_RESOLVED_ACFS_HOME="$candidate"
+                echo "$_INFO_RESOLVED_ACFS_HOME"
+                return 0
+            fi
+        fi
+    fi
+
+    if [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_EXPLICIT_ACFS_HOME"; then
         _INFO_RESOLVED_ACFS_HOME="$_INFO_EXPLICIT_ACFS_HOME"
         echo "$_INFO_RESOLVED_ACFS_HOME"
         return 0

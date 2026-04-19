@@ -432,7 +432,30 @@ resolve_changelog_acfs_home() {
         return 0
     fi
 
-    if [[ "$_CHANGELOG_SYSTEM_STATE_WAS_EXPLICIT" != true ]] && [[ -n "$_CHANGELOG_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/state.json" || -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/VERSION" || -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/CHANGELOG.md" ]]; then
+    if [[ "$_CHANGELOG_SYSTEM_STATE_WAS_EXPLICIT" == true ]]; then
+        target_home=$(changelog_read_target_home_from_state "$_CHANGELOG_SYSTEM_STATE_FILE" 2>/dev/null || true)
+        if [[ -n "$target_home" ]]; then
+            candidate="${target_home}/.acfs"
+            if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -f "$candidate/CHANGELOG.md" ]]; then
+                _CHANGELOG_RESOLVED_ACFS_HOME="$candidate"
+                printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
+                return 0
+            fi
+        fi
+
+        target_user=$(changelog_read_target_user_from_state "$_CHANGELOG_SYSTEM_STATE_FILE" 2>/dev/null || true)
+        if [[ -n "$target_user" ]]; then
+            target_home=$(changelog_home_for_user "$target_user" 2>/dev/null || true)
+            candidate="${target_home}/.acfs"
+            if [[ -n "$target_home" ]] && [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -f "$candidate/CHANGELOG.md" ]]; then
+                _CHANGELOG_RESOLVED_ACFS_HOME="$candidate"
+                printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
+                return 0
+            fi
+        fi
+    fi
+
+    if [[ -n "$_CHANGELOG_EXPLICIT_ACFS_HOME" ]] && [[ -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/state.json" || -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/VERSION" || -f "$_CHANGELOG_EXPLICIT_ACFS_HOME/CHANGELOG.md" ]]; then
         _CHANGELOG_RESOLVED_ACFS_HOME="$_CHANGELOG_EXPLICIT_ACFS_HOME"
         printf '%s\n' "$_CHANGELOG_RESOLVED_ACFS_HOME"
         return 0
