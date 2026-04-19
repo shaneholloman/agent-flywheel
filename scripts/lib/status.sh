@@ -19,12 +19,12 @@
 _STATUS_WAS_SOURCED=false
 _STATUS_ORIGINAL_HOME=""
 _STATUS_ORIGINAL_HOME_WAS_SET=false
+if [[ -v HOME ]]; then
+    _STATUS_ORIGINAL_HOME="$HOME"
+    _STATUS_ORIGINAL_HOME_WAS_SET=true
+fi
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
     _STATUS_WAS_SOURCED=true
-    if [[ -v HOME ]]; then
-        _STATUS_ORIGINAL_HOME="$HOME"
-        _STATUS_ORIGINAL_HOME_WAS_SET=true
-    fi
 fi
 
 # --- Defaults ---
@@ -50,6 +50,20 @@ _status_existing_abs_home() {
     [[ -n "$path_value" ]] || return 1
     [[ -d "$path_value" ]] || return 1
     printf '%s\n' "$path_value"
+}
+
+_status_path_looks_like_user_home() {
+    local path_value=""
+    local marker=""
+
+    path_value="$(_status_existing_abs_home "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+
+    for marker in .local .config .ssh .bashrc .zshrc .profile .oh-my-zsh .bun .cargo .atuin go; do
+        [[ -e "$path_value/$marker" ]] && return 0
+    done
+
+    return 1
 }
 
 _status_system_binary_path() {
@@ -183,6 +197,14 @@ _status_resolve_current_home() {
 _status_initial_current_home() {
     local cached_home=""
     local resolved_home=""
+
+    if [[ "${_STATUS_WAS_SOURCED:-false}" == "true" ]] && [[ -z "${TARGET_HOME:-}${TARGET_USER:-}${ACFS_HOME:-}${ACFS_STATE_FILE:-}${ACFS_SYSTEM_STATE_FILE:-}" ]]; then
+        cached_home="$(_status_sanitize_abs_nonroot_path "${_STATUS_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
 
     resolved_home="$(_status_resolve_current_home 2>/dev/null || true)"
     if [[ -n "$resolved_home" ]]; then
@@ -541,11 +563,6 @@ _status_state_file_path_target_home() {
     [[ -n "$data_home" ]] || return 1
     path_home="${data_home%/.acfs}"
 
-    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$data_home" == "$_STATUS_EXPLICIT_ACFS_HOME" ]]; then
-        printf '%s\n' "$path_home"
-        return 0
-    fi
-
     candidate_user="$(_status_read_user_for_home "$path_home" 2>/dev/null || true)"
     if [[ -n "$candidate_user" ]]; then
         printf '%s\n' "$path_home"
@@ -554,6 +571,11 @@ _status_state_file_path_target_home() {
 
     state_home="$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)"
     if [[ -n "$state_home" ]] && [[ "$state_home" == "$path_home" ]]; then
+        printf '%s\n' "$path_home"
+        return 0
+    fi
+
+    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$data_home" == "$_STATUS_EXPLICIT_ACFS_HOME" ]] && _status_path_looks_like_user_home "$path_home"; then
         printf '%s\n' "$path_home"
         return 0
     fi
@@ -656,16 +678,17 @@ _status_resolve_target_user() {
             return 0
         fi
 
+        if [[ -n "$path_home" ]] && [[ "$state_home" == "$path_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
+
         candidate_home="$(_status_home_for_user "$candidate_user" 2>/dev/null || true)"
         if [[ -n "$path_home" ]] && [[ "$candidate_home" == "$path_home" ]]; then
             printf '%s\n' "$candidate_user"
             return 0
         fi
         if [[ -n "$state_home" ]] && [[ -z "$path_home" || "$state_home" == "$path_home" ]] && [[ "$candidate_home" == "$state_home" ]]; then
-            printf '%s\n' "$candidate_user"
-            return 0
-        fi
-        if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]] && [[ -n "$state_home" ]] && [[ -n "$path_home" ]] && [[ "$state_home" != "$path_home" ]]; then
             printf '%s\n' "$candidate_user"
             return 0
         fi
@@ -699,11 +722,6 @@ _status_resolve_target_home() {
     state_home="$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)"
     system_home="$(_status_read_target_home_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
     explicit_target_home="$(_status_resolve_explicit_target_home 2>/dev/null || true)"
-
-    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]] && [[ -n "$state_home" ]] && [[ -n "$path_home" ]] && [[ "$state_home" != "$path_home" ]]; then
-        printf '%s\n' "$state_home"
-        return 0
-    fi
 
     if [[ -n "$path_home" ]]; then
         printf '%s\n' "$path_home"
@@ -743,6 +761,27 @@ _status_resolve_target_home() {
     return 1
 }
 
+_status_allow_target_home_fallback_from_user() {
+    local state_file="${1:-}"
+    local path_home=""
+    local state_home=""
+    local system_home=""
+
+    path_home="$(_status_state_file_path_target_home "$state_file" 2>/dev/null || true)"
+    if [[ -n "$path_home" ]]; then
+        return 1
+    fi
+
+    state_home="$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)"
+    system_home="$(_status_read_target_home_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
+
+    [[ "$state_file" == "$_STATUS_SYSTEM_STATE_FILE" ]] && return 0
+    [[ -n "$state_home" ]] && { [[ -z "$system_home" ]] || [[ "$state_home" == "$system_home" ]]; } && return 0
+    [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]] && [[ -z "$state_home" ]] && return 0
+
+    return 1
+}
+
 _status_preferred_bin_dir() {
     local base_home="${1:-${TARGET_HOME:-${_STATUS_CURRENT_HOME:-}}}"
     local state_file=""
@@ -774,6 +813,41 @@ _status_script_acfs_home() {
     printf '%s\n' "$candidate"
 }
 
+_status_current_home_acfs_candidate() {
+    local candidate="$_STATUS_DEFAULT_ACFS_HOME"
+    local current_home="$_STATUS_CURRENT_HOME"
+    local current_user=""
+    local original_home=""
+    local state_home=""
+    local state_user=""
+    local state_user_home=""
+
+    [[ -n "$candidate" && -n "$current_home" ]] || return 1
+    [[ "$current_home" != "/root" ]] || return 1
+    [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]] || return 1
+
+    if [[ "${_STATUS_ORIGINAL_HOME_WAS_SET:-false}" == true ]]; then
+        original_home="$(_status_sanitize_abs_nonroot_path "$_STATUS_ORIGINAL_HOME" 2>/dev/null || true)"
+        [[ -z "$original_home" || "$original_home" == "$current_home" ]] || return 1
+    fi
+
+    current_user="$(_status_resolve_current_user 2>/dev/null || true)"
+    [[ -n "$current_user" && "$current_user" != "root" ]] || return 1
+
+    if [[ -f "$candidate/state.json" ]]; then
+        state_home="$(_status_read_target_home_from_state "$candidate/state.json" 2>/dev/null || true)"
+        [[ -z "$state_home" || "$state_home" == "$current_home" ]] || return 1
+
+        state_user="$(_status_read_target_user_from_state "$candidate/state.json" 2>/dev/null || true)"
+        if [[ -n "$state_user" && "$state_user" != "$current_user" ]]; then
+            state_user_home="$(_status_home_for_user "$state_user" 2>/dev/null || true)"
+            [[ "$state_user_home" == "$current_home" ]] || return 1
+        fi
+    fi
+
+    printf '%s\n' "$candidate"
+}
+
 _status_resolve_acfs_home() {
     if [[ -n "$_STATUS_RESOLVED_ACFS_HOME" ]]; then
         printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
@@ -787,6 +861,23 @@ _status_resolve_acfs_home() {
 
     candidate=$(_status_script_acfs_home 2>/dev/null || true)
     if [[ -n "$candidate" ]] && [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+        _STATUS_RESOLVED_ACFS_HOME="$candidate"
+        printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+        return 0
+    fi
+
+    explicit_target_home="$(_status_resolve_explicit_target_home 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]]; then
+        candidate="${explicit_target_home}/.acfs"
+        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
+            _STATUS_RESOLVED_ACFS_HOME="$candidate"
+            printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
+            return 0
+        fi
+    fi
+
+    candidate="$(_status_current_home_acfs_candidate 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
         _STATUS_RESOLVED_ACFS_HOME="$candidate"
         printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
         return 0
@@ -812,16 +903,6 @@ _status_resolve_acfs_home() {
                 printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
                 return 0
             fi
-        fi
-    fi
-
-    explicit_target_home="$(_status_resolve_explicit_target_home 2>/dev/null || true)"
-    if [[ -n "$explicit_target_home" ]]; then
-        candidate="${explicit_target_home}/.acfs"
-        if [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -d "$candidate/onboard" ]]; then
-            _STATUS_RESOLVED_ACFS_HOME="$candidate"
-            printf '%s\n' "$_STATUS_RESOLVED_ACFS_HOME"
-            return 0
         fi
     fi
 

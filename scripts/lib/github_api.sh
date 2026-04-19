@@ -109,17 +109,49 @@ _github_api_existing_abs_home() {
 }
 
 _github_api_runtime_home() {
-    local runtime_home=""
+    local current_home=""
+    local explicit_home=""
+    local initial_env_home=""
+    local target_user="${TARGET_USER:-}"
+    local target_user_home=""
+    local passwd_entry=""
 
-    runtime_home="$(_github_api_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$runtime_home" ]]; then
-        printf '%s\n' "$runtime_home"
+    explicit_home="$(_github_api_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
+    current_home="$(_github_api_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
+    initial_env_home="$(_github_api_existing_abs_home "${ACFS_INITIAL_ENV_HOME:-${_UPDATE_INITIAL_ENV_HOME:-}}" 2>/dev/null || true)"
+
+    if [[ -n "$target_user" && "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        if [[ "$target_user" == "root" ]]; then
+            target_user_home="/root"
+        else
+            passwd_entry="$(_github_api_getent_passwd_entry "$target_user" 2>/dev/null || true)"
+            target_user_home="$(_github_api_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+            target_user_home="$(_github_api_existing_abs_home "$target_user_home" 2>/dev/null || true)"
+        fi
+    fi
+
+    if [[ -n "$explicit_home" && -n "$target_user_home" && "$explicit_home" == "$target_user_home" ]]; then
+        printf '%s\n' "$explicit_home"
         return 0
     fi
 
-    runtime_home="$(_github_api_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$runtime_home" ]]; then
-        printf '%s\n' "$runtime_home"
+    if [[ -n "$target_user_home" ]]; then
+        printf '%s\n' "$target_user_home"
+        return 0
+    fi
+
+    if [[ -n "$explicit_home" && "$explicit_home" != "$current_home" && "$explicit_home" != "$initial_env_home" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
+    fi
+
+    if [[ -n "$current_home" ]]; then
+        printf '%s\n' "$current_home"
+        return 0
+    fi
+
+    if [[ -n "$explicit_home" ]]; then
+        printf '%s\n' "$explicit_home"
         return 0
     fi
 

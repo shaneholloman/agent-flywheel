@@ -144,6 +144,7 @@ services_setup_resolve_current_home() {
     printf '%s\n' "$home_candidate"
 }
 
+_SERVICES_SETUP_ENV_HOME="$(services_setup_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
 _SERVICES_SETUP_CURRENT_USER="$(services_setup_resolve_current_user 2>/dev/null || true)"
 _SERVICES_SETUP_CURRENT_HOME="$(services_setup_resolve_current_home 2>/dev/null || true)"
 if [[ -n "$_SERVICES_SETUP_CURRENT_HOME" ]]; then
@@ -297,6 +298,18 @@ services_setup_validate_bin_dir_for_home() {
     printf '%s\n' "$bin_dir"
 }
 
+services_setup_target_home_has_acfs_data() {
+    local home_dir="${1:-}"
+
+    home_dir="$(services_setup_sanitize_abs_nonroot_path "$home_dir" 2>/dev/null || true)"
+    [[ -n "$home_dir" ]] || return 1
+
+    [[ -f "$home_dir/.acfs/state.json" ]] \
+        || [[ -f "$home_dir/.acfs/VERSION" ]] \
+        || [[ -f "$home_dir/.acfs/version" ]] \
+        || { [[ -f "$home_dir/.acfs/scripts/services-setup.sh" ]] && [[ -d "$home_dir/.acfs/scripts/lib" ]]; }
+}
+
 BUN_BIN="${BUN_BIN:-}"
 
 init_target_context() {
@@ -308,7 +321,7 @@ init_target_context() {
 
     explicit_target_home="$(services_setup_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
     resolved_target_home="$(resolve_home_dir "$TARGET_USER" 2>/dev/null || true)"
-    if [[ -n "$explicit_target_home" ]]; then
+    if [[ -n "$explicit_target_home" ]] && { [[ "$explicit_target_home" != "${_SERVICES_SETUP_ENV_HOME:-}" ]] || [[ -z "$resolved_target_home" ]] || [[ "$explicit_target_home" == "$resolved_target_home" ]] || services_setup_target_home_has_acfs_data "$explicit_target_home"; }; then
         TARGET_HOME="$explicit_target_home"
     elif [[ -n "$resolved_target_home" ]]; then
         TARGET_HOME="$resolved_target_home"

@@ -302,6 +302,16 @@ describe('Generated verified installer args', () => {
     );
   });
 
+  test('stack.slb Go PATH setup ignores commented PATH examples', () => {
+    const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
+    expect(existsSync(stackPath)).toBe(true);
+    const stackContent = readFileSync(stackPath, 'utf-8');
+
+    expect(stackContent).toContain('acfs_has_active_go_bin_path() {');
+    expect(stackContent).toContain('if ! acfs_has_active_go_bin_path ~/.zshrc; then');
+    expect(stackContent).not.toContain("grep -q 'export PATH=.*\\$HOME/go/bin' ~/.zshrc");
+  });
+
   test('stack.pcr emits a pre-install Claude check before the verified installer', () => {
     const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
     expect(existsSync(stackPath)).toBe(true);
@@ -328,6 +338,27 @@ describe('Generated verified installer args', () => {
     );
   });
 
+  test('multi-line install summaries skip leading helper function bodies', () => {
+    const shellPath = resolve(GENERATED_DIR, 'install_shell.sh');
+    expect(existsSync(shellPath)).toBe(true);
+    const shellContent = readFileSync(shellPath, 'utf-8');
+
+    expect(shellContent).not.toContain('dry-run: install: profile_path_has_fragment() {');
+    expect(shellContent).not.toContain('install command failed: profile_path_has_fragment() {');
+    expect(shellContent).toContain('dry-run: install: if [[ ! -f ~/.profile ]]; then');
+    expect(shellContent).toContain('install command failed: if [[ ! -f ~/.profile ]]; then');
+    expect(shellContent).toContain('dry-run: install: if [[ ! -f ~/.zprofile ]]; then');
+    expect(shellContent).toContain('install command failed: if [[ ! -f ~/.zprofile ]]; then');
+    expect(shellContent).not.toContain('dry-run: install: exit 1 (target_user)');
+    expect(shellContent).not.toContain('shell.omz: install command failed: exit 1');
+    expect(shellContent).toContain(
+      'dry-run: install: if [[ -f ~/.zshrc ]] && ! acfs_zshrc_is_managed_loader ~/.zshrc; then'
+    );
+    expect(shellContent).toContain(
+      'shell.omz: install command failed: if [[ -f ~/.zshrc ]] && ! acfs_zshrc_is_managed_loader ~/.zshrc; then'
+    );
+  });
+
   test('network modules emit post-install messages into generated installers', () => {
     const networkPath = resolve(GENERATED_DIR, 'install_network.sh');
     expect(existsSync(networkPath)).toBe(true);
@@ -338,6 +369,21 @@ describe('Generated verified installer args', () => {
     );
     expect(networkContent).toContain(
       'log_info "SSH keepalive configured! Your connections will now survive VPN/NAT timeouts."'
+    );
+  });
+
+  test('workspace agents alias checks require active alias lines', () => {
+    const acfsPath = resolve(GENERATED_DIR, 'install_acfs.sh');
+    expect(existsSync(acfsPath)).toBe(true);
+    const acfsContent = readFileSync(acfsPath, 'utf-8');
+
+    expect(acfsContent).toContain('acfs_has_active_agents_alias() {');
+    expect(acfsContent).not.toContain('grep -q "alias agents=" ~/.zshrc.local');
+    expect(acfsContent).toContain(
+      'dry-run: install: if ! acfs_has_active_agents_alias ~/.zshrc.local; then'
+    );
+    expect(acfsContent).toContain(
+      'dry-run: verify: acfs_has_active_agents_alias ~/.zshrc.local || acfs_has_active_agents_alias ~/.zshrc'
     );
   });
 });

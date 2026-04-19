@@ -438,18 +438,36 @@ INSTALL_SHELL_OMZ
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if [[ -f ~/.zshrc ]] && ! grep -q \"ACFS loader\" ~/.zshrc; then (target_user)"
+        log_info "dry-run: install: if [[ -f ~/.zshrc ]] && ! acfs_zshrc_is_managed_loader ~/.zshrc; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Setup loader .zshrc
-if [[ -f ~/.zshrc ]] && ! grep -q "ACFS loader" ~/.zshrc; then
+acfs_zshrc_is_managed_loader() {
+  local file="${1:-}"
+
+  [[ -f "$file" ]] || return 1
+  awk '
+    /^[[:space:]]*$/ { next }
+    { lines[++line_count]=$0 }
+    END {
+      if (line_count == 2 &&
+          lines[1] ~ /^# ACFS loader/ &&
+          lines[2] == "source \"$HOME/.acfs/zsh/acfs.zshrc\"") {
+        exit 0
+      }
+      exit 1
+    }
+  ' "$file" 2>/dev/null
+}
+
+if [[ -f ~/.zshrc ]] && ! acfs_zshrc_is_managed_loader ~/.zshrc; then
   mv ~/.zshrc ~/.zshrc.bak.$(date +%s)
 fi
 echo '# ACFS loader' > ~/.zshrc
 echo 'source "$HOME/.acfs/zsh/acfs.zshrc"' >> ~/.zshrc
 INSTALL_SHELL_OMZ
         then
-            log_error "shell.omz: install command failed: if [[ -f ~/.zshrc ]] && ! grep -q \"ACFS loader\" ~/.zshrc; then"
+            log_error "shell.omz: install command failed: if [[ -f ~/.zshrc ]] && ! acfs_zshrc_is_managed_loader ~/.zshrc; then"
             return 1
         fi
     fi
@@ -458,6 +476,18 @@ INSTALL_SHELL_OMZ
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Setup ~/.profile for bash login shells (prevents PATH warnings from installers)
+profile_path_has_fragment() {
+  local file="${1:-}"
+  local fragment="${2:-}"
+
+  [[ -n "$file" && -n "$fragment" && -f "$file" ]] || return 1
+  awk -v fragment="$fragment" '
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*(export[[:space:]]+)?PATH[[:space:]]*=/ && index($0, fragment) { found=1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$file" 2>/dev/null
+}
+
 legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
 profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 if [[ ! -f ~/.profile ]]; then
@@ -465,9 +495,9 @@ if [[ ! -f ~/.profile ]]; then
   echo '' >> ~/.profile
   echo '# User binary paths' >> ~/.profile
   echo "$profile_path_line" >> ~/.profile
-elif grep -Fq "$legacy_profile_path_line" ~/.profile; then
-  sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" ~/.profile
-elif ! grep -q '\.local/bin' ~/.profile || ! grep -q '\.atuin/bin' ~/.profile; then
+elif grep -Fxq "$legacy_profile_path_line" ~/.profile; then
+  sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" ~/.profile
+elif ! profile_path_has_fragment ~/.profile '.local/bin' || ! profile_path_has_fragment ~/.profile '.atuin/bin'; then
   echo '' >> ~/.profile
   echo '# Added by ACFS - user binary paths' >> ~/.profile
   echo "$profile_path_line" >> ~/.profile
@@ -483,6 +513,18 @@ INSTALL_SHELL_OMZ
     else
         if ! run_as_target_shell <<'INSTALL_SHELL_OMZ'
 # Setup ~/.zprofile for zsh login shells (zsh does NOT read ~/.profile)
+profile_path_has_fragment() {
+  local file="${1:-}"
+  local fragment="${2:-}"
+
+  [[ -n "$file" && -n "$fragment" && -f "$file" ]] || return 1
+  awk -v fragment="$fragment" '
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*(export[[:space:]]+)?PATH[[:space:]]*=/ && index($0, fragment) { found=1; exit }
+    END { exit(found ? 0 : 1) }
+  ' "$file" 2>/dev/null
+}
+
 legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
 profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 if [[ ! -f ~/.zprofile ]]; then
@@ -490,9 +532,9 @@ if [[ ! -f ~/.zprofile ]]; then
   echo '' >> ~/.zprofile
   echo '# User binary paths' >> ~/.zprofile
   echo "$profile_path_line" >> ~/.zprofile
-elif grep -Fq "$legacy_profile_path_line" ~/.zprofile; then
-  sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" ~/.zprofile
-elif ! grep -q '\.local/bin' ~/.zprofile || ! grep -q '\.atuin/bin' ~/.zprofile; then
+elif grep -Fxq "$legacy_profile_path_line" ~/.zprofile; then
+  sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" ~/.zprofile
+elif ! profile_path_has_fragment ~/.zprofile '.local/bin' || ! profile_path_has_fragment ~/.zprofile '.atuin/bin'; then
   echo '' >> ~/.zprofile
   echo '# Added by ACFS - user binary paths' >> ~/.zprofile
   echo "$profile_path_line" >> ~/.zprofile
@@ -607,6 +649,19 @@ acfs_generated_passwd_home_from_entry() {
 }
 
 # Set default shell
+acfs_external_shell_handoff_configured() {
+  local bashrc_path="${1:-}"
+  [[ -n "$bashrc_path" && -f "$bashrc_path" ]] || return 1
+
+  awk '
+      $0 == "# ACFS externally-managed shell handoff" { marker=1; next }
+      marker && $0 ~ /^[[:space:]]*#/ { next }
+      marker && index($0, "command -v zsh") && index($0, "ACFS_ZSH_HANDOFF_ACTIVE") { found=1; exit }
+      marker && $0 !~ /^[[:space:]]*$/ { marker=0 }
+      END { exit(found ? 0 : 1) }
+  ' "$bashrc_path" 2>/dev/null
+}
+
 if [[ "$SHELL" != */zsh ]]; then
   zsh_path="$(command -v zsh || true)"
   if [[ -z "$zsh_path" ]]; then
@@ -624,7 +679,7 @@ if [[ "$SHELL" != */zsh ]]; then
     local_entry="$(awk -F: -v user="$current_user" '$1 == user { print $0; exit }' /etc/passwd 2>/dev/null || true)"
   fi
   if [[ -n "$passwd_entry" ]] && [[ -z "$local_entry" ]]; then
-    if ! grep -q 'ACFS externally-managed shell handoff' ~/.bashrc 2>/dev/null; then
+    if ! acfs_external_shell_handoff_configured ~/.bashrc; then
       if [[ -f ~/.bashrc ]] && [[ -s ~/.bashrc ]]; then
         last_char="$(tail -c 1 ~/.bashrc | od -An -t u1 | tr -d ' ' 2>/dev/null || true)"
         if [[ "$last_char" != "10" ]]; then

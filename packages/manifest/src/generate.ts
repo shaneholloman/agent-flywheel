@@ -1193,18 +1193,75 @@ function classifyNonCommandInstallEntry(
   return null;
 }
 
+type ShellQuoteState = {
+  double: boolean;
+  single: boolean;
+};
+
+function updateShellQuoteState(line: string, initialState: ShellQuoteState): ShellQuoteState {
+  let double = initialState.double;
+  let single = initialState.single;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+
+    if (!single && !double && char === '#' && (index === 0 || /\s/.test(line[index - 1]))) {
+      break;
+    }
+
+    if (single) {
+      if (char === "'") single = false;
+      continue;
+    }
+
+    if (double) {
+      if (char === '"' && line[index - 1] !== '\\') double = false;
+      continue;
+    }
+
+    if (char === "'") {
+      single = true;
+    } else if (char === '"') {
+      double = true;
+    }
+  }
+
+  return { double, single };
+}
+
 function summarizeShellBlock(blockLines: string[], fallback: string): string {
-  const trimmed = blockLines.map((line) => line.trim()).filter(Boolean);
-  if (trimmed.length === 0) return fallback;
+  const topLevel: string[] = [];
+  let skippingFunction = false;
+  let skippingFunctionQuoteState: ShellQuoteState = { double: false, single: false };
 
-  const nonComment = trimmed.filter((line) => !line.startsWith('#'));
-  if (nonComment.length === 0) return fallback;
+  for (const line of blockLines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
 
-  const commandLike = nonComment.find(
+    if (skippingFunction) {
+      skippingFunctionQuoteState = updateShellQuoteState(line, skippingFunctionQuoteState);
+      if (!skippingFunctionQuoteState.double && !skippingFunctionQuoteState.single && trimmed === '}') {
+        skippingFunction = false;
+      }
+      continue;
+    }
+
+    if (/^(?:function\s+)?[A-Za-z_][A-Za-z0-9_]*(?:\s*\(\))?\s*\{$/.test(trimmed)) {
+      skippingFunction = true;
+      skippingFunctionQuoteState = { double: false, single: false };
+      continue;
+    }
+
+    topLevel.push(trimmed);
+  }
+
+  if (topLevel.length === 0) return fallback;
+
+  const commandLike = topLevel.find(
     (line) => !/^(?:local\s+)?[A-Za-z_][A-Za-z0-9_]*=(?!=)/.test(line)
   );
 
-  return commandLike ?? nonComment[0] ?? fallback;
+  return commandLike ?? topLevel[0] ?? fallback;
 }
 
 /**

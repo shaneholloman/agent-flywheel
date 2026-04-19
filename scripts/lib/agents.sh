@@ -164,13 +164,13 @@ _agent_target_home() {
     local current_home=""
 
     explicit_home="$(_agent_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$explicit_home" ]]; then
-        printf '%s\n' "$explicit_home"
-        return 0
-    fi
-
+    current_user="$(_agent_resolve_current_user 2>/dev/null || true)"
     if [[ "$target_user" == "root" ]]; then
         printf '/root\n'
+        return 0
+    fi
+    if [[ -n "$explicit_home" && -z "${TARGET_USER:-}" && "$target_user" == "$current_user" ]]; then
+        printf '%s\n' "$explicit_home"
         return 0
     fi
 
@@ -183,13 +183,17 @@ _agent_target_home() {
         fi
     fi
 
-    current_user="$(_agent_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$target_user" ]]; then
         current_home="$(_agent_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
         if [[ -n "$current_home" ]]; then
             printf '%s\n' "$current_home"
             return 0
         fi
+    fi
+
+    if [[ -n "$explicit_home" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
     fi
 
     return 1

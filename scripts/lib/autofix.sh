@@ -178,12 +178,17 @@ autofix_resolve_current_home() {
     printf '%s\n' "$home_candidate"
 }
 autofix_runtime_home() {
+    local explicit_home=""
     local runtime_home=""
     local target_user="${TARGET_USER:-}"
 
-    runtime_home="$(autofix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$runtime_home" ]]; then
-        printf '%s\n' "$runtime_home"
+    explicit_home="$(autofix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    if [[ "$target_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+    if [[ -n "$explicit_home" && -z "$target_user" && -z "${SUDO_USER:-}" ]]; then
+        printf '%s\n' "$explicit_home"
         return 0
     fi
 
@@ -201,6 +206,11 @@ autofix_runtime_home() {
             printf '%s\n' "$runtime_home"
             return 0
         fi
+    fi
+
+    if [[ -n "$explicit_home" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
     fi
 
     autofix_resolve_current_home

@@ -464,6 +464,38 @@ file_contains_line() {
     [[ -f "$file" ]] && grep -qF "$pattern" "$file" 2>/dev/null
 }
 
+file_contains_exact_line() {
+    local file="$1"
+    local line="$2"
+
+    [[ -f "$file" ]] && grep -Fxq "$line" "$file" 2>/dev/null
+}
+
+doctor_fix_sed_literal() {
+    printf '%s' "$1" | sed 's/[.[\*^$()+?{|]/\\&/g'
+}
+
+doctor_fix_remove_exact_line_and_next() {
+    local file="$1"
+    local line="$2"
+    local escaped_line=""
+
+    [[ -f "$file" ]] || return 1
+    escaped_line="$(doctor_fix_sed_literal "$line")"
+    sed -i "\\|^${escaped_line}$|,+1d" "$file"
+}
+
+doctor_fix_file_has_active_acfs_zshrc_source() {
+    local file="${1:-}"
+
+    [[ -f "$file" ]] || return 1
+    awk '
+        /^[[:space:]]*#/ { next }
+        /(^|[[:space:];&|])(source|\.)[[:space:]]+.*\.acfs\/zsh\/acfs\.zshrc/ { found=1; exit }
+        END { exit(found ? 0 : 1) }
+    ' "$file" 2>/dev/null
+}
+
 # Check if directory is in PATH
 dir_in_path() {
     local dir="$1"
@@ -662,11 +694,16 @@ fix_path_ordering() {
     path_string=$(IFS=:; echo "${path_dirs[*]}")
     local export_line="export PATH=\"${path_string}:\$PATH\""
     local marker="# ACFS PATH ordering (added by doctor --fix)"
+    local marker_present=false
 
-    # Guard: Check if already present
-    if file_contains_line "$target_file" "$marker"; then
+    # Guard: the marker alone is not enough; older fixes may lack newer paths.
+    if file_contains_exact_line "$target_file" "$marker" &&
+       file_contains_exact_line "$target_file" "$export_line"; then
         doctor_fix_log INFO "PATH ordering already configured in $target_file"
         return 0
+    fi
+    if file_contains_exact_line "$target_file" "$marker"; then
+        marker_present=true
     fi
 
     # Dry-run mode
@@ -684,6 +721,17 @@ fix_path_ordering() {
         restore_command="$(autofix_backup_restore_command "$backup_json" 2>/dev/null || true)"
     else
         restore_command="if [[ -f '$target_file' ]]; then sed -i '/$marker/,+1d' '$target_file' && if ! grep -q '[^[:space:]]' '$target_file'; then rm -f '$target_file'; fi; fi"
+    fi
+
+    if [[ "$marker_present" == "true" ]]; then
+        if ! doctor_fix_remove_exact_line_and_next "$target_file" "$marker"; then
+            doctor_fix_log ERROR "Failed to remove stale PATH ordering block from $target_file"
+            if [[ -n "$restore_command" ]]; then
+                doctor_fix_run_rollback_command "$restore_command" false || true
+            fi
+            FIX_FAILED=$((FIX_FAILED + 1))
+            return 1
+        fi
     fi
 
     # Apply fix
@@ -1035,8 +1083,8 @@ fix_acfs_sourcing() {
     local source_line='[[ -f ~/.acfs/zsh/acfs.zshrc ]] && source ~/.acfs/zsh/acfs.zshrc'
     local marker="# ACFS configuration (added by doctor --fix)"
 
-    # Guard: Check if already sourced
-    if file_contains_line "$zshrc" "acfs.zshrc"; then
+    # Guard: comments mentioning acfs.zshrc do not mean the loader is active.
+    if doctor_fix_file_has_active_acfs_zshrc_source "$zshrc"; then
         doctor_fix_log INFO "ACFS already sourced in .zshrc"
         return 0
     fi

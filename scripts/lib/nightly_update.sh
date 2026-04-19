@@ -123,6 +123,11 @@ resolve_current_home() {
     local passwd_home=""
 
     home_candidate="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if declare -F nightly_home_has_update_entrypoint >/dev/null 2>&1 && nightly_home_has_update_entrypoint "$home_candidate"; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
     current_user="$(resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "root" ]]; then
         printf '/root\n'
@@ -144,6 +149,15 @@ resolve_current_home() {
     printf '%s\n' "$home_candidate"
 }
 
+nightly_home_has_update_entrypoint() {
+    local candidate_home="${1:-}"
+
+    candidate_home="$(sanitize_abs_nonroot_path "$candidate_home" 2>/dev/null || true)"
+    [[ -n "$candidate_home" ]] || return 1
+
+    [[ -x "$candidate_home/.acfs/bin/acfs-update" || -x "$candidate_home/.local/bin/acfs-update" || -f "$candidate_home/.acfs/scripts/lib/update.sh" ]]
+}
+
 # Resolve home directory (systemd %h may not set HOME reliably)
 explicit_system_state_file="${ACFS_SYSTEM_STATE_FILE:-}"
 HOME="$(resolve_current_home)" || {
@@ -159,9 +173,11 @@ explicit_system_state_file="$(sanitize_abs_nonroot_path "$explicit_system_state_
 ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
 explicit_target_home="${TARGET_HOME:-}"
 if [[ -n "$explicit_target_home" ]]; then
-    HOME="$explicit_target_home"
-    ACFS_HOME="$explicit_target_home/.acfs"
-    export HOME ACFS_HOME
+    if nightly_home_has_update_entrypoint "$explicit_target_home" || ! nightly_home_has_update_entrypoint "$HOME"; then
+        HOME="$explicit_target_home"
+        ACFS_HOME="$explicit_target_home/.acfs"
+        export HOME ACFS_HOME
+    fi
 fi
 export TARGET_HOME ACFS_HOME ACFS_STATE_FILE ACFS_SYSTEM_STATE_FILE ACFS_BIN_DIR
 
@@ -306,6 +322,9 @@ for state_candidate in "${state_candidates[@]}"; do
         state_target_home="$(state_file_path_target_home "$state_candidate" 2>/dev/null || true)"
     fi
     if [[ -n "${state_target_home:-}" ]]; then
+        if ! nightly_home_has_update_entrypoint "$state_target_home"; then
+            continue
+        fi
         TARGET_HOME="$state_target_home"
         HOME="$TARGET_HOME"
         ACFS_HOME="$TARGET_HOME/.acfs"
@@ -315,6 +334,11 @@ for state_candidate in "${state_candidates[@]}"; do
     export ACFS_STATE_FILE ACFS_BIN_DIR
     break
 done
+
+if [[ -z "${ACFS_HOME:-}" ]] && nightly_home_has_update_entrypoint "$HOME"; then
+    ACFS_HOME="$HOME/.acfs"
+    export ACFS_HOME
+fi
 
 ACFS_BIN_DIR="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
 # Validate persisted or ambient bin_dir against the resolved runtime home.

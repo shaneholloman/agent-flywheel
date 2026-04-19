@@ -1491,7 +1491,18 @@ go build -o ~/go/bin/slb ./cmd/slb
 cd ..
 rm -rf "$SLB_TMP"
 # Add ~/go/bin to PATH if not already present
-if ! grep -q 'export PATH=.*\$HOME/go/bin' ~/.zshrc 2>/dev/null; then
+acfs_has_active_go_bin_path() {
+  local file="${1:-}"
+  [[ -f "$file" ]] || return 1
+
+  awk '
+      /^[[:space:]]*#/ { next }
+      /^[[:space:]]*(export[[:space:]]+)?PATH[[:space:]]*=/ && index($0, "$HOME/go/bin") { found=1; exit }
+      END { exit(found ? 0 : 1) }
+  ' "$file" 2>/dev/null
+}
+
+if ! acfs_has_active_go_bin_path ~/.zshrc; then
   echo '' >> ~/.zshrc
   echo '# Go binaries' >> ~/.zshrc
   echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc

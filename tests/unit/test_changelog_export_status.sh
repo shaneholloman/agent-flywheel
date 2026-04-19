@@ -733,6 +733,36 @@ test_services_setup_globals_are_initialized_under_set_u() {
     cleanup_mock_env
 }
 
+test_services_setup_repairs_stale_explicit_target_home_from_passwd() {
+    setup_mock_env
+
+    local stale_home="$TEST_HOME/stale-target-home"
+    local trusted_home="$TEST_HOME/trusted-target-home"
+    local output=""
+
+    mkdir -p "$stale_home" "$trusted_home"
+
+    output=$(HOME="$stale_home" TARGET_HOME="$stale_home" TRUSTED_TARGET_HOME="$trusted_home" \
+        bash -c '
+            set -euo pipefail
+            source "$1"
+            TARGET_USER="tester"
+            ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+            resolve_home_dir() { printf "%s" "$TRUSTED_TARGET_HOME"; }
+            find_user_bin() { return 1; }
+            init_target_context
+            printf "%s\n" "$TARGET_HOME"
+        ' _ "$SERVICES_SETUP_SH" 2>&1 || true)
+
+    if [[ "$output" == "$trusted_home" ]]; then
+        harness_pass "services-setup repairs stale explicit TARGET_HOME from passwd"
+    else
+        harness_fail "services-setup repairs stale explicit TARGET_HOME from passwd" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_services_setup_setup_flows_tolerate_unset_status_keys() {
     setup_mock_env
 
@@ -1031,32 +1061,33 @@ set -u
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 stale_home="$tmp_dir/missing-target-home"
-resolved_home="$tmp_dir/resolved-target-home"
-mkdir -p "$resolved_home"
+missing_current_home="$tmp_dir/missing-current-home"
+target_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+resolved_home="$(getent passwd "$target_user" 2>/dev/null | awk -F: 'NR == 1 { print $6 }')"
+if [[ -z "$resolved_home" && -r /etc/passwd ]]; then
+    resolved_home="$(awk -F: -v user="$target_user" '$1 == user { print $6; exit }' /etc/passwd)"
+fi
 export PATH="/usr/bin:/bin"
-export TARGET_USER="tester"
+export HOME="$missing_current_home"
+export TARGET_USER="$target_user"
 export TARGET_HOME="$stale_home"
-getent() {
-    if [[ "$1" == "passwd" && "$2" == "tester" ]]; then
-        printf 'tester:x:1000:1000::%s:/bin/bash
-' "$resolved_home"
-        return 0
-    fi
-    command getent "$@"
-}
 # shellcheck source=/dev/null
 source "$STACK_SH"
 
-if resolved="$(_stack_target_home 2>/dev/null)"; then
-    printf 'rc=0 path=%s
-' "$resolved"
+if [[ -z "$target_user" || -z "$resolved_home" || ! -d "$resolved_home" ]]; then
+    printf 'rc=skip missing-current-passwd-context\n'
+elif resolved="$(_stack_target_home 2>/dev/null)"; then
+    if [[ "$resolved" == "$resolved_home" ]]; then
+        printf 'rc=0 path=%s\n' "$resolved"
+    else
+        printf 'rc=mismatch path=%s expected=%s\n' "$resolved" "$resolved_home"
+    fi
 else
-    printf 'rc=%s
-' "$?"
+    printf 'rc=%s\n' "$?"
 fi
 EOF
     ); then
-        if [[ "$output" == "rc=0 path="*"/resolved-target-home" ]]; then
+        if [[ "$output" == "rc=0 path="* ]]; then
             harness_pass "stack target_home ignores invalid explicit TARGET_HOME before passwd fallback"
         else
             harness_fail "stack target_home ignores invalid explicit TARGET_HOME before passwd fallback" "$output"
@@ -1420,6 +1451,43 @@ test_autofix_uses_target_home_for_state_dir_when_home_is_relative() {
         harness_pass "autofix uses target_home for state dir when HOME is relative"
     else
         harness_fail "autofix uses target_home for state dir when HOME is relative" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_repairs_stale_target_home_for_state_dir_from_passwd() {
+    setup_mock_env
+
+    local current_user=""
+    local passwd_home=""
+    local stale_home="$TEST_HOME/autofix-stale-target"
+    local output=""
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    if [[ -n "$current_user" ]]; then
+        passwd_home="$(command getent passwd "$current_user" 2>/dev/null | cut -d: -f6)"
+        passwd_home="${passwd_home%/}"
+    fi
+    if [[ -z "$current_user" || -z "$passwd_home" || "$passwd_home" != /* || ! -d "$passwd_home" ]]; then
+        harness_skip "autofix repairs stale target_home for state dir from passwd" "could not resolve current user home"
+        cleanup_mock_env
+        return 0
+    fi
+
+    mkdir -p "$stale_home"
+
+    output=$(HOME="$stale_home" TARGET_HOME="$stale_home" TARGET_USER="$current_user" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED
+            source "$1"
+            printf "%s\n" "$ACFS_STATE_DIR"
+        ' _ "$AUTOFIX_SH" 2>&1)
+
+    if [[ "$output" == "$passwd_home/.acfs/autofix" ]]; then
+        harness_pass "autofix repairs stale target_home for state dir from passwd"
+    else
+        harness_fail "autofix repairs stale target_home for state dir from passwd" "$output"
     fi
 
     cleanup_mock_env
@@ -2626,6 +2694,88 @@ EOF
         harness_pass "autofix_existing update path entries restore symlink target on journaling failure"
     else
         harness_fail "autofix_existing update path entries restore symlink target on journaling failure" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_update_path_entries_repairs_legacy_acfs_marker_missing_atuin() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-path-stale-marker-target"
+    mkdir -p "$target_home"
+    cat > "$target_home/.zshrc" <<'EOF'
+# shell config
+# ACFS PATH
+export PATH="$HOME/.local/bin:$PATH" # ACFS
+EOF
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            update_path_entries >/dev/null 2>&1 || exit 1
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg file_contents "$(cat "$TARGET_HOME/.zshrc")" \
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                "{file_contents: \$file_contents, changes: \$changes}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        (.file_contents | contains(".atuin/bin"))
+        and (.file_contents | contains(".cargo/bin"))
+        and (.file_contents | contains("# ACFS PATH"))
+        and (.changes | length == 1)
+        and (.changes[0].description == "Added PATH entry to '"$target_home"'/.zshrc")
+        and (.changes[0].backups | length == 1)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing update_path_entries repairs stale ACFS marker missing Atuin"
+    else
+        harness_fail "autofix_existing update_path_entries repairs stale ACFS marker missing Atuin" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_autofix_existing_update_path_entries_repairs_zprofile_and_ignores_commented_atuin() {
+    setup_mock_env
+
+    local target_home="$TEST_HOME/autofix-existing-path-zprofile-target"
+    mkdir -p "$target_home"
+    cat > "$target_home/.zprofile" <<'EOF'
+# .atuin/bin appears in this comment but not in the active PATH
+# export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+EOF
+
+    local output=""
+    output=$(HOME="$TEST_HOME/root-home" TARGET_HOME="$target_home" \
+        bash -c '
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            start_autofix_session >/dev/null 2>&1 || exit 1
+            update_path_entries >/dev/null 2>&1 || exit 1
+            end_autofix_session >/dev/null 2>&1 || true
+            jq -nc \
+                --arg file_contents "$(cat "$TARGET_HOME/.zprofile")" \
+                --slurpfile changes "$ACFS_CHANGES_FILE" \
+                "{file_contents: \$file_contents, changes: \$changes}"
+        ' _ "$AUTOFIX_EXISTING_SH" 2>/dev/null)
+
+    if printf '%s\n' "$output" | jq -e '
+        (.file_contents | contains("# .atuin/bin appears in this comment"))
+        and (.file_contents | contains("# export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH\""))
+        and (.file_contents | contains("export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH\" # ACFS"))
+        and (.changes | length == 1)
+        and (.changes[0].description == "Added PATH entry to '"$target_home"'/.zprofile")
+        and (.changes[0].backups | length == 1)
+    ' >/dev/null 2>&1; then
+        harness_pass "autofix_existing update_path_entries repairs zprofile and ignores commented Atuin"
+    else
+        harness_fail "autofix_existing update_path_entries repairs zprofile and ignores commented Atuin" "$output"
     fi
 
     cleanup_mock_env
@@ -4173,6 +4323,10 @@ EOF
 #!/usr/bin/env bash
 printf 'LIVE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
 EOF
+    cat > "$TEST_TARGET_HOME/.acfs/bin/nproc" <<'EOF'
+#!/usr/bin/env bash
+printf '999999\n'
+EOF
     cat > "$STALE_HOME/.local/bin/df" <<'EOF'
 #!/usr/bin/env bash
 echo 'STALE_DF_USED' >&2
@@ -4180,6 +4334,7 @@ exit 99
 EOF
     chmod +x \
         "$TEST_TARGET_HOME/.acfs/bin/acfs-update" \
+        "$TEST_TARGET_HOME/.acfs/bin/nproc" \
         "$STALE_HOME/.local/bin/df"
 
     local output=""
@@ -4213,6 +4368,10 @@ EOF
 #!/usr/bin/env bash
 printf 'LIVE_HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
 EOF
+    cat > "$TEST_TARGET_HOME/.acfs/bin/nproc" <<'EOF'
+#!/usr/bin/env bash
+printf '999999\n'
+EOF
     cat > "$STALE_HOME/.local/bin/df" <<'EOF'
 #!/usr/bin/env bash
 echo 'STALE_DF_USED' >&2
@@ -4220,6 +4379,7 @@ exit 99
 EOF
     chmod +x \
         "$TEST_TARGET_HOME/.acfs/bin/acfs-update" \
+        "$TEST_TARGET_HOME/.acfs/bin/nproc" \
         "$STALE_HOME/.local/bin/df"
 
     local output=""
@@ -4575,7 +4735,7 @@ EOF
             printf "user=%s\nhome=%s\nstate=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "$(_status_resolve_state_file)"
         ' 2>/dev/null)
 
-    if [[ "$output" == *"user=tester"* ]] && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]] && [[ "$output" == *"state=$TEST_INSTALLED_ACFS/state.json"* ]]; then
+    if [[ "$output" != *"user=staleuser"* ]] && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]] && [[ "$output" == *"state=$TEST_INSTALLED_ACFS/state.json"* ]]; then
         harness_pass "status prefers live home-adjacent ACFS path over stale state target_home"
     else
         harness_fail "status prefers live home-adjacent ACFS path over stale state target_home" "$output"
@@ -5649,25 +5809,22 @@ test_continue_scans_nonstandard_homes_via_getent() {
 }
 JSON
 
-    cat > "$TEST_FAKE_BIN/getent" <<EOF
-#!/usr/bin/env bash
-if [[ "\$1" == "passwd" && \$# -eq 1 ]]; then
-    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
-    exit 0
-fi
-if [[ "\$1" == "passwd" && "\$2" == "tester" ]]; then
-    echo "tester:x:1000:1000::${TEST_TARGET_HOME}:/bin/bash"
-    exit 0
-fi
-exit 2
-EOF
-    chmod +x "$TEST_FAKE_BIN/getent"
-
     local output=""
     output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-        TEST_CONTINUE_SCRIPT="$CONTINUE_SH" \
+        TEST_CONTINUE_SCRIPT="$CONTINUE_SH" TEST_TARGET_HOME="$TEST_TARGET_HOME" \
         bash -lc '
             source "$TEST_CONTINUE_SCRIPT"
+            continue_getent_passwd_entry() {
+                if [[ "${1:-}" == "tester" ]]; then
+                    printf "tester:x:1000:1000::%s:/bin/bash\n" "$TEST_TARGET_HOME"
+                    return 0
+                fi
+                if [[ $# -eq 0 ]]; then
+                    printf "tester:x:1000:1000::%s:/bin/bash\n" "$TEST_TARGET_HOME"
+                    return 0
+                fi
+                return 1
+            }
             get_install_state_file
         ' 2>&1)
 
@@ -5871,7 +6028,7 @@ EOF
             printf "user=%s\nhome=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}"
         ' 2>/dev/null)
 
-    if [[ "$output" == *"user=tester"* ]] && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]; then
+    if [[ "$output" != *"user=staleuser"* ]] && [[ "$output" == *"home=$TEST_TARGET_HOME"* ]]; then
         harness_pass "info prefers live home-adjacent ACFS path over stale state target_home"
     else
         harness_fail "info prefers live home-adjacent ACFS path over stale state target_home" "$output"
@@ -7101,24 +7258,39 @@ EOF
 test_runtime_helpers_fail_closed_when_current_home_unresolved() {
     setup_mock_env
 
-    TEST_FAKE_BIN="$TEST_HOME/fake-bin"
-    mkdir -p "$TEST_FAKE_BIN"
-
-    cat > "$TEST_FAKE_BIN/getent" <<'EOF'
-#!/usr/bin/env bash
-exit 2
-EOF
-    chmod +x "$TEST_FAKE_BIN/getent"
-
     local failures=""
 
     while IFS='|' read -r label script func; do
         [[ -n "$label" ]] || continue
         local output=""
         local status=0
-        output=$(HOME="relative-home" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
-            bash -c 'script="$1"; func="$2"; shift 2; set --; source "$script"; "$func"' _ \
-            "$script" "$func" 2>&1) || status=$?
+        output=$(HOME="relative-home" PATH="/usr/bin:/bin" \
+            bash -c '
+                script="$1"
+                func="$2"
+                label="$3"
+                shift 3
+                set --
+                source "$script"
+                case "$label" in
+                    continue)
+                        continue_getent_passwd_entry() { return 1; }
+                        ;;
+                    dashboard)
+                        dashboard_getent_passwd_entry() { return 1; }
+                        ;;
+                    info)
+                        info_getent_passwd_entry() { return 1; }
+                        ;;
+                    changelog)
+                        changelog_getent_passwd_entry() { return 1; }
+                        ;;
+                    onboard)
+                        onboard_lookup_passwd_home() { return 1; }
+                        ;;
+                esac
+                "$func"
+            ' _ "$script" "$func" "$label" 2>&1) || status=$?
 
         if [[ $status -eq 0 ]] || [[ -n "$output" ]]; then
             failures+="${label}: status=${status} output=${output}"$'\n'
@@ -10557,6 +10729,7 @@ main() {
     test_services_setup_runs_target_user_commands_with_target_home || true
     test_services_setup_rejects_invalid_target_user_before_sudo || true
     test_services_setup_globals_are_initialized_under_set_u || true
+    test_services_setup_repairs_stale_explicit_target_home_from_passwd || true
     test_services_setup_setup_flows_tolerate_unset_status_keys || true
     test_services_setup_find_user_bin_checks_system_paths || true
     test_services_setup_find_user_bin_ignores_other_user_home_bin_dir_override || true
@@ -10582,6 +10755,7 @@ main() {
 
     harness_section "Autofix"
     test_autofix_uses_target_home_for_state_dir_when_home_is_relative || true
+    test_autofix_repairs_stale_target_home_for_state_dir_from_passwd || true
     test_autofix_existing_detects_target_home_install_when_home_is_relative || true
     test_autofix_existing_reads_target_home_version_under_root_home || true
     test_autofix_existing_prefers_target_home_over_poisoned_acfs_home || true
@@ -10608,6 +10782,8 @@ main() {
     test_autofix_existing_clean_shell_configs_restores_file_when_recording_fails || true
     test_autofix_existing_update_path_entries_restores_file_when_recording_fails || true
     test_autofix_existing_update_path_entries_restores_symlink_target_when_recording_fails || true
+    test_autofix_existing_update_path_entries_repairs_legacy_acfs_marker_missing_atuin || true
+    test_autofix_existing_update_path_entries_repairs_zprofile_and_ignores_commented_atuin || true
     test_autofix_existing_legacy_config_migration_undo_handles_quoted_paths || true
     test_autofix_existing_legacy_config_migration_undo_cleans_created_dirs || true
     test_autofix_existing_legacy_json_migration_undo_handles_quoted_paths || true

@@ -20,12 +20,12 @@ _ONBOARD_ORIGINAL_HOME_WAS_SET=false
 _ONBOARD_RESTORE_ERREXIT=false
 _ONBOARD_RESTORE_NOUNSET=false
 _ONBOARD_RESTORE_PIPEFAIL=false
+if [[ -v HOME ]]; then
+    _ONBOARD_ORIGINAL_HOME="$HOME"
+    _ONBOARD_ORIGINAL_HOME_WAS_SET=true
+fi
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
     _ONBOARD_WAS_SOURCED=true
-    if [[ -v HOME ]]; then
-        _ONBOARD_ORIGINAL_HOME="$HOME"
-        _ONBOARD_ORIGINAL_HOME_WAS_SET=true
-    fi
     [[ $- == *e* ]] && _ONBOARD_RESTORE_ERREXIT=true
     [[ $- == *u* ]] && _ONBOARD_RESTORE_NOUNSET=true
     if shopt -qo pipefail 2>/dev/null; then
@@ -82,6 +82,27 @@ onboard_existing_abs_home() {
     [[ -n "$path_value" ]] || return 1
     [[ -d "$path_value" ]] || return 1
     printf '%s\n' "$path_value"
+}
+
+onboard_path_looks_like_user_home() {
+    local path_value=""
+    local marker=""
+    local passwd_home=""
+
+    path_value="$(onboard_existing_abs_home "${1:-}" 2>/dev/null || true)"
+    [[ -n "$path_value" ]] || return 1
+
+    for marker in .local .config .ssh .bashrc .zshrc .profile .oh-my-zsh .bun .cargo .atuin go; do
+        [[ -e "$path_value/$marker" ]] && return 0
+    done
+
+    while IFS=: read -r _ _ _ _ _ passwd_home _; do
+        passwd_home="$(onboard_sanitize_abs_nonroot_path "$passwd_home" 2>/dev/null || true)"
+        [[ -n "$passwd_home" ]] || continue
+        [[ "$passwd_home" == "$path_value" ]] && return 0
+    done < <(onboard_getent_passwd_entry 2>/dev/null || true)
+
+    return 1
 }
 
 onboard_system_binary_path() {
@@ -361,6 +382,50 @@ onboard_acfs_home_target_home() {
     printf '%s\n' "${target_home%/}"
 }
 
+onboard_candidate_has_acfs_data() {
+    local candidate="${1:-}"
+
+    candidate="$(onboard_sanitize_abs_nonroot_path "$candidate" 2>/dev/null || true)"
+    [[ -n "$candidate" ]] || return 1
+
+    [[ -f "$candidate/state.json" || -f "$candidate/VERSION" || -f "$candidate/onboard_progress.json" || -d "$candidate/onboard" || -f "$candidate/scripts/lib/cheatsheet.sh" || -f "$candidate/zsh/acfs.zshrc" ]]
+}
+
+onboard_current_home_acfs_candidate() {
+    local candidate="$_ONBOARD_DEFAULT_ACFS_HOME"
+    local current_home="$_ONBOARD_CURRENT_HOME"
+    local current_user=""
+    local original_home=""
+    local state_home=""
+    local state_user=""
+    local state_user_home=""
+
+    [[ -z "${TARGET_HOME:-}${TARGET_USER:-}${ACFS_HOME:-}" ]] || return 1
+    [[ -n "$candidate" && -n "$current_home" ]] || return 1
+    [[ "$current_home" != "/root" ]] || return 1
+    [[ -f "$candidate/state.json" ]] || return 1
+    onboard_candidate_has_acfs_data "$candidate" || return 1
+
+    if [[ "${_ONBOARD_ORIGINAL_HOME_WAS_SET:-false}" == true ]]; then
+        original_home="$(onboard_sanitize_abs_nonroot_path "$_ONBOARD_ORIGINAL_HOME" 2>/dev/null || true)"
+        [[ -z "$original_home" || "$original_home" == "$current_home" ]] || return 1
+    fi
+
+    current_user="$(onboard_resolve_current_user 2>/dev/null || true)"
+    [[ -n "$current_user" && "$current_user" != "root" ]] || return 1
+
+    state_home="$(onboard_read_state_string "$candidate/state.json" "target_home" 2>/dev/null || true)"
+    [[ -z "$state_home" || "$state_home" == "$current_home" ]] || return 1
+
+    state_user="$(onboard_read_state_string "$candidate/state.json" "target_user" 2>/dev/null || true)"
+    if [[ -n "$state_user" && "$state_user" != "$current_user" ]]; then
+        state_user_home="$(onboard_home_for_user "$state_user" 2>/dev/null || true)"
+        [[ "$state_user_home" == "$current_home" ]] || return 1
+    fi
+
+    printf '%s\n' "$candidate"
+}
+
 onboard_validate_bin_dir_for_home() {
     local bin_dir="${1:-}"
     local base_home="${2:-}"
@@ -430,6 +495,13 @@ onboard_resolve_acfs_home() {
         fi
     fi
 
+    candidate="$(onboard_current_home_acfs_candidate 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        _ONBOARD_ACFS_HOME_SOURCE="current_home"
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
     target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
     candidate="${target_home}/.acfs"
     if [[ -n "$target_home" ]] && onboard_candidate_has_acfs_data "$candidate"; then
@@ -493,14 +565,31 @@ onboard_resolve_runtime_home() {
     local target_home=""
     local target_user=""
     local acfs_path_home=""
+    local current_candidate=""
     local state_target_home=""
     local state_target_user_home=""
 
     _ONBOARD_RUNTIME_HOME=""
     _ONBOARD_RUNTIME_HOME_SOURCE=""
 
+    if onboard_candidate_has_acfs_data "$_ONBOARD_ACFS_HOME"; then
+        acfs_path_home="$(onboard_acfs_home_target_home "$_ONBOARD_ACFS_HOME" 2>/dev/null || true)"
+    fi
+
+    current_candidate="$(onboard_current_home_acfs_candidate 2>/dev/null || true)"
+    if [[ -n "$acfs_path_home" ]] && { [[ "${_ONBOARD_ACFS_HOME_SOURCE:-}" == "current_home" ]] || [[ -n "$current_candidate" && "$_ONBOARD_ACFS_HOME" == "$current_candidate" ]]; }; then
+        _ONBOARD_RUNTIME_HOME="${acfs_path_home%/}"
+        _ONBOARD_RUNTIME_HOME_SOURCE="current_home"
+        return 0
+    fi
+
     target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
     if [[ -n "$target_home" ]]; then
+        if ! onboard_candidate_has_acfs_data "$target_home/.acfs" && [[ -n "$acfs_path_home" ]] && onboard_path_looks_like_user_home "$acfs_path_home"; then
+            _ONBOARD_RUNTIME_HOME="${acfs_path_home%/}"
+            _ONBOARD_RUNTIME_HOME_SOURCE="acfs_home_path"
+            return 0
+        fi
         _ONBOARD_RUNTIME_HOME="${target_home%/}"
         _ONBOARD_RUNTIME_HOME_SOURCE="system_state_target_home"
         return 0
@@ -517,7 +606,6 @@ onboard_resolve_runtime_home() {
     fi
 
     if onboard_candidate_has_acfs_data "$_ONBOARD_ACFS_HOME"; then
-        acfs_path_home="$(onboard_acfs_home_target_home "$_ONBOARD_ACFS_HOME" 2>/dev/null || true)"
         state_target_home="$(onboard_existing_abs_home "$(onboard_read_state_string "$_ONBOARD_ACFS_HOME/state.json" "target_home" 2>/dev/null || true)" 2>/dev/null || true)"
 
         if [[ -n "$state_target_home" ]]; then
@@ -526,7 +614,7 @@ onboard_resolve_runtime_home() {
                 _ONBOARD_RUNTIME_HOME_SOURCE="acfs_home_path"
                 return 0
             fi
-            if [[ "${_ONBOARD_ACFS_HOME_SOURCE:-}" == "script_acfs_home" ]] && [[ -n "$acfs_path_home" ]]; then
+            if [[ -n "$acfs_path_home" ]] && onboard_path_looks_like_user_home "$acfs_path_home"; then
                 _ONBOARD_RUNTIME_HOME="${acfs_path_home%/}"
                 _ONBOARD_RUNTIME_HOME_SOURCE="acfs_home_path"
                 return 0
@@ -2830,7 +2918,11 @@ onboard_main() {
                 return 1
             fi
 
-            bash "$cheatsheet_script" "$@"
+            ACFS_HOME="${_ONBOARD_ACFS_HOME:-}" \
+                TARGET_HOME="${_ONBOARD_RUNTIME_HOME:-}" \
+                ACFS_SYSTEM_STATE_FILE="${_ONBOARD_SYSTEM_STATE_FILE:-}" \
+                ACFS_BIN_DIR="$(onboard_preferred_bin_dir "${_ONBOARD_RUNTIME_HOME:-}" 2>/dev/null || true)" \
+                bash "$cheatsheet_script" "$@"
             return $?
             ;;
         reset|--reset)

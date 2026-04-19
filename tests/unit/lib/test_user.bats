@@ -246,6 +246,33 @@ EOF
     [[ ! -f "$stale_home/.bashrc" ]]
 }
 
+@test "set_default_shell: external handoff ignores marker-only comments" {
+    local managed_user="acfs-managed-user"
+    local stale_home
+    local resolved_home
+
+    stale_home="$(create_temp_dir)"
+    resolved_home="$(create_temp_dir)"
+    export TARGET_USER="$managed_user"
+    export TARGET_HOME="$stale_home"
+
+    cat > "$resolved_home/.bashrc" <<'EOF'
+# ACFS externally-managed shell handoff
+# Historical note only; no active zsh handoff lives here.
+EOF
+
+    user_getent_passwd_entry() {
+        [[ "${1:-}" == "$managed_user" ]] || return 1
+        printf '%s:x:1000:1000::%s:/bin/bash\n' "$managed_user" "$resolved_home"
+    }
+
+    run set_default_shell /bin/bash
+    assert_success
+
+    grep -Fq 'exec "$(command -v zsh)" -l' "$resolved_home/.bashrc"
+    [[ ! -f "$stale_home/.bashrc" ]]
+}
+
 @test "user.sh: sourcing leaves TARGET_HOME empty when unresolved" {
     run env PROJECT_ROOT="$PROJECT_ROOT" bash -c '
         set -euo pipefail

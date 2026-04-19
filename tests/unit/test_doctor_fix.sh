@@ -515,7 +515,7 @@ test_fix_path_ordering_idempotent() {
     echo "# Initial zshrc" > "$zshrc"
     echo "" >> "$zshrc"
     echo "# ACFS PATH ordering (added by doctor --fix)" >> "$zshrc"
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$zshrc"
+    echo 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/go/bin:$HOME/.atuin/bin:$PATH"' >> "$zshrc"
 
     local initial_lines
     initial_lines=$(wc -l < "$zshrc")
@@ -541,6 +541,51 @@ test_fix_path_ordering_idempotent() {
         return 1
     fi
 
+    cleanup_test_env
+    return 0
+}
+
+test_fix_path_ordering_repairs_stale_marker_missing_atuin() {
+    setup_test_env
+
+    local zshrc="$HOME/.zshrc"
+    echo "# Initial zshrc" > "$zshrc"
+    echo "" >> "$zshrc"
+    echo "# ACFS PATH ordering (added by doctor --fix)" >> "$zshrc"
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$zshrc"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    fix_path_ordering "path.ordering" >/dev/null 2>&1
+
+    if ! grep -Fq '$HOME/.atuin/bin' "$zshrc"; then
+        echo "  Stale PATH ordering block was not repaired with Atuin path"
+        cat "$zshrc"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if grep -Fxq 'export PATH="$HOME/.local/bin:$PATH"' "$zshrc"; then
+        echo "  Stale PATH ordering export was left behind"
+        cat "$zshrc"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_APPLIED -ne 1 ]]; then
+        echo "  FIX_APPLIED should be 1 for stale marker repair, got $FIX_APPLIED"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
     cleanup_test_env
     return 0
 }
@@ -1373,6 +1418,44 @@ test_fix_acfs_sourcing_idempotent() {
         return 1
     fi
 
+    cleanup_test_env
+    return 0
+}
+
+test_fix_acfs_sourcing_ignores_commented_loader_mention() {
+    setup_test_env
+
+    local zshrc="$HOME/.zshrc"
+    echo "# Initial zshrc" > "$zshrc"
+    echo "# source ~/.acfs/zsh/acfs.zshrc" >> "$zshrc"
+
+    local acfs_zshrc="$HOME/.acfs/zsh/acfs.zshrc"
+    echo "# ACFS config" > "$acfs_zshrc"
+
+    start_autofix_session >/dev/null || {
+        echo "  Failed to start autofix session"
+        cleanup_test_env
+        return 1
+    }
+
+    fix_acfs_sourcing "shell.acfs_sourced" >/dev/null 2>&1
+
+    if ! grep -Fxq '[[ -f ~/.acfs/zsh/acfs.zshrc ]] && source ~/.acfs/zsh/acfs.zshrc' "$zshrc"; then
+        echo "  Active ACFS source line was not added when only a comment mentioned acfs.zshrc"
+        cat "$zshrc"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    if [[ $FIX_APPLIED -ne 1 ]]; then
+        echo "  FIX_APPLIED should be 1 for commented loader repair, got $FIX_APPLIED"
+        end_autofix_session >/dev/null 2>&1 || true
+        cleanup_test_env
+        return 1
+    fi
+
+    end_autofix_session >/dev/null 2>&1 || true
     cleanup_test_env
     return 0
 }
@@ -3057,6 +3140,7 @@ main() {
     # fix_path_ordering tests
     run_test test_fix_path_ordering_applies
     run_test test_fix_path_ordering_idempotent
+    run_test test_fix_path_ordering_repairs_stale_marker_missing_atuin
     run_test test_fix_path_ordering_dry_run
     run_test test_fix_path_ordering_restores_file_when_record_change_fails
     run_test test_fix_path_ordering_removes_new_file_when_record_change_fails
@@ -3084,6 +3168,7 @@ main() {
     # fix_acfs_sourcing tests
     run_test test_fix_acfs_sourcing_applies
     run_test test_fix_acfs_sourcing_idempotent
+    run_test test_fix_acfs_sourcing_ignores_commented_loader_mention
     run_test test_fix_acfs_sourcing_uses_target_home
     run_test test_fix_acfs_sourcing_missing_acfs_config
     run_test test_fix_acfs_sourcing_dry_run

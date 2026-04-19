@@ -147,6 +147,7 @@ EOF
     local stale_home
     resolved_home="$(create_temp_dir)"
     stale_home="$BATS_TEST_TMPDIR/stale-target-home"
+    mkdir -p "$stale_home"
 
     export TARGET_HOME="$stale_home"
     export HOME="$stale_home"
@@ -162,6 +163,44 @@ EOF
     run update_target_home "tester"
     assert_success
     assert_output "$resolved_home"
+}
+
+@test "update.sh: source-time HOME repair does not make stale TARGET_HOME explicit" {
+    local current_user
+    local current_home
+    local stale_home
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || fail "Unable to resolve current user"
+    current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    [[ -n "$current_home" && -d "$current_home" ]] || fail "Unable to resolve current user home"
+
+    stale_home="$BATS_TEST_TMPDIR/stale-source-home"
+    mkdir -p "$stale_home"
+
+    run env TARGET_USER="$current_user" TARGET_HOME="$stale_home" HOME="$stale_home" bash -c 'source "$1"; printf "HOME=%s target=%s\n" "$HOME" "$(update_target_home "$TARGET_USER")"' _ "$PROJECT_ROOT/scripts/lib/update.sh"
+    assert_success
+    assert_output "HOME=$current_home target=$current_home"
+}
+
+@test "update.sh: source-time HOME repair prefers TARGET_USER passwd over stale TARGET_HOME" {
+    local current_user
+    local current_home
+    local caller_home
+    local stale_home
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || fail "Unable to resolve current user"
+    current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    [[ -n "$current_home" && -d "$current_home" ]] || fail "Unable to resolve current user home"
+
+    caller_home="$(create_temp_dir)"
+    stale_home="$BATS_TEST_TMPDIR/stale-source-target-home"
+    mkdir -p "$stale_home"
+
+    run env TARGET_USER="$current_user" TARGET_HOME="$stale_home" HOME="$caller_home" bash -c 'source "$1"; printf "HOME=%s target=%s\n" "$HOME" "$(update_target_home "$TARGET_USER")"' _ "$PROJECT_ROOT/scripts/lib/update.sh"
+    assert_success
+    assert_output "HOME=$current_home target=$current_home"
 }
 
 @test "update_target_home: rejects invalid fallback usernames" {
@@ -985,7 +1024,7 @@ EOF
 source "$HOME/.acfs/zsh/acfs.zshrc"
 
 # User overrides live here forever
-[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
+  [ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
 EOF
 
     run sync_acfs_zsh_loader
@@ -1008,6 +1047,19 @@ EOF
     run cat "$HOME/.zshrc"
     assert_output --partial '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
     refute_output --partial 'source "$HOME/.acfs/zsh/acfs.zshrc"'
+}
+
+@test "sync_acfs_zsh_loader: ignores commented ACFS loader references" {
+    cat > "$HOME/.zshrc" <<'EOF'
+# source "$HOME/.acfs/zsh/acfs.zshrc"
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
+EOF
+
+    run sync_acfs_zsh_loader
+    assert_success
+
+    run cat "$HOME/.zshrc"
+    assert_output --partial '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
 }
 
 @test "sync_acfs_profile_paths: upgrades legacy ACFS login PATH line" {
@@ -1040,6 +1092,96 @@ EOF
     run cat "$HOME/.zprofile"
     assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
     refute_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+}
+
+@test "sync_acfs_profile_paths: creates missing profile with Atuin login PATH" {
+    [[ ! -e "$HOME/.profile" ]]
+
+    run sync_acfs_profile_paths
+    assert_success
+
+    run cat "$HOME/.profile"
+    assert_output --partial '# ~/.profile: executed by bash for login shells'
+    assert_output --partial '# User binary paths'
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+}
+
+@test "sync_acfs_zprofile_paths: creates missing zprofile with Atuin login PATH" {
+    [[ ! -e "$HOME/.zprofile" ]]
+
+    run sync_acfs_zprofile_paths
+    assert_success
+
+    run cat "$HOME/.zprofile"
+    assert_output --partial '# ~/.zprofile: executed by zsh for login shells'
+    assert_output --partial '# User binary paths'
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+}
+
+@test "sync_acfs_profile_paths: adds Atuin login PATH when custom profile lacks it" {
+    cat > "$HOME/.profile" <<'EOF'
+# custom login profile
+export PATH="$HOME/.local/bin:/opt/custom/bin:$PATH"
+EOF
+
+    run sync_acfs_profile_paths
+    assert_success
+
+    run cat "$HOME/.profile"
+    assert_output --partial '# custom login profile'
+    assert_output --partial 'export PATH="$HOME/.local/bin:/opt/custom/bin:$PATH"'
+    assert_output --partial '# Added by ACFS - user binary paths'
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+}
+
+@test "sync_acfs_profile_paths: ignores commented Atuin mention when repairing login PATH" {
+    cat > "$HOME/.profile" <<'EOF'
+# .atuin/bin appears in this comment but not in the active PATH
+# export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+export PATH="$HOME/.local/bin:/opt/custom/bin:$PATH"
+EOF
+
+    run sync_acfs_profile_paths
+    assert_success
+
+    run cat "$HOME/.profile"
+    assert_output --partial '# .atuin/bin appears in this comment but not in the active PATH'
+    assert_output --partial '# export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+    assert_output --partial '# Added by ACFS - user binary paths'
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+}
+
+@test "sync_acfs_zprofile_paths: adds Atuin login PATH when custom zprofile lacks it" {
+    cat > "$HOME/.zprofile" <<'EOF'
+# custom zsh login profile
+export PATH="$HOME/.local/bin:/opt/custom/bin:$PATH"
+EOF
+
+    run sync_acfs_zprofile_paths
+    assert_success
+
+    run cat "$HOME/.zprofile"
+    assert_output --partial '# custom zsh login profile'
+    assert_output --partial 'export PATH="$HOME/.local/bin:/opt/custom/bin:$PATH"'
+    assert_output --partial '# Added by ACFS - user binary paths'
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+}
+
+@test "sync_acfs_zprofile_paths: ignores commented Atuin mention when repairing login PATH" {
+    cat > "$HOME/.zprofile" <<'EOF'
+# .atuin/bin appears in this comment but not in the active PATH
+# export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
+export PATH="$HOME/.local/bin:/opt/custom/bin:$PATH"
+EOF
+
+    run sync_acfs_zprofile_paths
+    assert_success
+
+    run cat "$HOME/.zprofile"
+    assert_output --partial '# .atuin/bin appears in this comment but not in the active PATH'
+    assert_output --partial '# export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+    assert_output --partial '# Added by ACFS - user binary paths'
+    assert_output --partial 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
 }
 
 @test "sync_acfs_profile_paths: respects TARGET_HOME when HOME differs" {
@@ -1207,6 +1349,57 @@ EOF
     refute_output --partial 'alias bv='
 }
 
+@test "cleanup_legacy_bv_alias: ignores commented legacy bv examples" {
+    local target_home
+    target_home="$(create_temp_dir)"
+
+    export HOME="$target_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+
+    cat > "$target_home/.zshrc.local" <<'EOF'
+# alias bv="old"
+# if [ -x "$HOME/.local/bin/bv" ]; then
+#   alias bv="$HOME/.local/bin/bv"
+# fi
+alias keep_me="true"
+EOF
+
+    run cleanup_legacy_bv_alias
+    assert_success
+
+    run cat "$target_home/.zshrc.local"
+    assert_output --partial '# alias bv="old"'
+    assert_output --partial '# if [ -x "$HOME/.local/bin/bv" ]; then'
+    assert_output --partial 'alias keep_me="true"'
+}
+
+@test "cleanup_legacy_bv_alias: removes indented legacy bv alias block" {
+    local target_home
+    target_home="$(create_temp_dir)"
+
+    export HOME="$target_home"
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+
+    cat > "$target_home/.zshrc.local" <<'EOF'
+before=1
+  if [ -x "$HOME/.local/bin/bv" ]; then
+    alias bv="$HOME/.local/bin/bv"
+  fi
+after=1
+EOF
+
+    run cleanup_legacy_bv_alias
+    assert_success
+
+    run cat "$target_home/.zshrc.local"
+    assert_output --partial 'before=1'
+    assert_output --partial 'after=1'
+    refute_output --partial 'alias bv='
+    refute_output --partial '.local/bin/bv'
+}
+
 @test "cleanup_legacy_br_alias: respects TARGET_HOME when HOME differs" {
     local current_home
     local target_home
@@ -1245,10 +1438,25 @@ EOF
     run grep -F 'echo '\''source "$HOME/.acfs/zsh/acfs.zshrc"'\'' >> ~/.zshrc' "$generated"
     assert_success
 
+    run grep -F 'acfs_zshrc_is_managed_loader() {' "$generated"
+    assert_success
+
+    run grep -F 'acfs_external_shell_handoff_configured() {' "$generated"
+    assert_success
+
+    run grep -F "grep -q 'ACFS externally-managed shell handoff' ~/.bashrc" "$generated"
+    assert_failure
+
+    run grep -F 'grep -q "ACFS loader" ~/.zshrc' "$generated"
+    assert_failure
+
     run grep -F 'echo '\''[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'\'' >> ~/.zshrc' "$generated"
     assert_failure
 
     run grep -F 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"' "$generated"
+    assert_success
+
+    run grep -F 'grep -Fxq "$legacy_profile_path_line"' "$generated"
     assert_success
 }
 
@@ -1309,7 +1517,22 @@ EOF
     run grep -F 'local user_zprofile="$HOME/.zprofile"' "$zsh_lib"
     assert_success
 
+    run grep -F '_zsh_is_managed_loader() {' "$zsh_lib"
+    assert_success
+
+    run grep -F 'zsh_external_shell_handoff_configured() {' "$zsh_lib"
+    assert_success
+
+    run grep -F "grep -q 'ACFS externally-managed shell handoff' \"\$bashrc\"" "$zsh_lib"
+    assert_failure
+
+    run grep -F 'grep -q "ACFS loader" "$user_zshrc"' "$zsh_lib"
+    assert_failure
+
     run grep -F 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"' "$zsh_lib"
+    assert_success
+
+    run grep -F 'grep -Fxq "$legacy_profile_path_line"' "$zsh_lib"
     assert_success
 
     run grep -F '# ACFS loader — user overrides go in ~/.zshrc.local (sourced by acfs.zshrc)' "$zsh_lib"
@@ -2149,6 +2372,68 @@ EOF
     assert_output --partial "LIVE_SCRIPT HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
 }
 
+@test "acfs-update wrapper only promotes system state homes with an update script" {
+    local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
+    local stale_home
+
+    stale_home="$(create_temp_dir)"
+    mkdir -p "$stale_home/.acfs"
+
+    ACFS_SYSTEM_STATE_FILE="$stale_home/.acfs/state.json"
+    resolve_target_home_from_state_hint() { printf '%s\n' "$stale_home"; }
+    find_update_script_for_home() { return 1; }
+    eval "$(sed -n '/^resolve_live_system_state_home()/,/^}/p' "$update_wrapper")"
+
+    run resolve_live_system_state_home
+    assert_failure
+}
+
+@test "acfs-update wrapper prefers valid HOME install over stale live system state" {
+    local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
+    local wrapper_dir
+    local target_home
+    local stale_home
+    local system_state
+    local current_user
+
+    wrapper_dir="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$BATS_TEST_TMPDIR/update-wrapper-live-stale-system-state.json"
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p "$target_home/.acfs/scripts/lib" "$stale_home/.acfs/scripts/lib"
+    cp "$update_wrapper" "$wrapper_dir/acfs-update"
+    chmod +x "$wrapper_dir/acfs-update"
+
+    cat > "$target_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$target_home"
+}
+EOF
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$stale_home"
+}
+EOF
+    cat > "$target_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'LIVE_HOME_INSTALL HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    cat > "$stale_home/.acfs/scripts/lib/update.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'STALE_SYSTEM_STATE HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    chmod +x "$target_home/.acfs/scripts/lib/update.sh" "$stale_home/.acfs/scripts/lib/update.sh"
+
+    run env HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$wrapper_dir/acfs-update" --no-self-update
+
+    assert_success
+    refute_output --partial "STALE_SYSTEM_STATE"
+    assert_output --partial "LIVE_HOME_INSTALL HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
+}
+
 @test "acfs global wrapper honors explicit TARGET_HOME over stale system state" {
     local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"
     local wrapper_dir
@@ -2191,6 +2476,52 @@ EOF
     assert_success
     refute_output --partial "STALE_ACFS"
     assert_output --partial "LIVE_ACFS HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
+}
+
+@test "acfs global wrapper prefers valid HOME install over stale live system state" {
+    local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"
+    local wrapper_dir
+    local target_home
+    local stale_home
+    local system_state
+    local current_user
+
+    wrapper_dir="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$BATS_TEST_TMPDIR/global-wrapper-live-stale-system-state.json"
+    current_user="$(id -un 2>/dev/null || whoami 2>/dev/null || true)"
+
+    mkdir -p "$target_home/.local/bin" "$target_home/.acfs" "$stale_home/.local/bin" "$stale_home/.acfs"
+    cp "$global_wrapper" "$wrapper_dir/acfs"
+    chmod +x "$wrapper_dir/acfs"
+
+    cat > "$target_home/.acfs/state.json" <<EOF
+{
+  "target_user": "$current_user",
+  "target_home": "$target_home"
+}
+EOF
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$stale_home"
+}
+EOF
+    cat > "$target_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'LIVE_HOME_ACFS HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    cat > "$stale_home/.local/bin/acfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'STALE_SYSTEM_ACFS HOME=%s TARGET_HOME=%s ACFS_HOME=%s\n' "$HOME" "${TARGET_HOME:-}" "${ACFS_HOME:-}"
+EOF
+    chmod +x "$target_home/.local/bin/acfs" "$stale_home/.local/bin/acfs"
+
+    run env HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash "$wrapper_dir/acfs"
+
+    assert_success
+    refute_output --partial "STALE_SYSTEM_ACFS"
+    assert_output --partial "LIVE_HOME_ACFS HOME=$target_home TARGET_HOME=$target_home ACFS_HOME=$target_home/.acfs"
 }
 
 @test "ACFS home resolvers honor explicit TARGET_HOME over stale system state" {
@@ -2313,6 +2644,200 @@ EOF
     run env -i PATH="/usr/bin:/bin" HOME="$current_home" TARGET_HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c 'source "$1" >/dev/null 2>&1; cheatsheet_prepare_context >/dev/null 2>&1; printf "%s\n" "${_CHEATSHEET_RESOLVED_TARGET_HOME:-}"' _ "$PROJECT_ROOT/scripts/lib/cheatsheet.sh"
     assert_success
     assert_output "$target_home"
+}
+
+@test "current HOME install resolvers beat stale system state" {
+    local target_home
+    local stale_home
+    local system_state
+    local label
+    local script
+    local func
+    local expected
+
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    system_state="$BATS_TEST_TMPDIR/current-home-stale-system-state.json"
+
+    mkdir -p "$target_home/.acfs/onboard" "$stale_home/.acfs/onboard"
+    cat > "$target_home/.acfs/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$target_home"
+}
+EOF
+    cat > "$stale_home/.acfs/state.json" <<EOF
+{
+  "target_user": "staleuser",
+  "target_home": "$stale_home"
+}
+EOF
+    printf 'live\n' > "$target_home/.acfs/VERSION"
+    printf 'stale\n' > "$stale_home/.acfs/VERSION"
+    printf '# live\n' > "$target_home/.acfs/CHANGELOG.md"
+    printf '# stale\n' > "$stale_home/.acfs/CHANGELOG.md"
+
+    cat > "$system_state" <<EOF
+{
+  "target_home": "$stale_home"
+}
+EOF
+
+    while IFS='|' read -r label script func expected; do
+        run env -i PATH="/usr/bin:/bin" HOME="$target_home" ACFS_SYSTEM_STATE_FILE="$system_state" bash -c '
+            source "$1" >/dev/null 2>&1
+            target_home="$2"
+            system_state="$3"
+            label="$4"
+            func="$5"
+
+            case "$label" in
+                status)
+                    _STATUS_CURRENT_HOME="$target_home"
+                    _STATUS_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    _STATUS_SYSTEM_STATE_WAS_EXPLICIT=true
+                    _STATUS_SYSTEM_STATE_FILE="$system_state"
+                    _STATUS_RESOLVED_ACFS_HOME=""
+                    _status_resolve_current_user() { printf "tester\n"; }
+                    _status_home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    ;;
+                info)
+                    _INFO_CURRENT_HOME="$target_home"
+                    _INFO_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    _INFO_SYSTEM_STATE_WAS_EXPLICIT=true
+                    _INFO_SYSTEM_STATE_FILE="$system_state"
+                    _INFO_RESOLVED_ACFS_HOME=""
+                    info_resolve_current_user() { printf "tester\n"; }
+                    info_home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    ;;
+                support)
+                    _SUPPORT_CURRENT_HOME="$target_home"
+                    _SUPPORT_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    SUPPORT_SYSTEM_STATE_WAS_EXPLICIT=true
+                    SUPPORT_SYSTEM_STATE_FILE="$system_state"
+                    support_resolve_current_user() { printf "tester\n"; }
+                    support_home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    ;;
+                dashboard)
+                    _DASHBOARD_CURRENT_HOME="$target_home"
+                    _DASHBOARD_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    _DASHBOARD_SYSTEM_STATE_WAS_EXPLICIT=true
+                    _DASHBOARD_SYSTEM_STATE_FILE="$system_state"
+                    _DASHBOARD_RESOLVED_ACFS_HOME=""
+                    dashboard_resolve_current_user() { printf "tester\n"; }
+                    dashboard_home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    ;;
+                export-config)
+                    _EXPORT_CURRENT_HOME="$target_home"
+                    _EXPORT_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    _EXPORT_SYSTEM_STATE_WAS_EXPLICIT=true
+                    _EXPORT_SYSTEM_STATE_FILE="$system_state"
+                    _EXPORT_RESOLVED_ACFS_HOME=""
+                    export_resolve_current_user() { printf "tester\n"; }
+                    home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    ;;
+                cheatsheet)
+                    _CHEATSHEET_CURRENT_HOME="$target_home"
+                    _CHEATSHEET_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    _CHEATSHEET_SYSTEM_STATE_WAS_EXPLICIT=true
+                    _CHEATSHEET_SYSTEM_STATE_FILE="$system_state"
+                    _CHEATSHEET_RESOLVED_ACFS_HOME=""
+                    cheatsheet_resolve_current_user() { printf "tester\n"; }
+                    cheatsheet_home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    ;;
+                onboard)
+                    _ONBOARD_CURRENT_HOME="$target_home"
+                    _ONBOARD_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    _ONBOARD_SYSTEM_STATE_FILE="$system_state"
+                    _ONBOARD_ACFS_HOME=""
+                    _ONBOARD_ACFS_HOME_SOURCE=""
+                    _ONBOARD_RUNTIME_HOME=""
+                    _ONBOARD_RUNTIME_HOME_SOURCE=""
+                    onboard_resolve_current_user() { printf "tester\n"; }
+                    onboard_home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    onboard_probe_current_home() {
+                        _ONBOARD_ACFS_HOME="$(onboard_resolve_acfs_home 2>/dev/null || true)"
+                        onboard_resolve_runtime_home >/dev/null 2>&1 || true
+                        printf "%s|%s\n" "${_ONBOARD_ACFS_HOME:-}" "${_ONBOARD_RUNTIME_HOME:-}"
+                    }
+                    ;;
+                continue)
+                    _CONTINUE_CURRENT_HOME="$target_home"
+                    _CONTINUE_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    _CONTINUE_SYSTEM_STATE_FILE="$system_state"
+                    _CONTINUE_STATE_FILE=""
+                    _CONTINUE_EXPLICIT_ACFS_HOME=""
+                    _CONTINUE_EXPLICIT_TARGET_HOME_RAW=""
+                    _CONTINUE_EXPLICIT_TARGET_USER_RAW=""
+                    continue_resolve_current_user() { printf "tester\n"; }
+                    home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    ;;
+                changelog)
+                    _CHANGELOG_CURRENT_HOME="$target_home"
+                    _CHANGELOG_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    _CHANGELOG_ACFS_HOME="$target_home/.acfs"
+                    _CHANGELOG_SYSTEM_STATE_WAS_EXPLICIT=true
+                    _CHANGELOG_SYSTEM_STATE_FILE="$system_state"
+                    _CHANGELOG_RESOLVED_ACFS_HOME=""
+                    changelog_resolve_current_user() { printf "tester\n"; }
+                    changelog_home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    ;;
+                smoke)
+                    _SMOKE_CURRENT_USER="tester"
+                    _SMOKE_CURRENT_HOME="$target_home"
+                    _SMOKE_DEFAULT_ACFS_HOME="$target_home/.acfs"
+                    _SMOKE_SYSTEM_STATE_FILE="$system_state"
+                    _smoke_resolve_current_user() { printf "tester\n"; }
+                    _smoke_home_for_user() { [[ "${1:-}" == "tester" ]] && printf "%s\n" "$target_home"; }
+                    ;;
+            esac
+
+            "$func"
+        ' _ "$script" "$target_home" "$system_state" "$label" "$func"
+        assert_success
+        assert_output "$expected"
+    done <<EOF
+status|$PROJECT_ROOT/scripts/lib/status.sh|_status_resolve_acfs_home|$target_home/.acfs
+info|$PROJECT_ROOT/scripts/lib/info.sh|info_get_data_home|$target_home/.acfs
+support|$PROJECT_ROOT/scripts/lib/support.sh|support_resolve_acfs_home|$target_home/.acfs
+dashboard|$PROJECT_ROOT/scripts/lib/dashboard.sh|dashboard_resolve_acfs_home|$target_home/.acfs
+export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|resolve_acfs_home|$target_home/.acfs
+cheatsheet|$PROJECT_ROOT/scripts/lib/cheatsheet.sh|cheatsheet_resolve_acfs_home|$target_home/.acfs
+onboard|$PROJECT_ROOT/packages/onboard/onboard.sh|onboard_probe_current_home|$target_home/.acfs|$target_home
+continue|$PROJECT_ROOT/scripts/lib/continue.sh|get_install_state_file|$target_home/.acfs/state.json
+changelog|$PROJECT_ROOT/scripts/lib/changelog.sh|resolve_changelog_acfs_home|$target_home/.acfs
+smoke|$PROJECT_ROOT/scripts/lib/smoke_test.sh|_smoke_resolve_bootstrap_state_file|$target_home/.acfs/state.json
+EOF
+}
+
+@test "doctor ignores stale caller ACFS_HOME when resolving install state" {
+    local target_home
+    local stale_home
+
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+
+    mkdir -p "$target_home/.acfs" "$stale_home/.acfs"
+    cat > "$target_home/.acfs/state.json" <<EOF
+{
+  "target_user": "tester",
+  "target_home": "$target_home"
+}
+EOF
+    cat > "$stale_home/.acfs/state.json" <<EOF
+{
+  "target_user": "staleuser",
+  "target_home": "$stale_home"
+}
+EOF
+
+    run env -i PATH="/usr/bin:/bin" HOME="$target_home" TARGET_USER="tester" TARGET_HOME="$target_home" ACFS_HOME="$stale_home/.acfs" bash -c '
+        eval "$(sed -n "1,/^export ACFS_HOME$/p" "$1")"
+        printf "TARGET_USER=%s\nTARGET_HOME=%s\nACFS_HOME=%s\n" "$TARGET_USER" "$TARGET_HOME" "$ACFS_HOME"
+    ' _ "$PROJECT_ROOT/scripts/lib/doctor.sh"
+    assert_success
+    refute_output --partial "staleuser"
+    refute_output --partial "$stale_home"
 }
 
 @test "home-to-user helpers ignore PATH-poisoned id/whoami/getent shims" {
@@ -2737,6 +3262,19 @@ EOF_DASHBOARD_SERVE
     assert_success
 }
 
+@test "stack SLB installer checks active Go PATH lines only" {
+    local stack="$PROJECT_ROOT/scripts/lib/stack.sh"
+
+    run grep -F 'acfs_has_active_go_bin_path() {' "$stack"
+    assert_success
+
+    run grep -F 'if ! acfs_has_active_go_bin_path ~/.zshrc; then' "$stack"
+    assert_success
+
+    run grep -F "grep -q 'export PATH=.*\$HOME/go/bin' ~/.zshrc" "$stack"
+    assert_failure
+}
+
 @test "run-as-user helper libs reject invalid TARGET_USER before sudo" {
     export TARGET_USER="../bad user"
     export TARGET_HOME="/home/tester"
@@ -2787,6 +3325,7 @@ EOF_DASHBOARD_SERVE
     resolved_home="$(getent passwd "$current_user" | cut -d: -f6)"
     [[ -n "$resolved_home" && -d "$resolved_home" ]] || fail "Unable to resolve current user home"
     stale_home="$BATS_TEST_TMPDIR/stale-target-home"
+    mkdir -p "$stale_home"
 
     export TARGET_USER="$current_user"
     export TARGET_HOME="$stale_home"
@@ -2816,6 +3355,159 @@ EOF_DASHBOARD_SERVE
     run _stack_target_home "$current_user"
     assert_success
     assert_output "$resolved_home"
+}
+
+@test "helper home resolvers ignore pre-repair HOME after update.sh fixes HOME" {
+    local current_user
+    local resolved_home
+    local stale_home
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || fail "Unable to resolve current user"
+    resolved_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    [[ -n "$resolved_home" && -d "$resolved_home" ]] || fail "Unable to resolve current user home"
+    stale_home="$BATS_TEST_TMPDIR/stale-initial-env-home"
+    mkdir -p "$stale_home/.local/bin"
+
+    export TARGET_USER="$current_user"
+    export TARGET_HOME="$stale_home"
+    export HOME="$resolved_home"
+    export ACFS_INITIAL_ENV_HOME="$stale_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+
+    source_lib "cli_tools"
+    run _cli_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "agents"
+    run _agent_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "languages"
+    run _lang_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "cloud_db"
+    run _cloud_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "stack"
+    run _stack_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "autofix"
+    run autofix_runtime_home
+    assert_success
+    assert_output "$resolved_home"
+}
+
+@test "helper home resolvers prefer TARGET_USER passwd over stale TARGET_HOME and ACFS_BIN_DIR" {
+    local current_user
+    local resolved_home
+    local caller_home
+    local stale_home
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || fail "Unable to resolve current user"
+    resolved_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    [[ -n "$resolved_home" && -d "$resolved_home" ]] || fail "Unable to resolve current user home"
+    caller_home="$(create_temp_dir)"
+    stale_home="$BATS_TEST_TMPDIR/stale-target-home-with-bin"
+    mkdir -p "$stale_home/.local/bin"
+
+    export TARGET_USER="$current_user"
+    export TARGET_HOME="$stale_home"
+    export HOME="$caller_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+
+    source_lib "cli_tools"
+    run _cli_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "agents"
+    run _agent_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "languages"
+    run _lang_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "cloud_db"
+    run _cloud_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "stack"
+    run _stack_target_home "$current_user"
+    assert_success
+    assert_output "$resolved_home"
+
+    source_lib "autofix"
+    run autofix_runtime_home
+    assert_success
+    assert_output "$resolved_home"
+}
+
+@test "helper home resolvers prefer root home over stale explicit TARGET_HOME" {
+    local stale_home
+    stale_home="$BATS_TEST_TMPDIR/stale-root-target-home"
+    mkdir -p "$stale_home/.local/bin"
+
+    export TARGET_USER="root"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+
+    run env TARGET_USER="root" TARGET_HOME="$stale_home" HOME="$stale_home" ACFS_BIN_DIR="$stale_home/.local/bin" bash -c 'source "$1"; printf "%s\n" "$HOME"' _ "$PROJECT_ROOT/scripts/lib/update.sh"
+    assert_success
+    assert_output "/root"
+
+    run update_target_home "root"
+    assert_success
+    assert_output "/root"
+
+    source_lib "cli_tools"
+    run _cli_target_home "root"
+    assert_success
+    assert_output "/root"
+
+    source_lib "agents"
+    run _agent_target_home "root"
+    assert_success
+    assert_output "/root"
+
+    source_lib "languages"
+    run _lang_target_home "root"
+    assert_success
+    assert_output "/root"
+
+    source_lib "cloud_db"
+    run _cloud_target_home "root"
+    assert_success
+    assert_output "/root"
+
+    source_lib "stack"
+    run _stack_target_home "root"
+    assert_success
+    assert_output "/root"
+
+    source_lib "autofix"
+    run autofix_runtime_home
+    assert_success
+    assert_output "/root"
+
+    source_lib "github_api"
+    run _github_api_runtime_home
+    assert_success
+    assert_output "/root"
 }
 
 @test "helper home resolvers ignore function-poisoned passwd and identity shims" {
@@ -2973,7 +3665,7 @@ EOF_DASHBOARD_SERVE
     source_lib "stack"
     run _stack_target_bin_dir "$current_user"
     assert_success
-    assert_output "$fake_bin_dir"
+    assert_output "$current_home/.local/bin"
 }
 
 @test "services-setup: resolve_home_dir prefers current HOME over guessed standard path" {
@@ -3633,6 +4325,7 @@ EOF
     local stale_home
     runtime_home="$(create_temp_dir)"
     stale_home="$BATS_TEST_TMPDIR/stale-runtime-home"
+    mkdir -p "$stale_home"
 
     export TARGET_HOME="$stale_home"
     export HOME="$runtime_home"
@@ -3640,6 +4333,29 @@ EOF
     run _github_api_runtime_home
     assert_success
     assert_output "$runtime_home"
+}
+
+@test "github_api runtime home prefers non-root TARGET_USER home over caller HOME" {
+    source_lib "github_api"
+
+    local current_user
+    local current_home
+    local caller_home
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null || true)"
+    [[ -n "$current_user" ]] || fail "Unable to resolve current user"
+    [[ "$current_user" != "root" ]] || skip "requires non-root current user"
+    current_home="$(command getent passwd "$current_user" | cut -d: -f6)"
+    [[ -n "$current_home" && -d "$current_home" ]] || fail "Unable to resolve current user home"
+    caller_home="$(create_temp_dir)"
+
+    export TARGET_USER="$current_user"
+    export TARGET_HOME=""
+    export HOME="$caller_home"
+
+    run _github_api_runtime_home
+    assert_success
+    assert_output "$current_home"
 }
 
 @test "update init honors explicit TARGET_HOME for early runtime paths" {
@@ -3849,6 +4565,15 @@ EOF
     assert_success
     run grep -F '[[ -n "$sanitized_bin_dir" ]] && env_args+=("ACFS_BIN_DIR=$sanitized_bin_dir")' "$update_wrapper"
     assert_success
+}
+
+@test "nightly update only promotes state target homes with update entrypoint" {
+    local nightly="$PROJECT_ROOT/scripts/lib/nightly_update.sh"
+    local block=""
+
+    block="$(sed -n '/if ! nightly_home_has_update_entrypoint "$state_target_home"; then/,/fi/p' "$nightly")"
+    [[ "$block" == *'if ! nightly_home_has_update_entrypoint "$state_target_home"; then'* ]]
+    [[ "$block" == *'continue'* ]]
 }
 
 @test "install execution helpers preserve ACFS bootstrap context" {

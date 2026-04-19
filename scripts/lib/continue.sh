@@ -20,12 +20,12 @@ _CONTINUE_ORIGINAL_HOME_WAS_SET=false
 _CONTINUE_RESTORE_ERREXIT=false
 _CONTINUE_RESTORE_NOUNSET=false
 _CONTINUE_RESTORE_PIPEFAIL=false
+if [[ -v HOME ]]; then
+    _CONTINUE_ORIGINAL_HOME="$HOME"
+    _CONTINUE_ORIGINAL_HOME_WAS_SET=true
+fi
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
     _CONTINUE_WAS_SOURCED=true
-    if [[ -v HOME ]]; then
-        _CONTINUE_ORIGINAL_HOME="$HOME"
-        _CONTINUE_ORIGINAL_HOME_WAS_SET=true
-    fi
     [[ $- == *e* ]] && _CONTINUE_RESTORE_ERREXIT=true
     [[ $- == *u* ]] && _CONTINUE_RESTORE_NOUNSET=true
     if shopt -qo pipefail 2>/dev/null; then
@@ -189,6 +189,14 @@ continue_resolve_current_home() {
 continue_initial_current_home() {
     local cached_home=""
     local resolved_home=""
+
+    if [[ "${_CONTINUE_WAS_SOURCED:-false}" == "true" ]] && [[ -z "${TARGET_HOME:-}${TARGET_USER:-}${ACFS_HOME:-}${ACFS_STATE_FILE:-}${ACFS_SYSTEM_STATE_FILE:-}" ]]; then
+        cached_home="$(continue_sanitize_abs_nonroot_path "${_CONTINUE_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
 
     resolved_home="$(continue_resolve_current_home 2>/dev/null || true)"
     if [[ -n "$resolved_home" ]]; then
@@ -368,8 +376,37 @@ script_acfs_home() {
 }
 
 current_user_state_file() {
-    [[ -n "$_CONTINUE_DEFAULT_ACFS_HOME" ]] || return 1
-    printf '%s/state.json\n' "$_CONTINUE_DEFAULT_ACFS_HOME"
+    local candidate=""
+    local current_user=""
+    local original_home=""
+    local state_home=""
+    local state_user=""
+    local state_user_home=""
+
+    [[ -n "$_CONTINUE_DEFAULT_ACFS_HOME" && -n "$_CONTINUE_CURRENT_HOME" ]] || return 1
+    [[ "$_CONTINUE_CURRENT_HOME" != "/root" ]] || return 1
+
+    candidate="$_CONTINUE_DEFAULT_ACFS_HOME/state.json"
+    [[ -f "$candidate" ]] || return 1
+
+    if [[ "${_CONTINUE_ORIGINAL_HOME_WAS_SET:-false}" == true ]]; then
+        original_home="$(continue_sanitize_abs_nonroot_path "$_CONTINUE_ORIGINAL_HOME" 2>/dev/null || true)"
+        [[ -z "$original_home" || "$original_home" == "$_CONTINUE_CURRENT_HOME" ]] || return 1
+    fi
+
+    current_user="$(continue_resolve_current_user 2>/dev/null || true)"
+    [[ -n "$current_user" && "$current_user" != "root" ]] || return 1
+
+    state_home="$(read_target_home_from_state "$candidate" 2>/dev/null || true)"
+    [[ -z "$state_home" || "$state_home" == "$_CONTINUE_CURRENT_HOME" ]] || return 1
+
+    state_user="$(read_target_user_from_state "$candidate" 2>/dev/null || true)"
+    if [[ -n "$state_user" && "$state_user" != "$current_user" ]]; then
+        state_user_home="$(home_for_user "$state_user" 2>/dev/null || true)"
+        [[ "$state_user_home" == "$_CONTINUE_CURRENT_HOME" ]] || return 1
+    fi
+
+    printf '%s\n' "$candidate"
 }
 
 find_scanned_install_state_file() {
@@ -381,16 +418,25 @@ find_scanned_install_state_file() {
     local mtime=""
     local getent_bin=""
 
-    getent_bin="$(continue_system_binary_path getent 2>/dev/null || true)"
-    [[ -n "$getent_bin" ]] || return 1
-
-    while IFS=: read -r _ _ _ _ _ candidate_home _; do
-        [[ -n "$candidate_home" ]] || continue
-        [[ "$candidate_home" == /* ]] || continue
-        candidate="${candidate_home%/}/.acfs/state.json"
-        [[ -f "$candidate" ]] || continue
-        matches+=("$candidate")
-    done < <("$getent_bin" passwd 2>/dev/null || true)
+    if declare -F continue_getent_passwd_entry >/dev/null 2>&1; then
+        while IFS=: read -r _ _ _ _ _ candidate_home _; do
+            [[ -n "$candidate_home" ]] || continue
+            [[ "$candidate_home" == /* ]] || continue
+            candidate="${candidate_home%/}/.acfs/state.json"
+            [[ -f "$candidate" ]] || continue
+            matches+=("$candidate")
+        done < <(continue_getent_passwd_entry 2>/dev/null || true)
+    else
+        getent_bin="$(continue_system_binary_path getent 2>/dev/null || true)"
+        [[ -n "$getent_bin" ]] || return 1
+        while IFS=: read -r _ _ _ _ _ candidate_home _; do
+            [[ -n "$candidate_home" ]] || continue
+            [[ "$candidate_home" == /* ]] || continue
+            candidate="${candidate_home%/}/.acfs/state.json"
+            [[ -f "$candidate" ]] || continue
+            matches+=("$candidate")
+        done < <("$getent_bin" passwd 2>/dev/null || true)
+    fi
 
     if [[ ${#matches[@]} -eq 1 ]]; then
         echo "${matches[0]}"
@@ -444,6 +490,12 @@ get_install_state_file() {
         return 1
     fi
 
+    candidate="$(current_user_state_file 2>/dev/null || true)"
+    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
+        echo "$candidate"
+        return 0
+    fi
+
     if [[ -n "${SUDO_USER:-}" ]]; then
         target_home=$(home_for_user "$SUDO_USER" || true)
         candidate="${target_home}/.acfs/state.json"
@@ -470,12 +522,6 @@ get_install_state_file() {
             echo "$candidate"
             return 0
         fi
-    fi
-
-    candidate="$(current_user_state_file 2>/dev/null || true)"
-    if [[ -n "$candidate" ]] && [[ -f "$candidate" ]]; then
-        echo "$candidate"
-        return 0
     fi
 
     candidate=$(find_scanned_install_state_file || true)

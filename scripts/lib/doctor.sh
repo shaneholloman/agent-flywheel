@@ -152,7 +152,11 @@ _acfs_doctor_resolve_current_home() {
 }
 
 _acfs_doctor_current_home="$(_acfs_doctor_resolve_current_home 2>/dev/null || true)"
-if [[ -n "$_acfs_doctor_current_home" ]]; then
+_acfs_doctor_original_home="$(_acfs_doctor_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+if [[ -n "$_acfs_doctor_original_home" ]]; then
+    HOME="$_acfs_doctor_original_home"
+    export HOME
+elif [[ -n "$_acfs_doctor_current_home" ]]; then
     HOME="$_acfs_doctor_current_home"
     export HOME
 fi
@@ -250,14 +254,82 @@ case "$SCRIPT_DIR" in
 esac
 _acfs_doctor_script_acfs_home="$(_acfs_doctor_sanitize_abs_nonroot_path "${_acfs_doctor_script_acfs_home:-}" 2>/dev/null || true)"
 
+_acfs_doctor_acfs_home_for_home() {
+    local base_home="${1:-}"
+
+    base_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$base_home" 2>/dev/null || true)"
+    [[ -n "$base_home" ]] || return 1
+    printf '%s\n' "$base_home/.acfs"
+}
+
+_acfs_doctor_acfs_home_matches_home() {
+    local acfs_home="${1:-}"
+    local base_home="${2:-}"
+    local expected_acfs_home=""
+
+    acfs_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$acfs_home" 2>/dev/null || true)"
+    [[ -n "$acfs_home" ]] || return 1
+    expected_acfs_home="$(_acfs_doctor_acfs_home_for_home "$base_home" 2>/dev/null || true)"
+    [[ -n "$expected_acfs_home" ]] || return 1
+    [[ "$acfs_home" == "$expected_acfs_home" ]]
+}
+
+_acfs_doctor_trusted_lookup_acfs_home() {
+    local acfs_home="${ACFS_HOME:-}"
+
+    acfs_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$acfs_home" 2>/dev/null || true)"
+    [[ -n "$acfs_home" ]] || return 1
+
+    if [[ -n "${_acfs_doctor_script_acfs_home:-}" ]]; then
+        [[ "$acfs_home" == "$_acfs_doctor_script_acfs_home" ]] || return 1
+        printf '%s\n' "$acfs_home"
+        return 0
+    fi
+
+    if _acfs_doctor_acfs_home_matches_home "$acfs_home" "${_ACFS_DOCTOR_ENV_TARGET_HOME:-}" 2>/dev/null; then
+        printf '%s\n' "$acfs_home"
+        return 0
+    fi
+
+    if _acfs_doctor_acfs_home_matches_home "$acfs_home" "${_acfs_doctor_current_home:-}" 2>/dev/null; then
+        printf '%s\n' "$acfs_home"
+        return 0
+    fi
+
+    return 1
+}
+
+_acfs_doctor_trusted_runtime_acfs_home() {
+    local acfs_home="${ACFS_HOME:-}"
+
+    acfs_home="$(_acfs_doctor_sanitize_abs_nonroot_path "$acfs_home" 2>/dev/null || true)"
+    [[ -n "$acfs_home" ]] || return 1
+
+    if [[ -n "${_acfs_doctor_script_acfs_home:-}" ]]; then
+        [[ "$acfs_home" == "$_acfs_doctor_script_acfs_home" ]] || return 1
+        printf '%s\n' "$acfs_home"
+        return 0
+    fi
+
+    if _acfs_doctor_acfs_home_matches_home "$acfs_home" "${TARGET_HOME:-}" 2>/dev/null; then
+        printf '%s\n' "$acfs_home"
+        return 0
+    fi
+
+    return 1
+}
+
 _acfs_doctor_find_project_path() {
     local rel_path="$1"
     local candidate=""
+    local trusted_acfs_home=""
+
+    trusted_acfs_home="$(_acfs_doctor_trusted_lookup_acfs_home 2>/dev/null || true)"
 
     for candidate in \
         "$SCRIPT_DIR/../$rel_path" \
         "$SCRIPT_DIR/../../$rel_path" \
-        "${ACFS_HOME:+$ACFS_HOME/$rel_path}" \
+        "${trusted_acfs_home:+$trusted_acfs_home/$rel_path}" \
         "${_acfs_doctor_current_home:+$_acfs_doctor_current_home/.acfs/$rel_path}"; do
         if [[ -f "$candidate" ]]; then
             printf '%s\n' "$candidate"
@@ -376,8 +448,9 @@ fi
 if [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]]; then
     _acfs_doctor_state_files+=("$ACFS_SYSTEM_STATE_FILE")
 fi
-if [[ -n "${ACFS_HOME:-}" ]] && { [[ -z "${_acfs_doctor_script_acfs_home:-}" ]] || [[ "${ACFS_HOME}" == "$_acfs_doctor_script_acfs_home" ]]; }; then
-    _acfs_doctor_state_files+=("$ACFS_HOME/state.json")
+_acfs_doctor_trusted_acfs_home="$(_acfs_doctor_trusted_lookup_acfs_home 2>/dev/null || true)"
+if [[ -n "$_acfs_doctor_trusted_acfs_home" ]]; then
+    _acfs_doctor_state_files+=("$_acfs_doctor_trusted_acfs_home/state.json")
 fi
 if [[ -n "${ACFS_STATE_FILE:-}" ]]; then
     _acfs_doctor_state_files+=("$ACFS_STATE_FILE")
@@ -539,11 +612,19 @@ export TARGET_HOME
 
 if [[ -n "$_acfs_doctor_script_acfs_home" ]]; then
     ACFS_HOME="$_acfs_doctor_script_acfs_home"
-elif [[ -z "${ACFS_HOME:-}" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
-    ACFS_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "$TARGET_HOME/.acfs" 2>/dev/null || true)"
+else
+    _acfs_doctor_trusted_acfs_home="$(_acfs_doctor_trusted_runtime_acfs_home 2>/dev/null || true)"
+    if [[ -n "$_acfs_doctor_trusted_acfs_home" ]]; then
+        ACFS_HOME="$_acfs_doctor_trusted_acfs_home"
+    elif [[ -n "${TARGET_HOME:-}" ]]; then
+        ACFS_HOME="$(_acfs_doctor_acfs_home_for_home "$TARGET_HOME" 2>/dev/null || true)"
+    else
+        ACFS_HOME=""
+    fi
 fi
 export ACFS_HOME
 
+unset _acfs_doctor_trusted_acfs_home
 unset _acfs_doctor_script_acfs_home
 unset _acfs_doctor_state_files
 unset _acfs_doctor_state_file

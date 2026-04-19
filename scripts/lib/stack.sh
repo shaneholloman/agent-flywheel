@@ -103,6 +103,18 @@ _stack_home_from_user_bin_dir() {
     printf '%s\n' "$hinted_home"
 }
 
+_stack_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local target_home="${2:-}"
+
+    bin_dir="$(_stack_sanitize_abs_nonroot_path "$bin_dir" 2>/dev/null || true)"
+    target_home="$(_stack_existing_abs_home "$target_home" 2>/dev/null || true)"
+    [[ -n "$bin_dir" && -n "$target_home" ]] || return 1
+    [[ "$bin_dir" == "$target_home" || "$bin_dir" == "$target_home/"* ]] || return 1
+
+    printf '%s\n' "$bin_dir"
+}
+
 _stack_target_bin_dir() {
     local target_user="${1:-${TARGET_USER:-ubuntu}}"
     local target_home=""
@@ -329,23 +341,42 @@ _stack_passwd_home_from_entry() {
 
 _stack_target_home() {
     local target_user="${1:-${TARGET_USER:-ubuntu}}"
+    local explicit_bin_dir=""
     local explicit_home=""
+    local initial_env_home=""
     local passwd_entry=""
     local current_user=""
     local current_home=""
 
     explicit_home="$(_stack_existing_abs_home "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$explicit_home" ]]; then
-        printf '%s\n' "$explicit_home"
-        return 0
-    fi
-
+    initial_env_home="$(_stack_existing_abs_home "${ACFS_INITIAL_ENV_HOME:-${_UPDATE_INITIAL_ENV_HOME:-}}" 2>/dev/null || true)"
+    current_user="$(_stack_resolve_current_user 2>/dev/null || true)"
+    explicit_bin_dir="$(_stack_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$explicit_home" 2>/dev/null || true)"
     if [[ "$target_user" == "root" ]]; then
         printf '/root\n'
         return 0
     fi
+    if [[ -n "$explicit_home" && -z "${TARGET_USER:-}" && "$target_user" == "$current_user" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
+    fi
 
-    current_user="$(_stack_resolve_current_user 2>/dev/null || true)"
+    if [[ -n "$explicit_home" && -n "$explicit_bin_dir" && -z "${TARGET_USER:-}" && "$explicit_home" != "$initial_env_home" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
+    fi
+
+    if [[ -n "$explicit_home" ]]; then
+        passwd_entry="$(_stack_getent_passwd_entry "$target_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            passwd_entry="$(_stack_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+            if [[ -n "$passwd_entry" ]]; then
+                printf '%s\n' "${passwd_entry%/}"
+                return 0
+            fi
+        fi
+    fi
+
     if [[ "$current_user" == "$target_user" ]]; then
         current_home="$(_stack_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
         if [[ -n "$current_home" ]]; then
@@ -361,6 +392,11 @@ _stack_target_home() {
             printf '%s\n' "${passwd_entry%/}"
             return 0
         fi
+    fi
+
+    if [[ -n "$explicit_home" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
     fi
 
     return 1
@@ -1389,7 +1425,18 @@ git clone --depth 1 https://github.com/Dicklesworthstone/simultaneous_launch_but
 go build -o "$HOME/go/bin/slb" ./cmd/slb
 
 # Add ~/go/bin to PATH if not already present
-if ! grep -q 'export PATH=.*\$HOME/go/bin' ~/.zshrc 2>/dev/null; then
+acfs_has_active_go_bin_path() {
+  local file="${1:-}"
+  [[ -f "$file" ]] || return 1
+
+  awk '
+      /^[[:space:]]*#/ { next }
+      /^[[:space:]]*(export[[:space:]]+)?PATH[[:space:]]*=/ && index($0, "$HOME/go/bin") { found=1; exit }
+      END { exit(found ? 0 : 1) }
+  ' "$file" 2>/dev/null
+}
+
+if ! acfs_has_active_go_bin_path ~/.zshrc; then
   echo '' >> ~/.zshrc
   echo '# Go binaries' >> ~/.zshrc
   echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc

@@ -24,6 +24,15 @@ source "$SCRIPT_DIR/autofix.sh"
 autofix_version_managers_runtime_home() {
     local runtime_home=""
 
+    if declare -f autofix_runtime_home >/dev/null 2>&1; then
+        runtime_home="$(autofix_runtime_home 2>/dev/null || true)"
+    fi
+    runtime_home="$(autofix_sanitize_abs_nonroot_path "$runtime_home" 2>/dev/null || true)"
+    if [[ -n "$runtime_home" ]]; then
+        printf '%s\n' "$runtime_home"
+        return 0
+    fi
+
     runtime_home="$(autofix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
     if [[ -n "$runtime_home" ]]; then
         printf '%s\n' "$runtime_home"

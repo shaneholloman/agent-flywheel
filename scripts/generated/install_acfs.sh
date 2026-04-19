@@ -347,11 +347,22 @@ INSTALL_ACFS_WORKSPACE
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: install: if [[ ! -f ~/.zshrc.local ]] || ! grep -q \"alias agents=\" ~/.zshrc.local; then (target_user)"
+        log_info "dry-run: install: if ! acfs_has_active_agents_alias ~/.zshrc.local; then (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_WORKSPACE'
 # Add agents alias to zshrc.local if not already present
-if [[ ! -f ~/.zshrc.local ]] || ! grep -q "alias agents=" ~/.zshrc.local; then
+acfs_has_active_agents_alias() {
+  local file="${1:-}"
+  [[ -f "$file" ]] || return 1
+
+  awk '
+      /^[[:space:]]*#/ { next }
+      /^[[:space:]]*alias[[:space:]]+agents=/ { found=1; exit }
+      END { exit(found ? 0 : 1) }
+  ' "$file" 2>/dev/null
+}
+
+if ! acfs_has_active_agents_alias ~/.zshrc.local; then
   touch ~/.zshrc.local 2>/dev/null || true
   echo '' >> ~/.zshrc.local
   echo '# ACFS agents workspace alias' >> ~/.zshrc.local
@@ -359,9 +370,9 @@ if [[ ! -f ~/.zshrc.local ]] || ! grep -q "alias agents=" ~/.zshrc.local; then
 fi
 INSTALL_ACFS_WORKSPACE
         then
-            log_warn "acfs.workspace: install command failed: if [[ ! -f ~/.zshrc.local ]] || ! grep -q \"alias agents=\" ~/.zshrc.local; then"
+            log_warn "acfs.workspace: install command failed: if ! acfs_has_active_agents_alias ~/.zshrc.local; then"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "acfs.workspace" "install command failed: if [[ ! -f ~/.zshrc.local ]] || ! grep -q \"alias agents=\" ~/.zshrc.local; then"
+              record_skipped_tool "acfs.workspace" "install command failed: if ! acfs_has_active_agents_alias ~/.zshrc.local; then"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "acfs.workspace"
             fi
@@ -387,15 +398,26 @@ INSTALL_ACFS_WORKSPACE
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: grep -q \"alias agents=\" ~/.zshrc.local || grep -q \"alias agents=\" ~/.zshrc (target_user)"
+        log_info "dry-run: verify: acfs_has_active_agents_alias ~/.zshrc.local || acfs_has_active_agents_alias ~/.zshrc (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_ACFS_WORKSPACE'
-grep -q "alias agents=" ~/.zshrc.local || grep -q "alias agents=" ~/.zshrc
+acfs_has_active_agents_alias() {
+  local file="${1:-}"
+  [[ -f "$file" ]] || return 1
+
+  awk '
+      /^[[:space:]]*#/ { next }
+      /^[[:space:]]*alias[[:space:]]+agents=/ { found=1; exit }
+      END { exit(found ? 0 : 1) }
+  ' "$file" 2>/dev/null
+}
+
+acfs_has_active_agents_alias ~/.zshrc.local || acfs_has_active_agents_alias ~/.zshrc
 INSTALL_ACFS_WORKSPACE
         then
-            log_warn "acfs.workspace: verify failed: grep -q \"alias agents=\" ~/.zshrc.local || grep -q \"alias agents=\" ~/.zshrc"
+            log_warn "acfs.workspace: verify failed: acfs_has_active_agents_alias ~/.zshrc.local || acfs_has_active_agents_alias ~/.zshrc"
             if type -t record_skipped_tool >/dev/null 2>&1; then
-              record_skipped_tool "acfs.workspace" "verify failed: grep -q \"alias agents=\" ~/.zshrc.local || grep -q \"alias agents=\" ~/.zshrc"
+              record_skipped_tool "acfs.workspace" "verify failed: acfs_has_active_agents_alias ~/.zshrc.local || acfs_has_active_agents_alias ~/.zshrc"
             elif type -t state_tool_skip >/dev/null 2>&1; then
               state_tool_skip "acfs.workspace"
             fi

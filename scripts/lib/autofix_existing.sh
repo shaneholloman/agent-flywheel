@@ -105,6 +105,7 @@ autofix_existing_shell_configs() {
     printf '%s\n' \
         "$runtime_home/.bashrc" \
         "$runtime_home/.zshrc" \
+        "$runtime_home/.zprofile" \
         "$runtime_home/.profile" \
         "$runtime_home/.bash_profile"
 }
@@ -142,6 +143,35 @@ autofix_existing_shell_config_files_json() {
         | map(select(length > 0))
         | unique
     '
+}
+
+autofix_existing_sed_literal() {
+    printf '%s' "$1" | sed 's/[.[\*^$()+?{|]/\\&/g'
+}
+
+autofix_existing_shell_config_has_path_fragment() {
+    local config_path="${1:-}"
+    local fragment="${2:-}"
+
+    [[ -n "$config_path" && -n "$fragment" && -f "$config_path" ]] || return 1
+    awk -v fragment="$fragment" '
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*(export[[:space:]]+)?PATH[[:space:]]*=/ && index($0, fragment) { found=1; exit }
+        END { exit(found ? 0 : 1) }
+    ' "$config_path" 2>/dev/null
+}
+
+autofix_existing_shell_config_needs_path_update() {
+    local config_path="${1:-}"
+
+    [[ -n "$config_path" && -f "$config_path" ]] || return 1
+
+    if autofix_existing_shell_config_has_path_fragment "$config_path" '.local/bin' &&
+       autofix_existing_shell_config_has_path_fragment "$config_path" '.atuin/bin'; then
+        return 1
+    fi
+
+    return 0
 }
 
 autofix_existing_mv_undo_command() {
@@ -896,13 +926,15 @@ update_path_entries() {
     local restore_command=""
     local files_json=""
     local recovery_incomplete=false
+    local legacy_acfs_path_line='export PATH="$HOME/.local/bin:$PATH" # ACFS'
+    local legacy_profile_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
+    local current_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH" # ACFS'
 
     while IFS= read -r config; do
         [[ -n "$config" ]] || continue
         edit_config="$(autofix_existing_shell_config_edit_path "$config" 2>/dev/null || true)"
         if [[ -n "$edit_config" ]]; then
-            # Check if ACFS path entry exists
-            if ! grep -q "# ACFS PATH" "$edit_config"; then
+            if autofix_existing_shell_config_needs_path_update "$edit_config"; then
                 log_info "[UPGRADE] Adding PATH entry to $config"
 
                 # Create backup
@@ -914,11 +946,35 @@ update_path_entries() {
                 files_json="$(autofix_existing_shell_config_files_json "$config" "$edit_config" 2>/dev/null || printf '[]\n')"
                 restore_command="$(autofix_backup_restore_command "$backup" 2>/dev/null || true)"
 
-                # Append PATH entry
-                if ! {
+                # Repair exact legacy ACFS lines in place; otherwise append a fresh block.
+                if grep -Fxq "$legacy_acfs_path_line" "$edit_config" 2>/dev/null; then
+                    if ! sed -i "s|^$(autofix_existing_sed_literal "$legacy_acfs_path_line")$|$current_path_line|" "$edit_config"; then
+                        log_error "[UPGRADE] Failed to update legacy PATH entry in $config"
+                        if ! autofix_existing_restore_from_backup "$backup" "$edit_config"; then
+                            log_error "[UPGRADE] Failed to restore $config after PATH update failure"
+                            recovery_incomplete=true
+                        fi
+                        if [[ "$recovery_incomplete" == "true" ]]; then
+                            return 2
+                        fi
+                        return 1
+                    fi
+                elif grep -Fxq "$legacy_profile_path_line" "$edit_config" 2>/dev/null; then
+                    if ! sed -i "s|^$(autofix_existing_sed_literal "$legacy_profile_path_line")$|$current_path_line|" "$edit_config"; then
+                        log_error "[UPGRADE] Failed to update legacy login PATH entry in $config"
+                        if ! autofix_existing_restore_from_backup "$backup" "$edit_config"; then
+                            log_error "[UPGRADE] Failed to restore $config after PATH update failure"
+                            recovery_incomplete=true
+                        fi
+                        if [[ "$recovery_incomplete" == "true" ]]; then
+                            return 2
+                        fi
+                        return 1
+                    fi
+                elif ! {
                     echo ''
                     echo '# ACFS PATH'
-                    echo 'export PATH="$HOME/.local/bin:$PATH" # ACFS'
+                    echo "$current_path_line"
                 } >> "$edit_config"; then
                     log_error "[UPGRADE] Failed to append PATH entry to $config"
                     if ! autofix_existing_restore_from_backup "$backup" "$edit_config"; then

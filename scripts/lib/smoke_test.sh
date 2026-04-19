@@ -8,12 +8,12 @@
 _SMOKE_WAS_SOURCED=false
 _SMOKE_ORIGINAL_HOME=""
 _SMOKE_ORIGINAL_HOME_WAS_SET=false
+if [[ -v HOME ]]; then
+    _SMOKE_ORIGINAL_HOME="$HOME"
+    _SMOKE_ORIGINAL_HOME_WAS_SET=true
+fi
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
     _SMOKE_WAS_SOURCED=true
-    if [[ -v HOME ]]; then
-        _SMOKE_ORIGINAL_HOME="$HOME"
-        _SMOKE_ORIGINAL_HOME_WAS_SET=true
-    fi
 fi
 
 # Ensure we have logging functions available
@@ -198,6 +198,14 @@ _smoke_initial_current_home() {
     local cached_home=""
     local resolved_home=""
 
+    if [[ "${_SMOKE_WAS_SOURCED:-false}" == "true" ]] && [[ -z "${TARGET_HOME:-}${TARGET_USER:-}${ACFS_HOME:-}${ACFS_STATE_FILE:-}${ACFS_SYSTEM_STATE_FILE:-}" ]]; then
+        cached_home="$(_smoke_sanitize_abs_nonroot_path "${_SMOKE_ORIGINAL_HOME:-${HOME:-}}" 2>/dev/null || true)"
+        if [[ -n "$cached_home" ]]; then
+            printf '%s\n' "$cached_home"
+            return 0
+        fi
+    fi
+
     resolved_home="$(_smoke_resolve_current_home 2>/dev/null || true)"
     if [[ -n "$resolved_home" ]]; then
         printf '%s\n' "$resolved_home"
@@ -228,6 +236,8 @@ _SMOKE_SYSTEM_STATE_FILE="$(_smoke_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STAT
 if [[ -z "$_SMOKE_SYSTEM_STATE_FILE" ]]; then
     _SMOKE_SYSTEM_STATE_FILE="/var/lib/acfs/state.json"
 fi
+_SMOKE_SYSTEM_STATE_WAS_EXPLICIT=false
+[[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && [[ "${ACFS_SYSTEM_STATE_FILE%/}" != "/var/lib/acfs/state.json" ]] && _SMOKE_SYSTEM_STATE_WAS_EXPLICIT=true
 
 _smoke_script_acfs_home() {
     local candidate=""
@@ -290,6 +300,12 @@ _smoke_resolve_bootstrap_state_file() {
     candidate="$(_smoke_script_acfs_home 2>/dev/null || true)"
     if [[ -n "$candidate" ]] && [[ -f "$candidate/state.json" ]]; then
         printf '%s\n' "$candidate/state.json"
+        return 0
+    fi
+
+    candidate="$(_smoke_current_home_state_file 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
         return 0
     fi
 
@@ -418,6 +434,43 @@ _smoke_read_user_for_home() {
     return 1
 }
 
+_smoke_current_home_state_file() {
+    local candidate=""
+    local current_home="$_SMOKE_CURRENT_HOME"
+    local current_user="${_SMOKE_CURRENT_USER:-}"
+    local original_home=""
+    local state_home=""
+    local state_user=""
+    local state_user_home=""
+
+    [[ -n "$_SMOKE_DEFAULT_ACFS_HOME" && -n "$current_home" ]] || return 1
+    [[ "$current_home" != "/root" ]] || return 1
+
+    candidate="$_SMOKE_DEFAULT_ACFS_HOME/state.json"
+    [[ -f "$candidate" ]] || return 1
+
+    if [[ "${_SMOKE_ORIGINAL_HOME_WAS_SET:-false}" == true ]]; then
+        original_home="$(_smoke_sanitize_abs_nonroot_path "$_SMOKE_ORIGINAL_HOME" 2>/dev/null || true)"
+        [[ -z "$original_home" || "$original_home" == "$current_home" ]] || return 1
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        current_user="$(_smoke_resolve_current_user 2>/dev/null || true)"
+    fi
+    [[ -n "$current_user" && "$current_user" != "root" ]] || return 1
+
+    state_home="$(_smoke_read_state_string "$candidate" "target_home" 2>/dev/null || true)"
+    [[ -z "$state_home" || "$state_home" == "$current_home" ]] || return 1
+
+    state_user="$(_smoke_read_state_string "$candidate" "target_user" 2>/dev/null || true)"
+    if [[ -n "$state_user" && "$state_user" != "$current_user" ]]; then
+        state_user_home="$(_smoke_home_for_user "$state_user" 2>/dev/null || true)"
+        [[ "$state_user_home" == "$current_home" ]] || return 1
+    fi
+
+    printf '%s\n' "$candidate"
+}
+
 _SMOKE_BOOTSTRAP_STATE_FILE="$(_smoke_resolve_bootstrap_state_file 2>/dev/null || true)"
 _SMOKE_TARGET_USER_DEFAULTED=false
 
@@ -432,13 +485,19 @@ if [[ -z "${_SMOKE_TARGET_USER:-}" ]]; then
 fi
 
 _SMOKE_TARGET_HOME=""
-_smoke_target_passwd_entry="$(_smoke_getent_passwd_entry "$_SMOKE_TARGET_USER" || true)"
-if [[ -n "$_smoke_target_passwd_entry" ]]; then
-    _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "$(_smoke_passwd_home_from_entry "$_smoke_target_passwd_entry" 2>/dev/null || true)" 2>/dev/null || true)"
-elif [[ "${_SMOKE_TARGET_USER}" == "root" ]]; then
-    _SMOKE_TARGET_HOME="/root"
-elif [[ -n "${_SMOKE_CURRENT_USER:-}" ]] && [[ "${_SMOKE_TARGET_USER}" == "${_SMOKE_CURRENT_USER}" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
-    _SMOKE_TARGET_HOME="$_SMOKE_CURRENT_HOME"
+if [[ "$_SMOKE_TARGET_USER_DEFAULTED" == true ]] && [[ "$_SMOKE_SYSTEM_STATE_WAS_EXPLICIT" == true ]]; then
+    _SMOKE_TARGET_HOME="$(_smoke_read_state_string "$_SMOKE_SYSTEM_STATE_FILE" "target_home" 2>/dev/null || true)"
+    _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "${_SMOKE_TARGET_HOME:-}" 2>/dev/null || true)"
+fi
+if [[ -z "${_SMOKE_TARGET_HOME:-}" ]]; then
+    _smoke_target_passwd_entry="$(_smoke_getent_passwd_entry "$_SMOKE_TARGET_USER" || true)"
+    if [[ -n "$_smoke_target_passwd_entry" ]]; then
+        _SMOKE_TARGET_HOME="$(_smoke_sanitize_abs_nonroot_path "$(_smoke_passwd_home_from_entry "$_smoke_target_passwd_entry" 2>/dev/null || true)" 2>/dev/null || true)"
+    elif [[ "${_SMOKE_TARGET_USER}" == "root" ]]; then
+        _SMOKE_TARGET_HOME="/root"
+    elif [[ -n "${_SMOKE_CURRENT_USER:-}" ]] && [[ "${_SMOKE_TARGET_USER}" == "${_SMOKE_CURRENT_USER}" ]] && [[ -n "${_SMOKE_CURRENT_HOME:-}" ]]; then
+        _SMOKE_TARGET_HOME="$_SMOKE_CURRENT_HOME"
+    fi
 fi
 unset _smoke_target_passwd_entry
 if [[ -z "${_SMOKE_TARGET_HOME:-}" ]]; then
@@ -850,8 +909,19 @@ _smoke_is_externally_managed_user() {
 
 _smoke_external_shell_handoff_configured() {
     local target_home="${1:-}"
+    local bashrc_path=""
+
     [[ -n "$target_home" ]] || return 1
-    grep -q 'ACFS externally-managed shell handoff' "$target_home/.bashrc" 2>/dev/null
+    bashrc_path="$target_home/.bashrc"
+    [[ -f "$bashrc_path" ]] || return 1
+
+    awk '
+        $0 == "# ACFS externally-managed shell handoff" { marker=1; next }
+        marker && $0 ~ /^[[:space:]]*#/ { next }
+        marker && index($0, "command -v zsh") && index($0, "ACFS_ZSH_HANDOFF_ACTIVE") { found=1; exit }
+        marker && $0 !~ /^[[:space:]]*$/ { marker=0 }
+        END { exit(found ? 0 : 1) }
+    ' "$bashrc_path" 2>/dev/null
 }
 
 # ============================================================

@@ -426,8 +426,19 @@ migrate_ssh_keys() {
 # Set default shell for target user
 user_external_shell_handoff_configured() {
     local target_home="${1:-}"
+    local bashrc_path=""
+
     [[ -n "$target_home" ]] || return 1
-    grep -q 'ACFS externally-managed shell handoff' "$target_home/.bashrc" 2>/dev/null
+    bashrc_path="$target_home/.bashrc"
+    [[ -f "$bashrc_path" ]] || return 1
+
+    awk '
+        $0 == "# ACFS externally-managed shell handoff" { marker=1; next }
+        marker && $0 ~ /^[[:space:]]*#/ { next }
+        marker && index($0, "command -v zsh") && index($0, "ACFS_ZSH_HANDOFF_ACTIVE") { found=1; exit }
+        marker && $0 !~ /^[[:space:]]*$/ { marker=0 }
+        END { exit(found ? 0 : 1) }
+    ' "$bashrc_path" 2>/dev/null
 }
 
 user_append_external_shell_handoff() {

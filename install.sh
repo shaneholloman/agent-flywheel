@@ -3947,8 +3947,19 @@ acfs_is_externally_managed_user() {
 
 acfs_external_shell_handoff_configured() {
     local target_home="${1:-}"
+    local bashrc_path=""
+
     [[ -n "$target_home" ]] || return 1
-    grep -q 'ACFS externally-managed shell handoff' "$target_home/.bashrc" 2>/dev/null
+    bashrc_path="$target_home/.bashrc"
+    [[ -f "$bashrc_path" ]] || return 1
+
+    awk '
+        $0 == "# ACFS externally-managed shell handoff" { marker=1; next }
+        marker && $0 ~ /^[[:space:]]*#/ { next }
+        marker && index($0, "command -v zsh") && index($0, "ACFS_ZSH_HANDOFF_ACTIVE") { found=1; exit }
+        marker && $0 !~ /^[[:space:]]*$/ { marker=0 }
+        END { exit(found ? 0 : 1) }
+    ' "$bashrc_path" 2>/dev/null
 }
 
 acfs_append_external_shell_handoff() {
@@ -3987,6 +3998,36 @@ acfs_configure_external_shell_handoff() {
 
     $SUDO chown "$target_user:$target_user" "$target_home/.bashrc" 2>/dev/null || true
     return 0
+}
+
+profile_path_has_fragment() {
+    local file="${1:-}"
+    local fragment="${2:-}"
+
+    [[ -n "$file" && -n "$fragment" && -f "$file" ]] || return 1
+    awk -v fragment="$fragment" '
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*(export[[:space:]]+)?PATH[[:space:]]*=/ && index($0, fragment) { found=1; exit }
+        END { exit(found ? 0 : 1) }
+    ' "$file" 2>/dev/null
+}
+
+acfs_zshrc_is_managed_loader() {
+    local file="${1:-}"
+
+    [[ -f "$file" ]] || return 1
+    awk '
+        /^[[:space:]]*$/ { next }
+        { lines[++line_count]=$0 }
+        END {
+            if (line_count == 2 &&
+                lines[1] ~ /^# ACFS loader/ &&
+                lines[2] == "source \"$HOME/.acfs/zsh/acfs.zshrc\"") {
+                exit 0
+            }
+            exit 1
+        }
+    ' "$file" 2>/dev/null
 }
 
 setup_shell() {
@@ -4065,7 +4106,7 @@ setup_shell() {
 
     # Create minimal .zshrc loader for target user (backup existing if needed)
     local user_zshrc="$TARGET_HOME/.zshrc"
-    if [[ -f "$user_zshrc" ]] && ! grep -q "^# ACFS loader" "$user_zshrc" 2>/dev/null; then
+    if [[ -f "$user_zshrc" ]] && ! acfs_zshrc_is_managed_loader "$user_zshrc"; then
         local backup
         backup="$user_zshrc.pre-acfs.$(date +%Y%m%d%H%M%S)"
         if [[ "${ACFS_CI:-false}" == "true" ]]; then
@@ -4099,10 +4140,10 @@ EOF
             echo "$profile_path_line"
         } > "$user_profile"
         $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_profile"
-    elif grep -Fq "$legacy_profile_path_line" "$user_profile" 2>/dev/null; then
-        sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" "$user_profile"
-    elif ! grep -q '\.local/bin' "$user_profile" 2>/dev/null || \
-         ! grep -q '\.atuin/bin' "$user_profile" 2>/dev/null; then
+    elif grep -Fxq "$legacy_profile_path_line" "$user_profile" 2>/dev/null; then
+        sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" "$user_profile"
+    elif ! profile_path_has_fragment "$user_profile" '.local/bin' || \
+         ! profile_path_has_fragment "$user_profile" '.atuin/bin'; then
         # Append to existing .profile
         {
             echo ""
@@ -4122,10 +4163,10 @@ EOF
             echo "$profile_path_line"
         } > "$user_zprofile"
         $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zprofile"
-    elif grep -Fq "$legacy_profile_path_line" "$user_zprofile" 2>/dev/null; then
-        sed -i "s|$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$profile_path_line|" "$user_zprofile"
-    elif ! grep -q '\.local/bin' "$user_zprofile" 2>/dev/null || \
-         ! grep -q '\.atuin/bin' "$user_zprofile" 2>/dev/null; then
+    elif grep -Fxq "$legacy_profile_path_line" "$user_zprofile" 2>/dev/null; then
+        sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" "$user_zprofile"
+    elif ! profile_path_has_fragment "$user_zprofile" '.local/bin' || \
+         ! profile_path_has_fragment "$user_zprofile" '.atuin/bin'; then
         {
             echo ""
             echo "# Added by ACFS - user binary paths"

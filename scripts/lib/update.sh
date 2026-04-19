@@ -93,30 +93,55 @@ _update_early_passwd_home_for_user() {
 }
 
 _update_early_runtime_home() {
+    local explicit_home=""
+    local env_home=""
     local runtime_home=""
     local current_user=""
+    local target_user="${TARGET_USER:-}"
 
-    runtime_home="$(_update_initial_existing_home "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$runtime_home" ]]; then
-        printf '%s\n' "$runtime_home"
-        return 0
-    fi
-
-    runtime_home="$(_update_initial_existing_home "${HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$runtime_home" ]]; then
-        printf '%s\n' "$runtime_home"
-        return 0
-    fi
-
+    explicit_home="$(_update_initial_existing_home "${TARGET_HOME:-}" 2>/dev/null || true)"
+    env_home="$(_update_initial_existing_home "${HOME:-}" 2>/dev/null || true)"
     current_user="$(_update_early_current_user 2>/dev/null || true)"
+
+    if [[ "$target_user" == "root" ]]; then
+        printf '/root\n'
+        return 0
+    fi
+
+    if [[ -n "$target_user" && "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        runtime_home="$(_update_early_passwd_home_for_user "$target_user" 2>/dev/null || true)"
+        if [[ -n "$runtime_home" ]]; then
+            printf '%s\n' "$runtime_home"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$explicit_home" && "$explicit_home" != "$env_home" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
+    fi
+
+    if [[ -n "$env_home" ]]; then
+        printf '%s\n' "$env_home"
+        return 0
+    fi
+
     if [[ -n "$current_user" ]]; then
         _update_early_passwd_home_for_user "$current_user"
         return $?
     fi
 
+    if [[ -n "$explicit_home" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
+    fi
+
     return 1
 }
 
+_UPDATE_INITIAL_ENV_HOME="$(_update_initial_existing_home "${HOME:-}" 2>/dev/null || true)"
+ACFS_INITIAL_ENV_HOME="${ACFS_INITIAL_ENV_HOME:-$_UPDATE_INITIAL_ENV_HOME}"
+export ACFS_INITIAL_ENV_HOME
 _UPDATE_EARLY_HOME="$(_update_early_runtime_home 2>/dev/null || true)"
 if [[ -n "$_UPDATE_EARLY_HOME" ]]; then
     HOME="$_UPDATE_EARLY_HOME"
@@ -1625,7 +1650,12 @@ update_target_home() {
     update_validate_target_user "$target_user" || return 1
 
     explicit_home="$(update_existing_home "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$explicit_home" ]]; then
+    current_user="$(update_current_user)"
+    if [[ "$target_user" == "root" ]]; then
+        printf '%s\n' "/root"
+        return 0
+    fi
+    if [[ -n "$explicit_home" && -z "${TARGET_USER:-}" && "$target_user" == "$current_user" ]]; then
         printf '%s\n' "$explicit_home"
         return 0
     fi
@@ -1640,18 +1670,17 @@ update_target_home() {
         fi
     fi
 
-    if [[ "$target_user" == "root" ]]; then
-        printf '%s\n' "/root"
-        return 0
-    fi
-
-    current_user="$(update_current_user)"
     if [[ "$target_user" == "$current_user" ]]; then
         current_home="$(update_existing_home "${HOME:-}" 2>/dev/null || true)"
         if [[ -n "$current_home" ]]; then
             printf '%s\n' "$current_home"
             return 0
         fi
+    fi
+
+    if [[ -n "$explicit_home" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
     fi
 
     return 1
@@ -1916,8 +1945,30 @@ cleanup_legacy_bv_alias() {
     local zshrc_local="$runtime_home/.zshrc.local"
     [[ -f "$zshrc_local" ]] || return 0
 
+    update_zshrc_local_has_active_bv_alias() {
+        local file="${1:-}"
+        [[ -f "$file" ]] || return 1
+
+        awk '
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*alias[[:space:]]+bv=/ { found=1; exit }
+            END { exit(found ? 0 : 1) }
+        ' "$file" 2>/dev/null
+    }
+
+    update_zshrc_local_has_active_bv_block() {
+        local file="${1:-}"
+        [[ -f "$file" ]] || return 1
+
+        awk '
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*if[[:space:]]+\[[^]]*\.local\/bin\/bv[^]]*\][[:space:]]*;[[:space:]]*then[[:space:]]*$/ { found=1; exit }
+            END { exit(found ? 0 : 1) }
+        ' "$file" 2>/dev/null
+    }
+
     if update_is_read_only_mode; then
-        if grep -qE 'alias bv=|if \[.*\.local/bin/bv.*\]; then' "$zshrc_local" 2>/dev/null; then
+        if update_zshrc_local_has_active_bv_alias "$zshrc_local" || update_zshrc_local_has_active_bv_block "$zshrc_local"; then
             log_item "skip" "legacy cleanup" "dry-run: would remove stale bv alias block from .zshrc.local"
         fi
         return 0
@@ -1940,19 +1991,19 @@ cleanup_legacy_bv_alias() {
     # or their skeletons.  Do NOT use '/^# === BV/,/^fi$/d' because the
     # BV comment may precede a for/done block (PATH setup) with no fi,
     # causing sed to delete to EOF.
-    if grep -q 'alias bv=' "$zshrc_local" 2>/dev/null; then
+    if update_zshrc_local_has_active_bv_alias "$zshrc_local"; then
         # Remove the if/elif/fi block containing bv alias checks
-        sed -i '/^if \[.*\.local\/bin\/bv.*\]; then/,/^fi$/d' "$zshrc_local"
+        sed -i '/^[[:space:]]*if[[:space:]]\+\[.*\.local\/bin\/bv.*\][[:space:]]*;[[:space:]]*then[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' "$zshrc_local"
         # Safety net: remove any standalone alias bv= lines
-        sed -i '/alias bv=/d' "$zshrc_local"
+        sed -i '/^[[:space:]]*alias[[:space:]]\+bv=/d' "$zshrc_local"
         log_item "ok" "legacy cleanup" "removed stale bv alias block from .zshrc.local"
         log_to_file "Removed bv alias block from $zshrc_local"
     fi
 
     # Also clean up orphaned if/elif/fi skeletons left by earlier runs
     # that only deleted the alias lines but not the surrounding block.
-    if grep -q 'if \[.*\.local\/bin\/bv.*\]; then' "$zshrc_local" 2>/dev/null; then
-        sed -i '/^if \[.*\.local\/bin\/bv.*\]; then/,/^fi$/d' "$zshrc_local"
+    if update_zshrc_local_has_active_bv_block "$zshrc_local"; then
+        sed -i '/^[[:space:]]*if[[:space:]]\+\[.*\.local\/bin\/bv.*\][[:space:]]*;[[:space:]]*then[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' "$zshrc_local"
         log_item "ok" "legacy cleanup" "removed orphaned bv if/elif/fi skeleton from .zshrc.local"
         log_to_file "Removed orphaned bv block skeleton from $zshrc_local"
     fi
@@ -2020,11 +2071,11 @@ sync_acfs_zsh_loader() {
 
     [[ -f "$user_zshrc" ]] || return 0
 
-    if ! grep -Fq "$acfs_loader_source" "$user_zshrc" 2>/dev/null; then
+    if ! _update_file_has_active_exact_line "$user_zshrc" "$acfs_loader_source"; then
         return 0
     fi
 
-    if ! grep -Fq "$stale_local_source" "$user_zshrc" 2>/dev/null; then
+    if ! _update_file_has_active_exact_line "$user_zshrc" "$stale_local_source"; then
         return 0
     fi
 
@@ -2033,9 +2084,39 @@ sync_acfs_zsh_loader() {
         return 0
     fi
 
-    sed -i '\|^\[ -f "\$HOME/\.zshrc\.local" \] && source "\$HOME/\.zshrc\.local"$|d' "$user_zshrc"
+    sed -i '\|^[[:space:]]*\[ -f "\$HOME/\.zshrc\.local" \] && source "\$HOME/\.zshrc\.local"[[:space:]]*$|d' "$user_zshrc"
     log_item "ok" "acfs.zsh loader" "removed duplicate ~/.zshrc.local sourcing from ~/.zshrc"
     log_to_file "Removed duplicate .zshrc.local sourcing from $user_zshrc"
+}
+
+_update_file_has_active_exact_line() {
+    local file="${1:-}"
+    local expected_line="${2:-}"
+
+    [[ -n "$file" && -n "$expected_line" && -f "$file" ]] || return 1
+
+    awk -v expected="$expected_line" '
+        /^[[:space:]]*#/ { next }
+        {
+            line=$0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line == expected) { found=1; exit }
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$file" 2>/dev/null
+}
+
+_update_profile_path_has_fragment() {
+    local file="${1:-}"
+    local fragment="${2:-}"
+
+    [[ -n "$file" && -n "$fragment" && -f "$file" ]] || return 1
+    awk -v fragment="$fragment" '
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*(export[[:space:]]+)?PATH[[:space:]]*=/ && index($0, fragment) { found=1; exit }
+        END { exit(found ? 0 : 1) }
+    ' "$file" 2>/dev/null
 }
 
 sync_acfs_profile_paths() {
@@ -2045,21 +2126,55 @@ sync_acfs_profile_paths() {
     local user_profile="$runtime_home/.profile"
     local legacy_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
     local current_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+    local escaped_legacy_path_line=""
 
-    [[ -f "$user_profile" ]] || return 0
+    if [[ ! -f "$user_profile" ]]; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_item "ok" "acfs.profile" "would create login PATH including ~/.atuin/bin"
+            return 0
+        fi
 
-    if ! grep -Fq "$legacy_path_line" "$user_profile" 2>/dev/null; then
+        {
+            printf '# ~/.profile: executed by bash for login shells\n'
+            printf '\n'
+            printf '# User binary paths\n'
+            printf '%s\n' "$current_path_line"
+        } > "$user_profile"
+        log_item "ok" "acfs.profile" "created login PATH including ~/.atuin/bin"
+        log_to_file "Created ACFS-managed PATH line in $user_profile"
+        return 0
+    fi
+
+    if grep -Fxq "$legacy_path_line" "$user_profile" 2>/dev/null; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_item "ok" "acfs.profile" "would update login PATH to include ~/.atuin/bin"
+            return 0
+        fi
+
+        escaped_legacy_path_line="$(printf '%s\n' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')"
+        sed -i "s|^$escaped_legacy_path_line$|$current_path_line|" "$user_profile"
+        log_item "ok" "acfs.profile" "updated login PATH to include ~/.atuin/bin"
+        log_to_file "Updated ACFS-managed PATH line in $user_profile"
+        return 0
+    fi
+
+    if _update_profile_path_has_fragment "$user_profile" '.local/bin' && \
+       _update_profile_path_has_fragment "$user_profile" '.atuin/bin'; then
         return 0
     fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_item "ok" "acfs.profile" "would update login PATH to include ~/.atuin/bin"
+        log_item "ok" "acfs.profile" "would add login PATH including ~/.atuin/bin"
         return 0
     fi
 
-    sed -i "s|$(printf '%s\n' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$current_path_line|" "$user_profile"
-    log_item "ok" "acfs.profile" "updated login PATH to include ~/.atuin/bin"
-    log_to_file "Updated ACFS-managed PATH line in $user_profile"
+    {
+        printf '\n'
+        printf '# Added by ACFS - user binary paths\n'
+        printf '%s\n' "$current_path_line"
+    } >> "$user_profile"
+    log_item "ok" "acfs.profile" "added login PATH including ~/.atuin/bin"
+    log_to_file "Added ACFS-managed PATH line to $user_profile"
 }
 
 sync_acfs_zprofile_paths() {
@@ -2069,21 +2184,55 @@ sync_acfs_zprofile_paths() {
     local user_zprofile="$runtime_home/.zprofile"
     local legacy_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"'
     local current_path_line='export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$PATH"'
+    local escaped_legacy_path_line=""
 
-    [[ -f "$user_zprofile" ]] || return 0
+    if [[ ! -f "$user_zprofile" ]]; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_item "ok" "acfs.zprofile" "would create login PATH including ~/.atuin/bin"
+            return 0
+        fi
 
-    if ! grep -Fq "$legacy_path_line" "$user_zprofile" 2>/dev/null; then
+        {
+            printf '# ~/.zprofile: executed by zsh for login shells\n'
+            printf '\n'
+            printf '# User binary paths\n'
+            printf '%s\n' "$current_path_line"
+        } > "$user_zprofile"
+        log_item "ok" "acfs.zprofile" "created login PATH including ~/.atuin/bin"
+        log_to_file "Created ACFS-managed PATH line in $user_zprofile"
+        return 0
+    fi
+
+    if grep -Fxq "$legacy_path_line" "$user_zprofile" 2>/dev/null; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_item "ok" "acfs.zprofile" "would update login PATH to include ~/.atuin/bin"
+            return 0
+        fi
+
+        escaped_legacy_path_line="$(printf '%s\n' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')"
+        sed -i "s|^$escaped_legacy_path_line$|$current_path_line|" "$user_zprofile"
+        log_item "ok" "acfs.zprofile" "updated login PATH to include ~/.atuin/bin"
+        log_to_file "Updated ACFS-managed PATH line in $user_zprofile"
+        return 0
+    fi
+
+    if _update_profile_path_has_fragment "$user_zprofile" '.local/bin' && \
+       _update_profile_path_has_fragment "$user_zprofile" '.atuin/bin'; then
         return 0
     fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_item "ok" "acfs.zprofile" "would update login PATH to include ~/.atuin/bin"
+        log_item "ok" "acfs.zprofile" "would add login PATH including ~/.atuin/bin"
         return 0
     fi
 
-    sed -i "s|$(printf '%s\n' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')|$current_path_line|" "$user_zprofile"
-    log_item "ok" "acfs.zprofile" "updated login PATH to include ~/.atuin/bin"
-    log_to_file "Updated ACFS-managed PATH line in $user_zprofile"
+    {
+        printf '\n'
+        printf '# Added by ACFS - user binary paths\n'
+        printf '%s\n' "$current_path_line"
+    } >> "$user_zprofile"
+    log_item "ok" "acfs.zprofile" "added login PATH including ~/.atuin/bin"
+    log_to_file "Added ACFS-managed PATH line to $user_zprofile"
 }
 
 # Sync critical scripts from the git repo to ~/.acfs/ so that subsequent
