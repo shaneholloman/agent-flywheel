@@ -665,6 +665,10 @@ _status_resolve_target_user() {
             printf '%s\n' "$candidate_user"
             return 0
         fi
+        if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]] && [[ -n "$state_home" ]] && [[ -n "$path_home" ]] && [[ "$state_home" != "$path_home" ]]; then
+            printf '%s\n' "$candidate_user"
+            return 0
+        fi
         if [[ -z "$path_home" ]] && [[ -n "$state_home" ]] && { [[ -z "$system_home" ]] || [[ "$state_home" == "$system_home" ]] || { [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]]; }; }; then
             printf '%s\n' "$candidate_user"
             return 0
@@ -695,6 +699,11 @@ _status_resolve_target_home() {
     state_home="$(_status_read_target_home_from_state "$state_file" 2>/dev/null || true)"
     system_home="$(_status_read_target_home_from_state "$_STATUS_SYSTEM_STATE_FILE" 2>/dev/null || true)"
     explicit_target_home="$(_status_resolve_explicit_target_home 2>/dev/null || true)"
+
+    if [[ -n "$_STATUS_EXPLICIT_ACFS_HOME" ]] && [[ "$state_file" == "$_STATUS_EXPLICIT_ACFS_HOME/state.json" ]] && [[ -n "$state_home" ]] && [[ -n "$path_home" ]] && [[ "$state_home" != "$path_home" ]]; then
+        printf '%s\n' "$state_home"
+        return 0
+    fi
 
     if [[ -n "$path_home" ]]; then
         printf '%s\n' "$path_home"
