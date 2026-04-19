@@ -38,8 +38,7 @@ acfs_generated_system_binary_path() {
     for candidate in         "/usr/local/bin/$name"         "/usr/bin/$name"         "/bin/$name"         "/usr/sbin/$name"         "/sbin/$name"
     do
         [[ -x "$candidate" ]] || continue
-        printf '%s
-' "$candidate"
+        printf '%s\n' "$candidate"
         return 0
     done
 
@@ -64,8 +63,7 @@ acfs_generated_resolve_current_user() {
     fi
 
     [[ -n "$current_user" ]] || return 1
-    printf '%s
-' "$current_user"
+    printf '%s\n' "$current_user"
 }
 
 acfs_generated_getent_passwd_entry() {
@@ -79,8 +77,7 @@ acfs_generated_getent_passwd_entry() {
     if [[ -z "$user" ]]; then
         if [[ -n "$getent_bin" ]]; then
             while IFS= read -r passwd_line; do
-                printf '%s
-' "$passwd_line"
+                printf '%s\n' "$passwd_line"
                 printed_any=true
             done < <("$getent_bin" passwd 2>/dev/null || true)
             if [[ "$printed_any" == true ]]; then
@@ -90,8 +87,7 @@ acfs_generated_getent_passwd_entry() {
 
         [[ -r /etc/passwd ]] || return 1
         while IFS= read -r passwd_line; do
-            printf '%s
-' "$passwd_line"
+            printf '%s\n' "$passwd_line"
         done < /etc/passwd
         return 0
     fi
@@ -109,8 +105,7 @@ acfs_generated_getent_passwd_entry() {
     fi
 
     [[ -n "$passwd_entry" ]] || return 1
-    printf '%s
-' "$passwd_entry"
+    printf '%s\n' "$passwd_entry"
 }
 
 acfs_generated_passwd_home_from_entry() {
@@ -120,8 +115,7 @@ acfs_generated_passwd_home_from_entry() {
     [[ -n "$passwd_entry" ]] || return 1
     IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
     if [[ -n "$passwd_home" ]] && [[ "$passwd_home" == /* ]] && [[ "$passwd_home" != "/" ]]; then
-        printf '%s
-' "${passwd_home%/}"
+        printf '%s\n' "${passwd_home%/}"
         return 0
     fi
 
@@ -293,6 +287,100 @@ INSTALL_BASE_FILESYSTEM
         log_info "dry-run: install: if [[ -z \"\$target_home\" ]]; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
+# Generated helper functions used by this child shell.
+acfs_generated_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in         "/usr/local/bin/$name"         "/usr/bin/$name"         "/bin/$name"         "/usr/sbin/$name"         "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+acfs_generated_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(acfs_generated_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(acfs_generated_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+acfs_generated_getent_passwd_entry() {
+    local user="${1-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
+
+    getent_bin="$(acfs_generated_system_binary_path getent 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
+
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
+    fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+acfs_generated_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    if [[ -n "$passwd_home" ]] && [[ "$passwd_home" == /* ]] && [[ "$passwd_home" != "/" ]]; then
+        printf '%s\n' "${passwd_home%/}"
+        return 0
+    fi
+
+    return 1
+}
+
 target_home="${TARGET_HOME:-}"
 if [[ -z "$target_home" ]]; then
   if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
@@ -359,6 +447,100 @@ INSTALL_BASE_FILESYSTEM
         log_info "dry-run: verify: if [[ -z \"\$target_home\" ]]; then (root)"
     else
         if ! run_as_root_shell <<'INSTALL_BASE_FILESYSTEM'
+# Generated helper functions used by this child shell.
+acfs_generated_system_binary_path() {
+    local name="${1:-}"
+    local candidate=""
+
+    [[ -n "$name" ]] || return 1
+
+    for candidate in         "/usr/local/bin/$name"         "/usr/bin/$name"         "/bin/$name"         "/usr/sbin/$name"         "/sbin/$name"
+    do
+        [[ -x "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+acfs_generated_resolve_current_user() {
+    local current_user=""
+    local id_bin=""
+    local whoami_bin=""
+
+    id_bin="$(acfs_generated_system_binary_path id 2>/dev/null || true)"
+    if [[ -n "$id_bin" ]]; then
+        current_user="$("$id_bin" -un 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$current_user" ]]; then
+        whoami_bin="$(acfs_generated_system_binary_path whoami 2>/dev/null || true)"
+        if [[ -n "$whoami_bin" ]]; then
+            current_user="$("$whoami_bin" 2>/dev/null || true)"
+        fi
+    fi
+
+    [[ -n "$current_user" ]] || return 1
+    printf '%s\n' "$current_user"
+}
+
+acfs_generated_getent_passwd_entry() {
+    local user="${1-}"
+    local getent_bin=""
+    local passwd_entry=""
+    local passwd_line=""
+    local printed_any=false
+
+    getent_bin="$(acfs_generated_system_binary_path getent 2>/dev/null || true)"
+    if [[ -z "$user" ]]; then
+        if [[ -n "$getent_bin" ]]; then
+            while IFS= read -r passwd_line; do
+                printf '%s\n' "$passwd_line"
+                printed_any=true
+            done < <("$getent_bin" passwd 2>/dev/null || true)
+            if [[ "$printed_any" == true ]]; then
+                return 0
+            fi
+        fi
+
+        [[ -r /etc/passwd ]] || return 1
+        while IFS= read -r passwd_line; do
+            printf '%s\n' "$passwd_line"
+        done < /etc/passwd
+        return 0
+    fi
+
+    if [[ -n "$getent_bin" ]]; then
+        passwd_entry="$("$getent_bin" passwd "$user" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$passwd_entry" ]] && [[ -r /etc/passwd ]]; then
+        while IFS= read -r passwd_line; do
+            [[ "${passwd_line%%:*}" == "$user" ]] || continue
+            passwd_entry="$passwd_line"
+            break
+        done < /etc/passwd
+    fi
+
+    [[ -n "$passwd_entry" ]] || return 1
+    printf '%s\n' "$passwd_entry"
+}
+
+acfs_generated_passwd_home_from_entry() {
+    local passwd_entry="${1:-}"
+    local passwd_home=""
+
+    [[ -n "$passwd_entry" ]] || return 1
+    IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+    if [[ -n "$passwd_home" ]] && [[ "$passwd_home" == /* ]] && [[ "$passwd_home" != "/" ]]; then
+        printf '%s\n' "${passwd_home%/}"
+        return 0
+    fi
+
+    return 1
+}
+
 target_home="${TARGET_HOME:-}"
 if [[ -z "$target_home" ]]; then
   if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then

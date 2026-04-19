@@ -38,8 +38,7 @@ acfs_generated_system_binary_path() {
     for candidate in         "/usr/local/bin/$name"         "/usr/bin/$name"         "/bin/$name"         "/usr/sbin/$name"         "/sbin/$name"
     do
         [[ -x "$candidate" ]] || continue
-        printf '%s
-' "$candidate"
+        printf '%s\n' "$candidate"
         return 0
     done
 
@@ -64,8 +63,7 @@ acfs_generated_resolve_current_user() {
     fi
 
     [[ -n "$current_user" ]] || return 1
-    printf '%s
-' "$current_user"
+    printf '%s\n' "$current_user"
 }
 
 acfs_generated_getent_passwd_entry() {
@@ -79,8 +77,7 @@ acfs_generated_getent_passwd_entry() {
     if [[ -z "$user" ]]; then
         if [[ -n "$getent_bin" ]]; then
             while IFS= read -r passwd_line; do
-                printf '%s
-' "$passwd_line"
+                printf '%s\n' "$passwd_line"
                 printed_any=true
             done < <("$getent_bin" passwd 2>/dev/null || true)
             if [[ "$printed_any" == true ]]; then
@@ -90,8 +87,7 @@ acfs_generated_getent_passwd_entry() {
 
         [[ -r /etc/passwd ]] || return 1
         while IFS= read -r passwd_line; do
-            printf '%s
-' "$passwd_line"
+            printf '%s\n' "$passwd_line"
         done < /etc/passwd
         return 0
     fi
@@ -109,8 +105,7 @@ acfs_generated_getent_passwd_entry() {
     fi
 
     [[ -n "$passwd_entry" ]] || return 1
-    printf '%s
-' "$passwd_entry"
+    printf '%s\n' "$passwd_entry"
 }
 
 acfs_generated_passwd_home_from_entry() {
@@ -120,8 +115,7 @@ acfs_generated_passwd_home_from_entry() {
     [[ -n "$passwd_entry" ]] || return 1
     IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
     if [[ -n "$passwd_home" ]] && [[ "$passwd_home" == /* ]] && [[ "$passwd_home" != "/" ]]; then
-        printf '%s
-' "${passwd_home%/}"
+        printf '%s\n' "${passwd_home%/}"
         return 0
     fi
 

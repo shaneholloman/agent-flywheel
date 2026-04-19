@@ -224,6 +224,8 @@ describe('Generated verified installer args', () => {
     );
     expect(stackContent).not.toContain('TARGET_HOME="/home/${TARGET_USER}"');
     expect(stackContent).not.toContain('TARGET_HOME="/home/${TARGET_USER:-ubuntu}"');
+    expect(stackContent).toContain("printf '%s\\n'");
+    expect(stackContent).not.toContain("printf '%s\n'");
   });
 
   test('stack.mcp_agent_mail dest uses TARGET_HOME directly without caller HOME fallback', () => {
@@ -351,6 +353,14 @@ describe('Generated filesystem script hardening', () => {
   test('uses no-dereference recursive chown for the ACFS dir', () => {
     expect(filesystemContent).toContain('chown -hR');
   });
+
+  test('generated helper functions are in scope for child-shell heredocs', () => {
+    expect(filesystemContent).toContain('# Generated helper functions used by this child shell.');
+    expect(filesystemContent).toContain('acfs_generated_system_binary_path() {');
+    expect(filesystemContent).toContain(
+      '_acfs_passwd_entry="$(acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"'
+    );
+  });
 });
 
 describe('doctor_checks.sh content', () => {
@@ -429,6 +439,14 @@ describe('doctor_checks.sh content', () => {
     expect(doctorContent).not.toContain(
       'root)\n            if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then'
     );
+  });
+
+  test('doctor checks inject generated helpers into child bash commands that need them', () => {
+    expect(doctorContent).toContain('if [[ "$cmd" == *"acfs_generated_"* ]]; then');
+    expect(doctorContent).toContain(
+      'helper_prelude="$(declare -f acfs_generated_system_binary_path acfs_generated_resolve_current_user acfs_generated_getent_passwd_entry acfs_generated_passwd_home_from_entry 2>/dev/null || true)"'
+    );
+    expect(doctorContent).toContain('cmd="${helper_prelude}"$\'\\n\'"${cmd}"');
   });
 });
 

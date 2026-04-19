@@ -77,15 +77,15 @@ acfs_generated_system_binary_path() {
 
     [[ -n "\$name" ]] || return 1
 
-    for candidate in \
-        "/usr/local/bin/\$name" \
-        "/usr/bin/\$name" \
-        "/bin/\$name" \
-        "/usr/sbin/\$name" \
+    for candidate in \\
+        "/usr/local/bin/\$name" \\
+        "/usr/bin/\$name" \\
+        "/bin/\$name" \\
+        "/usr/sbin/\$name" \\
         "/sbin/\$name"
     do
         [[ -x "\$candidate" ]] || continue
-        printf '%s\n' "\$candidate"
+        printf '%s\\n' "\$candidate"
         return 0
     done
 
@@ -110,7 +110,7 @@ acfs_generated_resolve_current_user() {
     fi
 
     [[ -n "\$current_user" ]] || return 1
-    printf '%s\n' "\$current_user"
+    printf '%s\\n' "\$current_user"
 }
 
 acfs_generated_getent_passwd_entry() {
@@ -124,7 +124,7 @@ acfs_generated_getent_passwd_entry() {
     if [[ -z "\$user" ]]; then
         if [[ -n "\$getent_bin" ]]; then
             while IFS= read -r passwd_line; do
-                printf '%s\n' "\$passwd_line"
+                printf '%s\\n' "\$passwd_line"
                 printed_any=true
             done < <("\$getent_bin" passwd 2>/dev/null || true)
             if [[ "\$printed_any" == true ]]; then
@@ -134,7 +134,7 @@ acfs_generated_getent_passwd_entry() {
 
         [[ -r /etc/passwd ]] || return 1
         while IFS= read -r passwd_line; do
-            printf '%s\n' "\$passwd_line"
+            printf '%s\\n' "\$passwd_line"
         done < /etc/passwd
         return 0
     fi
@@ -152,7 +152,7 @@ acfs_generated_getent_passwd_entry() {
     fi
 
     [[ -n "\$passwd_entry" ]] || return 1
-    printf '%s\n' "\$passwd_entry"
+    printf '%s\\n' "\$passwd_entry"
 }
 
 acfs_generated_passwd_home_from_entry() {
@@ -162,7 +162,7 @@ acfs_generated_passwd_home_from_entry() {
     [[ -n "\$passwd_entry" ]] || return 1
     IFS=: read -r _ _ _ _ _ passwd_home _ <<< "\$passwd_entry"
     if [[ -n "\$passwd_home" ]] && [[ "\$passwd_home" == /* ]] && [[ "\$passwd_home" != "/" ]]; then
-        printf '%s\n' "\${passwd_home%/}"
+        printf '%s\\n' "\${passwd_home%/}"
         return 0
     fi
 
@@ -568,6 +568,36 @@ function moduleFailureLines(module: Module, reason: string): string[] {
   ];
 }
 
+function generatedHelperPreludeLines(): string[] {
+  const startMarker = 'acfs_generated_system_binary_path() {';
+  const endMarker = '\n# When running a generated installer directly';
+  const start = HEADER.indexOf(startMarker);
+  const end = HEADER.indexOf(endMarker, start);
+
+  if (start < 0 || end < 0) {
+    throw new Error('Generated helper prelude markers not found in header');
+  }
+
+  return HEADER.slice(start, end).trimEnd().split('\n');
+}
+
+function commandLinesNeedGeneratedHelpers(commandLines: string[]): boolean {
+  return commandLines.some((line) => line.includes('acfs_generated_'));
+}
+
+function commandLinesWithGeneratedHelperPrelude(commandLines: string[]): string[] {
+  if (!commandLinesNeedGeneratedHelpers(commandLines)) {
+    return commandLines;
+  }
+
+  return [
+    '# Generated helper functions used by this child shell.',
+    ...generatedHelperPreludeLines(),
+    '',
+    ...commandLines,
+  ];
+}
+
 function wrapCommandBlock(
   module: Module,
   summary: string,
@@ -610,7 +640,7 @@ function wrapInstallHeredoc(
   lines.push('    else');
   lines.push(`        if ! ${shellHelper} <<'${delimiter}'`);
   // Commands inside heredoc (no extra indentation - heredoc is literal)
-  for (const cmd of commandLines) {
+  for (const cmd of commandLinesWithGeneratedHelperPrelude(commandLines)) {
     lines.push(cmd);
   }
   lines.push(delimiter);
@@ -636,7 +666,7 @@ function wrapOptionalVerifyHeredoc(
   lines.push(`        log_info "dry-run: verify (optional): ${escapedSummary} (${module.run_as})"`);
   lines.push('    else');
   lines.push(`        if ! ${shellHelper} <<'${delimiter}'`);
-  for (const cmd of commandLines) {
+  for (const cmd of commandLinesWithGeneratedHelperPrelude(commandLines)) {
     lines.push(cmd);
   }
   lines.push(delimiter);
@@ -667,7 +697,7 @@ function generatePreInstallCheck(module: Module): string[] {
   lines.push(`        log_info "dry-run: pre-install check: ${escapedSummary} (${check.run_as})"`);
   lines.push('    else');
   lines.push(`        if ! ${shellHelper} <<'${delimiter}'`);
-  for (const line of blockLines) {
+  for (const line of commandLinesWithGeneratedHelperPrelude(blockLines)) {
     lines.push(line);
   }
   lines.push(delimiter);
@@ -1425,6 +1455,16 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('            fi');
   lines.push('            unset _acfs_passwd_entry');
   lines.push('        fi');
+  lines.push('    fi');
+  lines.push('');
+  lines.push('    if [[ "$cmd" == *"acfs_generated_"* ]]; then');
+  lines.push('        local helper_prelude=""');
+  lines.push('        helper_prelude="$(declare -f acfs_generated_system_binary_path acfs_generated_resolve_current_user acfs_generated_getent_passwd_entry acfs_generated_passwd_home_from_entry 2>/dev/null || true)"');
+  lines.push('        if [[ -z "$helper_prelude" ]]; then');
+  lines.push('            log_error "Generated helper functions are unavailable for manifest check command"');
+  lines.push('            return 1');
+  lines.push('        fi');
+  lines.push("        cmd=\"${helper_prelude}\"$'\\n'\"${cmd}\"");
   lines.push('    fi');
   lines.push('');
   lines.push('    case "$run_as" in');
