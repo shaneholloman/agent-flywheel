@@ -1740,7 +1740,7 @@ doctor_agent_mail_cli_path() {
 # Try to retrieve a reasonably informative version line for a command without
 # assuming it supports `--version`.
 doctor_version_probe() {
-    if (( $# < 3 )); then
+    if (( $# < 4 )); then
         return 1
     fi
 

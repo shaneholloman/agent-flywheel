@@ -112,6 +112,13 @@ test_doctor_lsof_version_probe_captures_stderr() {
         return 1
     fi
 
+    if bash -c "$probe_def"$'\n''doctor_version_probe "" 2 merge' >/dev/null 2>&1; then
+        harness_fail "doctor_version_probe accepts calls without a command when timeout is unavailable"
+        return 1
+    else
+        harness_pass "doctor_version_probe rejects calls without a command"
+    fi
+
     if [[ -x /usr/bin/lsof && -x /usr/bin/timeout ]]; then
         local output=""
         output="$(bash -c "$probe_def"$'\n''doctor_version_probe /usr/bin/timeout 2 merge /usr/bin/lsof -v' 2>&1 || true)"
