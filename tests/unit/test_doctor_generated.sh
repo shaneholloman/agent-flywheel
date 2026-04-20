@@ -24,9 +24,18 @@ source "$REPO_ROOT/tests/vm/lib/test_harness.sh"
 
 # Log file
 LOG_FILE="/tmp/acfs_doctor_generated_test_$(date +%Y%m%d_%H%M%S).log"
+DOCTOR_JSON_OUTPUT=""
+DOCTOR_JSON_LOADED=false
 
 # Redirect all output to log file as well
 exec > >(tee -a "$LOG_FILE") 2>&1
+
+ensure_doctor_json_output() {
+    if [[ "$DOCTOR_JSON_LOADED" != "true" ]]; then
+        DOCTOR_JSON_OUTPUT="$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1 || true)"
+        DOCTOR_JSON_LOADED=true
+    fi
+}
 
 # ============================================================
 # Test Cases
@@ -108,7 +117,8 @@ test_fix_suggestion_format() {
 
     # Get fix suggestions from actual doctor JSON output (more realistic test)
     local output
-    output=$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1)
+    ensure_doctor_json_output
+    output="$DOCTOR_JSON_OUTPUT"
 
     # Extract an install-style fix suggestion from the output.
     # Some checks legitimately emit manual repair hints (for example,
@@ -163,8 +173,8 @@ test_doctor_json_includes_fix_hints() {
     harness_section "Test: Doctor JSON output includes fix hints"
 
     local output
-    output=$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1)
-    local exit_code=$?
+    ensure_doctor_json_output
+    output="$DOCTOR_JSON_OUTPUT"
 
     # Check JSON is valid
     if echo "$output" | jq -e '.' >/dev/null 2>&1; then
@@ -198,7 +208,8 @@ test_failed_checks_have_fix_hints() {
     harness_section "Test: Failed checks have fix hints"
 
     local output
-    output=$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1)
+    ensure_doctor_json_output
+    output="$DOCTOR_JSON_OUTPUT"
 
     # Get failed checks
     local failed_checks
@@ -228,7 +239,8 @@ test_warn_checks_have_fix_hints() {
     harness_section "Test: Warning checks have fix hints"
 
     local output
-    output=$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1)
+    ensure_doctor_json_output
+    output="$DOCTOR_JSON_OUTPUT"
 
     # Get warning checks
     local warn_checks
@@ -258,7 +270,8 @@ test_fix_hint_uses_module_id() {
     harness_section "Test: Fix hints use correct module IDs"
 
     local output
-    output=$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1)
+    ensure_doctor_json_output
+    output="$DOCTOR_JSON_OUTPUT"
 
     # Sample a few installer-backed checks and verify fix hints reference
     # their module. Some modules intentionally return bespoke prose guidance
@@ -327,7 +340,8 @@ test_doctor_summary_counts() {
     harness_section "Test: Doctor summary has correct counts"
 
     local output
-    output=$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1)
+    ensure_doctor_json_output
+    output="$DOCTOR_JSON_OUTPUT"
 
     # Get summary counts
     local pass_count warn_count fail_count
@@ -423,10 +437,10 @@ EOF
     local root_output=""
     root_output=$(HOME="$fake_home" PATH="$fake_bin:/usr/bin:/bin" TARGET_USER=customuser bash -c '
         source "'"$checks_file"'"
-        run_manifest_check_command root "printf root-check-ran\\n"
+        run_manifest_check_command root "printf \"%s\\n\" root-check-ran"
     ' 2>&1 || true)
 
-    if [[ "$root_output" == *"sudo-called="* ]] && [[ "$root_output" != *"Unable to resolve TARGET_HOME"* ]]; then
+    if [[ "$root_output" == *"root-check-ran"* ]] && [[ "$root_output" != *"Unable to resolve TARGET_HOME"* ]]; then
         harness_pass "root checks still dispatch when TARGET_HOME is unresolved"
     else
         harness_fail "root checks still dispatch when TARGET_HOME is unresolved" "$root_output"
@@ -467,7 +481,8 @@ test_workspace_checks_are_not_required_health_failures() {
         harness_fail "generated acfs.workspace checks are still required"
     fi
 
-    output=$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1)
+    ensure_doctor_json_output
+    output="$DOCTOR_JSON_OUTPUT"
     local workspace_check_count
     workspace_check_count=$(echo "$output" | jq '[.checks[] | select(.id | startswith("acfs.workspace"))] | length' 2>/dev/null || echo "0")
     if [[ "$workspace_check_count" -eq 0 ]]; then
@@ -555,7 +570,8 @@ test_manifest_supplemental_coverage_is_precise() {
     harness_section "Test: Manifest supplemental coverage keeps intended checks"
 
     local output
-    output=$(bash "$REPO_ROOT/scripts/lib/doctor.sh" --json 2>&1)
+    ensure_doctor_json_output
+    output="$DOCTOR_JSON_OUTPUT"
 
     local postgres_service_count
     postgres_service_count=$(echo "$output" | jq '[.checks[] | select(.id == "db.postgres18.2")] | length' 2>/dev/null || echo "0")
@@ -601,6 +617,25 @@ test_manifest_guard_scripts_cover_all_generated_outputs() {
         harness_pass "Manifest drift check validates generated artifacts via generate:diff"
     else
         harness_fail "Manifest drift check does not validate generated artifacts via generate:diff"
+    fi
+
+    if grep -Fq 'EXPECTED_AGENT_MAIL_MCP_URL="http://127.0.0.1:8765/mcp/"' "$drift_file" \
+        && ! grep -Fq 'am --version' "$drift_file"; then
+        harness_pass "Manifest drift check uses deterministic repo MCP URL"
+    else
+        harness_fail "Manifest drift check still depends on local Agent Mail CLI version"
+    fi
+
+    local drift_output=""
+    local drift_status=0
+    drift_output=$(PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+        "$drift_file" --json --quiet 2>&1) || drift_status=$?
+    if [[ "$drift_status" -eq 0 ]] \
+        && echo "$drift_output" | jq -e '.repo_mcp_configs.expected_url == "http://127.0.0.1:8765/mcp/" and .repo_mcp_configs.drifted == 0' >/dev/null 2>&1; then
+        harness_pass "Manifest drift check passes when am is absent from PATH"
+    else
+        harness_fail "Manifest drift check should not require am in PATH"
+        harness_capture_output "manifest_drift_without_am" "$drift_output"
     fi
 }
 

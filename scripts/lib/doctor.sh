@@ -996,6 +996,7 @@ CACHE_TTL=300  # 5 minutes
 # Per-check timeout (prevents indefinite hangs)
 # Related: agentic_coding_flywheel_setup-lz1
 DEEP_CHECK_TIMEOUT=15  # seconds
+DOCTOR_VERSION_TIMEOUT="${DOCTOR_VERSION_TIMEOUT:-2}"
 
 # Print `acfs` CLI help (only used when this script is installed as the `acfs` entrypoint).
 print_acfs_help() {
@@ -1738,6 +1739,18 @@ doctor_agent_mail_cli_path() {
 }
 # Try to retrieve a reasonably informative version line for a command without
 # assuming it supports `--version`.
+doctor_version_probe() {
+    local timeout_bin="$1"
+    local timeout_secs="$2"
+    shift 2
+
+    if [[ -n "$timeout_bin" ]]; then
+        "$timeout_bin" "$timeout_secs" "$@" 2>/dev/null | head -n1
+    else
+        "$@" 2>/dev/null | head -n1
+    fi
+}
+
 get_version_line() {
     local cmd="$1"
     local exec_path="$cmd"
@@ -1748,17 +1761,21 @@ get_version_line() {
     fi
 
     local version=""
+    local timeout_bin=""
+    timeout_bin="$(_acfs_doctor_system_binary_path timeout 2>/dev/null || true)"
     # UBS has a directory size check that can block --version; bypass it
     if [[ "$cmd" == "ubs" ]] || [[ "$exec_path" == */ubs ]]; then
-        version=$(UBS_MAX_DIR_SIZE_MB=10000 "$exec_path" --version 2>/dev/null | head -n1) || true
+        version=$(UBS_MAX_DIR_SIZE_MB=10000 doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" --version) || true
+    elif [[ "$cmd" == "lsof" ]] || [[ "$exec_path" == */lsof ]]; then
+        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" -v) || true
     else
-        version=$("$exec_path" --version 2>/dev/null | head -n1) || true
+        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" --version) || true
     fi
     if [[ -z "$version" ]]; then
-        version=$("$exec_path" -V 2>/dev/null | head -n1) || true
+        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" -V) || true
     fi
     if [[ -z "$version" ]]; then
-        version=$("$exec_path" version 2>/dev/null | head -n1) || true
+        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" version) || true
     fi
 
     if [[ -z "$version" ]]; then
