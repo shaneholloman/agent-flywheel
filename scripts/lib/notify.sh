@@ -168,9 +168,37 @@ _acfs_notify_resolve_current_home() {
 }
 
 _acfs_notify_runtime_home() {
+    local current_user=""
+    local passwd_entry=""
+    local passwd_home=""
     local target_home=""
+    local target_user="${TARGET_USER:-}"
 
     target_home="$(_acfs_notify_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+
+    if [[ -n "$target_user" ]]; then
+        [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
+
+        if [[ "$target_user" == "root" ]]; then
+            printf '/root\n'
+            return 0
+        fi
+
+        passwd_entry="$(_acfs_notify_getent_passwd_entry "$target_user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            passwd_home="$(_acfs_notify_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+            if [[ -n "$passwd_home" ]]; then
+                printf '%s\n' "$passwd_home"
+                return 0
+            fi
+        fi
+
+        current_user="$(_acfs_notify_resolve_current_user 2>/dev/null || true)"
+        if [[ -z "$current_user" ]] || [[ "$current_user" != "$target_user" ]]; then
+            return 1
+        fi
+    fi
+
     if [[ -n "$target_home" ]]; then
         printf '%s\n' "$target_home"
         return 0

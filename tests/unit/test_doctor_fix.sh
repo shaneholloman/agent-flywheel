@@ -364,6 +364,98 @@ test_doctor_fix_runtime_home_fails_closed_for_different_unresolved_target() {
     return 1
 }
 
+test_doctor_fix_runtime_home_prefers_target_user_passwd_home_over_stale_target_home() {
+    setup_test_env
+
+    local stale_home="$ACFS_STATE_DIR/stale-home"
+    local passwd_home="$ACFS_STATE_DIR/passwd-home"
+    mkdir -p "$stale_home" "$passwd_home"
+
+    export TARGET_USER="targetuser"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+    export TEST_DOCTOR_FIX_PASSWD_HOME="$passwd_home"
+
+    doctor_fix_current_user() {
+        printf 'calleruser\n'
+    }
+
+    doctor_fix_resolve_home_for_user() {
+        if [[ "${1:-}" == "targetuser" ]]; then
+            printf '%s\n' "$TEST_DOCTOR_FIX_PASSWD_HOME"
+            return 0
+        fi
+        return 1
+    }
+
+    local resolved_home=""
+    resolved_home="$(doctor_fix_runtime_home 2>/dev/null || true)"
+
+    if [[ "$resolved_home" == "$passwd_home" ]]; then
+        unset TEST_DOCTOR_FIX_PASSWD_HOME
+        cleanup_test_env
+        return 0
+    fi
+
+    echo "  Expected target user's passwd home $passwd_home, got $resolved_home"
+    unset TEST_DOCTOR_FIX_PASSWD_HOME
+    cleanup_test_env
+    return 1
+}
+
+test_doctor_fix_runtime_home_rejects_invalid_target_user_before_target_home() {
+    setup_test_env
+
+    local target_home="$ACFS_STATE_DIR/target-home"
+    mkdir -p "$target_home"
+
+    export TARGET_USER="bad/user"
+    export TARGET_HOME="$target_home"
+
+    local resolved_home=""
+    resolved_home="$(doctor_fix_runtime_home 2>/dev/null || true)"
+
+    if [[ -z "$resolved_home" ]]; then
+        cleanup_test_env
+        return 0
+    fi
+
+    echo "  Expected invalid TARGET_USER to fail closed, got $resolved_home"
+    cleanup_test_env
+    return 1
+}
+
+test_doctor_fix_runtime_home_fails_closed_for_unresolved_target_with_stale_target_home() {
+    setup_test_env
+
+    local stale_home="$ACFS_STATE_DIR/stale-home"
+    mkdir -p "$stale_home"
+
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+
+    doctor_fix_current_user() {
+        printf 'calleruser\n'
+    }
+
+    doctor_fix_resolve_home_for_user() {
+        return 1
+    }
+
+    local resolved_home=""
+    resolved_home="$(doctor_fix_runtime_home 2>/dev/null || true)"
+
+    if [[ -z "$resolved_home" ]]; then
+        cleanup_test_env
+        return 0
+    fi
+
+    echo "  Expected unresolved different TARGET_USER to fail closed, got $resolved_home"
+    cleanup_test_env
+    return 1
+}
+
 test_doctor_fix_runtime_bin_dir_ignores_other_user_bin_dir() {
     setup_test_env
 
@@ -3134,6 +3226,9 @@ main() {
     run_test test_doctor_fix_runtime_path_prefers_system_bins_over_current_shell_path
     run_test test_doctor_fix_runtime_home_ignores_relative_home
     run_test test_doctor_fix_runtime_home_fails_closed_for_different_unresolved_target
+    run_test test_doctor_fix_runtime_home_prefers_target_user_passwd_home_over_stale_target_home
+    run_test test_doctor_fix_runtime_home_rejects_invalid_target_user_before_target_home
+    run_test test_doctor_fix_runtime_home_fails_closed_for_unresolved_target_with_stale_target_home
     run_test test_doctor_fix_runtime_bin_dir_ignores_other_user_bin_dir
     run_test test_doctor_fix_binary_path_ignores_other_user_bin_dir
 

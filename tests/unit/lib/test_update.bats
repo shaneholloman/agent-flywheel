@@ -2157,6 +2157,45 @@ EOF
     }
 }
 
+@test "services-setup: init_target_context fails closed for unresolved target with explicit TARGET_HOME" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local stale_home
+
+    stale_home="$(create_temp_dir)"
+    mkdir -p "$stale_home/.local/bin" "$stale_home/.acfs"
+
+    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_valid_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_passwd_home_from_entry()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_bin_dir_for_home()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^find_user_bin()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^init_target_context()/,/^}$/p' "$services_setup")"
+
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+
+    services_setup_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    services_setup_getent_passwd_entry() {
+        return 1
+    }
+
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+    export ACFS_HOME="$stale_home/.acfs"
+
+    run init_target_context
+    assert_failure
+    assert_output --partial "Unable to determine home directory for user: missinguser"
+}
+
 @test "diagnostic helpers: prepend primary ACFS bin dir and ~/.acfs/bin" {
     local doctor="$PROJECT_ROOT/scripts/lib/doctor.sh"
     local info="$PROJECT_ROOT/scripts/lib/info.sh"
@@ -4777,6 +4816,113 @@ EOF
     assert_output ""
 }
 
+@test "notification runtime homes prefer TARGET_USER passwd over stale TARGET_HOME" {
+    local stale_home
+    local target_home
+    local failures=""
+
+    stale_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+
+    while IFS='|' read -r label script runtime_func; do
+        [[ -n "$label" ]] || continue
+
+        if ! bash -c '
+            set -euo pipefail
+            label="$1"
+            script="$2"
+            runtime_func="$3"
+            stale_home="$4"
+            target_home="$5"
+
+            case "$label" in
+                notifications)
+                    eval "$(sed -n "/^notifications_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^notifications_resolve_current_user()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^notifications_getent_passwd_entry()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^notifications_passwd_home_from_entry()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^notifications_resolve_current_home()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^notifications_runtime_home()/,/^}$/p" "$script")"
+                    notifications_resolve_current_user() { printf "calleruser\n"; }
+                    notifications_getent_passwd_entry() {
+                        if [[ "${1:-}" == "targetuser" ]]; then
+                            printf "targetuser:x:1000:1000::%s:/bin/bash\n" "$target_home"
+                            return 0
+                        fi
+                        return 1
+                    }
+                    ;;
+                notify)
+                    eval "$(sed -n "/^_acfs_notify_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^_acfs_notify_resolve_current_user()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^_acfs_notify_getent_passwd_entry()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^_acfs_notify_passwd_home_from_entry()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^_acfs_notify_resolve_current_home()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^_acfs_notify_runtime_home()/,/^}$/p" "$script")"
+                    _acfs_notify_resolve_current_user() { printf "calleruser\n"; }
+                    _acfs_notify_getent_passwd_entry() {
+                        if [[ "${1:-}" == "targetuser" ]]; then
+                            printf "targetuser:x:1000:1000::%s:/bin/bash\n" "$target_home"
+                            return 0
+                        fi
+                        return 1
+                    }
+                    ;;
+                webhook)
+                    eval "$(sed -n "/^webhook_sanitize_abs_nonroot_path()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^webhook_resolve_current_user()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^webhook_getent_passwd_entry()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^webhook_passwd_home_from_entry()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^webhook_resolve_current_home()/,/^}$/p" "$script")"
+                    eval "$(sed -n "/^webhook_runtime_home()/,/^}$/p" "$script")"
+                    webhook_resolve_current_user() { printf "calleruser\n"; }
+                    webhook_getent_passwd_entry() {
+                        if [[ "${1:-}" == "targetuser" ]]; then
+                            printf "targetuser:x:1000:1000::%s:/bin/bash\n" "$target_home"
+                            return 0
+                        fi
+                        return 1
+                    }
+                    ;;
+            esac
+
+            export TARGET_USER="targetuser"
+            export TARGET_HOME="$stale_home"
+            export HOME="$stale_home"
+            resolved="$("$runtime_func")"
+            [[ "$resolved" == "$target_home" ]] || {
+                printf "%s passwd mode resolved %s, expected %s\n" "$label" "$resolved" "$target_home" >&2
+                exit 1
+            }
+
+            export TARGET_USER="bad/user"
+            resolved="$("$runtime_func" 2>/dev/null || true)"
+            [[ -z "$resolved" ]] || {
+                printf "%s invalid mode resolved %s\n" "$label" "$resolved" >&2
+                exit 1
+            }
+
+            export TARGET_USER="missinguser"
+            resolved="$("$runtime_func" 2>/dev/null || true)"
+            [[ -z "$resolved" ]] || {
+                printf "%s unresolved mode resolved %s\n" "$label" "$resolved" >&2
+                exit 1
+            }
+        ' _ "$label" "$script" "$runtime_func" "$stale_home" "$target_home"; then
+            printf -v failures '%s%s failed\n' "$failures" "$label"
+        fi
+    done <<EOF
+notifications|$PROJECT_ROOT/scripts/lib/notifications.sh|notifications_runtime_home
+notify|$PROJECT_ROOT/scripts/lib/notify.sh|_acfs_notify_runtime_home
+webhook|$PROJECT_ROOT/scripts/lib/webhook.sh|webhook_runtime_home
+EOF
+
+    if [[ -n "$failures" ]]; then
+        printf '%s' "$failures" >&2
+        return 1
+    fi
+}
+
 @test "preflight: resolve_current_home fails closed when HOME is invalid and passwd lookup fails" {
     local preflight="$PROJECT_ROOT/scripts/preflight.sh"
 
@@ -4817,6 +4963,89 @@ EOF
 
     resolve_current_user() {
         printf 'tester\n'
+    }
+
+    preflight_getent_passwd_entry() {
+        return 1
+    }
+
+    run resolve_install_target_home
+    assert_failure
+    assert_output ""
+}
+
+@test "preflight: resolve_install_target_home prefers target user passwd home over stale TARGET_HOME" {
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
+    local stale_home
+    local target_home
+
+    eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_getent_passwd_entry()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_install_target_home()/,/^}$/p' "$preflight")"
+
+    stale_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    export HOME="$stale_home"
+    export TARGET_USER="targetuser"
+    export TARGET_HOME="$stale_home"
+
+    resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    preflight_getent_passwd_entry() {
+        if [[ "${1:-}" == "targetuser" ]]; then
+            printf 'targetuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            return 0
+        fi
+        return 1
+    }
+
+    run resolve_install_target_home
+    assert_success
+    assert_output "$target_home"
+}
+
+@test "preflight: resolve_install_target_home rejects invalid TARGET_USER before TARGET_HOME" {
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
+    local target_home
+
+    eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_install_target_home()/,/^}$/p' "$preflight")"
+
+    target_home="$(create_temp_dir)"
+    export TARGET_USER="bad/user"
+    export TARGET_HOME="$target_home"
+
+    run resolve_install_target_home
+    assert_failure
+    assert_output ""
+}
+
+@test "preflight: resolve_install_target_home fails closed for unresolved target with stale TARGET_HOME" {
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
+    local stale_home
+
+    eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_getent_passwd_entry()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_install_target_home()/,/^}$/p' "$preflight")"
+
+    stale_home="$(create_temp_dir)"
+    export HOME="$stale_home"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="$stale_home"
+
+    resolve_current_user() {
+        printf 'calleruser\n'
     }
 
     preflight_getent_passwd_entry() {

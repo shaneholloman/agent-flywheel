@@ -317,6 +317,7 @@ BUN_BIN="${BUN_BIN:-}"
 
 init_target_context() {
     local bun_bin_dir=""
+    local current_user=""
     local explicit_target_home=""
     local resolved_target_home=""
 
@@ -327,6 +328,11 @@ init_target_context() {
     if [[ -n "$resolved_target_home" ]]; then
         TARGET_HOME="$resolved_target_home"
     elif [[ -n "$explicit_target_home" ]]; then
+        current_user="$(services_setup_resolve_current_user 2>/dev/null || true)"
+        if [[ -z "$current_user" ]] || [[ "$TARGET_USER" != "$current_user" ]]; then
+            log_error "Unable to determine home directory for user: $TARGET_USER"
+            return 1
+        fi
         TARGET_HOME="$explicit_target_home"
     fi
     if [[ -z "${TARGET_HOME:-}" ]]; then

@@ -202,25 +202,31 @@ doctor_fix_resolve_current_home() {
 }
 
 doctor_fix_runtime_home() {
-    local resolved_home=""
     local target_user_raw="${TARGET_USER:-}"
     local current_user=""
+    local explicit_home=""
+    local resolved_home=""
 
-    resolved_home="$(doctor_fix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$resolved_home" ]]; then
-        printf '%s\n' "${resolved_home%/}"
-        return 0
-    fi
+    explicit_home="$(doctor_fix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
 
     if [[ -n "$target_user_raw" ]]; then
         doctor_fix_is_valid_username "$target_user_raw" || return 1
-        current_user="$(doctor_fix_current_user 2>/dev/null || true)"
-        if [[ -z "$current_user" ]] || [[ "$target_user_raw" != "$current_user" ]]; then
-            resolved_home="$(doctor_fix_resolve_home_for_user "$target_user_raw" 2>/dev/null || true)"
-            [[ -n "$resolved_home" ]] || return 1
+
+        resolved_home="$(doctor_fix_resolve_home_for_user "$target_user_raw" 2>/dev/null || true)"
+        if [[ -n "$resolved_home" ]]; then
             printf '%s\n' "${resolved_home%/}"
             return 0
         fi
+
+        current_user="$(doctor_fix_current_user 2>/dev/null || true)"
+        if [[ -z "$current_user" ]] || [[ "$target_user_raw" != "$current_user" ]]; then
+            return 1
+        fi
+    fi
+
+    if [[ -n "$explicit_home" ]]; then
+        printf '%s\n' "${explicit_home%/}"
+        return 0
     fi
 
     resolved_home="$(doctor_fix_resolve_current_home 2>/dev/null || true)"

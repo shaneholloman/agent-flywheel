@@ -243,15 +243,30 @@ resolve_install_target_home() {
     local target_user_raw="${TARGET_USER:-}"
     local target_user="${TARGET_USER:-ubuntu}"
     local current_user=""
+    local explicit_target_home=""
 
-    target_home="$(preflight_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$target_home" ]]; then
-        printf '%s\n' "$target_home"
-        return 0
-    fi
+    explicit_target_home="$(preflight_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
 
     if [[ -n "$target_user_raw" ]] && ! preflight_is_valid_username "$target_user"; then
         return 1
+    fi
+
+    if [[ -n "$target_user_raw" ]]; then
+        target_home="$(resolve_home_dir "$target_user" 2>/dev/null || true)"
+        if [[ -n "$target_home" ]]; then
+            printf '%s\n' "$target_home"
+            return 0
+        fi
+
+        current_user="$(resolve_current_user 2>/dev/null || true)"
+        if [[ -z "$current_user" ]] || [[ "$target_user" != "$current_user" ]]; then
+            return 1
+        fi
+    fi
+
+    if [[ -n "$explicit_target_home" ]]; then
+        printf '%s\n' "$explicit_target_home"
+        return 0
     fi
 
     if [[ "$EUID" -eq 0 ]]; then

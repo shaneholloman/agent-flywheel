@@ -215,7 +215,7 @@ teardown() {
     assert_failure
 }
 
-@test "state: resolve target home accepts dotted fallback usernames" {
+@test "state: resolve target home accepts dotted usernames but fails closed when unresolved" {
     unset ACFS_HOME
     unset ACFS_STATE_FILE
     export TARGET_HOME=""
@@ -227,6 +227,70 @@ teardown() {
     }
 
     run state_resolve_target_home
+    assert_failure
+}
+
+@test "state: resolve target home prefers target user passwd home over stale TARGET_HOME" {
+    local stale_home
+    local passwd_home
+    stale_home="$(create_temp_dir)"
+    passwd_home="$(create_temp_dir)"
+
+    unset ACFS_HOME
+    unset ACFS_STATE_FILE
+    export TARGET_HOME="$stale_home"
+    export TARGET_USER="targetuser"
+    export HOME="$stale_home"
+
+    state_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    state_getent_passwd_entry() {
+        if [[ "${1:-}" == "targetuser" ]]; then
+            printf 'targetuser:x:1000:1000::%s:/bin/bash\n' "$passwd_home"
+            return 0
+        fi
+        return 1
+    }
+
+    run state_resolve_target_home
     assert_success
-    assert_output "/home/john.doe"
+    assert_output "$passwd_home"
+}
+
+@test "state: resolve target home rejects invalid TARGET_USER before TARGET_HOME" {
+    local target_home
+    target_home="$(create_temp_dir)"
+
+    unset ACFS_HOME
+    unset ACFS_STATE_FILE
+    export TARGET_HOME="$target_home"
+    export TARGET_USER="../bad-user"
+    export HOME="$target_home"
+
+    run state_resolve_target_home
+    assert_failure
+}
+
+@test "state: resolve target home fails closed for unresolved target with stale TARGET_HOME" {
+    local stale_home
+    stale_home="$(create_temp_dir)"
+
+    unset ACFS_HOME
+    unset ACFS_STATE_FILE
+    export TARGET_HOME="$stale_home"
+    export TARGET_USER="missinguser"
+    export HOME="$stale_home"
+
+    state_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    state_getent_passwd_entry() {
+        return 1
+    }
+
+    run state_resolve_target_home
+    assert_failure
 }
