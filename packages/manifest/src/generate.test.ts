@@ -218,7 +218,7 @@ describe('Generated verified installer args', () => {
     const stackContent = readFileSync(stackPath, 'utf-8');
 
     expect(stackContent).toContain('if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then');
-    expect(stackContent).toContain('TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"');
+    expect(stackContent).toContain('TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" "$_ACFS_EXPLICIT_TARGET_HOME" || true)"');
     expect(stackContent).toContain(
       'log_error "Invalid TARGET_HOME for \'${TARGET_USER}\': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be \'/\')"'
     );
@@ -325,6 +325,22 @@ describe('Generated verified installer args', () => {
     expect(installerIndex).toBeGreaterThan(precheckIndex);
   });
 
+  test('stack hook verification parses Claude settings hook commands instead of grepping raw text', () => {
+    const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
+    expect(existsSync(stackPath)).toBe(true);
+    const stackContent = readFileSync(stackPath, 'utf-8');
+
+    expect(stackContent).toContain('claude_settings_has_command_hook() {');
+    expect(stackContent).toContain("dcg_command_pattern='(^|[[:space:]/])dcg([[:space:]]|$)'");
+    expect(stackContent).toContain(
+      "pcr_command_pattern='(^|[[:space:]/])claude-post-compact-reminder([[:space:]]|$)'"
+    );
+    expect(stackContent).not.toContain('grep -q "dcg" "$settings"');
+    expect(stackContent).not.toContain('grep -q "dcg" "$alt_settings"');
+    expect(stackContent).not.toContain('grep -q "claude-post-compact-reminder" "$settings"');
+    expect(stackContent).not.toContain('grep -q "claude-post-compact-reminder" "$alt_settings"');
+  });
+
   test('multi-line install summaries skip comment-only lines', () => {
     const stackPath = resolve(GENERATED_DIR, 'install_stack.sh');
     expect(existsSync(stackPath)).toBe(true);
@@ -408,11 +424,13 @@ describe('Generated filesystem script hardening', () => {
     const trustedHomeIndex = filesystemContent.indexOf(
       'target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"'
     );
-    const inheritedHomeIndex = filesystemContent.indexOf('target_home="${TARGET_HOME%/}"');
+    const inheritedHomeIndex = filesystemContent.indexOf('target_home="$explicit_target_home"');
 
     expect(filesystemContent).toContain('target_home=""');
-    expect(filesystemContent).toContain('if [[ -z "$target_home" && -n "${TARGET_HOME:-}" ]]; then');
+    expect(filesystemContent).toContain('explicit_target_home="${TARGET_HOME:-}"');
+    expect(filesystemContent).toContain('if [[ -z "$target_home" && -n "$explicit_target_home" ]]; then');
     expect(filesystemContent).not.toContain('target_home="${TARGET_HOME:-}"\nif [[ -z "$target_home" ]]; then');
+    expect(filesystemContent).not.toContain('target_home="${TARGET_HOME%/}"');
     expect(trustedHomeIndex).toBeGreaterThanOrEqual(0);
     expect(inheritedHomeIndex).toBeGreaterThanOrEqual(0);
     expect(trustedHomeIndex).toBeLessThan(inheritedHomeIndex);
@@ -420,14 +438,16 @@ describe('Generated filesystem script hardening', () => {
 
   test('direct generated installers repair TARGET_HOME before inherited fallback', () => {
     const resolvedHomeIndex = filesystemContent.indexOf(
-      '_ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"'
+      '_ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" "$_ACFS_EXPLICIT_TARGET_HOME" || true)"'
     );
-    const inheritedHomeIndex = filesystemContent.indexOf('TARGET_HOME="${TARGET_HOME%/}"');
+    const inheritedHomeIndex = filesystemContent.indexOf('TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"');
 
+    expect(filesystemContent).toContain('_ACFS_EXPLICIT_TARGET_HOME="${TARGET_HOME:-}"');
     expect(filesystemContent).toContain('_ACFS_RESOLVED_TARGET_HOME=""');
     expect(filesystemContent).toContain('if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then');
     expect(filesystemContent).toContain('TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"');
-    expect(filesystemContent).toContain('elif [[ -n "${TARGET_HOME:-}" ]]; then');
+    expect(filesystemContent).toContain('elif [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then');
+    expect(filesystemContent).not.toContain('TARGET_HOME="${TARGET_HOME%/}"');
     expect(resolvedHomeIndex).toBeGreaterThanOrEqual(0);
     expect(inheritedHomeIndex).toBeGreaterThanOrEqual(0);
     expect(resolvedHomeIndex).toBeLessThan(inheritedHomeIndex);
@@ -513,7 +533,7 @@ describe('doctor_checks.sh content', () => {
   });
 
   test('run_manifest_check_command resolves target homes without /home guesses', () => {
-    expect(doctorContent).toContain('resolved_target_home="$(_acfs_resolve_target_home "$target_user" || true)"');
+    expect(doctorContent).toContain('resolved_target_home="$(_acfs_resolve_target_home "$target_user" "$explicit_target_home" || true)"');
     expect(doctorContent).not.toContain('target_home="/home/$target_user"');
     expect(doctorContent).toContain(
       'log_error "Invalid TARGET_HOME for \'$target_user\': ${target_home:-<empty>} (must be an absolute path and cannot be \'/\')"'
@@ -522,14 +542,17 @@ describe('doctor_checks.sh content', () => {
 
   test('run_manifest_check_command repairs target_home before inherited fallback', () => {
     const resolvedHomeIndex = doctorContent.indexOf(
-      'resolved_target_home="$(_acfs_resolve_target_home "$target_user" || true)"'
+      'resolved_target_home="$(_acfs_resolve_target_home "$target_user" "$explicit_target_home" || true)"'
     );
-    const inheritedHomeIndex = doctorContent.indexOf('target_home="${target_home%/}"');
+    const inheritedHomeIndex = doctorContent.indexOf('target_home="$explicit_target_home"');
 
+    expect(doctorContent).toContain('local explicit_target_home=""');
     expect(doctorContent).toContain('local resolved_target_home=""');
+    expect(doctorContent).toContain('explicit_target_home="$target_home"');
     expect(doctorContent).toContain('if [[ -n "$resolved_target_home" ]]; then');
     expect(doctorContent).toContain('target_home="${resolved_target_home%/}"');
-    expect(doctorContent).toContain('elif [[ -n "$target_home" ]]; then');
+    expect(doctorContent).toContain('elif [[ -n "$explicit_target_home" ]]; then');
+    expect(doctorContent).not.toContain('target_home="${target_home%/}"');
     expect(doctorContent).not.toContain('if [[ -z "$target_home" ]]; then\n        if declare -f _acfs_resolve_target_home');
     expect(resolvedHomeIndex).toBeGreaterThanOrEqual(0);
     expect(inheritedHomeIndex).toBeGreaterThanOrEqual(0);

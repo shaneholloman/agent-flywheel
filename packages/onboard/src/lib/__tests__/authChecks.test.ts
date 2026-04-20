@@ -89,6 +89,19 @@ describe('authChecks', () => {
     expect(checks.checkClaude()).toEqual({ authenticated: false });
   });
 
+  test('checkClaude rejects placeholder OAuth credentials', () => {
+    const credentialsPath = path.join(HOME, '.claude', '.credentials.json');
+    const checks = createAuthChecks(
+      makeDeps({
+        commandExists: (command) => command === 'claude',
+        existsSync: (filePath) => filePath === credentialsPath,
+        readFileSync: () => JSON.stringify({ claudeAiOauth: { accessToken: 'your-token-here' } }),
+      }),
+    );
+
+    expect(checks.checkClaude()).toEqual({ authenticated: false });
+  });
+
   test('checkClaude keeps searching config fallbacks until it finds a valid email', () => {
     const credentialsPath = path.join(HOME, '.claude', '.credentials.json');
     const primaryConfigPath = path.join(HOME, '.claude', 'config.json');
@@ -178,6 +191,19 @@ describe('authChecks', () => {
     expect(checks.checkCodex()).toEqual({ authenticated: false });
   });
 
+  test('checkCodex rejects placeholder auth tokens', () => {
+    const authPath = path.join(HOME, '.codex', 'auth.json');
+    const checks = createAuthChecks(
+      makeDeps({
+        commandExists: (command) => command === 'codex',
+        existsSync: (filePath) => filePath === authPath,
+        readFileSync: () => JSON.stringify({ tokens: { access_token: 'your_token_here' } }),
+      }),
+    );
+
+    expect(checks.checkCodex()).toEqual({ authenticated: false });
+  });
+
   test('checkCodex respects the injected PATH when using the default command lookup', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acfs-auth-checks-'));
     const fakeCodexPath = path.join(tempDir, 'codex');
@@ -257,6 +283,20 @@ describe('authChecks', () => {
     expect(checks.checkGemini()).toEqual({ authenticated: false });
   });
 
+  test('checkGemini rejects quoted placeholder GEMINI_API_KEY values with trailing comments', () => {
+    const envPath = path.join(HOME, '.gemini', '.env');
+    const checks = createAuthChecks(
+      makeDeps({
+        commandExists: (command) => command === 'gemini',
+        existsSync: (filePath) => filePath === envPath,
+        readFileSync: (filePath) =>
+          filePath === envPath ? 'GEMINI_API_KEY="YOUR_GEMINI_API_KEY" # replace me\n' : '',
+      }),
+    );
+
+    expect(checks.checkGemini()).toEqual({ authenticated: false });
+  });
+
   test('checkGemini reads GEMINI_API_KEY from ~/.gemini/.env', () => {
     const envPath = path.join(HOME, '.gemini', '.env');
     const checks = createAuthChecks(
@@ -265,6 +305,20 @@ describe('authChecks', () => {
         existsSync: (filePath) => filePath === envPath,
         readFileSync: (filePath) =>
           filePath === envPath ? 'GEMINI_API_KEY="gemini-from-env-file"\n' : '',
+      }),
+    );
+
+    expect(checks.checkGemini()).toEqual({ authenticated: true, details: 'via GEMINI_API_KEY' });
+  });
+
+  test('checkGemini accepts quoted GEMINI_API_KEY values with trailing comments', () => {
+    const envPath = path.join(HOME, '.gemini', '.env');
+    const checks = createAuthChecks(
+      makeDeps({
+        commandExists: (command) => command === 'gemini',
+        existsSync: (filePath) => filePath === envPath,
+        readFileSync: (filePath) =>
+          filePath === envPath ? 'GEMINI_API_KEY="gemini-from-env-file" # installed by ACFS\n' : '',
       }),
     );
 
@@ -315,6 +369,27 @@ describe('authChecks', () => {
           }
           if (filePath === oauthPath) {
             return JSON.stringify({ access_token: '   ' });
+          }
+          return '';
+        },
+      }),
+    );
+
+    expect(checks.checkGemini()).toEqual({ authenticated: false });
+  });
+
+  test('checkGemini rejects placeholder Gemini auth artifacts', () => {
+    const accountsPath = path.join(HOME, '.gemini', 'google_accounts.json');
+    const oauthPath = path.join(HOME, '.gemini', 'oauth_creds.json');
+    const checks = createAuthChecks(
+      makeDeps({
+        commandExists: (command) => command === 'gemini',
+        readFileSync: (filePath) => {
+          if (filePath === accountsPath) {
+            return JSON.stringify({ active: 'replace-me', old: [] });
+          }
+          if (filePath === oauthPath) {
+            return JSON.stringify({ refresh_token: 'your-token-here' });
           }
           return '';
         },
@@ -409,7 +484,37 @@ describe('authChecks', () => {
     expect(checks.checkGitHub()).toEqual({ authenticated: false });
   });
 
-  test('checkVercel returns authenticated with legacy ~/.vercel/auth.json', () => {
+  test('checkGitHub rejects placeholder oauth tokens in hosts.yml', () => {
+    const hostsPath = path.join(HOME, '.config', 'gh', 'hosts.yml');
+    const checks = createAuthChecks(
+      makeDeps({
+        existsSync: (filePath) => filePath === hostsPath,
+        readFileSync: () =>
+          [
+            'github.com:',
+            '    oauth_token: your_github_token',
+            '    user: octocat',
+          ].join('\n'),
+      }),
+    );
+
+    expect(checks.checkGitHub()).toEqual({ authenticated: false });
+  });
+
+  test('checkVercel returns authenticated with legacy ~/.vercel/auth.json token', () => {
+    const authPath = path.join(HOME, '.vercel', 'auth.json');
+    const validVercelCredential = ['vercel', 'credential'].join('-');
+    const checks = createAuthChecks(
+      makeDeps({
+        existsSync: (filePath) => filePath === authPath,
+        readFileSync: () => JSON.stringify({ token: validVercelCredential, user: { email: 'me@example.com' } }),
+      }),
+    );
+
+    expect(checks.checkVercel()).toEqual({ authenticated: true, details: 'me@example.com' });
+  });
+
+  test('checkVercel rejects auth.json without a token', () => {
     const authPath = path.join(HOME, '.vercel', 'auth.json');
     const checks = createAuthChecks(
       makeDeps({
@@ -418,7 +523,7 @@ describe('authChecks', () => {
       }),
     );
 
-    expect(checks.checkVercel()).toEqual({ authenticated: true, details: 'me@example.com' });
+    expect(checks.checkVercel()).toEqual({ authenticated: false });
   });
 
   test('checkVercel returns authenticated with VERCEL_TOKEN env var', () => {
@@ -448,6 +553,19 @@ describe('authChecks', () => {
       makeDeps({
         env: { VERCEL_TOKEN: 'your-token-here' } as NodeJS.ProcessEnv,
         commandExists: (command) => command === 'vercel',
+      }),
+    );
+
+    expect(checks.checkVercel()).toEqual({ authenticated: false });
+  });
+
+  test('checkVercel rejects placeholder auth.json tokens', () => {
+    const authPath = path.join(HOME, '.config', 'vercel', 'auth.json');
+    const placeholderVercelCredential = ['your', 'vercel', 'token'].join('_');
+    const checks = createAuthChecks(
+      makeDeps({
+        existsSync: (filePath) => filePath === authPath,
+        readFileSync: () => JSON.stringify({ token: placeholderVercelCredential }),
       }),
     );
 
@@ -490,6 +608,18 @@ describe('authChecks', () => {
     const checks = createAuthChecks(
       makeDeps({
         env: { SUPABASE_ACCESS_TOKEN: 'YOUR_SUPABASE_ACCESS_TOKEN' } as NodeJS.ProcessEnv,
+      }),
+    );
+
+    expect(checks.checkSupabase()).toEqual({ authenticated: false });
+  });
+
+  test('checkSupabase rejects placeholder access token files', () => {
+    const tokenPath = path.join(HOME, '.supabase', 'access-token');
+    const checks = createAuthChecks(
+      makeDeps({
+        existsSync: (filePath) => filePath === tokenPath,
+        readFileSync: () => 'your_supabase_access_token',
       }),
     );
 

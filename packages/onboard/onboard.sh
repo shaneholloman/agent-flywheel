@@ -317,6 +317,12 @@ onboard_home_for_user() {
         return 0
     fi
 
+    home_candidate="$(onboard_lookup_passwd_home "$user" 2>/dev/null || true)"
+    if [[ -n "$home_candidate" ]]; then
+        printf '%s\n' "$home_candidate"
+        return 0
+    fi
+
     current_user="$(onboard_resolve_current_user 2>/dev/null || true)"
     if [[ "$user" == "$current_user" ]]; then
         home_candidate="${_ONBOARD_CURRENT_HOME:-}"
@@ -327,12 +333,6 @@ onboard_home_for_user() {
             printf '%s\n' "$home_candidate"
             return 0
         fi
-    fi
-
-    home_candidate="$(onboard_lookup_passwd_home "$user" 2>/dev/null || true)"
-    if [[ -n "$home_candidate" ]]; then
-        printf '%s\n' "$home_candidate"
-        return 0
     fi
 
     return 1

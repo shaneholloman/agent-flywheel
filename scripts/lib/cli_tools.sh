@@ -244,7 +244,7 @@ _cli_target_home() {
 
     if [[ "$current_user" == "$target_user" ]]; then
         current_home="$(_cli_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
-        if [[ -n "$current_home" ]]; then
+        if [[ -n "$current_home" ]] && { [[ -z "$explicit_home" ]] || [[ "$current_home" == "$explicit_home" ]]; }; then
             printf '%s\n' "$current_home"
             return 0
         fi
@@ -561,11 +561,13 @@ install_cargo_cli_tools() {
         log_warn "Cargo not found at $cargo_bin, skipping cargo CLI tools"
         return 0
     fi
+    local cargo_bin_q=""
+    printf -v cargo_bin_q '%q' "$cargo_bin"
 
     # Install zoxide if not already installed
     if ! _cli_target_has_command zoxide; then
         log_detail "Installing zoxide via cargo..."
-        _cli_run_as_user "$cargo_bin install zoxide --locked 2>/dev/null" || {
+        _cli_run_as_user "$cargo_bin_q install zoxide --locked 2>/dev/null" || {
             # Fallback: try the official installer
             log_detail "Trying zoxide official installer..."
             if _cli_require_security; then
@@ -573,7 +575,13 @@ install_cargo_cli_tools() {
                 local expected_sha256
                 expected_sha256="$(get_checksum zoxide)"
                 if [[ -n "$expected_sha256" ]]; then
-                    _cli_run_as_user "source '$CLI_TOOLS_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$expected_sha256' 'zoxide' | sh" || true
+                    local security_lib_q=""
+                    local url_q=""
+                    local expected_sha256_q=""
+                    printf -v security_lib_q '%q' "$CLI_TOOLS_SCRIPT_DIR/security.sh"
+                    printf -v url_q '%q' "$url"
+                    printf -v expected_sha256_q '%q' "$expected_sha256"
+                    _cli_run_as_user "source $security_lib_q; verify_checksum $url_q $expected_sha256_q zoxide | sh" || true
                 else
                     log_warn "No checksum recorded for zoxide; skipping unverified installer fallback"
                 fi
@@ -584,29 +592,31 @@ install_cargo_cli_tools() {
     # Install ast-grep (sg command)
     if ! _cli_target_has_command sg; then
         log_detail "Installing ast-grep via cargo..."
-        _cli_run_as_user "$cargo_bin install ast-grep --locked 2>/dev/null" || log_warn "Could not install ast-grep"
+        _cli_run_as_user "$cargo_bin_q install ast-grep --locked 2>/dev/null" || log_warn "Could not install ast-grep"
     fi
 
     # Install lsd via cargo if apt version not available
     if ! _cli_target_has_command lsd && ! _cli_target_has_command eza; then
         log_detail "Installing lsd via cargo..."
-        _cli_run_as_user "$cargo_bin install lsd --locked 2>/dev/null" || log_warn "Could not install lsd"
+        _cli_run_as_user "$cargo_bin_q install lsd --locked 2>/dev/null" || log_warn "Could not install lsd"
     fi
 
     # Install dust via cargo if apt version not available
     if ! _cli_target_has_command dust; then
         log_detail "Installing dust via cargo..."
-        _cli_run_as_user "$cargo_bin install du-dust --locked 2>/dev/null" || log_warn "Could not install dust"
+        _cli_run_as_user "$cargo_bin_q install du-dust --locked 2>/dev/null" || log_warn "Could not install dust"
     fi
 
     # Install tealdeer (tldr - simplified man pages)
     if ! _cli_target_has_command tldr; then
         log_detail "Installing tealdeer (tldr) via cargo..."
-        _cli_run_as_user "$cargo_bin install tealdeer --locked 2>/dev/null" || log_warn "Could not install tealdeer"
+        _cli_run_as_user "$cargo_bin_q install tealdeer --locked 2>/dev/null" || log_warn "Could not install tealdeer"
         # Fetch tldr pages cache (use full path since ~/.cargo/bin may not be in PATH yet)
         local tldr_bin="$target_home/.cargo/bin/tldr"
         if [[ -x "$tldr_bin" ]]; then
-            _cli_run_as_user "$tldr_bin --update 2>/dev/null" || true
+            local tldr_bin_q=""
+            printf -v tldr_bin_q '%q' "$tldr_bin"
+            _cli_run_as_user "$tldr_bin_q --update 2>/dev/null" || true
         fi
     fi
 
@@ -678,7 +688,7 @@ install_lazygit() {
         log_warn "mktemp failed; cannot install lazygit"
         return 1
     fi
-    trap 'rm -rf -- "$tmpdir" 2>/dev/null' RETURN
+    trap 'rm -rf -- "${tmpdir:-}" 2>/dev/null || true; trap - RETURN' RETURN
     curl --proto '=https' --proto-redir '=https' -fsSL -o "$tmpdir/lazygit.tar.gz" \
         "https://github.com/jesseduffield/lazygit/releases/download/v${version}/lazygit_${version}_Linux_${arch}.tar.gz" || {
         log_warn "Could not download lazygit"
@@ -732,7 +742,7 @@ install_lazydocker() {
         log_warn "mktemp failed; cannot install lazydocker"
         return 1
     fi
-    trap 'rm -rf -- "$tmpdir" 2>/dev/null' RETURN
+    trap 'rm -rf -- "${tmpdir:-}" 2>/dev/null || true; trap - RETURN' RETURN
     curl --proto '=https' --proto-redir '=https' -fsSL -o "$tmpdir/lazydocker.tar.gz" \
         "https://github.com/jesseduffield/lazydocker/releases/download/v${version}/lazydocker_${version}_Linux_${arch}.tar.gz" || {
         log_warn "Could not download lazydocker"
@@ -786,7 +796,7 @@ install_yq() {
         log_warn "mktemp failed; cannot install yq"
         return 1
     fi
-    trap 'rm -rf -- "$tmpdir" 2>/dev/null' RETURN
+    trap 'rm -rf -- "${tmpdir:-}" 2>/dev/null || true; trap - RETURN' RETURN
     curl --proto '=https' --proto-redir '=https' -fsSL -o "$tmpdir/yq" \
         "https://github.com/mikefarah/yq/releases/download/${version}/yq_linux_${arch}" || {
         log_warn "Could not download yq"
@@ -835,7 +845,13 @@ install_atuin() {
         return 1
     fi
 
-    if ! _cli_run_as_user "source '$CLI_TOOLS_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$expected_sha256' 'atuin' | sh -s -- --non-interactive"; then
+    local security_lib_q=""
+    local url_q=""
+    local expected_sha256_q=""
+    printf -v security_lib_q '%q' "$CLI_TOOLS_SCRIPT_DIR/security.sh"
+    printf -v url_q '%q' "$url"
+    printf -v expected_sha256_q '%q' "$expected_sha256"
+    if ! _cli_run_as_user "source $security_lib_q; verify_checksum $url_q $expected_sha256_q atuin | sh -s -- --non-interactive"; then
         log_warn "Could not install atuin"
     fi
 

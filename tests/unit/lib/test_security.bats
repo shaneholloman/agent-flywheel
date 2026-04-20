@@ -43,6 +43,39 @@ teardown() {
     assert_output --partial "Verified: test"
 }
 
+@test "verify_checksum: clears RETURN cleanup trap after success" {
+    local security_lib="$PROJECT_ROOT/scripts/lib/security.sh"
+
+    run bash -c '
+        set -euo pipefail
+        source "$1"
+        acfs_download_to_file() {
+            printf "%s" "verified content" > "$2"
+        }
+        sha="$(printf "%s" "verified content" | sha256sum | cut -d" " -f1)"
+        verify_checksum "https://example.com" "$sha" "test" >/dev/null 2>&1
+        trap -p RETURN
+    ' _ "$security_lib"
+    assert_success
+    assert_output ""
+}
+
+@test "fetch_checksum: clears RETURN cleanup trap after success" {
+    local security_lib="$PROJECT_ROOT/scripts/lib/security.sh"
+
+    run bash -c '
+        set -euo pipefail
+        source "$1"
+        acfs_download_to_file() {
+            printf "%s" "verified content" > "$2"
+        }
+        fetch_checksum "https://example.com" >/dev/null
+        trap -p RETURN
+    ' _ "$security_lib"
+    assert_success
+    assert_output ""
+}
+
 @test "verify_checksum: fails on mismatch" {
     local content="malicious content"
     local sha="0000000000000000000000000000000000000000000000000000000000000000"

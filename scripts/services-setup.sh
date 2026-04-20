@@ -226,9 +226,12 @@ services_setup_validate_target_user() {
 
 resolve_home_dir() {
     local user="$1"
+    local expected_home="${2:-}"
     local home=""
     local current_user=""
     local passwd_entry=""
+
+    expected_home="$(services_setup_sanitize_abs_nonroot_path "$expected_home" 2>/dev/null || true)"
 
     passwd_entry="$(services_setup_getent_passwd_entry "$user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
@@ -247,7 +250,7 @@ resolve_home_dir() {
     current_user="$(services_setup_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$user" ]]; then
         home="$(services_setup_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-        if [[ -n "$home" ]]; then
+        if [[ -n "$home" ]] && { [[ -z "$expected_home" ]] || [[ "$home" == "$expected_home" ]]; }; then
             printf '%s' "$home"
             return 0
         fi
@@ -320,17 +323,27 @@ init_target_context() {
     services_setup_validate_target_user "$TARGET_USER" || return 1
 
     explicit_target_home="$(services_setup_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
-    resolved_target_home="$(resolve_home_dir "$TARGET_USER" 2>/dev/null || true)"
-    if [[ -n "$explicit_target_home" ]] && { [[ "$explicit_target_home" != "${_SERVICES_SETUP_ENV_HOME:-}" ]] || [[ -z "$resolved_target_home" ]] || [[ "$explicit_target_home" == "$resolved_target_home" ]] || services_setup_target_home_has_acfs_data "$explicit_target_home"; }; then
-        TARGET_HOME="$explicit_target_home"
-    elif [[ -n "$resolved_target_home" ]]; then
+    resolved_target_home="$(resolve_home_dir "$TARGET_USER" "$explicit_target_home" 2>/dev/null || true)"
+    if [[ -n "$resolved_target_home" ]]; then
         TARGET_HOME="$resolved_target_home"
+    elif [[ -n "$explicit_target_home" ]]; then
+        TARGET_HOME="$explicit_target_home"
     fi
     if [[ -z "${TARGET_HOME:-}" ]]; then
         log_error "Unable to determine home directory for user: $TARGET_USER"
         return 1
     fi
     export TARGET_HOME
+
+    ACFS_HOME="$(services_setup_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
+    if [[ -n "$explicit_target_home" ]] && [[ "$explicit_target_home" != "$TARGET_HOME" ]]; then
+        case "$ACFS_HOME" in
+            "$explicit_target_home"|"$explicit_target_home"/*)
+                ACFS_HOME="$TARGET_HOME/.acfs"
+                ;;
+        esac
+    fi
+    export ACFS_HOME
 
     ACFS_BIN_DIR="$(services_setup_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$TARGET_HOME" 2>/dev/null || true)"
     export ACFS_BIN_DIR
@@ -449,18 +462,122 @@ user_file_exists() {
     [[ -f "$path" ]]
 }
 
-json_file_has_nonempty_value() {
-    local path="$1"
-    local jq_expr="$2"
-    local grep_pattern="$3"
+services_setup_normalize_config_value() {
+    local value="${1-}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    if [[ ${#value} -ge 2 ]]; then
+        local first_char="${value:0:1}"
+        local last_char="${value: -1}"
+        if [[ ( "$first_char" == '"' && "$last_char" == '"' ) || ( "$first_char" == "'" && "$last_char" == "'" ) ]]; then
+            value="${value:1:${#value}-2}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+        fi
+    fi
+
+    printf '%s\n' "$value"
+}
+
+services_setup_is_placeholder_secret() {
+    local normalized=""
+    normalized="$(services_setup_normalize_config_value "${1-}")"
+    normalized="${normalized,,}"
+
+    case "$normalized" in
+        your-token-here|your_token_here|your-token|your_token|your_api_key|your-api-key|your_github_token|your_openai_api_key|your_claude_token|your_vercel_token|your_supabase_access_token|your_cloudflare_api_token|your_gemini_api_key|your_google_api_key|your_project_id|your_project_location|replace-me|change-me|changeme|"<token>"|"<api-key>"|"<secret>")
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+services_setup_has_usable_secret() {
+    local normalized=""
+    normalized="$(services_setup_normalize_config_value "${1-}")"
+    [[ -n "${normalized//[[:space:]]/}" ]] && ! services_setup_is_placeholder_secret "$normalized"
+}
+
+json_file_has_usable_jq_value() {
+    local path="${1:-}"
+    local jq_expr="${2:-}"
+    local candidate=""
+
+    [[ -s "$path" ]] || return 1
+    [[ -n "$jq_expr" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    while IFS= read -r candidate; do
+        if services_setup_has_usable_secret "$candidate"; then
+            return 0
+        fi
+    done < <(jq -r "$jq_expr" "$path" 2>/dev/null || true)
+
+    return 1
+}
+
+json_file_has_usable_string_key() {
+    local path="${1:-}"
+    shift || true
 
     [[ -s "$path" ]] || return 1
 
-    if command -v jq &>/dev/null; then
-        jq -e "$jq_expr" "$path" >/dev/null 2>&1
-    else
-        grep -Eq "$grep_pattern" "$path" 2>/dev/null
-    fi
+    local key=""
+    local regex=""
+    local line=""
+    for key in "$@"; do
+        [[ -n "$key" ]] || continue
+        regex="\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]+)\""
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" =~ $regex ]] && services_setup_has_usable_secret "${BASH_REMATCH[1]}"; then
+                return 0
+            fi
+        done < "$path"
+    done
+
+    return 1
+}
+
+file_has_usable_secret() {
+    local path="${1:-}"
+    local value=""
+
+    [[ -f "$path" ]] || return 1
+    value="$(cat "$path" 2>/dev/null || true)"
+    services_setup_has_usable_secret "$value"
+}
+
+claude_settings_has_command_hook() {
+    local settings_file="${1:-}"
+    local command_pattern="${2:-}"
+
+    [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+    [[ -f "$settings_file" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    jq -e --arg pattern "$command_pattern" '
+      def command_hook_matches:
+        type == "object"
+        and ((.type? // "command") == "command")
+        and ((.command? // "") | strings | test($pattern));
+      def event_entry_matches:
+        if type == "object" and (.hooks? | type) == "array" then
+          any(.hooks[]?; command_hook_matches)
+        else
+          command_hook_matches
+        end;
+      def hook_event_entries:
+        if (.hooks? | type) == "object" then
+          .hooks | to_entries[]? | .value | arrays | .[]?
+        elif (.hooks? | type) == "array" then
+          .hooks[]?
+        else
+          empty
+        end;
+      any(hook_event_entries; event_entry_matches)
+    ' "$settings_file" >/dev/null 2>&1
 }
 
 # Check if a directory exists and is non-empty
@@ -503,12 +620,13 @@ find_user_bin() {
 dcg_hook_registered() {
     local settings_file="$TARGET_HOME/.claude/settings.json"
     local alt_settings_file="$TARGET_HOME/.config/claude/settings.json"
+    local dcg_command_pattern='(^|[[:space:]/])dcg([[:space:]]|$)'
 
-    if [[ -f "$settings_file" ]] && grep -q "dcg" "$settings_file" 2>/dev/null; then
+    if claude_settings_has_command_hook "$settings_file" "$dcg_command_pattern"; then
         return 0
     fi
 
-    if [[ -f "$alt_settings_file" ]] && grep -q "dcg" "$alt_settings_file" 2>/dev/null; then
+    if claude_settings_has_command_hook "$alt_settings_file" "$dcg_command_pattern"; then
         return 0
     fi
 
@@ -700,10 +818,10 @@ check_claude_status() {
         return
     fi
 
-    if json_file_has_nonempty_value \
+    if json_file_has_usable_jq_value \
         "$TARGET_HOME/.claude/.credentials.json" \
-        '((.claudeAiOauth.accessToken // "") | strings | length) > 0' \
-        '"accessToken"[[:space:]]*:[[:space:]]*"[^"]+"'; then
+        '.claudeAiOauth.accessToken // empty | strings' || \
+       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.claude/.credentials.json" "accessToken"; }; then
         SERVICE_STATUS[claude]="configured"
     else
         SERVICE_STATUS[claude]="installed"
@@ -719,10 +837,10 @@ check_codex_status() {
         return
     fi
 
-    if json_file_has_nonempty_value \
+    if json_file_has_usable_jq_value \
         "$TARGET_HOME/.codex/auth.json" \
-        '((.tokens.access_token // .access_token // .accessToken // .OPENAI_API_KEY // "") | strings | length) > 0' \
-        '"(access(_token|Token)|OPENAI_API_KEY)"[[:space:]]*:[[:space:]]*"[^"]+"'; then
+        '[.tokens.access_token, .access_token, .accessToken, .OPENAI_API_KEY] | .[]? | strings' || \
+       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.codex/auth.json" "access_token" "accessToken" "OPENAI_API_KEY"; }; then
         SERVICE_STATUS[codex]="configured"
     else
         SERVICE_STATUS[codex]="installed"
@@ -739,14 +857,14 @@ check_gemini_status() {
     fi
 
     # Check for real Gemini OAuth state, not just a leftover or blank artifact.
-    if json_file_has_nonempty_value \
+    if json_file_has_usable_jq_value \
         "$TARGET_HOME/.gemini/google_accounts.json" \
-        '((.active // "") | strings | length) > 0' \
-        '"active"[[:space:]]*:[[:space:]]*"[^"]+"' || \
-       json_file_has_nonempty_value \
+        '.active // empty | strings' || \
+       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.gemini/google_accounts.json" "active"; } || \
+       json_file_has_usable_jq_value \
         "$TARGET_HOME/.gemini/oauth_creds.json" \
-        '((.access_token // "") | strings | length) > 0 or ((.refresh_token // "") | strings | length) > 0' \
-        '"(access_token|refresh_token)"[[:space:]]*:[[:space:]]*"[^"]+"'; then
+        '[.access_token, .refresh_token] | .[]? | strings' || \
+       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.gemini/oauth_creds.json" "access_token" "refresh_token"; }; then
         SERVICE_STATUS[gemini]="configured"
     else
         SERVICE_STATUS[gemini]="installed"
@@ -762,10 +880,12 @@ check_vercel_status() {
         return
     fi
 
-    # Check if logged in by looking for auth token
-    if user_file_exists "$TARGET_HOME/.config/vercel/auth.json" || \
-       user_file_exists "$TARGET_HOME/.vercel/auth.json" || \
-       [[ -n "${VERCEL_TOKEN:-}" ]]; then
+    # Check if logged in by looking for a usable auth token.
+    if services_setup_has_usable_secret "${VERCEL_TOKEN:-}" || \
+       json_file_has_usable_jq_value "$TARGET_HOME/.config/vercel/auth.json" '.token // empty | strings' || \
+       json_file_has_usable_jq_value "$TARGET_HOME/.vercel/auth.json" '.token // empty | strings' || \
+       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.config/vercel/auth.json" "token"; } || \
+       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.vercel/auth.json" "token"; }; then
         SERVICE_STATUS[vercel]="configured"
     else
         SERVICE_STATUS[vercel]="installed"
@@ -782,10 +902,10 @@ check_supabase_status() {
     fi
 
     # Check for access token
-    if [[ -n "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+    if services_setup_has_usable_secret "${SUPABASE_ACCESS_TOKEN:-}"; then
         SERVICE_STATUS[supabase]="configured"
-    elif [[ -s "$TARGET_HOME/.supabase/access-token" ]] || \
-         [[ -s "$TARGET_HOME/.config/supabase/access-token" ]]; then
+    elif file_has_usable_secret "$TARGET_HOME/.supabase/access-token" || \
+         file_has_usable_secret "$TARGET_HOME/.config/supabase/access-token"; then
         SERVICE_STATUS[supabase]="configured"
     else
         SERVICE_STATUS[supabase]="installed"

@@ -584,18 +584,20 @@ _run_shell_with_strict_mode() {
     local path_prefix
     path_prefix="$(_acfs_user_paths)"
 
-    # UV_NO_CONFIG prevents uv from looking for config in /root when running via sudo
-    local env_setup="export PATH=\"$path_prefix:\$PATH\" UV_NO_CONFIG=1"
+    # Keep path data out of the shell source. ACFS_BIN_DIR may come from the
+    # environment, so pass it through env rather than interpolating it into
+    # bash -c where command substitutions would execute.
+    local -a shell_env=("ACFS_TARGET_PATH_PREFIX=$path_prefix" "UV_NO_CONFIG=1")
 
     if [[ -n "$cmd" ]]; then
         # IMPORTANT: Avoid `bash -l` (login shell). Third-party installers can
         # leave broken profile files that would break non-interactive runs.
-        bash -c "$env_setup; set -euo pipefail; $cmd"
+        env "${shell_env[@]}" bash -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; eval "$1"' _ "$cmd"
         return $?
     fi
 
     # stdin mode (supports heredocs/pipes)
-    bash -c "$env_setup; set -euo pipefail; (printf '%s\n' 'set -euo pipefail'; cat) | bash -s"
+    env "${shell_env[@]}" bash -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | bash -s'
 }
 
 # Resolve a target user's home via NSS/getent with safe fallbacks.
@@ -720,8 +722,16 @@ fi
 if ! declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
     _acfs_resolve_target_home() {
         local user="${1:-ubuntu}"
+        local expected_home="${2:-}"
         local passwd_entry=""
         local current_user=""
+        local current_home=""
+
+        if [[ -n "$expected_home" ]] && [[ "$expected_home" == /* ]] && [[ "$expected_home" != / ]]; then
+            expected_home="${expected_home%/}"
+        else
+            expected_home=""
+        fi
 
         if [[ "$user" == "root" ]]; then
             printf '/root\n'
@@ -739,8 +749,11 @@ if ! declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
 
         current_user="$(_acfs_resolve_current_user 2>/dev/null || true)"
         if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != / ]]; then
-            printf '%s\n' "${HOME%/}"
-            return 0
+            current_home="${HOME%/}"
+            if [[ -z "$expected_home" ]] || [[ "$current_home" == "$expected_home" ]]; then
+                printf '%s\n' "$current_home"
+                return 0
+            fi
         fi
 
         return 1
@@ -750,12 +763,39 @@ fi
 if ! declare -f run_as_target >/dev/null 2>&1; then
     run_as_target() {
         local user="${TARGET_USER:-ubuntu}"
-        local user_home="${TARGET_HOME:-}"
+        local explicit_user_home="${TARGET_HOME:-}"
+        local explicit_user_home_for_repair=""
+        local user_home=""
+        local passwd_entry=""
+        local primary_bin_dir=""
+        local acfs_home_for_target=""
 
         _acfs_validate_target_user "$user" "TARGET_USER" || return 1
 
+        if [[ "$user" == "root" ]]; then
+            user_home="/root"
+        else
+            passwd_entry="$(_acfs_getent_passwd_entry "$user" 2>/dev/null || true)"
+            if [[ -n "$passwd_entry" ]]; then
+                user_home="$(_acfs_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+            fi
+        fi
+
+        if [[ "$explicit_user_home" == /* ]] && [[ "$explicit_user_home" != "/" ]]; then
+            explicit_user_home_for_repair="${explicit_user_home%/}"
+            [[ "$explicit_user_home_for_repair" != "/" ]] || explicit_user_home_for_repair=""
+        fi
+
+        if [[ -z "$user_home" && -n "$explicit_user_home" ]]; then
+            if [[ "$explicit_user_home" == "/" ]]; then
+                user_home="/"
+            else
+                user_home="${explicit_user_home%/}"
+            fi
+        fi
+
         if [[ -z "$user_home" ]]; then
-            user_home="$(_acfs_resolve_target_home "$user" || true)"
+            user_home="$(_acfs_resolve_target_home "$user" "$explicit_user_home_for_repair" || true)"
         fi
 
         if [[ -z "$user_home" ]] || [[ "$user_home" == "/" ]] || [[ "$user_home" != /* ]]; then
@@ -763,7 +803,24 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
             return 1
         fi
 
-        local target_path_prefix="${ACFS_BIN_DIR:-$user_home/.local/bin}:$user_home/.local/bin:$user_home/.acfs/bin:$user_home/.cargo/bin:$user_home/.bun/bin:$user_home/.atuin/bin:$user_home/go/bin"
+        primary_bin_dir="${ACFS_BIN_DIR:-$user_home/.local/bin}"
+        if [[ -n "$explicit_user_home_for_repair" ]] && [[ "$explicit_user_home_for_repair" != "$user_home" ]]; then
+            case "$primary_bin_dir" in
+                "$explicit_user_home_for_repair"|"$explicit_user_home_for_repair"/*)
+                    primary_bin_dir="$user_home/.local/bin"
+                    ;;
+            esac
+        fi
+        acfs_home_for_target="${ACFS_HOME:-}"
+        if [[ -n "$explicit_user_home_for_repair" ]] && [[ "$explicit_user_home_for_repair" != "$user_home" ]]; then
+            case "$acfs_home_for_target" in
+                "$explicit_user_home_for_repair"|"$explicit_user_home_for_repair"/*)
+                    acfs_home_for_target="$user_home/.acfs"
+                    ;;
+            esac
+        fi
+
+        local target_path_prefix="$primary_bin_dir:$user_home/.local/bin:$user_home/.acfs/bin:$user_home/.cargo/bin:$user_home/.bun/bin:$user_home/.atuin/bin:$user_home/go/bin"
         local current_path="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 
         # UV_NO_CONFIG prevents uv from looking for config in /root when running via sudo/runuser.
@@ -774,8 +831,8 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
 
         # Pass core ACFS variables to the target user environment
         env_args+=("TARGET_USER=$user" "TARGET_HOME=$user_home")
-        [[ -n "${ACFS_HOME:-}" ]] && env_args+=("ACFS_HOME=$ACFS_HOME")
-        [[ -n "${ACFS_BIN_DIR:-}" ]] && env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR")
+        [[ -n "$acfs_home_for_target" ]] && env_args+=("ACFS_HOME=$acfs_home_for_target")
+        [[ -n "${ACFS_BIN_DIR:-}" ]] && env_args+=("ACFS_BIN_DIR=$primary_bin_dir")
 
         # Pass ACFS context variables to the target user environment when available.
         [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && env_args+=("ACFS_BOOTSTRAP_DIR=$ACFS_BOOTSTRAP_DIR")
@@ -921,17 +978,18 @@ run_as_target_shell() {
         return 1
     fi
 
-    # UV_NO_CONFIG prevents uv from looking for config in /root when running via sudo
-    local env_setup="export PATH=\"$path_prefix:\$PATH\" UV_NO_CONFIG=1"
+    # Keep path data out of the shell source. run_as_target passes env
+    # assignments as argv, so poisoned path values remain inert data.
+    local -a shell_env=("ACFS_TARGET_PATH_PREFIX=$path_prefix" "UV_NO_CONFIG=1")
 
     if [[ -n "$cmd" ]]; then
         # IMPORTANT: Avoid `bash -l` (login shell). Profile files are not a stable API.
-        run_as_target bash -c "$env_setup; set -euo pipefail; $cmd"
+        run_as_target env "${shell_env[@]}" bash -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; eval "$1"' _ "$cmd"
         return $?
     fi
 
     # stdin mode
-    run_as_target bash -c "$env_setup; set -euo pipefail; (printf '%s\n' 'set -euo pipefail'; cat) | bash -s"
+    run_as_target env "${shell_env[@]}" bash -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | bash -s'
 }
 
 # Run a command as TARGET_USER while preserving stdin for the final runner.

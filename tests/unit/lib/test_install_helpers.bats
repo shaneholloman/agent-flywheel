@@ -94,12 +94,15 @@ teardown() {
     local out
     out=$(run_as_target_shell "echo test")
     
-    # Check key parts instead of exact string to avoid expansion hell
-    # We want to ensure it calls run_as_target with bash -c and sets PATH
-    if [[ "$out" != *"run_as_target called with: bash -c"* ]]; then
-        fail "Did not call run_as_target bash -c"
+    # Check key parts instead of exact string to avoid expansion hell.
+    # PATH data must be passed through env, not interpolated into shell source.
+    if [[ "$out" != *"run_as_target called with: env ACFS_TARGET_PATH_PREFIX="* ]]; then
+        fail "Did not pass target path prefix as env data"
     fi
-    if [[ "$out" != *"export PATH="* ]]; then
+    if [[ "$out" != *" bash -c "* ]]; then
+        fail "Did not call bash -c"
+    fi
+    if [[ "$out" != *'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"'* ]]; then
         fail "Did not export PATH"
     fi
     if [[ "$out" != *"\$HOME/.local/bin"* ]]; then
@@ -108,6 +111,54 @@ teardown() {
     if [[ "$out" != *"echo test"* ]]; then
         fail "Did not include command"
     fi
+}
+
+@test "run_as_current_shell: treats ACFS_BIN_DIR as inert PATH data" {
+    local marker="$BATS_TEST_TMPDIR/current-shell-path-injection"
+    export ACFS_BIN_DIR="\$(printf pwn > '$marker')"
+
+    run run_as_current_shell "printf 'ok\n'"
+    assert_success
+    assert_output "ok"
+    [[ ! -e "$marker" ]] || fail "ACFS_BIN_DIR command substitution executed"
+}
+
+@test "run_as_current_shell stdin mode treats ACFS_BIN_DIR as inert PATH data" {
+    local marker="$BATS_TEST_TMPDIR/current-shell-stdin-path-injection"
+    local out
+    export ACFS_BIN_DIR="\$(printf pwn > '$marker')"
+
+    out="$(printf "printf 'ok\\n'\n" | run_as_current_shell)"
+    [[ "$out" == "ok" ]] || fail "Expected ok, got: $out"
+    [[ ! -e "$marker" ]] || fail "ACFS_BIN_DIR command substitution executed"
+}
+
+@test "run_as_target_shell: treats ACFS_BIN_DIR as inert PATH data" {
+    local marker="$BATS_TEST_TMPDIR/target-shell-path-injection"
+    export ACFS_BIN_DIR="\$(printf pwn > '$marker')"
+
+    run_as_target() {
+        "$@"
+    }
+
+    run run_as_target_shell "printf 'ok\n'"
+    assert_success
+    assert_output "ok"
+    [[ ! -e "$marker" ]] || fail "ACFS_BIN_DIR command substitution executed"
+}
+
+@test "run_as_target_shell stdin mode treats ACFS_BIN_DIR as inert PATH data" {
+    local marker="$BATS_TEST_TMPDIR/target-shell-stdin-path-injection"
+    local out
+    export ACFS_BIN_DIR="\$(printf pwn > '$marker')"
+
+    run_as_target() {
+        "$@"
+    }
+
+    out="$(printf "printf 'ok\\n'\n" | run_as_target_shell)"
+    [[ "$out" == "ok" ]] || fail "Expected ok, got: $out"
+    [[ ! -e "$marker" ]] || fail "ACFS_BIN_DIR command substitution executed"
 }
 
 @test "run_as_target: extends PATH for target-user non-login shells" {
@@ -124,6 +175,73 @@ teardown() {
     captured="$(cat "$STUB_DIR/sudo.log")"
     [[ "$captured" == *"PATH=/home/testuser/.local/bin:/home/testuser/.local/bin:/home/testuser/.acfs/bin:/home/testuser/.cargo/bin:/home/testuser/.bun/bin:/home/testuser/.atuin/bin:/home/testuser/go/bin:"* ]] \
         || fail "Expected run_as_target to extend PATH for target-user bins, got: $captured"
+}
+
+@test "run_as_target: passwd home overrides stale TARGET_HOME and home-scoped bin dir" {
+    local target_home
+    local stale_home
+    local captured
+
+    target_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    mkdir -p "$target_home/.local/bin" "$target_home/.acfs" "$stale_home/.local/bin" "$stale_home/.acfs"
+
+    export TARGET_USER="acfstestuser"
+    export TARGET_HOME="$stale_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+    export ACFS_HOME="$stale_home/.acfs"
+
+    _acfs_getent_passwd_entry() {
+        if [[ "${1:-}" == "acfstestuser" ]]; then
+            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            return 0
+        fi
+        return 1
+    }
+
+    spy_command "sudo"
+
+    run run_as_target env
+    assert_success
+
+    captured="$(cat "$STUB_DIR/sudo.log")"
+    [[ "$captured" == *"HOME=$target_home"* ]] || fail "Expected passwd target HOME, got: $captured"
+    [[ "$captured" == *"TARGET_HOME=$target_home"* ]] || fail "Expected passwd TARGET_HOME, got: $captured"
+    [[ "$captured" == *"ACFS_BIN_DIR=$target_home/.local/bin"* ]] || fail "Expected repaired ACFS_BIN_DIR, got: $captured"
+    [[ "$captured" == *"ACFS_HOME=$target_home/.acfs"* ]] || fail "Expected repaired ACFS_HOME, got: $captured"
+    [[ "$captured" != *"$stale_home"* ]] || fail "Stale home leaked into target environment: $captured"
+}
+
+@test "run_as_target: slash TARGET_HOME is not used as a stale-home rewrite prefix" {
+    local target_home
+    local captured
+
+    target_home="$(create_temp_dir)"
+    mkdir -p "$target_home/.local/bin" "$target_home/.acfs"
+
+    export TARGET_USER="acfstestuser"
+    export TARGET_HOME="/"
+    export ACFS_BIN_DIR="/usr/local/bin"
+    export ACFS_HOME="/opt/acfs"
+
+    _acfs_getent_passwd_entry() {
+        if [[ "${1:-}" == "acfstestuser" ]]; then
+            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            return 0
+        fi
+        return 1
+    }
+
+    spy_command "sudo"
+
+    run run_as_target env
+    assert_success
+
+    captured="$(cat "$STUB_DIR/sudo.log")"
+    [[ "$captured" == *"HOME=$target_home"* ]] || fail "Expected passwd target HOME, got: $captured"
+    [[ "$captured" == *"TARGET_HOME=$target_home"* ]] || fail "Expected passwd TARGET_HOME, got: $captured"
+    [[ "$captured" == *"ACFS_BIN_DIR=/usr/local/bin"* ]] || fail "Slash TARGET_HOME rewrote ACFS_BIN_DIR: $captured"
+    [[ "$captured" == *"ACFS_HOME=/opt/acfs"* ]] || fail "Slash TARGET_HOME rewrote ACFS_HOME: $captured"
 }
 
 @test "primary bin helpers fail clearly without HOME or ACFS_BIN_DIR" {
@@ -195,6 +313,29 @@ teardown() {
     run _acfs_resolve_target_home "$current_user"
     assert_success
     assert_output "$HOME"
+}
+
+@test "_acfs_resolve_target_home: current HOME fallback cannot override explicit target home" {
+    local current_user
+    local current_home
+    local target_home
+
+    current_user="$(command id -un 2>/dev/null || command whoami 2>/dev/null)"
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    export HOME="$current_home"
+
+    _acfs_getent_passwd_entry() {
+        return 2
+    }
+
+    run _acfs_resolve_target_home "$current_user" "$target_home"
+    assert_failure
+    assert_output ""
+
+    run _acfs_resolve_target_home "$current_user" "$current_home"
+    assert_success
+    assert_output "$current_home"
 }
 
 @test "_acfs_resolve_target_home: rejects slash HOME for current user when passwd resolution is unavailable" {

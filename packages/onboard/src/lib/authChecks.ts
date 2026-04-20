@@ -87,11 +87,41 @@ function normalizeConfigValue(value: string): string {
   return trimmed;
 }
 
+function stripShellInlineComment(value: string): string {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < value.length; i += 1) {
+    const char = value[i];
+    if (quote) {
+      if (char === '\\') {
+        i += 1;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '#' && (i === 0 || /\s/.test(value[i - 1] ?? ''))) {
+      return value.slice(0, i).trimEnd();
+    }
+  }
+  return value.trim();
+}
+
 const PLACEHOLDER_SECRETS = new Set([
   'your-token-here',
+  'your_token_here',
   'your-token',
+  'your_token',
   'your_api_key',
   'your-api-key',
+  'your_github_token',
+  'your_openai_api_key',
+  'your_claude_token',
   'your_vercel_token',
   'your_supabase_access_token',
   'your_cloudflare_api_token',
@@ -138,10 +168,7 @@ function readConfiguredValueFromFile(
     if (!match?.[1]) {
       return null;
     }
-    let value = match[1].trim();
-    if (!value.startsWith('"') && !value.startsWith("'")) {
-      value = value.replace(/\s+#.*$/, '').trim();
-    }
+    const value = stripShellInlineComment(match[1].trim());
     const normalized = normalizeConfigValue(value);
     return normalized || null;
   } catch {
@@ -162,7 +189,7 @@ function parseGitHubHostsEntry(contents: string): AuthStatus | null {
   }
 
   const tokenMatch = block.match(/^[ \t]+oauth_token:\s*(["']?)([^"'\n#]+)\1\s*$/m);
-  if (!tokenMatch?.[2]?.trim()) {
+  if (!hasUsableSecret(tokenMatch?.[2])) {
     return null;
   }
 
@@ -290,7 +317,7 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
       deps.readFileSync,
       credentialsPath,
     );
-    if (!hasNonBlankString(credentials?.claudeAiOauth?.accessToken)) {
+    if (!hasUsableSecret(credentials?.claudeAiOauth?.accessToken)) {
       return { authenticated: false };
     }
 
@@ -332,7 +359,7 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
         auth?.access_token,
         auth?.accessToken,
         auth?.OPENAI_API_KEY,
-      ].some(hasNonBlankString)
+      ].some(hasUsableSecret)
     ) {
       return { authenticated: true };
     }
@@ -386,7 +413,7 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
       deps.readFileSync,
       googleAccountsPath,
     );
-    if (hasNonBlankString(googleAccounts?.active)) {
+    if (hasNonBlankString(googleAccounts?.active) && !isPlaceholderSecret(googleAccounts.active)) {
       return { authenticated: true, details: googleAccounts.active.trim() };
     }
 
@@ -396,8 +423,8 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
       oauthCredsPath,
     );
     if (
-      hasNonBlankString(oauthCreds?.access_token) ||
-      hasNonBlankString(oauthCreds?.refresh_token)
+      hasUsableSecret(oauthCreds?.access_token) ||
+      hasUsableSecret(oauthCreds?.refresh_token)
     ) {
       return { authenticated: true };
     }
@@ -447,13 +474,13 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
         continue;
       }
       const auth = safeReadJson<{ token?: string; user?: { email?: string } }>(deps.readFileSync, authPath);
-      if (hasNonBlankString(auth?.user?.email)) {
-        return { authenticated: true, details: auth?.user?.email.trim() };
-      }
-      if (hasNonBlankString(auth?.token)) {
+      if (hasUsableSecret(auth?.token)) {
+        if (hasNonBlankString(auth?.user?.email)) {
+          return { authenticated: true, details: auth.user.email.trim() };
+        }
         return { authenticated: true };
       }
-      // File exists but contains no valid token or user - not authenticated
+      // File exists but contains no valid token - not authenticated
     }
     return { authenticated: false };
   };
@@ -473,7 +500,9 @@ export function createAuthChecks(overrides: Partial<AuthCheckDeps> = {}) {
       }
       try {
         const token = deps.readFileSync(tokenPath, 'utf-8').trim();
-        return token ? { authenticated: true } : { authenticated: false };
+        if (hasUsableSecret(token)) {
+          return { authenticated: true };
+        }
       } catch {
         // File exists but unreadable - cannot confirm authentication
         continue;

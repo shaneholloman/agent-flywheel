@@ -200,6 +200,37 @@ _stack_target_has_command() {
     [[ -n "$(_stack_target_command_path "${1:-}" 2>/dev/null || true)" ]]
 }
 
+_stack_claude_settings_has_command_hook() {
+    local settings_file="${1:-}"
+    local command_pattern="${2:-}"
+
+    [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+    [[ -f "$settings_file" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    jq -e --arg pattern "$command_pattern" '
+      def command_hook_matches:
+        type == "object"
+        and ((.type? // "command") == "command")
+        and ((.command? // "") | strings | test($pattern));
+      def event_entry_matches:
+        if type == "object" and (.hooks? | type) == "array" then
+          any(.hooks[]?; command_hook_matches)
+        else
+          command_hook_matches
+        end;
+      def hook_event_entries:
+        if (.hooks? | type) == "object" then
+          .hooks | to_entries[]? | .value | arrays | .[]?
+        elif (.hooks? | type) == "array" then
+          .hooks[]?
+        else
+          empty
+        end;
+      any(hook_event_entries; event_entry_matches)
+    ' "$settings_file" >/dev/null 2>&1
+}
+
 _stack_curl() {
     local curl_bin=""
 
@@ -379,7 +410,7 @@ _stack_target_home() {
 
     if [[ "$current_user" == "$target_user" ]]; then
         current_home="$(_stack_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
-        if [[ -n "$current_home" ]]; then
+        if [[ -n "$current_home" ]] && { [[ -z "$explicit_home" ]] || [[ "$current_home" == "$explicit_home" ]]; }; then
             printf '%s\n' "$current_home"
             return 0
         fi
@@ -546,7 +577,13 @@ _stack_repair_agent_mail_cli_symlink() {
     local repaired=0
     for dir in "${bin_dirs[@]}"; do
         [[ -n "$dir" ]] || continue
-        _stack_run_as_user "mkdir -p '$dir' 2>/dev/null || true; if [[ -w '$dir' || ! -e '$dir/am' ]]; then ln -sf '$am_src' '$dir/am'; fi" || repaired=1
+        local dir_q=""
+        local am_src_q=""
+        local am_dest_q=""
+        printf -v dir_q '%q' "$dir"
+        printf -v am_src_q '%q' "$am_src"
+        printf -v am_dest_q '%q' "$dir/am"
+        _stack_run_as_user "mkdir -p $dir_q 2>/dev/null || true; if [[ -w $dir_q || ! -e $am_dest_q ]]; then ln -sf $am_src_q $am_dest_q; fi" || repaired=1
     done
 
     return "$repaired"
@@ -582,14 +619,16 @@ _stack_run_as_user() {
     local target_user_q=""
     local target_home_q=""
     local acfs_bin_dir_q=""
+    local target_path_prefix_q=""
     local wrapped_cmd=""
 
     printf -v target_user_q '%q' "$target_user"
     printf -v target_home_q '%q' "$target_home"
     printf -v acfs_bin_dir_q '%q' "$resolved_bin_dir"
+    printf -v target_path_prefix_q '%q' "$target_path_prefix"
 
     wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q ACFS_BIN_DIR=$acfs_bin_dir_q;"
-    wrapped_cmd+=" export PATH=\"$target_path_prefix:$system_path_prefix:\$PATH\"; set -o pipefail; $cmd"
+    wrapped_cmd+=" export PATH=$target_path_prefix_q:$system_path_prefix:\$PATH; set -o pipefail; $cmd"
 
     if [[ "$(_stack_resolve_current_user 2>/dev/null || true)" == "$target_user" ]]; then
         bash -c "$wrapped_cmd"
@@ -666,9 +705,18 @@ _stack_run_verified_installer_with_env() {
         log_warn "No checksum recorded for $tool; refusing to run unverified installer"
         return 1
     fi
-    if [[ -n "$bash_env_assignment" ]] && [[ ! "$bash_env_assignment" =~ ^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+$ ]]; then
-        log_warn "Invalid inline env assignment for $tool installer: $bash_env_assignment"
-        return 1
+    local env_assignment_rendered=""
+    if [[ -n "$bash_env_assignment" ]]; then
+        if [[ "$bash_env_assignment" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local env_name="${BASH_REMATCH[1]}"
+            local env_value="${BASH_REMATCH[2]}"
+            local env_value_q=""
+            printf -v env_value_q '%q' "$env_value"
+            env_assignment_rendered="${env_name}=${env_value_q}"
+        else
+            log_warn "Invalid inline env assignment for $tool installer: $bash_env_assignment"
+            return 1
+        fi
     fi
 
     local -a quoted_args=()
@@ -677,9 +725,18 @@ _stack_run_verified_installer_with_env() {
         quoted_args+=("$(printf '%q' "$arg")")
     done
 
-    local cmd="source '$STACK_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$expected_sha256' '$tool' | "
-    if [[ -n "$bash_env_assignment" ]]; then
-        cmd+="$bash_env_assignment "
+    local security_lib_q=""
+    local url_q=""
+    local expected_sha256_q=""
+    local tool_q=""
+    printf -v security_lib_q '%q' "$STACK_SCRIPT_DIR/security.sh"
+    printf -v url_q '%q' "$url"
+    printf -v expected_sha256_q '%q' "$expected_sha256"
+    printf -v tool_q '%q' "$tool"
+
+    local cmd="source $security_lib_q; verify_checksum $url_q $expected_sha256_q $tool_q | "
+    if [[ -n "$env_assignment_rendered" ]]; then
+        cmd+="$env_assignment_rendered "
     fi
     cmd+="bash -s --"
     if [[ ${#quoted_args[@]} -gt 0 ]]; then
@@ -1148,14 +1205,15 @@ _stack_pcr_installed() {
     local hook_script="$target_home/.local/bin/claude-post-compact-reminder"
     local settings_file="$target_home/.claude/settings.json"
     local alt_settings_file="$target_home/.config/claude/settings.json"
+    local pcr_command_pattern='(^|[[:space:]/])claude-post-compact-reminder([[:space:]]|$)'
 
     [[ -x "$hook_script" ]] || return 1
 
-    if [[ -f "$settings_file" ]] && grep -q "claude-post-compact-reminder" "$settings_file" 2>/dev/null; then
+    if _stack_claude_settings_has_command_hook "$settings_file" "$pcr_command_pattern"; then
         return 0
     fi
 
-    if [[ -f "$alt_settings_file" ]] && grep -q "claude-post-compact-reminder" "$alt_settings_file" 2>/dev/null; then
+    if _stack_claude_settings_has_command_hook "$alt_settings_file" "$pcr_command_pattern"; then
         return 0
     fi
 

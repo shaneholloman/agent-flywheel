@@ -201,6 +201,30 @@ EOF
     assert_output --partial '"session_id": "123"'
 }
 
+@test "sanitize_session_export: clears RETURN cleanup trap after success" {
+    local json='{
+        "schema_version": 1,
+        "session_id": "123",
+        "agent": "claude-code",
+        "stats": { "turns": 1 },
+        "sanitized_transcript": [
+            { "content": "no secrets here" }
+        ]
+    }'
+    local file
+    file=$(create_temp_file "$json")
+
+    run bash -c '
+        set -euo pipefail
+        source "$1"
+        sanitize_session_export "$2" >/dev/null
+        trap -p RETURN
+    ' _ "$PROJECT_ROOT/scripts/lib/session.sh" "$file"
+
+    assert_success
+    assert_output ""
+}
+
 @test "import_session: rejects malformed ACFS exports" {
     local malformed='{
         "schema_version": 1

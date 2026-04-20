@@ -166,6 +166,7 @@ test_has_gh_auth_prefers_target_home_binary() {
     local temp_dir target_home fake_path runtime_home marker status=1
     local old_home="${HOME:-}"
     local old_path="${PATH:-}"
+    local old_target_user="${TARGET_USER-__unset__}"
     local old_target_home="${TARGET_HOME-__unset__}"
     local old_acfs_bin_dir="${ACFS_BIN_DIR-__unset__}"
 
@@ -196,6 +197,7 @@ EOF
 
     HOME="$runtime_home"
     PATH="$fake_path:/usr/bin:/bin"
+    TARGET_USER="acfstestuser"
     TARGET_HOME="$target_home"
     ACFS_BIN_DIR="$target_home/.local/bin"
 
@@ -205,6 +207,11 @@ EOF
 
     PATH="$old_path"
     HOME="$old_home"
+    if [[ "$old_target_user" == "__unset__" ]]; then
+        unset TARGET_USER
+    else
+        TARGET_USER="$old_target_user"
+    fi
     if [[ "$old_target_home" == "__unset__" ]]; then
         unset TARGET_HOME
     else
@@ -238,8 +245,7 @@ test_fetch_valid_url() {
     # Test: Fetch a known good URL should succeed
     local tmp_file
     tmp_file=$(mktemp)
-    # shellcheck disable=SC2064
-    trap "rm -f '$tmp_file'" RETURN
+    trap 'rm -f -- "${tmp_file:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     # Use a small, stable GitHub file
     if github_fetch_with_backoff "https://raw.githubusercontent.com/Dicklesworthstone/beads_rust/main/README.md" "$tmp_file" "test" 2>/dev/null; then
@@ -254,8 +260,7 @@ test_fetch_invalid_url() {
     # Test: Fetch non-existent URL should fail with exit code 2
     local tmp_file status=0
     tmp_file=$(mktemp)
-    # shellcheck disable=SC2064
-    trap "rm -f '$tmp_file'" RETURN
+    trap 'rm -f -- "${tmp_file:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     github_fetch_with_backoff "https://api.github.com/repos/nonexistent-user-12345/nonexistent-repo-67890/contents" "$tmp_file" "test" 2>/dev/null || status=$?
 
@@ -295,6 +300,76 @@ test_fetch_valid_url_without_base_args() {
     return "$status"
 }
 
+test_fetch_with_backoff_clears_return_trap() {
+    # Regression test: library functions are sourced into long-lived shells, so
+    # temp-file cleanup must not leave a stale RETURN trap behind.
+    local temp_dir tmp_file trap_output status=0
+    temp_dir=$(mktemp -d)
+    tmp_file=$(mktemp)
+
+    cat > "$temp_dir/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "--help" ]]; then
+    printf '%s\n' '--proto'
+    exit 0
+fi
+
+headers=""
+output=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -D)
+            headers="$2"
+            shift 2
+            ;;
+        -o)
+            output="$2"
+            shift 2
+            ;;
+        -w)
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+printf 'HTTP/2 200\r\nx-ratelimit-remaining: 1\r\n\r\n' > "$headers"
+printf 'ok\n' > "$output"
+printf '200'
+EOF
+    chmod +x "$temp_dir/curl"
+
+    trap_output="$(
+        PATH="$temp_dir:/usr/bin:/bin" GITHUB_MAX_RETRIES=1 bash -c '
+            set -euo pipefail
+            source "$1"
+            github_fetch_with_backoff "https://example.invalid/file" "$2" "trap-test" >/dev/null
+            trap -p RETURN
+        ' _ "$LIB_DIR/github_api.sh" "$tmp_file"
+    )" || status=$?
+
+    rm -rf "$temp_dir"
+    rm -f "$tmp_file"
+
+    [[ "$status" -eq 0 && -z "$trap_output" ]]
+}
+
+test_latest_release_returns_nonzero_on_fetch_failure() {
+    (
+        github_api_fetch() {
+            return 2
+        }
+
+        local output status=0
+        output="$(github_get_latest_release "owner/repo")" || status=$?
+        [[ "$status" -ne 0 && -z "$output" ]]
+    )
+}
+
 # ============================================================
 # Main
 # ============================================================
@@ -323,6 +398,11 @@ main() {
     echo ""
     echo "--- Auth Detection ---"
     run_test "Target-home gh beats current PATH gh" test_has_gh_auth_prefers_target_home_binary
+
+    echo ""
+    echo "--- Cleanup Discipline ---"
+    run_test "Fetch backoff clears RETURN trap" test_fetch_with_backoff_clears_return_trap
+    run_test "Latest release failure returns non-zero" test_latest_release_returns_nonzero_on_fetch_failure
 
     # Skip network tests if SKIP_NETWORK_TESTS is set
     if [[ "${SKIP_NETWORK_TESTS:-}" != "true" ]]; then

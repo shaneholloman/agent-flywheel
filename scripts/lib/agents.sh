@@ -41,6 +41,84 @@ _agent_command_exists() {
     command -v "$1" &>/dev/null
 }
 
+_agent_normalize_config_value() {
+    local value="${1-}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+
+    if [[ ${#value} -ge 2 ]]; then
+        local first_char="${value:0:1}"
+        local last_char="${value: -1}"
+        if [[ ( "$first_char" == '"' && "$last_char" == '"' ) || ( "$first_char" == "'" && "$last_char" == "'" ) ]]; then
+            value="${value:1:${#value}-2}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+        fi
+    fi
+
+    printf '%s\n' "$value"
+}
+
+_agent_is_placeholder_secret() {
+    local normalized=""
+    normalized="$(_agent_normalize_config_value "${1-}")"
+    normalized="${normalized,,}"
+
+    case "$normalized" in
+        your-token-here|your_token_here|your-token|your_token|your_api_key|your-api-key|your_github_token|your_openai_api_key|your_claude_token|your_vercel_token|your_supabase_access_token|your_cloudflare_api_token|your_gemini_api_key|your_google_api_key|your_project_id|your_project_location|replace-me|change-me|changeme|"<token>"|"<api-key>"|"<secret>")
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+_agent_has_usable_secret() {
+    local normalized=""
+    normalized="$(_agent_normalize_config_value "${1-}")"
+    [[ -n "${normalized//[[:space:]]/}" ]] && ! _agent_is_placeholder_secret "$normalized"
+}
+
+_agent_json_file_has_usable_jq_value() {
+    local file_path="${1:-}"
+    local jq_expr="${2:-}"
+    local candidate=""
+
+    [[ -s "$file_path" ]] || return 1
+    [[ -n "$jq_expr" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    while IFS= read -r candidate; do
+        if _agent_has_usable_secret "$candidate"; then
+            return 0
+        fi
+    done < <(jq -r "$jq_expr" "$file_path" 2>/dev/null || true)
+
+    return 1
+}
+
+_agent_json_file_has_usable_string_key() {
+    local file_path="${1:-}"
+    shift || true
+
+    [[ -s "$file_path" ]] || return 1
+
+    local key=""
+    local regex=""
+    local line=""
+    for key in "$@"; do
+        [[ -n "$key" ]] || continue
+        regex="\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]+)\""
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" =~ $regex ]] && _agent_has_usable_secret "${BASH_REMATCH[1]}"; then
+                return 0
+            fi
+        done < "$file_path"
+    done
+
+    return 1
+}
+
 # Get the sudo command if needed
 _agent_get_sudo() {
     if [[ $EUID -eq 0 ]]; then
@@ -185,7 +263,7 @@ _agent_target_home() {
 
     if [[ "$current_user" == "$target_user" ]]; then
         current_home="$(_agent_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
-        if [[ -n "$current_home" ]]; then
+        if [[ -n "$current_home" ]] && { [[ -z "$explicit_home" ]] || [[ "$current_home" == "$explicit_home" ]]; }; then
             printf '%s\n' "$current_home"
             return 0
         fi
@@ -428,10 +506,19 @@ _agent_create_bun_wrapper() {
     [[ -x "$bun_tool_path" ]] || return 0
 
     log_detail "Creating $tool_name bun wrapper at $wrapper_path"
-    _agent_run_as_user "mkdir -p '$target_home/.local/bin'" || return 1
+    local local_bin_q=""
+    local wrapper_path_q=""
+    local wrapper_exec_line=""
+    local wrapper_exec_line_q=""
+    printf -v local_bin_q '%q' "$target_home/.local/bin"
+    printf -v wrapper_path_q '%q' "$wrapper_path"
+    wrapper_exec_line="exec ~/.bun/bin/bun ~/.bun/bin/$tool_name \"\$@\""
+    printf -v wrapper_exec_line_q '%q' "$wrapper_exec_line"
+
+    _agent_run_as_user "mkdir -p $local_bin_q" || return 1
     # Use printf to avoid heredoc quoting issues with variable expansion
-    _agent_run_as_user "printf '%s\\n' '#!/bin/bash' 'exec ~/.bun/bin/bun ~/.bun/bin/$tool_name \"\$@\"' > '$wrapper_path'" || return 1
-    _agent_run_as_user "chmod +x '$wrapper_path'" || return 1
+    _agent_run_as_user "printf '%s\\n' '#!/bin/bash' $wrapper_exec_line_q > $wrapper_path_q" || return 1
+    _agent_run_as_user "chmod +x $wrapper_path_q" || return 1
     return 0
 }
 
@@ -484,7 +571,15 @@ _agent_ensure_nvm_node() {
     fi
 
     log_detail "Installing nvm + latest Node.js for Gemini patch compatibility..."
-    if ! _agent_run_as_user "source '$AGENTS_SCRIPT_DIR/security.sh'; verify_checksum '$installer_url' '$installer_sha' '$patch_tool' | bash -s --"; then
+    local security_lib_q=""
+    local installer_url_q=""
+    local installer_sha_q=""
+    local patch_tool_q=""
+    printf -v security_lib_q '%q' "$AGENTS_SCRIPT_DIR/security.sh"
+    printf -v installer_url_q '%q' "$installer_url"
+    printf -v installer_sha_q '%q' "$installer_sha"
+    printf -v patch_tool_q '%q' "$patch_tool"
+    if ! _agent_run_as_user "source $security_lib_q; verify_checksum $installer_url_q $installer_sha_q $patch_tool_q | bash -s --"; then
         log_warn "nvm installer verification failed; cannot prepare Node.js for Gemini patch"
         return 1
     fi
@@ -535,7 +630,17 @@ _agent_apply_verified_gemini_patch() {
         return 1
     fi
 
-    if _agent_run_as_user "export PATH='$node_bin_dir':\"\$PATH\"; source '$AGENTS_SCRIPT_DIR/security.sh'; verify_checksum '$patch_url' '$patch_sha' '$patch_tool' | bash -s --"; then
+    local node_bin_dir_q=""
+    local security_lib_q=""
+    local patch_url_q=""
+    local patch_sha_q=""
+    local patch_tool_q=""
+    printf -v node_bin_dir_q '%q' "$node_bin_dir"
+    printf -v security_lib_q '%q' "$AGENTS_SCRIPT_DIR/security.sh"
+    printf -v patch_url_q '%q' "$patch_url"
+    printf -v patch_sha_q '%q' "$patch_sha"
+    printf -v patch_tool_q '%q' "$patch_tool"
+    if _agent_run_as_user "export PATH=$node_bin_dir_q:\"\$PATH\"; source $security_lib_q; verify_checksum $patch_url_q $patch_sha_q $patch_tool_q | bash -s --"; then
         return 0
     fi
 
@@ -571,7 +676,13 @@ install_claude_code() {
             local url="${KNOWN_INSTALLERS[claude]}"
             local sha="${LOADED_CHECKSUMS[claude]}"
             if [[ -n "$url" && -n "$sha" ]]; then
-                if _agent_run_as_user "source '$AGENTS_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$sha' 'claude' | bash -s -- latest"; then
+                local security_lib_q=""
+                local url_q=""
+                local sha_q=""
+                printf -v security_lib_q '%q' "$AGENTS_SCRIPT_DIR/security.sh"
+                printf -v url_q '%q' "$url"
+                printf -v sha_q '%q' "$sha"
+                if _agent_run_as_user "source $security_lib_q; verify_checksum $url_q $sha_q claude | bash -s -- latest"; then
                     log_success "Claude Code installed (verified)"
                     return 0
                 fi
@@ -714,9 +825,15 @@ _configure_gemini_settings() {
     local am_mcp_path="/mcp/"
     am_mcp_path="$(_agent_detect_am_mcp_path "$target_home")"
     local am_mcp_url="http://127.0.0.1:8765${am_mcp_path}"
+    local settings_dir_q=""
+    local settings_file_q=""
+    local am_mcp_url_q=""
+    printf -v settings_dir_q '%q' "$settings_dir"
+    printf -v settings_file_q '%q' "$settings_file"
+    printf -v am_mcp_url_q '%q' "$am_mcp_url"
 
     # Create settings directory if needed
-    _agent_run_as_user "mkdir -p '$settings_dir'" || return 1
+    _agent_run_as_user "mkdir -p $settings_dir_q" || return 1
 
     # If settings file doesn't exist, create it with tmux-compatible defaults, OAuth auth,
     # and MCP Agent Mail server configuration (fixes #158)
@@ -724,7 +841,7 @@ _configure_gemini_settings() {
         log_detail "Creating Gemini settings for tmux compatibility, OAuth auth, and MCP Agent Mail..."
         # Write default settings - the JSON is simple enough to inline
         # Note: Using double quotes for variable expansion, escaping inner quotes
-        _agent_run_as_user "cat > '$settings_file' << 'GEMINI_EOF'
+        _agent_run_as_user "cat > $settings_file_q << 'GEMINI_EOF'
 {
   \"selectedType\": \"oauth-personal\",
   \"tools\": {
@@ -745,11 +862,13 @@ GEMINI_EOF"
     # Settings file exists - merge our settings if jq is available
     if command -v jq &>/dev/null; then
         local tmp_file="$settings_dir/.settings.tmp.$$"
+        local tmp_file_q=""
         local needs_update=false
+        printf -v tmp_file_q '%q' "$tmp_file"
 
         # Check if enableInteractiveShell is already set correctly
         local shell_value
-        shell_value=$(_agent_run_as_user "jq -r 'if .tools.shell | has(\"enableInteractiveShell\") then .tools.shell.enableInteractiveShell | tostring else \"unset\" end' '$settings_file'" 2>/dev/null || echo "error")
+        shell_value=$(_agent_run_as_user "jq -r 'if .tools.shell | has(\"enableInteractiveShell\") then .tools.shell.enableInteractiveShell | tostring else \"unset\" end' $settings_file_q" 2>/dev/null || echo "error")
 
         if [[ "$shell_value" != "false" ]]; then
             needs_update=true
@@ -757,7 +876,7 @@ GEMINI_EOF"
 
         # Check if selectedType is set to oauth-personal (fix gemini-api-key if found)
         local auth_value
-        auth_value=$(_agent_run_as_user "jq -r '.selectedType // \"unset\"' '$settings_file'" 2>/dev/null || echo "error")
+        auth_value=$(_agent_run_as_user "jq -r '.selectedType // \"unset\"' $settings_file_q" 2>/dev/null || echo "error")
 
         if [[ "$auth_value" == "gemini-api-key" ]]; then
             log_detail "Fixing Gemini auth from API key to OAuth..."
@@ -768,7 +887,7 @@ GEMINI_EOF"
 
         # Check if MCP Agent Mail server is configured (fixes #158)
         local mcp_value
-        mcp_value=$(_agent_run_as_user "jq -r '.mcpServers.\"mcp-agent-mail\".httpUrl // \"unset\"' '$settings_file'" 2>/dev/null || echo "error")
+        mcp_value=$(_agent_run_as_user "jq -r '.mcpServers.\"mcp-agent-mail\".httpUrl // \"unset\"' $settings_file_q" 2>/dev/null || echo "error")
         if [[ "$mcp_value" != "$am_mcp_url" ]]; then
             needs_update=true
         fi
@@ -776,10 +895,10 @@ GEMINI_EOF"
         if [[ "$needs_update" == "true" ]]; then
             log_detail "Configuring Gemini settings for tmux compatibility, OAuth, and MCP Agent Mail..."
             # Update shell settings, auth type, and MCP server config
-            if _agent_run_as_user "jq '.selectedType = \"oauth-personal\" | .tools = (.tools // {}) | .tools.shell = (.tools.shell // {}) | .tools.shell.enableInteractiveShell = false | .mcpServers = (.mcpServers // {}) | .mcpServers.\"mcp-agent-mail\" = {\"httpUrl\": \"$am_mcp_url\"}' '$settings_file' > '$tmp_file' && mv '$tmp_file' '$settings_file'" 2>/dev/null; then
+            if _agent_run_as_user "jq --arg http_url $am_mcp_url_q '.selectedType = \"oauth-personal\" | .tools = (.tools // {}) | .tools.shell = (.tools.shell // {}) | .tools.shell.enableInteractiveShell = false | .mcpServers = (.mcpServers // {}) | .mcpServers.\"mcp-agent-mail\" = {\"httpUrl\": \$http_url}' $settings_file_q > $tmp_file_q && mv $tmp_file_q $settings_file_q" 2>/dev/null; then
                 log_detail "Gemini settings configured (OAuth + tmux + MCP Agent Mail)"
             else
-                _agent_run_as_user "rm -f '$tmp_file'" 2>/dev/null
+                _agent_run_as_user "rm -f $tmp_file_q" 2>/dev/null
                 log_warn "Could not update Gemini settings automatically"
             fi
         else
@@ -940,10 +1059,10 @@ check_agent_auth() {
     local claude_creds_file="$target_home/.claude/.credentials.json"
     local claude_configured=false
     if command -v jq &>/dev/null; then
-        if [[ -f "$claude_creds_file" ]] && jq -e '((.claudeAiOauth.accessToken // "") | strings | length) > 0' "$claude_creds_file" >/dev/null 2>&1; then
+        if _agent_json_file_has_usable_jq_value "$claude_creds_file" '.claudeAiOauth.accessToken // empty | strings'; then
             claude_configured=true
         fi
-    elif [[ -f "$claude_creds_file" ]] && grep -Eq '"accessToken"[[:space:]]*:[[:space:]]*"[^"]+"' "$claude_creds_file" 2>/dev/null; then
+    elif _agent_json_file_has_usable_string_key "$claude_creds_file" "accessToken"; then
         claude_configured=true
     fi
 
@@ -958,11 +1077,10 @@ check_agent_auth() {
     local codex_auth_file="$codex_home/auth.json"
     local codex_configured=false
     if command -v jq &>/dev/null; then
-        if [[ -f "$codex_auth_file" ]] && \
-           jq -e '((.tokens.access_token // .access_token // .accessToken // .OPENAI_API_KEY // "") | strings | length) > 0' "$codex_auth_file" >/dev/null 2>&1; then
+        if _agent_json_file_has_usable_jq_value "$codex_auth_file" '[.tokens.access_token, .access_token, .accessToken, .OPENAI_API_KEY] | .[]? | strings'; then
             codex_configured=true
         fi
-    elif [[ -f "$codex_auth_file" ]] && grep -Eq '"(access(_token|Token)|OPENAI_API_KEY)"[[:space:]]*:[[:space:]]*"[^"]+"' "$codex_auth_file" 2>/dev/null; then
+    elif _agent_json_file_has_usable_string_key "$codex_auth_file" "access_token" "accessToken" "OPENAI_API_KEY"; then
         codex_configured=true
     fi
 
@@ -978,16 +1096,15 @@ check_agent_auth() {
     local gemini_configured=false
 
     if command -v jq &>/dev/null; then
-        if [[ -f "$gemini_accounts_file" ]] && jq -e '((.active // "") | strings | length) > 0' "$gemini_accounts_file" >/dev/null 2>&1; then
+        if _agent_json_file_has_usable_jq_value "$gemini_accounts_file" '.active // empty | strings'; then
             gemini_configured=true
-        elif [[ -f "$gemini_oauth_file" ]] && \
-             jq -e '((.access_token // "") | strings | length) > 0 or ((.refresh_token // "") | strings | length) > 0' "$gemini_oauth_file" >/dev/null 2>&1; then
+        elif _agent_json_file_has_usable_jq_value "$gemini_oauth_file" '[.access_token, .refresh_token] | .[]? | strings'; then
             gemini_configured=true
         fi
     else
-        if [[ -f "$gemini_accounts_file" ]] && grep -Eq '"active"[[:space:]]*:[[:space:]]*"[^"]+"' "$gemini_accounts_file" 2>/dev/null; then
+        if _agent_json_file_has_usable_string_key "$gemini_accounts_file" "active"; then
             gemini_configured=true
-        elif [[ -f "$gemini_oauth_file" ]] && grep -Eq '"(access_token|refresh_token)"[[:space:]]*:[[:space:]]*"[^"]+"' "$gemini_oauth_file" 2>/dev/null; then
+        elif _agent_json_file_has_usable_string_key "$gemini_oauth_file" "access_token" "refresh_token"; then
             gemini_configured=true
         fi
     fi

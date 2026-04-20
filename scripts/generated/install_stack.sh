@@ -158,9 +158,13 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
 
     MODE="${MODE:-vibe}"
 
+    _ACFS_EXPLICIT_TARGET_HOME="${TARGET_HOME:-}"
+    if [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
+        _ACFS_EXPLICIT_TARGET_HOME="${_ACFS_EXPLICIT_TARGET_HOME%/}"
+    fi
     _ACFS_RESOLVED_TARGET_HOME=""
     if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
-        _ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"
+        _ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" "$_ACFS_EXPLICIT_TARGET_HOME" || true)"
     else
         if [[ "${TARGET_USER}" == "root" ]]; then
             _ACFS_RESOLVED_TARGET_HOME="/root"
@@ -170,20 +174,24 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
                 _ACFS_RESOLVED_TARGET_HOME="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
             else
                 _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-                if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                    _ACFS_RESOLVED_TARGET_HOME="${HOME%/}"
+                _acfs_current_home="${HOME:-}"
+                if [[ -n "$_acfs_current_home" ]]; then
+                    _acfs_current_home="${_acfs_current_home%/}"
                 fi
-                unset _acfs_current_user
+                if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "$_acfs_current_home" ]] && [[ "$_acfs_current_home" == /* ]] && [[ "$_acfs_current_home" != "/" ]] && { [[ -z "$_ACFS_EXPLICIT_TARGET_HOME" ]] || [[ "$_acfs_current_home" == "$_ACFS_EXPLICIT_TARGET_HOME" ]]; }; then
+                    _ACFS_RESOLVED_TARGET_HOME="$_acfs_current_home"
+                fi
+                unset _acfs_current_user _acfs_current_home
             fi
             unset _acfs_passwd_entry
         fi
     fi
     if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then
         TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"
-    elif [[ -n "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="${TARGET_HOME%/}"
+    elif [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
+        TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"
     fi
-    unset _ACFS_RESOLVED_TARGET_HOME
+    unset _ACFS_EXPLICIT_TARGET_HOME _ACFS_RESOLVED_TARGET_HOME
 
     if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
         log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
@@ -1615,21 +1623,49 @@ INSTALL_STACK_DCG
         fi
     fi
     if [[ "${DRY_RUN:-false}" = "true" ]]; then
-        log_info "dry-run: verify: if [[ -f \"\$settings\" ]]; then (target_user)"
+        log_info "dry-run: verify: claude_settings_has_command_hook \"\$settings\" \"\$dcg_command_pattern\" || (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_STACK_DCG'
+claude_settings_has_command_hook() {
+  local settings_file="${1:-}"
+  local command_pattern="${2:-}"
+
+  [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+  [[ -f "$settings_file" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  jq -e --arg pattern "$command_pattern" '
+    def command_hook_matches:
+      type == "object"
+      and ((.type? // "command") == "command")
+      and ((.command? // "") | strings | test($pattern));
+    def event_entry_matches:
+      if type == "object" and (.hooks? | type) == "array" then
+        any(.hooks[]?; command_hook_matches)
+      else
+        command_hook_matches
+      end;
+    def hook_event_entries:
+      if (.hooks? | type) == "object" then
+        .hooks | to_entries[]? | .value | arrays | .[]?
+      elif (.hooks? | type) == "array" then
+        .hooks[]?
+      else
+        empty
+      end;
+    any(hook_event_entries; event_entry_matches)
+  ' "$settings_file" >/dev/null 2>&1
+}
+
 settings="$HOME/.claude/settings.json"
 alt_settings="$HOME/.config/claude/settings.json"
-if [[ -f "$settings" ]]; then
-  grep -q "dcg" "$settings"
-elif [[ -f "$alt_settings" ]]; then
-  grep -q "dcg" "$alt_settings"
-else
-  exit 1
-fi
+dcg_command_pattern='(^|[[:space:]/])dcg([[:space:]]|$)'
+
+claude_settings_has_command_hook "$settings" "$dcg_command_pattern" ||
+  claude_settings_has_command_hook "$alt_settings" "$dcg_command_pattern"
 INSTALL_STACK_DCG
         then
-            log_error "stack.dcg: verify failed: if [[ -f \"\$settings\" ]]; then"
+            log_error "stack.dcg: verify failed: claude_settings_has_command_hook \"\$settings\" \"\$dcg_command_pattern\" ||"
             return 1
         fi
     fi
@@ -2626,20 +2662,47 @@ INSTALL_STACK_PCR_PRE_INSTALL_CHECK
         log_info "dry-run: verify: test -x \"\$hook_script\" || exit 1 (target_user)"
     else
         if ! run_as_target_shell <<'INSTALL_STACK_PCR'
+claude_settings_has_command_hook() {
+  local settings_file="${1:-}"
+  local command_pattern="${2:-}"
+
+  [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+  [[ -f "$settings_file" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  jq -e --arg pattern "$command_pattern" '
+    def command_hook_matches:
+      type == "object"
+      and ((.type? // "command") == "command")
+      and ((.command? // "") | strings | test($pattern));
+    def event_entry_matches:
+      if type == "object" and (.hooks? | type) == "array" then
+        any(.hooks[]?; command_hook_matches)
+      else
+        command_hook_matches
+      end;
+    def hook_event_entries:
+      if (.hooks? | type) == "object" then
+        .hooks | to_entries[]? | .value | arrays | .[]?
+      elif (.hooks? | type) == "array" then
+        .hooks[]?
+      else
+        empty
+      end;
+    any(hook_event_entries; event_entry_matches)
+  ' "$settings_file" >/dev/null 2>&1
+}
+
 target_home="${TARGET_HOME:-$HOME}"
 hook_script="$target_home/.local/bin/claude-post-compact-reminder"
 settings="$target_home/.claude/settings.json"
 alt_settings="$target_home/.config/claude/settings.json"
+pcr_command_pattern='(^|[[:space:]/])claude-post-compact-reminder([[:space:]]|$)'
 
 test -x "$hook_script" || exit 1
 
-if [[ -f "$settings" ]]; then
-  grep -q "claude-post-compact-reminder" "$settings"
-elif [[ -f "$alt_settings" ]]; then
-  grep -q "claude-post-compact-reminder" "$alt_settings"
-else
-  exit 1
-fi
+claude_settings_has_command_hook "$settings" "$pcr_command_pattern" ||
+  claude_settings_has_command_hook "$alt_settings" "$pcr_command_pattern"
 INSTALL_STACK_PCR
         then
             log_warn "stack.pcr: verify failed: test -x \"\$hook_script\" || exit 1"

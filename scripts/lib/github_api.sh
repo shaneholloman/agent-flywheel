@@ -140,6 +140,11 @@ _github_api_runtime_home() {
         return 0
     fi
 
+    if [[ -z "$target_user" && -n "$current_home" ]]; then
+        printf '%s\n' "$current_home"
+        return 0
+    fi
+
     if [[ -n "$explicit_home" && "$explicit_home" != "$current_home" && "$explicit_home" != "$initial_env_home" ]]; then
         printf '%s\n' "$explicit_home"
         return 0
@@ -424,9 +429,8 @@ github_fetch_with_backoff() {
     tmp_body="$(mktemp "${TMPDIR:-/tmp}/gh-body.XXXXXX")" || return 2
     tmp_headers="$(mktemp "${TMPDIR:-/tmp}/gh-headers.XXXXXX")" || { rm -f "$tmp_body"; return 2; }
 
-    # Cleanup on exit
-    # shellcheck disable=SC2064
-    trap "rm -f '$tmp_body' '$tmp_headers'" RETURN
+    # Cleanup on function return without leaving a stale RETURN trap in sourced shells.
+    trap 'rm -f -- "${tmp_body:-}" "${tmp_headers:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     while (( attempt < max_attempts )); do
         attempt=$((attempt + 1))
@@ -536,8 +540,7 @@ github_get_latest_release() {
     local tmp_response
     tmp_response="$(mktemp "${TMPDIR:-/tmp}/gh-release.XXXXXX")" || return 1
 
-    # shellcheck disable=SC2064
-    trap "rm -f '$tmp_response'" RETURN
+    trap 'rm -f -- "${tmp_response:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     if github_api_fetch "/repos/$repo/releases/latest" "$tmp_response"; then
         # Use jq for robust parsing if available, fall back to grep/sed
@@ -548,6 +551,8 @@ github_get_latest_release() {
                 | head -1 \
                 | sed 's/.*"\([^"]*\)"$/\1/'
         fi
+    else
+        return 1
     fi
 }
 

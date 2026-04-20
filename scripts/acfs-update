@@ -539,23 +539,25 @@ validated_target_user_for_dispatch() {
   local candidate_user="$1"
   local expected_home="${2:-}"
   local current_user=""
+  local current_home=""
   local resolved_home=""
 
   [[ -n "$candidate_user" ]] || return 1
   is_valid_username "$candidate_user" || return 1
 
-  current_user="$(resolve_current_user 2>/dev/null || true)"
-  if [[ -n "$current_user" ]] && [[ "$current_user" == "$candidate_user" ]]; then
-    printf '%s\n' "$candidate_user"
-    return 0
-  fi
-
-  resolved_home="$(resolve_home_for_user "$candidate_user" 2>/dev/null || true)"
-  [[ -n "$resolved_home" ]] || return 1
-
   expected_home="$(sanitize_abs_nonroot_path "$expected_home" 2>/dev/null || true)"
-  if [[ -n "$expected_home" ]] && [[ "$resolved_home" != "$expected_home" ]]; then
-    return 1
+  resolved_home="$(resolve_home_for_user "$candidate_user" 2>/dev/null || true)"
+  if [[ -n "$resolved_home" ]]; then
+    if [[ -n "$expected_home" ]] && [[ "$resolved_home" != "$expected_home" ]]; then
+      return 1
+    fi
+  else
+    [[ -n "$expected_home" ]] || return 1
+    current_user="$(resolve_current_user 2>/dev/null || true)"
+    current_home="$(sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+    if [[ "$current_user" != "$candidate_user" || -z "$current_home" || "$current_home" != "$expected_home" ]]; then
+      return 1
+    fi
   fi
 
   printf '%s\n' "$candidate_user"
@@ -923,6 +925,24 @@ exec_as_target_user() {
   sanitized_bin_dir="$(sanitize_abs_nonroot_path "${ACFS_BIN_DIR:-}" 2>/dev/null || true)"
 
   validate_target_user_or_die "$user"
+
+  if [[ -n "$sanitized_target_home" ]]; then
+    if [[ -n "$sanitized_state_file" ]] && ! state_file_matches_target_home "$sanitized_state_file" "$sanitized_target_home"; then
+      sanitized_state_file=""
+    fi
+    if [[ -n "$sanitized_system_state_file" ]] && ! state_file_matches_target_home "$sanitized_system_state_file" "$sanitized_target_home"; then
+      sanitized_system_state_file=""
+    fi
+    if [[ -z "$sanitized_state_file" && -f "$sanitized_target_home/.acfs/state.json" ]]; then
+      sanitized_state_file="$sanitized_target_home/.acfs/state.json"
+    fi
+    case "$sanitized_acfs_home" in
+      "$sanitized_target_home/.acfs") ;;
+      "$sanitized_target_home/.acfs"/*|*/.acfs)
+        sanitized_acfs_home="$sanitized_target_home/.acfs"
+        ;;
+    esac
+  fi
 
   [[ -n "$sanitized_state_file" ]] && env_args+=("ACFS_STATE_FILE=$sanitized_state_file")
   [[ -n "$sanitized_system_state_file" ]] && env_args+=("ACFS_SYSTEM_STATE_FILE=$sanitized_system_state_file")

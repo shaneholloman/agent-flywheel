@@ -763,12 +763,12 @@ dashboard_generate() {
     }
 
     cleanup_tmp_file() {
-        if [[ -n "$tmp_file" && -e "$tmp_file" ]]; then
+        if [[ -n "${tmp_file:-}" && -e "$tmp_file" ]]; then
             rm -f "$tmp_file"
         fi
     }
 
-    trap cleanup_tmp_file RETURN
+    trap 'cleanup_tmp_file; trap - RETURN' RETURN
 
     if ! bash "$info_script" --html > "$tmp_file"; then
         echo "Error: dashboard generation failed" >&2

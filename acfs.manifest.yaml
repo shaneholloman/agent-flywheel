@@ -95,6 +95,10 @@ modules:
           chown "${TARGET_USER:-ubuntu}:${TARGET_USER:-ubuntu}" /data/projects/AGENTS.md 2>/dev/null || true
       - |
           target_home=""
+          explicit_target_home="${TARGET_HOME:-}"
+          if [[ -n "$explicit_target_home" ]]; then
+            explicit_target_home="${explicit_target_home%/}"
+          fi
           if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
             target_home="/root"
           else
@@ -103,16 +107,21 @@ modules:
               target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
             else
               current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-              if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                target_home="${HOME%/}"
+              current_home="${HOME:-}"
+              if [[ -n "$current_home" ]]; then
+                current_home="${current_home%/}"
               fi
-              unset current_user
+              if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "$current_home" ]] && [[ "$current_home" == /* ]] && [[ "$current_home" != "/" ]] && { [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }; then
+                target_home="$current_home"
+              fi
+              unset current_user current_home
             fi
             unset _acfs_passwd_entry
           fi
-          if [[ -z "$target_home" && -n "${TARGET_HOME:-}" ]]; then
-            target_home="${TARGET_HOME%/}"
+          if [[ -z "$target_home" && -n "$explicit_target_home" ]]; then
+            target_home="$explicit_target_home"
           fi
+          unset explicit_target_home
           if [[ -z "$target_home" ]]; then
             echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
             exit 1
@@ -133,6 +142,10 @@ modules:
       - test -f /data/projects/AGENTS.md
       - |
           target_home=""
+          explicit_target_home="${TARGET_HOME:-}"
+          if [[ -n "$explicit_target_home" ]]; then
+            explicit_target_home="${explicit_target_home%/}"
+          fi
           if [[ "${TARGET_USER:-ubuntu}" == "root" ]]; then
             target_home="/root"
           else
@@ -141,16 +154,21 @@ modules:
               target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
             else
               current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-              if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                target_home="${HOME%/}"
+              current_home="${HOME:-}"
+              if [[ -n "$current_home" ]]; then
+                current_home="${current_home%/}"
               fi
-              unset current_user
+              if [[ -n "$current_user" ]] && [[ "$current_user" == "${TARGET_USER:-ubuntu}" ]] && [[ -n "$current_home" ]] && [[ "$current_home" == /* ]] && [[ "$current_home" != "/" ]] && { [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }; then
+                target_home="$current_home"
+              fi
+              unset current_user current_home
             fi
             unset _acfs_passwd_entry
           fi
-          if [[ -z "$target_home" && -n "${TARGET_HOME:-}" ]]; then
-            target_home="${TARGET_HOME%/}"
+          if [[ -z "$target_home" && -n "$explicit_target_home" ]]; then
+            target_home="$explicit_target_home"
           fi
+          unset explicit_target_home
           if [[ -z "$target_home" ]]; then
             echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
             exit 1
@@ -1980,15 +1998,43 @@ modules:
     verify:
       - dcg --version
       - |
+          claude_settings_has_command_hook() {
+            local settings_file="${1:-}"
+            local command_pattern="${2:-}"
+
+            [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+            [[ -f "$settings_file" ]] || return 1
+            command -v jq >/dev/null 2>&1 || return 1
+
+            jq -e --arg pattern "$command_pattern" '
+              def command_hook_matches:
+                type == "object"
+                and ((.type? // "command") == "command")
+                and ((.command? // "") | strings | test($pattern));
+              def event_entry_matches:
+                if type == "object" and (.hooks? | type) == "array" then
+                  any(.hooks[]?; command_hook_matches)
+                else
+                  command_hook_matches
+                end;
+              def hook_event_entries:
+                if (.hooks? | type) == "object" then
+                  .hooks | to_entries[]? | .value | arrays | .[]?
+                elif (.hooks? | type) == "array" then
+                  .hooks[]?
+                else
+                  empty
+                end;
+              any(hook_event_entries; event_entry_matches)
+            ' "$settings_file" >/dev/null 2>&1
+          }
+
           settings="$HOME/.claude/settings.json"
           alt_settings="$HOME/.config/claude/settings.json"
-          if [[ -f "$settings" ]]; then
-            grep -q "dcg" "$settings"
-          elif [[ -f "$alt_settings" ]]; then
-            grep -q "dcg" "$alt_settings"
-          else
-            exit 1
-          fi
+          dcg_command_pattern='(^|[[:space:]/])dcg([[:space:]]|$)'
+
+          claude_settings_has_command_hook "$settings" "$dcg_command_pattern" ||
+            claude_settings_has_command_hook "$alt_settings" "$dcg_command_pattern"
 
   - id: stack.ru
     description: Repo Updater - multi-repo sync + AI-driven commit automation
@@ -2509,20 +2555,47 @@ modules:
     installed_check:
       run_as: target_user
       command: |
+        claude_settings_has_command_hook() {
+          local settings_file="${1:-}"
+          local command_pattern="${2:-}"
+
+          [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+          [[ -f "$settings_file" ]] || return 1
+          command -v jq >/dev/null 2>&1 || return 1
+
+          jq -e --arg pattern "$command_pattern" '
+            def command_hook_matches:
+              type == "object"
+              and ((.type? // "command") == "command")
+              and ((.command? // "") | strings | test($pattern));
+            def event_entry_matches:
+              if type == "object" and (.hooks? | type) == "array" then
+                any(.hooks[]?; command_hook_matches)
+              else
+                command_hook_matches
+              end;
+            def hook_event_entries:
+              if (.hooks? | type) == "object" then
+                .hooks | to_entries[]? | .value | arrays | .[]?
+              elif (.hooks? | type) == "array" then
+                .hooks[]?
+              else
+                empty
+              end;
+            any(hook_event_entries; event_entry_matches)
+          ' "$settings_file" >/dev/null 2>&1
+        }
+
         target_home="${TARGET_HOME:-$HOME}"
         hook_script="$target_home/.local/bin/claude-post-compact-reminder"
         settings="$target_home/.claude/settings.json"
         alt_settings="$target_home/.config/claude/settings.json"
+        pcr_command_pattern='(^|[[:space:]/])claude-post-compact-reminder([[:space:]]|$)'
 
         test -x "$hook_script" || exit 1
 
-        if [[ -f "$settings" ]]; then
-          grep -q "claude-post-compact-reminder" "$settings"
-        elif [[ -f "$alt_settings" ]]; then
-          grep -q "claude-post-compact-reminder" "$alt_settings"
-        else
-          exit 1
-        fi
+        claude_settings_has_command_hook "$settings" "$pcr_command_pattern" ||
+          claude_settings_has_command_hook "$alt_settings" "$pcr_command_pattern"
     verified_installer:
       tool: pcr
       runner: bash
@@ -2531,20 +2604,47 @@ modules:
     install: []
     verify:
       - |
+        claude_settings_has_command_hook() {
+          local settings_file="${1:-}"
+          local command_pattern="${2:-}"
+
+          [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+          [[ -f "$settings_file" ]] || return 1
+          command -v jq >/dev/null 2>&1 || return 1
+
+          jq -e --arg pattern "$command_pattern" '
+            def command_hook_matches:
+              type == "object"
+              and ((.type? // "command") == "command")
+              and ((.command? // "") | strings | test($pattern));
+            def event_entry_matches:
+              if type == "object" and (.hooks? | type) == "array" then
+                any(.hooks[]?; command_hook_matches)
+              else
+                command_hook_matches
+              end;
+            def hook_event_entries:
+              if (.hooks? | type) == "object" then
+                .hooks | to_entries[]? | .value | arrays | .[]?
+              elif (.hooks? | type) == "array" then
+                .hooks[]?
+              else
+                empty
+              end;
+            any(hook_event_entries; event_entry_matches)
+          ' "$settings_file" >/dev/null 2>&1
+        }
+
         target_home="${TARGET_HOME:-$HOME}"
         hook_script="$target_home/.local/bin/claude-post-compact-reminder"
         settings="$target_home/.claude/settings.json"
         alt_settings="$target_home/.config/claude/settings.json"
+        pcr_command_pattern='(^|[[:space:]/])claude-post-compact-reminder([[:space:]]|$)'
 
         test -x "$hook_script" || exit 1
 
-        if [[ -f "$settings" ]]; then
-          grep -q "claude-post-compact-reminder" "$settings"
-        elif [[ -f "$alt_settings" ]]; then
-          grep -q "claude-post-compact-reminder" "$alt_settings"
-        else
-          exit 1
-        fi
+        claude_settings_has_command_hook "$settings" "$pcr_command_pattern" ||
+          claude_settings_has_command_hook "$alt_settings" "$pcr_command_pattern"
 
   # ============================================================
   # PHASE 9B: Utilities (giil, csctf)

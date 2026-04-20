@@ -49,6 +49,57 @@ _acfs_doctor_system_binary_path() {
     return 1
 }
 
+_acfs_doctor_read_json_string_key() {
+    local json_file="${1:-}"
+    local key="${2:-}"
+    local value=""
+    local jq_bin=""
+    local sed_bin=""
+
+    [[ -f "$json_file" ]] || return 1
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+
+    jq_bin="$(_acfs_doctor_system_binary_path jq 2>/dev/null || true)"
+    if [[ -n "$jq_bin" ]]; then
+        value="$("$jq_bin" -r --arg key "$key" 'select(.[$key] | type == "string") | .[$key]' "$json_file" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$value" ]]; then
+        sed_bin="$(_acfs_doctor_system_binary_path sed 2>/dev/null || true)"
+        if [[ -n "$sed_bin" ]]; then
+            value="$("$sed_bin" -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$json_file" 2>/dev/null | head -n 1)"
+        fi
+    fi
+
+    [[ -n "$value" ]] && [[ "$value" != "null" ]] || return 1
+    printf '%s\n' "$value"
+}
+
+_acfs_doctor_normalize_mode() {
+    local mode="${1:-}"
+
+    case "$mode" in
+        vibe|safe)
+            printf '%s\n' "$mode"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+_acfs_doctor_normalize_ref() {
+    local ref="${1:-}"
+
+    [[ -n "$ref" ]] || return 1
+    [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+    [[ "$ref" != /* ]] || return 1
+    [[ "$ref" != */ ]] || return 1
+    [[ "$ref" != *..* ]] || return 1
+    [[ "$ref" != *@\{* ]] || return 1
+    printf '%s\n' "$ref"
+}
+
 _acfs_doctor_resolve_current_user() {
     local current_user=""
     local id_bin=""
@@ -348,6 +399,62 @@ _acfs_doctor_find_scripts_script() {
     _acfs_doctor_find_project_path "scripts/$1"
 }
 
+_acfs_doctor_shell_has_active_assignment() {
+    local file="${1:-}"
+    local variable_name="${2:-}"
+    [[ -n "$file" && -n "$variable_name" && -f "$file" ]] || return 1
+
+    awk -v variable_name="$variable_name" '
+        /^[[:space:]]*#/ { next }
+        {
+            line=$0
+            sub(/^[[:space:]]*export[[:space:]]+/, "", line)
+            if (line ~ "^[[:space:]]*" variable_name "[[:space:]]*=") {
+                sub("^[[:space:]]*" variable_name "[[:space:]]*=", "", line)
+                sub(/[[:space:]]+#.*$/, "", line)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+                empty_single_quotes=sprintf("%c%c", 39, 39)
+                if (line != "" && line != "\"\"" && line != empty_single_quotes) {
+                    found=1
+                    exit
+                }
+            }
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$file" 2>/dev/null
+}
+
+_acfs_doctor_claude_settings_has_command_hook() {
+    local settings_file="${1:-}"
+    local command_pattern="${2:-}"
+
+    [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
+    [[ -f "$settings_file" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    jq -e --arg pattern "$command_pattern" '
+      def command_hook_matches:
+        type == "object"
+        and ((.type? // "command") == "command")
+        and ((.command? // "") | strings | test($pattern));
+      def event_entry_matches:
+        if type == "object" and (.hooks? | type) == "array" then
+          any(.hooks[]?; command_hook_matches)
+        else
+          command_hook_matches
+        end;
+      def hook_event_entries:
+        if (.hooks? | type) == "object" then
+          .hooks | to_entries[]? | .value | arrays | .[]?
+        elif (.hooks? | type) == "array" then
+          .hooks[]?
+        else
+          empty
+        end;
+      any(hook_event_entries; event_entry_matches)
+    ' "$settings_file" >/dev/null 2>&1
+}
+
 _acfs_doctor_source_first() {
     local rel_path="$1"
     local candidate=""
@@ -426,16 +533,14 @@ fi
 unset _acfs_doctor_version_file
 
 # Prefer the installed state file for mode (vibe/safe) when available.
+ACFS_MODE="$(_acfs_doctor_normalize_mode "${ACFS_MODE:-}" 2>/dev/null || true)"
 _acfs_doctor_installed_state="$(_acfs_doctor_find_project_path "state.json" 2>/dev/null || true)"
 if [[ -z "${ACFS_MODE:-}" ]] && [[ -f "$_acfs_doctor_installed_state" ]]; then
-    if command -v jq &>/dev/null; then
-        ACFS_MODE="$(jq -r '.mode // empty' "$_acfs_doctor_installed_state" 2>/dev/null || true)"
-    fi
-    if [[ -z "${ACFS_MODE:-}" ]]; then
-        ACFS_MODE="$(sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_installed_state" | head -n 1)"
-    fi
-    [[ -n "${ACFS_MODE:-}" ]] && export ACFS_MODE
+    ACFS_MODE="$(_acfs_doctor_read_json_string_key "$_acfs_doctor_installed_state" "mode" 2>/dev/null || true)"
+    ACFS_MODE="$(_acfs_doctor_normalize_mode "${ACFS_MODE:-}" 2>/dev/null || true)"
 fi
+ACFS_MODE="${ACFS_MODE:-vibe}"
+export ACFS_MODE
 unset _acfs_doctor_installed_state
 
 # Prefer authoritative installed/system state before ambient $HOME/.acfs state.
@@ -657,13 +762,14 @@ _acfs_doctor_source_first "doctor_fix.sh" || true
 build_fix_suggestion() {
     local module_id="$1"
     shift
-    local phase_flag=""
+    local phase_value=""
 
     # Parse optional --phase argument
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --phase)
-                phase_flag="--only-phase $2"
+                [[ $# -ge 2 ]] || break
+                phase_value="$2"
                 shift 2
                 ;;
             *)
@@ -676,18 +782,22 @@ build_fix_suggestion() {
     local base_url="https://agent-flywheel.com/install"
 
     # Build flags based on current state
-    local flags="--yes --force-reinstall"
+    local flags=""
+    local -a flag_args=(--yes --force-reinstall)
 
     # Add mode flag (vibe is default, but explicit is clearer)
     local mode="${ACFS_MODE:-vibe}"
-    flags="$flags --mode $mode"
+    mode="$(_acfs_doctor_normalize_mode "$mode" 2>/dev/null || true)"
+    flag_args+=(--mode "${mode:-vibe}")
 
     # Add module/phase selector
-    if [[ -n "$phase_flag" ]]; then
-        flags="$flags $phase_flag"
+    if [[ -n "$phase_value" ]]; then
+        flag_args+=(--only-phase "$phase_value")
     elif [[ -n "$module_id" ]]; then
-        flags="$flags --only $module_id"
+        flag_args+=(--only "$module_id")
     fi
+    printf -v flags '%q ' "${flag_args[@]}"
+    flags="${flags% }"
 
     # Build the command
     # Check if we have a pinned ref from state.json
@@ -696,11 +806,12 @@ build_fix_suggestion() {
     state_file="$(_acfs_doctor_find_project_path "state.json" 2>/dev/null || true)"
     if [[ -f "$state_file" ]]; then
         local pinned_ref=""
-        if command -v jq &>/dev/null; then
-            pinned_ref=$(jq -r '.pinned_ref // empty' "$state_file" 2>/dev/null) || true
-        fi
+        local pinned_ref_q=""
+        pinned_ref="$(_acfs_doctor_read_json_string_key "$state_file" "pinned_ref" 2>/dev/null || true)"
+        pinned_ref="$(_acfs_doctor_normalize_ref "$pinned_ref" 2>/dev/null || true)"
         if [[ -n "$pinned_ref" && "$pinned_ref" != "main" ]]; then
-            ref_env="ACFS_REF=\"$pinned_ref\" "
+            printf -v pinned_ref_q '%q' "$pinned_ref"
+            ref_env="ACFS_REF=$pinned_ref_q "
         fi
     fi
 
@@ -1165,7 +1276,7 @@ is_placeholder_secret() {
     normalized="${normalized,,}"
 
     case "$normalized" in
-        your-token-here|your-token|your_api_key|your-api-key|your_vercel_token|your_supabase_access_token|your_cloudflare_api_token|your_gemini_api_key|your_google_api_key|your_project_id|your_project_location|replace-me|change-me|changeme|"<token>"|"<api-key>"|"<secret>")
+        your-token-here|your_token_here|your-token|your_token|your_api_key|your-api-key|your_github_token|your_openai_api_key|your_claude_token|your_vercel_token|your_supabase_access_token|your_cloudflare_api_token|your_gemini_api_key|your_google_api_key|your_project_id|your_project_location|replace-me|change-me|changeme|"<token>"|"<api-key>"|"<secret>")
             return 0
             ;;
     esac
@@ -1177,6 +1288,46 @@ has_usable_secret() {
     local normalized
     normalized="$(normalize_config_value "${1-}")"
     [[ -n "${normalized//[[:space:]]/}" ]] && ! is_placeholder_secret "$normalized"
+}
+
+json_file_has_usable_jq_value() {
+    local file_path="${1:-}"
+    local jq_expr="${2:-}"
+    local candidate=""
+
+    [[ -s "$file_path" ]] || return 1
+    [[ -n "$jq_expr" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    while IFS= read -r candidate; do
+        if has_usable_secret "$candidate"; then
+            return 0
+        fi
+    done < <(jq -r "$jq_expr" "$file_path" 2>/dev/null || true)
+
+    return 1
+}
+
+json_file_has_usable_string_key() {
+    local file_path="${1:-}"
+    shift || true
+
+    [[ -s "$file_path" ]] || return 1
+
+    local key=""
+    local regex=""
+    local line=""
+    for key in "$@"; do
+        [[ -n "$key" ]] || continue
+        regex="\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]+)\""
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" =~ $regex ]] && has_usable_secret "${BASH_REMATCH[1]}"; then
+                return 0
+            fi
+        done < "$file_path"
+    done
+
+    return 1
 }
 
 read_configured_var_from_file() {
@@ -1862,7 +2013,7 @@ check_dcg_hook_status() {
         return
     fi
 
-    if grep -q "dcg" "$settings_file" 2>/dev/null; then
+    if _acfs_doctor_claude_settings_has_command_hook "$settings_file" '(^|[[:space:]/])dcg([[:space:]]|$)'; then
         check "stack.dcg" "DCG ($version)" "pass" "installed + hook registered"
     else
         check "stack.dcg" "DCG ($version)" "warn" "binary installed but hook not registered" \
@@ -2451,7 +2602,15 @@ _doctor_run_manifest_check() {
     local cmd="$2"
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home="${TARGET_HOME:-}"
+    local explicit_target_home=""
+    local resolved_target_home=""
+    local current_home=""
     local target_path=""
+
+    explicit_target_home="$target_home"
+    if [[ -n "$explicit_target_home" ]]; then
+        explicit_target_home="${explicit_target_home%/}"
+    fi
 
     if declare -f _acfs_validate_target_user >/dev/null 2>&1; then
         _acfs_validate_target_user "$target_user" "TARGET_USER" || return 1
@@ -2460,7 +2619,6 @@ _doctor_run_manifest_check() {
         return 1
     fi
 
-    local resolved_target_home=""
     if [[ "$target_user" == "root" ]]; then
         resolved_target_home="/root"
     else
@@ -2468,8 +2626,11 @@ _doctor_run_manifest_check() {
         passwd_entry="$(_acfs_doctor_getent_passwd_entry "$target_user" 2>/dev/null || true)"
         if [[ -n "$passwd_entry" ]]; then
             resolved_target_home="$(_acfs_doctor_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
-        elif [[ "$target_user" == "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)" ]] && [[ -n "${_acfs_doctor_current_home:-}" ]]; then
-            resolved_target_home="$_acfs_doctor_current_home"
+        elif [[ "$target_user" == "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)" ]]; then
+            current_home="$(_acfs_doctor_sanitize_abs_nonroot_path "${_acfs_doctor_current_home:-}" 2>/dev/null || true)"
+            if [[ -n "$current_home" ]] && { [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }; then
+                resolved_target_home="$current_home"
+            fi
         fi
     fi
     if [[ -n "$resolved_target_home" ]]; then
@@ -2478,9 +2639,9 @@ _doctor_run_manifest_check() {
         else
             target_home=""
         fi
-    elif [[ -n "$target_home" ]]; then
-        if [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-            target_home="${target_home%/}"
+    elif [[ -n "$explicit_target_home" ]]; then
+        if [[ "$explicit_target_home" == /* ]] && [[ "$explicit_target_home" != "/" ]]; then
+            target_home="$explicit_target_home"
         else
             target_home=""
         fi
@@ -3024,12 +3185,12 @@ check_claude_auth() {
     local has_token=false
     if command -v jq &>/dev/null; then
         # Use jq for reliable JSON parsing
-        if jq -e '((.claudeAiOauth.accessToken // "") | strings | length) > 0' "$creds_file" >/dev/null 2>&1; then
+        if json_file_has_usable_jq_value "$creds_file" '.claudeAiOauth.accessToken // empty | strings'; then
             has_token=true
         fi
     else
         # Fallback: require a non-empty string token, not just key presence.
-        if grep -Eq '"accessToken"[[:space:]]*:[[:space:]]*"[^"]+"' "$creds_file" 2>/dev/null; then
+        if json_file_has_usable_string_key "$creds_file" "accessToken"; then
             has_token=true
         fi
     fi
@@ -3080,19 +3241,19 @@ check_codex_auth() {
     # Check for OAuth tokens.access_token (preferred)
     if command -v jq &>/dev/null; then
         # Use jq if available for reliable JSON parsing
-        if jq -e '((.tokens.access_token // .access_token // .accessToken // "") | strings | length) > 0' "$auth_file" >/dev/null 2>&1; then
+        if json_file_has_usable_jq_value "$auth_file" '[.tokens.access_token, .access_token, .accessToken] | .[]? | strings'; then
             has_oauth=true
         fi
         # Check for legacy API key in auth.json
-        if jq -e '((.OPENAI_API_KEY // "") | strings | length) > 0' "$auth_file" >/dev/null 2>&1; then
+        if json_file_has_usable_jq_value "$auth_file" '.OPENAI_API_KEY // empty | strings'; then
             has_api_key=true
         fi
     else
         # Fallback: require non-empty strings, not just key presence.
-        if grep -Eq '"(access(_token|Token))"[[:space:]]*:[[:space:]]*"[^"]+"' "$auth_file" 2>/dev/null; then
+        if json_file_has_usable_string_key "$auth_file" "access_token" "accessToken"; then
             has_oauth=true
         fi
-        if grep -q '"OPENAI_API_KEY".*:.*"[^"]\+"' "$auth_file" 2>/dev/null; then
+        if json_file_has_usable_string_key "$auth_file" "OPENAI_API_KEY"; then
             has_api_key=true
         fi
     fi
@@ -3183,15 +3344,14 @@ check_gemini_auth() {
             gemini_refresh_token="$(jq -r '.refresh_token // empty' "$oauth_creds_file" 2>/dev/null || true)"
         fi
 
-        if [[ -n "$gemini_active" || -n "$gemini_access_token" || -n "$gemini_refresh_token" ]]; then
+        if has_usable_secret "$gemini_active" || has_usable_secret "$gemini_access_token" || has_usable_secret "$gemini_refresh_token"; then
             found_auth=true
         fi
     else
-        if [[ -f "$google_accounts_file" ]] && grep -Eq '"active"[[:space:]]*:[[:space:]]*"[^"]+"' "$google_accounts_file"; then
+        if json_file_has_usable_string_key "$google_accounts_file" "active"; then
             found_auth=true
         fi
-        if [[ "$found_auth" == "false" ]] && [[ -f "$oauth_creds_file" ]] && \
-           grep -Eq '"(access_token|refresh_token)"[[:space:]]*:[[:space:]]*"[^"]+"' "$oauth_creds_file"; then
+        if [[ "$found_auth" == "false" ]] && json_file_has_usable_string_key "$oauth_creds_file" "access_token" "refresh_token"; then
             found_auth=true
         fi
     fi
@@ -3570,7 +3730,7 @@ check_vault_configured() {
     # Check if VAULT_ADDR is set (required for vault to work)
     if [[ -z "${VAULT_ADDR:-}" ]]; then
         # Check common config locations
-        if [[ -f "$auth_home/.zshrc.local" ]] && grep -q "VAULT_ADDR" "$auth_home/.zshrc.local" 2>/dev/null; then
+        if _acfs_doctor_shell_has_active_assignment "$auth_home/.zshrc.local" "VAULT_ADDR"; then
             check "deep.cloud.vault_config" "Vault config" "pass" "VAULT_ADDR in ~/.zshrc.local"
         else
             check "deep.cloud.vault_config" "Vault config" "warn" "VAULT_ADDR not set" "export VAULT_ADDR=https://your-vault-server:8200"
@@ -3705,18 +3865,23 @@ check_supabase_auth() {
     fi
 
     local token_file=""
-    if [[ -f "$auth_home/.supabase/access-token" ]]; then
-        token_file="$auth_home/.supabase/access-token"
-    elif [[ -f "$auth_home/.config/supabase/access-token" ]]; then
-        token_file="$auth_home/.config/supabase/access-token"
-    fi
+    local token_files=(
+        "$auth_home/.supabase/access-token"
+        "$auth_home/.config/supabase/access-token"
+    )
+    for token_file in "${token_files[@]}"; do
+        if [[ -f "$token_file" ]]; then
+            local token_value=""
+            token_value="$(cat "$token_file" 2>/dev/null || true)"
+            if has_usable_secret "$token_value"; then
+                cache_result "supabase_auth" "access-token file"
+                check "deep.cloud.supabase_auth" "Supabase CLI auth" "pass" "access-token file present"
+                return
+            fi
+        fi
+    done
 
-    if [[ -n "$token_file" ]] && [[ -s "$token_file" ]]; then
-        cache_result "supabase_auth" "access-token file"
-        check "deep.cloud.supabase_auth" "Supabase CLI auth" "pass" "access-token file present"
-    else
-        check "deep.cloud.supabase_auth" "Supabase CLI auth" "warn" "not authenticated" "supabase login --token <token> (or set SUPABASE_ACCESS_TOKEN)"
-    fi
+    check "deep.cloud.supabase_auth" "Supabase CLI auth" "warn" "not authenticated" "supabase login --token <token> (or set SUPABASE_ACCESS_TOKEN)"
 }
 
 # check_vercel_auth - Vercel CLI authentication check
@@ -3761,21 +3926,26 @@ check_vercel_auth() {
         check "deep.cloud.vercel_auth" "Vercel CLI auth" "pass" "$vercel_user"
     else
         local auth_file=""
-        if [[ -f "$auth_home/.config/vercel/auth.json" ]]; then
-            auth_file="$auth_home/.config/vercel/auth.json"
-        elif [[ -f "$auth_home/.vercel/auth.json" ]]; then
-            auth_file="$auth_home/.vercel/auth.json"
-        fi
+        local auth_files=(
+            "$auth_home/.config/vercel/auth.json"
+            "$auth_home/.vercel/auth.json"
+        )
+        for auth_file in "${auth_files[@]}"; do
+            [[ -f "$auth_file" ]] || continue
+            if command -v jq &>/dev/null; then
+                if json_file_has_usable_jq_value "$auth_file" '.token // empty | strings'; then
+                    cache_result "vercel_auth" "auth file present"
+                    check "deep.cloud.vercel_auth" "Vercel CLI auth" "pass" "auth file present"
+                    return
+                fi
+            elif json_file_has_usable_string_key "$auth_file" "token"; then
+                cache_result "vercel_auth" "auth file present"
+                check "deep.cloud.vercel_auth" "Vercel CLI auth" "pass" "auth file present"
+                return
+            fi
+        done
 
-        if [[ -n "$auth_file" ]] && command -v jq &>/dev/null && jq -e '((.token // .user.email // "") | strings | length) > 0' "$auth_file" >/dev/null 2>&1; then
-            cache_result "vercel_auth" "auth file present"
-            check "deep.cloud.vercel_auth" "Vercel CLI auth" "pass" "auth file present"
-        elif [[ -n "$auth_file" ]] && grep -Eq '"(token|email)"[[:space:]]*:[[:space:]]*"[^"]+"' "$auth_file" 2>/dev/null; then
-            cache_result "vercel_auth" "auth file present"
-            check "deep.cloud.vercel_auth" "Vercel CLI auth" "pass" "auth file present"
-        else
-            check "deep.cloud.vercel_auth" "Vercel CLI auth" "warn" "not authenticated" "vercel login (or set VERCEL_TOKEN)"
-        fi
+        check "deep.cloud.vercel_auth" "Vercel CLI auth" "warn" "not authenticated" "vercel login (or set VERCEL_TOKEN)"
     fi
 }
 

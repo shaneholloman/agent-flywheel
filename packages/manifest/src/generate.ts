@@ -200,9 +200,13 @@ if [[ "\${BASH_SOURCE[0]}" = "\${0}" ]]; then
 
     MODE="\${MODE:-vibe}"
 
+    _ACFS_EXPLICIT_TARGET_HOME="\${TARGET_HOME:-}"
+    if [[ -n "\$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
+        _ACFS_EXPLICIT_TARGET_HOME="\${_ACFS_EXPLICIT_TARGET_HOME%/}"
+    fi
     _ACFS_RESOLVED_TARGET_HOME=""
     if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
-        _ACFS_RESOLVED_TARGET_HOME="\$(_acfs_resolve_target_home "\${TARGET_USER}" || true)"
+        _ACFS_RESOLVED_TARGET_HOME="\$(_acfs_resolve_target_home "\${TARGET_USER}" "\$_ACFS_EXPLICIT_TARGET_HOME" || true)"
     else
         if [[ "\${TARGET_USER}" == "root" ]]; then
             _ACFS_RESOLVED_TARGET_HOME="/root"
@@ -212,20 +216,24 @@ if [[ "\${BASH_SOURCE[0]}" = "\${0}" ]]; then
                 _ACFS_RESOLVED_TARGET_HOME="\$(acfs_generated_passwd_home_from_entry "\$_acfs_passwd_entry" 2>/dev/null || true)"
             else
                 _acfs_current_user="\$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-                if [[ "\${_acfs_current_user:-}" == "\${TARGET_USER}" ]] && [[ -n "\${HOME:-}" ]] && [[ "\${HOME}" == /* ]] && [[ "\${HOME}" != "/" ]]; then
-                    _ACFS_RESOLVED_TARGET_HOME="\${HOME%/}"
+                _acfs_current_home="\${HOME:-}"
+                if [[ -n "\$_acfs_current_home" ]]; then
+                    _acfs_current_home="\${_acfs_current_home%/}"
                 fi
-                unset _acfs_current_user
+                if [[ "\${_acfs_current_user:-}" == "\${TARGET_USER}" ]] && [[ -n "\$_acfs_current_home" ]] && [[ "\$_acfs_current_home" == /* ]] && [[ "\$_acfs_current_home" != "/" ]] && { [[ -z "\$_ACFS_EXPLICIT_TARGET_HOME" ]] || [[ "\$_acfs_current_home" == "\$_ACFS_EXPLICIT_TARGET_HOME" ]]; }; then
+                    _ACFS_RESOLVED_TARGET_HOME="\$_acfs_current_home"
+                fi
+                unset _acfs_current_user _acfs_current_home
             fi
             unset _acfs_passwd_entry
         fi
     fi
     if [[ -n "\$_ACFS_RESOLVED_TARGET_HOME" ]]; then
         TARGET_HOME="\${_ACFS_RESOLVED_TARGET_HOME%/}"
-    elif [[ -n "\${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="\${TARGET_HOME%/}"
+    elif [[ -n "\$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
+        TARGET_HOME="\$_ACFS_EXPLICIT_TARGET_HOME"
     fi
-    unset _ACFS_RESOLVED_TARGET_HOME
+    unset _ACFS_EXPLICIT_TARGET_HOME _ACFS_RESOLVED_TARGET_HOME
 
     if [[ -z "\${TARGET_HOME:-}" ]] || [[ "\${TARGET_HOME}" == "/" ]] || [[ "\${TARGET_HOME}" != /* ]]; then
         log_error "Invalid TARGET_HOME for '\${TARGET_USER}': \${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
@@ -1610,10 +1618,17 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('    local cmd="$2"');
   lines.push('    local target_user="${TARGET_USER:-ubuntu}"');
   lines.push('    local target_home="${TARGET_HOME:-}"');
+  lines.push('    local explicit_target_home=""');
   lines.push('    local resolved_target_home=""');
   lines.push('    local target_path=""');
   lines.push('    local current_user=""');
+  lines.push('    local current_home=""');
   lines.push('    local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"');
+  lines.push('');
+  lines.push('    explicit_target_home="$target_home"');
+  lines.push('    if [[ -n "$explicit_target_home" ]]; then');
+  lines.push('        explicit_target_home="${explicit_target_home%/}"');
+  lines.push('    fi');
   lines.push('');
   lines.push('    if declare -f _acfs_validate_target_user >/dev/null 2>&1; then');
   lines.push('        _acfs_validate_target_user "$target_user" "TARGET_USER" || return 1');
@@ -1623,7 +1638,7 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('    fi');
   lines.push('');
   lines.push('    if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then');
-  lines.push('        resolved_target_home="$(_acfs_resolve_target_home "$target_user" || true)"');
+  lines.push('        resolved_target_home="$(_acfs_resolve_target_home "$target_user" "$explicit_target_home" || true)"');
   lines.push('    elif [[ "$target_user" == "root" ]]; then');
   lines.push('        resolved_target_home="/root"');
   lines.push('    else');
@@ -1633,8 +1648,12 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('            resolved_target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"');
   lines.push('        else');
   lines.push('            _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"');
-  lines.push('            if [[ "${_acfs_current_user:-}" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then');
-  lines.push('                resolved_target_home="${HOME%/}"');
+  lines.push('            current_home="${HOME:-}"');
+  lines.push('            if [[ -n "$current_home" ]]; then');
+  lines.push('                current_home="${current_home%/}"');
+  lines.push('            fi');
+  lines.push('            if [[ "${_acfs_current_user:-}" == "$target_user" ]] && [[ -n "$current_home" ]] && [[ "$current_home" == /* ]] && [[ "$current_home" != "/" ]] && { [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }; then');
+  lines.push('                resolved_target_home="$current_home"');
   lines.push('            fi');
   lines.push('            unset _acfs_current_user');
   lines.push('        fi');
@@ -1642,8 +1661,8 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('    fi');
   lines.push('    if [[ -n "$resolved_target_home" ]]; then');
   lines.push('        target_home="${resolved_target_home%/}"');
-  lines.push('    elif [[ -n "$target_home" ]]; then');
-  lines.push('        target_home="${target_home%/}"');
+  lines.push('    elif [[ -n "$explicit_target_home" ]]; then');
+  lines.push('        target_home="$explicit_target_home"');
   lines.push('    fi');
   lines.push('');
   lines.push('    if [[ "$cmd" == *"acfs_generated_"* ]]; then');

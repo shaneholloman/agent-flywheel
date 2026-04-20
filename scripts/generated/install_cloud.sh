@@ -158,9 +158,13 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
 
     MODE="${MODE:-vibe}"
 
+    _ACFS_EXPLICIT_TARGET_HOME="${TARGET_HOME:-}"
+    if [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
+        _ACFS_EXPLICIT_TARGET_HOME="${_ACFS_EXPLICIT_TARGET_HOME%/}"
+    fi
     _ACFS_RESOLVED_TARGET_HOME=""
     if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
-        _ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"
+        _ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" "$_ACFS_EXPLICIT_TARGET_HOME" || true)"
     else
         if [[ "${TARGET_USER}" == "root" ]]; then
             _ACFS_RESOLVED_TARGET_HOME="/root"
@@ -170,20 +174,24 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
                 _ACFS_RESOLVED_TARGET_HOME="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
             else
                 _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-                if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                    _ACFS_RESOLVED_TARGET_HOME="${HOME%/}"
+                _acfs_current_home="${HOME:-}"
+                if [[ -n "$_acfs_current_home" ]]; then
+                    _acfs_current_home="${_acfs_current_home%/}"
                 fi
-                unset _acfs_current_user
+                if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "$_acfs_current_home" ]] && [[ "$_acfs_current_home" == /* ]] && [[ "$_acfs_current_home" != "/" ]] && { [[ -z "$_ACFS_EXPLICIT_TARGET_HOME" ]] || [[ "$_acfs_current_home" == "$_ACFS_EXPLICIT_TARGET_HOME" ]]; }; then
+                    _ACFS_RESOLVED_TARGET_HOME="$_acfs_current_home"
+                fi
+                unset _acfs_current_user _acfs_current_home
             fi
             unset _acfs_passwd_entry
         fi
     fi
     if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then
         TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"
-    elif [[ -n "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="${TARGET_HOME%/}"
+    elif [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
+        TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"
     fi
-    unset _ACFS_RESOLVED_TARGET_HOME
+    unset _ACFS_EXPLICIT_TARGET_HOME _ACFS_RESOLVED_TARGET_HOME
 
     if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
         log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"

@@ -224,6 +224,30 @@ EOF
     assert_output "$current_home"
 }
 
+@test "user_home_for_user: current HOME fallback cannot override explicit target home" {
+    local current_home
+    local target_home
+
+    current_home="$(create_temp_dir)"
+    target_home="$(create_temp_dir)"
+    export HOME="$current_home"
+
+    user_lookup_passwd_home() {
+        return 1
+    }
+
+    user_resolve_current_user() {
+        printf 'tester\n'
+    }
+
+    run user_home_for_user "tester" "$target_home"
+    assert_failure
+
+    run user_home_for_user "tester" "$current_home"
+    assert_success
+    assert_output "$current_home"
+}
+
 @test "set_default_shell: external handoff uses passwd home over stale TARGET_HOME" {
     local managed_user="acfs-managed-user"
     local stale_home

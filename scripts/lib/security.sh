@@ -308,8 +308,8 @@ fetch_checksum() {
         log_error "Failed to create temp file"
         return 1
     }
-    # Ensure cleanup on return
-    trap 'rm -f "${tmp_file:-}" 2>/dev/null' RETURN
+    # Ensure cleanup on return without leaking a RETURN trap into callers.
+    trap 'rm -f "${tmp_file:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     if ! acfs_download_to_file "$url" "$tmp_file" "$url"; then
         log_error "Failed to fetch $url"
@@ -352,8 +352,8 @@ verify_checksum() {
         log_error "Failed to create temp file for $name"
         return 1
     }
-    # Ensure cleanup on return (covers all temp files this function creates)
-    trap 'rm -f "${tmp_file:-}" "${fresh_tmp_file:-}" "${verify_tmp:-}" 2>/dev/null' RETURN
+    # Ensure cleanup on return without leaking a RETURN trap into callers.
+    trap 'rm -f "${tmp_file:-}" "${fresh_tmp_file:-}" "${verify_tmp:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     if ! acfs_download_to_file "$url" "$tmp_file" "$name"; then
         log_error "Security Error: Failed to fetch $name"
@@ -550,8 +550,8 @@ fetch_and_run_with_recovery() {
         log_error "Failed to create temp file for $name"
         return 1
     }
-    # Ensure cleanup on return
-    trap 'rm -f "${tmp_file:-}" 2>/dev/null' RETURN
+    # Ensure cleanup on return without leaking a RETURN trap into callers.
+    trap 'rm -f "${tmp_file:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     # Fetch content to file with retries
     if ! acfs_download_to_file "$url" "$tmp_file" "$name"; then

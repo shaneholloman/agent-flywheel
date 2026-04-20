@@ -1672,7 +1672,7 @@ update_target_home() {
 
     if [[ "$target_user" == "$current_user" ]]; then
         current_home="$(update_existing_home "${HOME:-}" 2>/dev/null || true)"
-        if [[ -n "$current_home" ]]; then
+        if [[ -n "$current_home" ]] && { [[ -z "$explicit_home" ]] || [[ "$current_home" == "$explicit_home" ]]; }; then
             printf '%s\n' "$current_home"
             return 0
         fi
@@ -1849,6 +1849,35 @@ update_run_in_target_context() {
 # Migration Cleanup
 # ============================================================
 
+update_claude_settings_has_legacy_git_safety_guard_hook() {
+    local settings_file="${1:-}"
+
+    [[ -f "$settings_file" ]] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+
+    jq -e '
+      def legacy_git_safety_guard_command:
+        type == "object"
+        and ((.type? // "command") == "command")
+        and ((.command? // "") | strings | contains("git_safety_guard"));
+      def event_entry_matches:
+        if type == "object" and (.hooks? | type) == "array" then
+          any(.hooks[]?; legacy_git_safety_guard_command)
+        else
+          legacy_git_safety_guard_command
+        end;
+      def hook_event_entries:
+        if (.hooks? | type) == "object" then
+          .hooks | to_entries[]? | .value | arrays | .[]?
+        elif (.hooks? | type) == "array" then
+          .hooks[]?
+        else
+          empty
+        end;
+      any(hook_event_entries; event_entry_matches)
+    ' "$settings_file" >/dev/null 2>&1
+}
+
 # Clean up legacy git_safety_guard artifacts from pre-DCG installations
 # This runs on every update to ensure stale files are removed
 cleanup_legacy_git_safety_guard() {
@@ -1869,7 +1898,7 @@ cleanup_legacy_git_safety_guard() {
             done
         done
 
-        if [[ -f "$runtime_home/.claude/settings.json" ]] && grep -q "git_safety_guard" "$runtime_home/.claude/settings.json" 2>/dev/null; then
+        if update_claude_settings_has_legacy_git_safety_guard_hook "$runtime_home/.claude/settings.json"; then
             would_clean=true
         fi
 
@@ -1914,21 +1943,44 @@ cleanup_legacy_git_safety_guard() {
 
     # Clean git_safety_guard from Claude settings.json if present
     local settings_file="$runtime_home/.claude/settings.json"
-    if [[ -f "$settings_file" ]] && command -v jq &>/dev/null; then
-        if jq -e '.hooks // empty' "$settings_file" &>/dev/null; then
-            # Check if git_safety_guard is referenced in hooks
-            if grep -q "git_safety_guard" "$settings_file" 2>/dev/null; then
-                local tmp_settings
-                tmp_settings=$(mktemp "${TMPDIR:-/tmp}/acfs_settings.XXXXXX" 2>/dev/null) || tmp_settings=""
-                if [[ -n "$tmp_settings" ]]; then
-                    # Remove any hook entries containing git_safety_guard
-                    if jq 'walk(if type == "object" and .hooks then .hooks |= map(select(. | tostring | contains("git_safety_guard") | not)) else . end)' "$settings_file" > "$tmp_settings" 2>/dev/null; then
-                        mv "$tmp_settings" "$settings_file" && cleaned=true
-                        log_to_file "Cleaned git_safety_guard references from $settings_file"
-                    else
-                        rm -f "$tmp_settings"
-                    fi
+    if update_claude_settings_has_legacy_git_safety_guard_hook "$settings_file"; then
+        local tmp_settings
+        tmp_settings=$(mktemp "${TMPDIR:-/tmp}/acfs_settings.XXXXXX" 2>/dev/null) || tmp_settings=""
+        if [[ -n "$tmp_settings" ]]; then
+            if jq '
+              def legacy_git_safety_guard_command:
+                type == "object"
+                and ((.type? // "command") == "command")
+                and ((.command? // "") | strings | contains("git_safety_guard"));
+              def strip_legacy_git_safety_guard:
+                if type == "object" and (.hooks? | type) == "array" then
+                  .hooks = [ .hooks[]? | select(legacy_git_safety_guard_command | not) ] |
+                  select((.hooks | length) > 0)
+                else
+                  select(legacy_git_safety_guard_command | not)
+                end;
+              if (.hooks? | type) == "object" then
+                .hooks |= with_entries(
+                  if (.value | type) == "array" then
+                    .value = [ .value[]? | strip_legacy_git_safety_guard ]
+                  else
+                    .
+                  end
+                )
+              elif (.hooks? | type) == "array" then
+                .hooks = [ .hooks[]? | strip_legacy_git_safety_guard ]
+              else
+                .
+              end
+            ' "$settings_file" > "$tmp_settings" 2>/dev/null; then
+                if mv "$tmp_settings" "$settings_file"; then
+                    cleaned=true
+                    log_to_file "Cleaned git_safety_guard references from $settings_file"
+                else
+                    rm -f "$tmp_settings"
                 fi
+            else
+                rm -f "$tmp_settings"
             fi
         fi
     fi
@@ -2608,11 +2660,6 @@ update_run_verified_installer_with_env() {
         return 1
     fi
 
-    # Guard: verify_checksum() sets a RETURN trap referencing $tmp_file.
-    # Under some bash versions the trap can leak into the caller scope;
-    # declaring the variable here prevents "unbound variable" under set -u.
-    local tmp_file=""
-
     local url="${KNOWN_INSTALLERS[$tool]:-}"
     local expected_sha256
     expected_sha256="$(get_checksum "$tool")"
@@ -2622,9 +2669,15 @@ update_run_verified_installer_with_env() {
         return 1
     fi
 
-    if [[ -n "$bash_env_assignment" ]] && [[ ! "$bash_env_assignment" =~ ^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+$ ]]; then
-        echo "Invalid inline env assignment for $tool installer: $bash_env_assignment" >&2
-        return 1
+    if [[ -n "$bash_env_assignment" ]]; then
+        if [[ "$bash_env_assignment" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local env_name="${BASH_REMATCH[1]}"
+            local env_value="${BASH_REMATCH[2]}"
+            bash_env_assignment="${env_name}=${env_value}"
+        else
+            echo "Invalid inline env assignment for $tool installer: $bash_env_assignment" >&2
+            return 1
+        fi
     fi
 
     local tmp_install=""
@@ -2633,20 +2686,23 @@ update_run_verified_installer_with_env() {
         echo "Failed to create temp file for verified $tool installer" >&2
         return 1
     fi
-    trap 'rm -f "$tmp_install" 2>/dev/null || true' RETURN
 
     if verify_checksum "$url" "$expected_sha256" "$tool" > "$tmp_install"; then
         :
     else
-        return $?
+        local verify_exit_code=$?
+        rm -f "$tmp_install" 2>/dev/null || true
+        return "$verify_exit_code"
     fi
 
     if ! chmod +x "$tmp_install"; then
+        rm -f "$tmp_install" 2>/dev/null || true
         return 1
     fi
 
     local exit_code=0
     update_run_in_target_context "$bash_env_assignment" bash "$tmp_install" "$@" </dev/null || exit_code=$?
+    rm -f "$tmp_install" 2>/dev/null || true
 
     return "$exit_code"
 }
@@ -4024,7 +4080,6 @@ update_stack() {
     # MCP Agent Mail - always install/update via non-blocking installer mode,
     # then enable the managed user service on port 8765.
     local tool="mcp_agent_mail"
-    local tmp_file=""  # guard against verify_checksum RETURN trap leak
     local url="${KNOWN_INSTALLERS[$tool]:-}"
     local expected_sha256
     expected_sha256="$(get_checksum "$tool")"

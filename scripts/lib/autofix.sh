@@ -132,9 +132,12 @@ autofix_lookup_passwd_home() {
 
 autofix_home_for_user() {
     local user="${1:-}"
+    local expected_home="${2:-}"
     local passwd_home=""
 
     autofix_validate_target_user "$user" || [[ "$user" == "root" ]] || return 1
+
+    expected_home="$(autofix_sanitize_abs_nonroot_path "$expected_home" 2>/dev/null || true)"
 
     if [[ "$user" == "root" ]]; then
         printf '/root\n'
@@ -149,7 +152,7 @@ autofix_home_for_user() {
 
     if [[ "$(autofix_resolve_current_user 2>/dev/null || true)" == "$user" ]]; then
         passwd_home="$(autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-        if [[ -n "$passwd_home" ]]; then
+        if [[ -n "$passwd_home" ]] && { [[ -z "$expected_home" ]] || [[ "$passwd_home" == "$expected_home" ]]; }; then
             printf '%s\n' "$passwd_home"
             return 0
         fi
@@ -193,7 +196,7 @@ autofix_runtime_home() {
     fi
 
     if autofix_validate_target_user "$target_user"; then
-        runtime_home="$(autofix_home_for_user "$target_user" 2>/dev/null || true)"
+        runtime_home="$(autofix_home_for_user "$target_user" "$explicit_home" 2>/dev/null || true)"
         if [[ -n "$runtime_home" ]]; then
             printf '%s\n' "$runtime_home"
             return 0
@@ -201,7 +204,7 @@ autofix_runtime_home() {
     fi
 
     if autofix_validate_target_user "${SUDO_USER:-}"; then
-        runtime_home="$(autofix_home_for_user "$SUDO_USER" 2>/dev/null || true)"
+        runtime_home="$(autofix_home_for_user "$SUDO_USER" "$explicit_home" 2>/dev/null || true)"
         if [[ -n "$runtime_home" ]]; then
             printf '%s\n' "$runtime_home"
             return 0

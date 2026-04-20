@@ -163,10 +163,16 @@ fi
 
 user_home_for_user() {
     local user="${1:-}"
+    local expected_home="${2:-}"
     local current_user=""
     local home_candidate=""
 
     [[ -n "$user" ]] || return 1
+    if [[ -n "$expected_home" ]] && [[ "$expected_home" == /* ]] && [[ "$expected_home" != "/" ]]; then
+        expected_home="${expected_home%/}"
+    else
+        expected_home=""
+    fi
 
     if [[ "$user" == "root" ]]; then
         printf '/root\n'
@@ -181,8 +187,11 @@ user_home_for_user() {
 
     current_user="$(user_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-        printf '%s\n' "${HOME%/}"
-        return 0
+        home_candidate="${HOME%/}"
+        if [[ -z "$expected_home" ]] || [[ "$home_candidate" == "$expected_home" ]]; then
+            printf '%s\n' "$home_candidate"
+            return 0
+        fi
     fi
 
     return 1
@@ -191,13 +200,19 @@ user_home_for_user() {
 # Target user for ACFS installations
 TARGET_USER="${TARGET_USER:-ubuntu}"
 user_require_valid_target_user "$TARGET_USER"
-_ACFS_USER_RESOLVED_TARGET_HOME="$(user_home_for_user "$TARGET_USER" 2>/dev/null || true)"
+_ACFS_USER_EXPLICIT_TARGET_HOME="${TARGET_HOME:-}"
+if [[ -n "$_ACFS_USER_EXPLICIT_TARGET_HOME" ]] && [[ "$_ACFS_USER_EXPLICIT_TARGET_HOME" == /* ]] && [[ "$_ACFS_USER_EXPLICIT_TARGET_HOME" != "/" ]]; then
+    _ACFS_USER_EXPLICIT_TARGET_HOME="${_ACFS_USER_EXPLICIT_TARGET_HOME%/}"
+else
+    _ACFS_USER_EXPLICIT_TARGET_HOME=""
+fi
+_ACFS_USER_RESOLVED_TARGET_HOME="$(user_home_for_user "$TARGET_USER" "$_ACFS_USER_EXPLICIT_TARGET_HOME" 2>/dev/null || true)"
 if [[ -n "$_ACFS_USER_RESOLVED_TARGET_HOME" ]]; then
     TARGET_HOME="$_ACFS_USER_RESOLVED_TARGET_HOME"
 elif [[ -n "${TARGET_HOME:-}" ]]; then
     TARGET_HOME="${TARGET_HOME%/}"
 fi
-unset _ACFS_USER_RESOLVED_TARGET_HOME
+unset _ACFS_USER_EXPLICIT_TARGET_HOME _ACFS_USER_RESOLVED_TARGET_HOME
 
 # Generate a random password robustly
 _generate_random_password() {

@@ -166,17 +166,23 @@ report_failure() {
 
     # Build resume command (prefer HTTPS-only curl when supported)
     local install_url="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}/install.sh"
+    local install_url_q=""
     local curl_cmd="curl -fsSL"
+    local resume_flags=""
     if command -v curl &>/dev/null && curl --help all 2>/dev/null | grep -q -- '--proto'; then
         curl_cmd="curl --proto '=https' --proto-redir '=https' -fsSL"
     fi
-    local resume_cmd="${curl_cmd} '${install_url}' | bash -s -- --resume"
+    printf -v install_url_q '%q' "$install_url"
+    local -a resume_args=(--resume)
     if [[ "${MODE:-}" == "vibe" ]]; then
-        resume_cmd="$resume_cmd --mode vibe"
+        resume_args+=(--mode vibe)
     fi
     if [[ "${YES_MODE:-false}" == "true" ]]; then
-        resume_cmd="$resume_cmd --yes"
+        resume_args+=(--yes)
     fi
+    printf -v resume_flags '%q ' "${resume_args[@]}"
+    resume_flags="${resume_flags% }"
+    local resume_cmd="${curl_cmd} ${install_url_q} | bash -s -- ${resume_flags}"
 
     # Terminal output (stderr to keep stdout clean for piping)
     {

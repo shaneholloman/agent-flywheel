@@ -831,9 +831,13 @@ acfs_summary_emit() {
     command -v jq &>/dev/null || return 1
 
     local resolved_target_home=""
-    resolved_target_home="$(acfs_home_for_user "${TARGET_USER:-ubuntu}" 2>/dev/null || true)"
+    local explicit_target_home=""
+    if [[ -n "${TARGET_HOME:-}" ]] && [[ "${TARGET_HOME}" == /* ]] && [[ "${TARGET_HOME}" != "/" ]]; then
+        explicit_target_home="${TARGET_HOME%/}"
+    fi
+    resolved_target_home="$(acfs_home_for_user "${TARGET_USER:-ubuntu}" "$explicit_target_home" 2>/dev/null || true)"
     if [[ -z "$resolved_target_home" ]]; then
-        resolved_target_home="${TARGET_HOME:-}"
+        resolved_target_home="$explicit_target_home"
     fi
     resolved_target_home="${resolved_target_home%/}"
     if [[ -z "$resolved_target_home" ]] || [[ "$resolved_target_home" == "/" ]] || [[ "$resolved_target_home" != /* ]]; then
@@ -933,6 +937,10 @@ generate_resume_hint() {
 
     # Start with base command
     local cmd=""
+    local install_url=""
+    local install_url_q=""
+    local arg_q=""
+    local -a resume_args=(--resume)
 
     # Prefer curl|bash one-liner for curl invocations; local script for local runs
     if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -940,12 +948,14 @@ generate_resume_hint() {
         cmd="curl -sSL"
         if [[ -n "${ACFS_COMMIT_SHA_FULL:-}" ]]; then
             # Pin to exact commit SHA for reproducibility
-            cmd="$cmd https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_COMMIT_SHA_FULL}/install.sh"
+            install_url="https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_COMMIT_SHA_FULL}/install.sh"
         elif [[ -n "${ACFS_REF_INPUT:-}" && "${ACFS_REF_INPUT}" != "main" ]]; then
-            cmd="$cmd https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF_INPUT}/install.sh"
+            install_url="https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF_INPUT}/install.sh"
         else
-            cmd="$cmd https://acfs.sh"
+            install_url="https://acfs.sh"
         fi
+        printf -v install_url_q '%q' "$install_url"
+        cmd="$cmd $install_url_q"
         cmd="$cmd | bash -s --"
     else
         # Local script invocation
@@ -956,31 +966,35 @@ generate_resume_hint() {
     fi
 
     # Always add --resume flag (skips completed phases via state.json)
-    cmd="$cmd --resume"
 
     # Add mode if not default
     if [[ "${MODE:-vibe}" != "vibe" ]]; then
-        cmd="$cmd --mode $MODE"
+        resume_args+=(--mode "$MODE")
     fi
 
     # Propagate --ref so the resume uses the same git ref (avoids the
     # curl|bash env-var pitfall where ACFS_REF only reaches curl, not bash)
     if [[ -n "${ACFS_REF_INPUT:-}" && "${ACFS_REF_INPUT}" != "main" ]]; then
-        cmd="$cmd --ref ${ACFS_REF_INPUT}"
+        resume_args+=(--ref "$ACFS_REF_INPUT")
     fi
 
     # Add skip flags that were used
-    [[ "${SKIP_POSTGRES:-false}" == "true" ]] && cmd="$cmd --skip-postgres"
-    [[ "${SKIP_VAULT:-false}" == "true" ]] && cmd="$cmd --skip-vault"
-    [[ "${SKIP_CLOUD:-false}" == "true" ]] && cmd="$cmd --skip-cloud"
-    [[ "${SKIP_PREFLIGHT:-false}" == "true" ]] && cmd="$cmd --skip-preflight"
-    [[ "${SKIP_UBUNTU_UPGRADE:-false}" == "true" ]] && cmd="$cmd --skip-ubuntu-upgrade"
+    [[ "${SKIP_POSTGRES:-false}" == "true" ]] && resume_args+=(--skip-postgres)
+    [[ "${SKIP_VAULT:-false}" == "true" ]] && resume_args+=(--skip-vault)
+    [[ "${SKIP_CLOUD:-false}" == "true" ]] && resume_args+=(--skip-cloud)
+    [[ "${SKIP_PREFLIGHT:-false}" == "true" ]] && resume_args+=(--skip-preflight)
+    [[ "${SKIP_UBUNTU_UPGRADE:-false}" == "true" ]] && resume_args+=(--skip-ubuntu-upgrade)
 
     # Add --yes if original run was non-interactive
-    [[ "${YES_MODE:-false}" == "true" ]] && cmd="$cmd --yes"
+    [[ "${YES_MODE:-false}" == "true" ]] && resume_args+=(--yes)
 
     # Add --strict if it was set
-    [[ "${STRICT_MODE:-false}" == "true" ]] && cmd="$cmd --strict"
+    [[ "${STRICT_MODE:-false}" == "true" ]] && resume_args+=(--strict)
+
+    for arg_q in "${resume_args[@]}"; do
+        printf -v arg_q '%q' "$arg_q"
+        cmd="$cmd $arg_q"
+    done
 
     echo "$cmd"
 }
@@ -2504,15 +2518,70 @@ install_checksums_yaml() {
 
 run_as_target() {
     local user="$TARGET_USER"
-    local user_home="${TARGET_HOME:-}"
+    local explicit_user_home="${TARGET_HOME:-}"
+    local explicit_user_home_for_repair=""
+    local user_home=""
+    local passwd_entry=""
+    local passwd_home=""
+    local primary_bin_dir=""
+    local acfs_home_for_target=""
+
+    if [[ -z "$user" ]] || [[ ! "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+        log_error "Invalid TARGET_USER '${user:-<empty>}' (expected: lowercase user name like 'ubuntu')"
+        return 1
+    fi
+
+    if [[ "$user" == "root" ]]; then
+        user_home="/root"
+    else
+        passwd_entry="$(acfs_early_getent_passwd_entry "$user" 2>/dev/null || true)"
+        if [[ -n "$passwd_entry" ]]; then
+            IFS=: read -r _ _ _ _ _ passwd_home _ <<< "$passwd_entry"
+            if [[ -n "$passwd_home" ]] && [[ "$passwd_home" == /* ]] && [[ "$passwd_home" != "/" ]]; then
+                user_home="${passwd_home%/}"
+            fi
+        fi
+    fi
+
+    if [[ "$explicit_user_home" == /* ]] && [[ "$explicit_user_home" != "/" ]]; then
+        explicit_user_home_for_repair="${explicit_user_home%/}"
+        [[ "$explicit_user_home_for_repair" != "/" ]] || explicit_user_home_for_repair=""
+    fi
+
+    if [[ -z "$user_home" && -n "$explicit_user_home" ]]; then
+        if [[ "$explicit_user_home" == "/" ]]; then
+            user_home="/"
+        else
+            user_home="${explicit_user_home%/}"
+        fi
+    fi
+
     if [[ -z "$user_home" ]]; then
         user_home="$(acfs_home_for_user "$user" || true)"
     fi
-    if [[ -z "$user_home" ]] || [[ "$user_home" != /* ]]; then
-        log_error "Unable to resolve TARGET_HOME for '$user'; export TARGET_HOME explicitly"
+    if [[ -z "$user_home" ]] || [[ "$user_home" == "/" ]] || [[ "$user_home" != /* ]]; then
+        log_error "Invalid TARGET_HOME for '$user': ${user_home:-<empty>} (must be an absolute path and cannot be '/')"
         return 1
     fi
-    local target_path_prefix="${ACFS_BIN_DIR:-$user_home/.local/bin}:$user_home/.local/bin:$user_home/.acfs/bin:$user_home/.cargo/bin:$user_home/.bun/bin:$user_home/.atuin/bin:$user_home/go/bin"
+
+    primary_bin_dir="${ACFS_BIN_DIR:-$user_home/.local/bin}"
+    if [[ -n "$explicit_user_home_for_repair" ]] && [[ "$explicit_user_home_for_repair" != "$user_home" ]]; then
+        case "$primary_bin_dir" in
+            "$explicit_user_home_for_repair"|"$explicit_user_home_for_repair"/*)
+                primary_bin_dir="$user_home/.local/bin"
+                ;;
+        esac
+    fi
+    acfs_home_for_target="${ACFS_HOME:-}"
+    if [[ -n "$explicit_user_home_for_repair" ]] && [[ "$explicit_user_home_for_repair" != "$user_home" ]]; then
+        case "$acfs_home_for_target" in
+            "$explicit_user_home_for_repair"|"$explicit_user_home_for_repair"/*)
+                acfs_home_for_target="$user_home/.acfs"
+                ;;
+        esac
+    fi
+
+    local target_path_prefix="$primary_bin_dir:$user_home/.local/bin:$user_home/.acfs/bin:$user_home/.cargo/bin:$user_home/.bun/bin:$user_home/.atuin/bin:$user_home/go/bin"
     local current_path="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
 
     # Environment variables to set for target user commands
@@ -2539,8 +2608,8 @@ run_as_target() {
     fi
 
     # Pass ACFS context variables to target user environment
-    if [[ -n "${ACFS_HOME:-}" ]]; then env_args+=("ACFS_HOME=$ACFS_HOME"); fi
-    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then env_args+=("ACFS_BIN_DIR=$ACFS_BIN_DIR"); fi
+    if [[ -n "$acfs_home_for_target" ]]; then env_args+=("ACFS_HOME=$acfs_home_for_target"); fi
+    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then env_args+=("ACFS_BIN_DIR=$primary_bin_dir"); fi
     if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]]; then env_args+=("ACFS_BOOTSTRAP_DIR=$ACFS_BOOTSTRAP_DIR"); fi
     if [[ -n "${ACFS_LIB_DIR:-}" ]]; then env_args+=("ACFS_LIB_DIR=$ACFS_LIB_DIR"); fi
     if [[ -n "${ACFS_GENERATED_DIR:-}" ]]; then env_args+=("ACFS_GENERATED_DIR=$ACFS_GENERATED_DIR"); fi
@@ -3084,11 +3153,18 @@ confirm_or_exit() {
 # Resolve a user's home directory from NSS when possible.
 acfs_home_for_user() {
     local user="${1:-}"
+    local expected_home="${2:-}"
     local passwd_entry=""
     local current_user=""
+    local current_home=""
     local passwd_home=""
 
     [[ -n "$user" ]] || return 1
+    if [[ -n "$expected_home" ]] && [[ "$expected_home" == /* ]] && [[ "$expected_home" != "/" ]]; then
+        expected_home="${expected_home%/}"
+    else
+        expected_home=""
+    fi
 
     if [[ "$user" == "root" ]]; then
         echo /root
@@ -3106,8 +3182,11 @@ acfs_home_for_user() {
 
     current_user="$(acfs_early_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-        echo "${HOME%/}"
-        return 0
+        current_home="${HOME%/}"
+        if [[ -z "$expected_home" ]] || [[ "$current_home" == "$expected_home" ]]; then
+            echo "$current_home"
+            return 0
+        fi
     fi
 
     return 1
@@ -3120,12 +3199,22 @@ init_target_paths() {
     # Resolve the target user's actual home directory through NSS/getent first;
     # inherited TARGET_HOME is only a fallback for unusual systems where the
     # target user cannot be resolved yet.
+    local explicit_target_home_raw="${TARGET_HOME:-}"
+    local explicit_target_home=""
     local resolved_target_home=""
-    resolved_target_home="$(acfs_home_for_user "$TARGET_USER" 2>/dev/null || true)"
+    if [[ "$explicit_target_home_raw" == /* ]] && [[ "$explicit_target_home_raw" != "/" ]]; then
+        explicit_target_home="${explicit_target_home_raw%/}"
+        [[ "$explicit_target_home" != "/" ]] || explicit_target_home=""
+    fi
+    resolved_target_home="$(acfs_home_for_user "$TARGET_USER" "$explicit_target_home" 2>/dev/null || true)"
     if [[ -n "$resolved_target_home" ]]; then
         TARGET_HOME="$resolved_target_home"
     elif [[ -n "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="${TARGET_HOME%/}"
+        if [[ "$TARGET_HOME" == "/" ]]; then
+            TARGET_HOME="/"
+        else
+            TARGET_HOME="${TARGET_HOME%/}"
+        fi
     fi
 
     if [[ -z "$TARGET_HOME" ]]; then
@@ -3143,13 +3232,34 @@ init_target_paths() {
     # Override via ACFS_BIN_DIR for shared/multi-user machines:
     #   ACFS_BIN_DIR=/usr/local/bin ./install.sh
     ACFS_BIN_DIR="${ACFS_BIN_DIR:-$TARGET_HOME/.local/bin}"
+    if [[ -n "$explicit_target_home" ]] && [[ "$explicit_target_home" != "$TARGET_HOME" ]]; then
+        case "$ACFS_BIN_DIR" in
+            "$explicit_target_home"|"$explicit_target_home"/*)
+                ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+                ;;
+        esac
+    fi
     if [[ -z "$ACFS_BIN_DIR" ]] || [[ "$ACFS_BIN_DIR" == "/" ]] || [[ "$ACFS_BIN_DIR" != /* ]]; then
         log_fatal "ACFS_BIN_DIR must be an absolute path and cannot be '/' (got: ${ACFS_BIN_DIR:-<empty>})"
     fi
 
     # ACFS directories for target user
     ACFS_HOME="${ACFS_HOME:-$TARGET_HOME/.acfs}"
+    if [[ -n "$explicit_target_home" ]] && [[ "$explicit_target_home" != "$TARGET_HOME" ]]; then
+        case "$ACFS_HOME" in
+            "$explicit_target_home"|"$explicit_target_home"/*)
+                ACFS_HOME="$TARGET_HOME/.acfs"
+                ;;
+        esac
+    fi
     ACFS_STATE_FILE="${ACFS_STATE_FILE:-$ACFS_HOME/state.json}"
+    if [[ -n "$explicit_target_home" ]] && [[ "$explicit_target_home" != "$TARGET_HOME" ]]; then
+        case "$ACFS_STATE_FILE" in
+            "$explicit_target_home"|"$explicit_target_home"/*)
+                ACFS_STATE_FILE="$ACFS_HOME/state.json"
+                ;;
+        esac
+    fi
 
     # Basic hardening: refuse to use a symlinked ACFS_HOME when running with
     # elevated privileges (prevents clobbering arbitrary paths via symlink tricks).
@@ -3346,7 +3456,7 @@ run_ubuntu_upgrade_phase() {
         had_state_file=true
     fi
     export ACFS_STATE_FILE="$upgrade_state_file"
-    trap 'restore_previous_acfs_state_file "$had_state_file" "$previous_state_file"; trap - RETURN' RETURN
+    trap 'restore_previous_acfs_state_file "${had_state_file:-false}" "${previous_state_file:-}"; trap - RETURN' RETURN
 
     # Convert target version string to number for comparison
     # TARGET_UBUNTU_VERSION is "25.10", need 2510
@@ -4979,7 +5089,7 @@ install_supabase_cli_release() {
         log_error "Supabase CLI: failed to create temp files"
         return 1
     fi
-    trap 'rm -rf "$tmp_dir" "$tmp_tgz" "$tmp_checksums" 2>/dev/null || true' RETURN
+    trap 'rm -rf "${tmp_dir:-}" "${tmp_tgz:-}" "${tmp_checksums:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     if ! acfs_curl -o "$tmp_tgz" "${base_url}/${tarball}" 2>/dev/null; then
         log_error "Supabase CLI: failed to download ${tarball}"
@@ -5408,34 +5518,34 @@ NTM_CONFIG_EOF
                 if try_step "Installing MCP Agent Mail" run_as_target bash "$ACFS_TMP_INSTALL" --dest "$target_dir" --yes; then
                     # Symlink repair/normalization: prefer the freshly installed
                     # Rust CLI even if an older am is already on PATH.
-                    run_as_target bash -c "
-                        export PATH=\"\${ACFS_BIN_DIR:-\$HOME/.local/bin}:\$HOME/.local/bin:\$HOME/.acfs/bin:\$HOME/.cargo/bin:\$HOME/.bun/bin:\$HOME/.atuin/bin:\$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin\"
-                        am_src=\"$target_dir/am\"
-                        am_dst=\"\$HOME/.local/bin/am\"
-                        primary_am=\"\${ACFS_BIN_DIR:-\$HOME/.local/bin}/am\"
-                        resolved_am=\"\"
-                        for candidate in \\
-                            \"\$am_src\" \\
-                            \"\$primary_am\" \\
-                            \"\$HOME/.local/bin/am\" \\
-                            \"\$HOME/.acfs/bin/am\" \\
-                            \"\$HOME/.cargo/bin/am\" \\
-                            \"\$HOME/.bun/bin/am\" \\
-                            \"\$HOME/.atuin/bin/am\" \\
-                            \"\$HOME/go/bin/am\"; do
-                            if [[ -x \"\$candidate\" ]]; then
-                                resolved_am=\"\$candidate\"
+                    run_as_target env "ACFS_AGENT_MAIL_TARGET_DIR=$target_dir" bash -c '
+                        export PATH="${ACFS_BIN_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"
+                        am_src="$ACFS_AGENT_MAIL_TARGET_DIR/am"
+                        am_dst="$HOME/.local/bin/am"
+                        primary_am="${ACFS_BIN_DIR:-$HOME/.local/bin}/am"
+                        resolved_am=""
+                        for candidate in \
+                            "$am_src" \
+                            "$primary_am" \
+                            "$HOME/.local/bin/am" \
+                            "$HOME/.acfs/bin/am" \
+                            "$HOME/.cargo/bin/am" \
+                            "$HOME/.bun/bin/am" \
+                            "$HOME/.atuin/bin/am" \
+                            "$HOME/go/bin/am"; do
+                            if [[ -x "$candidate" ]]; then
+                                resolved_am="$candidate"
                                 break
                             fi
                         done
-                        if [[ -x \"\$am_src\" ]]; then
-                            mkdir -p \"\$HOME/.local/bin\"
-                            if [[ \"\$resolved_am\" != \"\$am_src\" ]]; then
-                                ln -sf \"\$am_src\" \"\$am_dst\"
-                                echo \"ACFS: ensured am symlink points at installed binary: \$am_dst -> \$am_src\" >&2
+                        if [[ -x "$am_src" ]]; then
+                            mkdir -p "$HOME/.local/bin"
+                            if [[ "$resolved_am" != "$am_src" ]]; then
+                                ln -sf "$am_src" "$am_dst"
+                                echo "ACFS: ensured am symlink points at installed binary: $am_dst -> $am_src" >&2
                             fi
                         fi
-                    " || true
+                    ' || true
                     if run_as_target bash -c 'set -euo pipefail
                         export PATH="${ACFS_BIN_DIR:-$HOME/.local/bin}:$HOME/.local/bin:$HOME/.acfs/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.atuin/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin:/snap/bin"
                         sqlite_user_table_count() {
@@ -5595,14 +5705,21 @@ UNIT_EOF
                                     rm -f "$fallback_pid_file"
                                 fi
                             fi
-                            nohup env \
+                            if env \
                                 RUST_LOG=info \
                                 STORAGE_ROOT="$storage_root" \
                                 DATABASE_URL="$db_url" \
                                 HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
-                                bash -c "$am_bin migrate && $am_bin serve-http --no-tui --host 127.0.0.1 --port 8765 --path $am_mcp_path" \
-                                >>"$fallback_log_file" 2>&1 < /dev/null &
-                            echo $! > "$fallback_pid_file"
+                                "$am_bin" migrate >>"$fallback_log_file" 2>&1; then
+                                nohup env \
+                                    RUST_LOG=info \
+                                    STORAGE_ROOT="$storage_root" \
+                                    DATABASE_URL="$db_url" \
+                                    HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true \
+                                    "$am_bin" serve-http --no-tui --host 127.0.0.1 --port 8765 --path "$am_mcp_path" \
+                                    >>"$fallback_log_file" 2>&1 < /dev/null &
+                                echo $! > "$fallback_pid_file"
+                            fi
                         fi
                     '; then
                         local am_waited=0

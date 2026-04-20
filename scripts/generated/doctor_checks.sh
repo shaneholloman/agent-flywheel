@@ -158,9 +158,13 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
 
     MODE="${MODE:-vibe}"
 
+    _ACFS_EXPLICIT_TARGET_HOME="${TARGET_HOME:-}"
+    if [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
+        _ACFS_EXPLICIT_TARGET_HOME="${_ACFS_EXPLICIT_TARGET_HOME%/}"
+    fi
     _ACFS_RESOLVED_TARGET_HOME=""
     if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
-        _ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" || true)"
+        _ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" "$_ACFS_EXPLICIT_TARGET_HOME" || true)"
     else
         if [[ "${TARGET_USER}" == "root" ]]; then
             _ACFS_RESOLVED_TARGET_HOME="/root"
@@ -170,20 +174,24 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
                 _ACFS_RESOLVED_TARGET_HOME="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
             else
                 _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-                if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                    _ACFS_RESOLVED_TARGET_HOME="${HOME%/}"
+                _acfs_current_home="${HOME:-}"
+                if [[ -n "$_acfs_current_home" ]]; then
+                    _acfs_current_home="${_acfs_current_home%/}"
                 fi
-                unset _acfs_current_user
+                if [[ "${_acfs_current_user:-}" == "${TARGET_USER}" ]] && [[ -n "$_acfs_current_home" ]] && [[ "$_acfs_current_home" == /* ]] && [[ "$_acfs_current_home" != "/" ]] && { [[ -z "$_ACFS_EXPLICIT_TARGET_HOME" ]] || [[ "$_acfs_current_home" == "$_ACFS_EXPLICIT_TARGET_HOME" ]]; }; then
+                    _ACFS_RESOLVED_TARGET_HOME="$_acfs_current_home"
+                fi
+                unset _acfs_current_user _acfs_current_home
             fi
             unset _acfs_passwd_entry
         fi
     fi
     if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then
         TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"
-    elif [[ -n "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="${TARGET_HOME%/}"
+    elif [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
+        TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"
     fi
-    unset _ACFS_RESOLVED_TARGET_HOME
+    unset _ACFS_EXPLICIT_TARGET_HOME _ACFS_RESOLVED_TARGET_HOME
 
     if [[ -z "${TARGET_HOME:-}" ]] || [[ "${TARGET_HOME}" == "/" ]] || [[ "${TARGET_HOME}" != /* ]]; then
         log_error "Invalid TARGET_HOME for '${TARGET_USER}': ${TARGET_HOME:-<empty>} (must be an absolute path and cannot be '/')"
@@ -256,7 +264,7 @@ declare -a MANIFEST_CHECKS=(
     "users.ubuntu.2	Ensure target user + passwordless sudo + ssh keys	[[ \"\${MODE:-vibe}\" != \"vibe\" ]] || runuser -u \"\${TARGET_USER:-ubuntu}\" -- sudo -n true	required	root"
     "base.filesystem.1	Create workspace and ACFS directories	test -d /data/projects	required	root"
     "base.filesystem.2	Create workspace and ACFS directories	test -f /data/projects/AGENTS.md	required	root"
-    "base.filesystem.3	Create workspace and ACFS directories	target_home=\"\"\\nif [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then\\n  target_home=\"/root\"\\nelse\\n  _acfs_passwd_entry=\"\$(acfs_generated_getent_passwd_entry \"\${TARGET_USER:-ubuntu}\" 2>/dev/null || true)\"\\n  if [[ -n \"\$_acfs_passwd_entry\" ]]; then\\n    target_home=\"\$(acfs_generated_passwd_home_from_entry \"\$_acfs_passwd_entry\" 2>/dev/null || true)\"\\n  else\\n    current_user=\"\$(acfs_generated_resolve_current_user 2>/dev/null || true)\"\\n    if [[ -n \"\$current_user\" ]] && [[ \"\$current_user\" == \"\${TARGET_USER:-ubuntu}\" ]] && [[ -n \"\${HOME:-}\" ]] && [[ \"\${HOME}\" == /* ]] && [[ \"\${HOME}\" != \"/\" ]]; then\\n      target_home=\"\${HOME%/}\"\\n    fi\\n    unset current_user\\n  fi\\n  unset _acfs_passwd_entry\\nfi\\nif [[ -z \"\$target_home\" && -n \"\${TARGET_HOME:-}\" ]]; then\\n  target_home=\"\${TARGET_HOME%/}\"\\nfi\\nif [[ -z \"\$target_home\" ]]; then\\n  echo \"ERROR: Unable to resolve TARGET_HOME for '\${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly\" >&2\\n  exit 1\\nfi\\nif [[ -z \"\$target_home\" || \"\$target_home\" == \"/\" || \"\$target_home\" != /* ]]; then\\n  echo \"ERROR: Invalid TARGET_HOME: '\${target_home:-<empty>}'\" >&2\\n  exit 1\\nfi\\ntest -d \"\$target_home/.acfs\"	required	root"
+    "base.filesystem.3	Create workspace and ACFS directories	target_home=\"\"\\nexplicit_target_home=\"\${TARGET_HOME:-}\"\\nif [[ -n \"\$explicit_target_home\" ]]; then\\n  explicit_target_home=\"\${explicit_target_home%/}\"\\nfi\\nif [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then\\n  target_home=\"/root\"\\nelse\\n  _acfs_passwd_entry=\"\$(acfs_generated_getent_passwd_entry \"\${TARGET_USER:-ubuntu}\" 2>/dev/null || true)\"\\n  if [[ -n \"\$_acfs_passwd_entry\" ]]; then\\n    target_home=\"\$(acfs_generated_passwd_home_from_entry \"\$_acfs_passwd_entry\" 2>/dev/null || true)\"\\n  else\\n    current_user=\"\$(acfs_generated_resolve_current_user 2>/dev/null || true)\"\\n    current_home=\"\${HOME:-}\"\\n    if [[ -n \"\$current_home\" ]]; then\\n      current_home=\"\${current_home%/}\"\\n    fi\\n    if [[ -n \"\$current_user\" ]] && [[ \"\$current_user\" == \"\${TARGET_USER:-ubuntu}\" ]] && [[ -n \"\$current_home\" ]] && [[ \"\$current_home\" == /* ]] && [[ \"\$current_home\" != \"/\" ]] && { [[ -z \"\$explicit_target_home\" ]] || [[ \"\$current_home\" == \"\$explicit_target_home\" ]]; }; then\\n      target_home=\"\$current_home\"\\n    fi\\n    unset current_user current_home\\n  fi\\n  unset _acfs_passwd_entry\\nfi\\nif [[ -z \"\$target_home\" && -n \"\$explicit_target_home\" ]]; then\\n  target_home=\"\$explicit_target_home\"\\nfi\\nunset explicit_target_home\\nif [[ -z \"\$target_home\" ]]; then\\n  echo \"ERROR: Unable to resolve TARGET_HOME for '\${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly\" >&2\\n  exit 1\\nfi\\nif [[ -z \"\$target_home\" || \"\$target_home\" == \"/\" || \"\$target_home\" != /* ]]; then\\n  echo \"ERROR: Invalid TARGET_HOME: '\${target_home:-<empty>}'\" >&2\\n  exit 1\\nfi\\ntest -d \"\$target_home/.acfs\"	required	root"
     "shell.zsh	Zsh shell package	zsh --version	required	root"
     "shell.omz.1	Oh My Zsh + Powerlevel10k + plugins + ACFS config	test -d ~/.oh-my-zsh	required	target_user"
     "shell.omz.2	Oh My Zsh + Powerlevel10k + plugins + ACFS config	test -f ~/.acfs/zsh/acfs.zshrc	required	target_user"
@@ -319,7 +327,7 @@ declare -a MANIFEST_CHECKS=(
     "stack.caam	Instant auth switching for agent CLIs	caam status || caam --help	required	target_user"
     "stack.slb	Two-person rule for dangerous commands (optional guardrails)	export PATH=\"\$HOME/go/bin:\$PATH\" && slb >/dev/null 2>&1 || slb --help >/dev/null 2>&1	optional	target_user"
     "stack.dcg.1	Destructive Command Guard - Claude Code hook blocking dangerous git/fs commands	dcg --version	required	target_user"
-    "stack.dcg.2	Destructive Command Guard - Claude Code hook blocking dangerous git/fs commands	settings=\"\$HOME/.claude/settings.json\"\\nalt_settings=\"\$HOME/.config/claude/settings.json\"\\nif [[ -f \"\$settings\" ]]; then\\n  grep -q \"dcg\" \"\$settings\"\\nelif [[ -f \"\$alt_settings\" ]]; then\\n  grep -q \"dcg\" \"\$alt_settings\"\\nelse\\n  exit 1\\nfi	required	target_user"
+    "stack.dcg.2	Destructive Command Guard - Claude Code hook blocking dangerous git/fs commands	claude_settings_has_command_hook() {\\n  local settings_file=\"\${1:-}\"\\n  local command_pattern=\"\${2:-}\"\\n\\n  [[ -n \"\$settings_file\" && -n \"\$command_pattern\" ]] || return 1\\n  [[ -f \"\$settings_file\" ]] || return 1\\n  command -v jq >/dev/null 2>&1 || return 1\\n\\n  jq -e --arg pattern \"\$command_pattern\" '\\n    def command_hook_matches:\\n      type == \"object\"\\n      and ((.type? // \"command\") == \"command\")\\n      and ((.command? // \"\") | strings | test(\$pattern));\\n    def event_entry_matches:\\n      if type == \"object\" and (.hooks? | type) == \"array\" then\\n        any(.hooks[]?; command_hook_matches)\\n      else\\n        command_hook_matches\\n      end;\\n    def hook_event_entries:\\n      if (.hooks? | type) == \"object\" then\\n        .hooks | to_entries[]? | .value | arrays | .[]?\\n      elif (.hooks? | type) == \"array\" then\\n        .hooks[]?\\n      else\\n        empty\\n      end;\\n    any(hook_event_entries; event_entry_matches)\\n  ' \"\$settings_file\" >/dev/null 2>&1\\n}\\n\\nsettings=\"\$HOME/.claude/settings.json\"\\nalt_settings=\"\$HOME/.config/claude/settings.json\"\\ndcg_command_pattern='(^|[[:space:]/])dcg([[:space:]]|\$)'\\n\\nclaude_settings_has_command_hook \"\$settings\" \"\$dcg_command_pattern\" ||\\n  claude_settings_has_command_hook \"\$alt_settings\" \"\$dcg_command_pattern\"	required	target_user"
     "stack.ru	Repo Updater - multi-repo sync + AI-driven commit automation	ru --version	required	target_user"
     "stack.brenner_bot	Brenner Bot - research session manager with hypothesis tracking	brenner --version || brenner --help	optional	target_user"
     "stack.rch	Remote Compilation Helper - transparent build offloading for AI coding agents	rch --version || rch --help	optional	target_user"
@@ -331,7 +339,7 @@ declare -a MANIFEST_CHECKS=(
     "stack.cross_agent_session_resumer	Cross-provider AI coding session resumption — convert and resume sessions across providers (casr)	casr providers || casr --help	optional	target_user"
     "stack.doodlestein_self_releaser	Fallback release infrastructure — local builds via act when GitHub Actions is throttled (dsr)	dsr --version || dsr --help	optional	target_user"
     "stack.agent_settings_backup	Smart backup tool for AI coding agent configuration folders (asb)	asb version || asb help	optional	target_user"
-    "stack.pcr	Post-compaction reminder hook for Claude Code that forces an AGENTS.md re-read	target_home=\"\${TARGET_HOME:-\$HOME}\"\\nhook_script=\"\$target_home/.local/bin/claude-post-compact-reminder\"\\nsettings=\"\$target_home/.claude/settings.json\"\\nalt_settings=\"\$target_home/.config/claude/settings.json\"\\n\\ntest -x \"\$hook_script\" || exit 1\\n\\nif [[ -f \"\$settings\" ]]; then\\n  grep -q \"claude-post-compact-reminder\" \"\$settings\"\\nelif [[ -f \"\$alt_settings\" ]]; then\\n  grep -q \"claude-post-compact-reminder\" \"\$alt_settings\"\\nelse\\n  exit 1\\nfi	optional	target_user"
+    "stack.pcr	Post-compaction reminder hook for Claude Code that forces an AGENTS.md re-read	claude_settings_has_command_hook() {\\n  local settings_file=\"\${1:-}\"\\n  local command_pattern=\"\${2:-}\"\\n\\n  [[ -n \"\$settings_file\" && -n \"\$command_pattern\" ]] || return 1\\n  [[ -f \"\$settings_file\" ]] || return 1\\n  command -v jq >/dev/null 2>&1 || return 1\\n\\n  jq -e --arg pattern \"\$command_pattern\" '\\n    def command_hook_matches:\\n      type == \"object\"\\n      and ((.type? // \"command\") == \"command\")\\n      and ((.command? // \"\") | strings | test(\$pattern));\\n    def event_entry_matches:\\n      if type == \"object\" and (.hooks? | type) == \"array\" then\\n        any(.hooks[]?; command_hook_matches)\\n      else\\n        command_hook_matches\\n      end;\\n    def hook_event_entries:\\n      if (.hooks? | type) == \"object\" then\\n        .hooks | to_entries[]? | .value | arrays | .[]?\\n      elif (.hooks? | type) == \"array\" then\\n        .hooks[]?\\n      else\\n        empty\\n      end;\\n    any(hook_event_entries; event_entry_matches)\\n  ' \"\$settings_file\" >/dev/null 2>&1\\n}\\n\\ntarget_home=\"\${TARGET_HOME:-\$HOME}\"\\nhook_script=\"\$target_home/.local/bin/claude-post-compact-reminder\"\\nsettings=\"\$target_home/.claude/settings.json\"\\nalt_settings=\"\$target_home/.config/claude/settings.json\"\\npcr_command_pattern='(^|[[:space:]/])claude-post-compact-reminder([[:space:]]|\$)'\\n\\ntest -x \"\$hook_script\" || exit 1\\n\\nclaude_settings_has_command_hook \"\$settings\" \"\$pcr_command_pattern\" ||\\n  claude_settings_has_command_hook \"\$alt_settings\" \"\$pcr_command_pattern\"	optional	target_user"
     "utils.giil	Get Image from Internet Link - download cloud images for visual debugging	giil --help || giil --version	optional	target_user"
     "utils.csctf	Chat Shared Conversation to File - convert AI share links to Markdown/HTML	csctf --help || csctf --version	optional	target_user"
     "utils.xf	xf - Ultra-fast X/Twitter archive search with Tantivy	xf --help || xf --version	optional	target_user"
@@ -356,10 +364,17 @@ run_manifest_check_command() {
     local cmd="$2"
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home="${TARGET_HOME:-}"
+    local explicit_target_home=""
     local resolved_target_home=""
     local target_path=""
     local current_user=""
+    local current_home=""
     local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+
+    explicit_target_home="$target_home"
+    if [[ -n "$explicit_target_home" ]]; then
+        explicit_target_home="${explicit_target_home%/}"
+    fi
 
     if declare -f _acfs_validate_target_user >/dev/null 2>&1; then
         _acfs_validate_target_user "$target_user" "TARGET_USER" || return 1
@@ -369,7 +384,7 @@ run_manifest_check_command() {
     fi
 
     if declare -f _acfs_resolve_target_home >/dev/null 2>&1; then
-        resolved_target_home="$(_acfs_resolve_target_home "$target_user" || true)"
+        resolved_target_home="$(_acfs_resolve_target_home "$target_user" "$explicit_target_home" || true)"
     elif [[ "$target_user" == "root" ]]; then
         resolved_target_home="/root"
     else
@@ -379,8 +394,12 @@ run_manifest_check_command() {
             resolved_target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"
         else
             _acfs_current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
-            if [[ "${_acfs_current_user:-}" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-                resolved_target_home="${HOME%/}"
+            current_home="${HOME:-}"
+            if [[ -n "$current_home" ]]; then
+                current_home="${current_home%/}"
+            fi
+            if [[ "${_acfs_current_user:-}" == "$target_user" ]] && [[ -n "$current_home" ]] && [[ "$current_home" == /* ]] && [[ "$current_home" != "/" ]] && { [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }; then
+                resolved_target_home="$current_home"
             fi
             unset _acfs_current_user
         fi
@@ -388,8 +407,8 @@ run_manifest_check_command() {
     fi
     if [[ -n "$resolved_target_home" ]]; then
         target_home="${resolved_target_home%/}"
-    elif [[ -n "$target_home" ]]; then
-        target_home="${target_home%/}"
+    elif [[ -n "$explicit_target_home" ]]; then
+        target_home="$explicit_target_home"
     fi
 
     if [[ "$cmd" == *"acfs_generated_"* ]]; then

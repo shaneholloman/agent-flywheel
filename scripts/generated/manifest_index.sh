@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="afa60a1d94c39fa93f77696e31eb1d394856994f457b664bce10a18938f7c08b"
+ACFS_MANIFEST_SHA256="2bf6552ab81638bbf354cc3092e26d3da97d6b9e70b91d264fa527201d61a866"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"
@@ -619,7 +619,7 @@ declare -gA ACFS_MODULE_INSTALLED_CHECK=(
   ['stack.cross_agent_session_resumer']="command -v casr"
   ['stack.doodlestein_self_releaser']="command -v dsr"
   ['stack.agent_settings_backup']="command -v asb"
-  ['stack.pcr']="target_home=\"\${TARGET_HOME:-\$HOME}\" hook_script=\"\$target_home/.local/bin/claude-post-compact-reminder\" settings=\"\$target_home/.claude/settings.json\" alt_settings=\"\$target_home/.config/claude/settings.json\"  test -x \"\$hook_script\" || exit 1  if [[ -f \"\$settings\" ]]; then   grep -q \"claude-post-compact-reminder\" \"\$settings\" elif [[ -f \"\$alt_settings\" ]]; then   grep -q \"claude-post-compact-reminder\" \"\$alt_settings\" else   exit 1 fi "
+  ['stack.pcr']="claude_settings_has_command_hook() {   local settings_file=\"\${1:-}\"   local command_pattern=\"\${2:-}\"    [[ -n \"\$settings_file\" && -n \"\$command_pattern\" ]] || return 1   [[ -f \"\$settings_file\" ]] || return 1   command -v jq >/dev/null 2>&1 || return 1    jq -e --arg pattern \"\$command_pattern\" '     def command_hook_matches:       type == \"object\"       and ((.type? // \"command\") == \"command\")       and ((.command? // \"\") | strings | test(\$pattern));     def event_entry_matches:       if type == \"object\" and (.hooks? | type) == \"array\" then         any(.hooks[]?; command_hook_matches)       else         command_hook_matches       end;     def hook_event_entries:       if (.hooks? | type) == \"object\" then         .hooks | to_entries[]? | .value | arrays | .[]?       elif (.hooks? | type) == \"array\" then         .hooks[]?       else         empty       end;     any(hook_event_entries; event_entry_matches)   ' \"\$settings_file\" >/dev/null 2>&1 }  target_home=\"\${TARGET_HOME:-\$HOME}\" hook_script=\"\$target_home/.local/bin/claude-post-compact-reminder\" settings=\"\$target_home/.claude/settings.json\" alt_settings=\"\$target_home/.config/claude/settings.json\" pcr_command_pattern='(^|[[:space:]/])claude-post-compact-reminder([[:space:]]|\$)'  test -x \"\$hook_script\" || exit 1  claude_settings_has_command_hook \"\$settings\" \"\$pcr_command_pattern\" ||   claude_settings_has_command_hook \"\$alt_settings\" \"\$pcr_command_pattern\" "
   ['utils.giil']="command -v giil"
   ['utils.csctf']="command -v csctf"
   ['utils.xf']="command -v xf"

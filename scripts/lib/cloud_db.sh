@@ -207,7 +207,7 @@ _cloud_target_home() {
 
     if [[ "$current_user" == "$target_user" ]]; then
         current_home="$(_cloud_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
-        if [[ -n "$current_home" ]]; then
+        if [[ -n "$current_home" ]] && { [[ -z "$explicit_home" ]] || [[ "$current_home" == "$explicit_home" ]]; }; then
             printf '%s\n' "$current_home"
             return 0
         fi
@@ -491,7 +491,11 @@ _install_cloud_cli() {
 
     log_detail "Installing $cli..."
 
-    if _cloud_run_as_user "\"$bun_bin\" install -g $cli@latest"; then
+    local bun_bin_q=""
+    local cli_package_q=""
+    printf -v bun_bin_q '%q' "$bun_bin"
+    printf -v cli_package_q '%q' "$cli@latest"
+    if _cloud_run_as_user "$bun_bin_q install -g $cli_package_q"; then
         if [[ -x "$cli_bin" ]]; then
             log_success "$cli installed"
             return 0

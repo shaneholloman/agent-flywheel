@@ -179,7 +179,7 @@ _lang_target_home() {
 
     if [[ "$current_user" == "$target_user" ]]; then
         current_home="$(_lang_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
-        if [[ -n "$current_home" ]]; then
+        if [[ -n "$current_home" ]] && { [[ -z "$explicit_home" ]] || [[ "$current_home" == "$explicit_home" ]]; }; then
             printf '%s\n' "$current_home"
             return 0
         fi
@@ -302,8 +302,10 @@ _lang_ensure_local_bin() {
     local local_bin="$target_home/.local/bin"
 
     if [[ ! -d "$local_bin" ]]; then
+        local local_bin_q=""
+        printf -v local_bin_q '%q' "$local_bin"
         log_detail "Creating $local_bin"
-        _lang_run_as_user "mkdir -p '$local_bin'"
+        _lang_run_as_user "mkdir -p $local_bin_q"
     fi
 }
 
@@ -341,7 +343,13 @@ install_bun() {
         return 1
     fi
 
-    if ! _lang_run_as_user "source '$LANG_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$expected_sha256' 'bun' | bash"; then
+    local security_lib_q=""
+    local url_q=""
+    local expected_sha256_q=""
+    printf -v security_lib_q '%q' "$LANG_SCRIPT_DIR/security.sh"
+    printf -v url_q '%q' "$url"
+    printf -v expected_sha256_q '%q' "$expected_sha256"
+    if ! _lang_run_as_user "source $security_lib_q; verify_checksum $url_q $expected_sha256_q bun | bash"; then
         log_warn "Bun installation failed"
         return 1
     fi
@@ -349,7 +357,9 @@ install_bun() {
     # Verify installation
     if [[ -x "$bun_bin" ]]; then
         local version
-        version=$(_lang_run_as_user "$bun_bin --version" 2>/dev/null || echo "unknown")
+        local bun_bin_q=""
+        printf -v bun_bin_q '%q' "$bun_bin"
+        version=$(_lang_run_as_user "$bun_bin_q --version" 2>/dev/null || echo "unknown")
         log_success "Bun $version installed"
         return 0
     else
@@ -372,7 +382,9 @@ upgrade_bun() {
     fi
 
     log_detail "Upgrading Bun..."
-    _lang_run_as_user "$bun_bin upgrade" && log_success "Bun upgraded"
+    local bun_bin_q=""
+    printf -v bun_bin_q '%q' "$bun_bin"
+    _lang_run_as_user "$bun_bin_q upgrade" && log_success "Bun upgraded"
 }
 
 # ============================================================
@@ -411,7 +423,13 @@ install_uv() {
         return 1
     fi
 
-    if ! _lang_run_as_user "source '$LANG_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$expected_sha256' 'uv' | sh"; then
+    local security_lib_q=""
+    local url_q=""
+    local expected_sha256_q=""
+    printf -v security_lib_q '%q' "$LANG_SCRIPT_DIR/security.sh"
+    printf -v url_q '%q' "$url"
+    printf -v expected_sha256_q '%q' "$expected_sha256"
+    if ! _lang_run_as_user "source $security_lib_q; verify_checksum $url_q $expected_sha256_q uv | sh"; then
         log_warn "uv installation failed"
         return 1
     fi
@@ -419,7 +437,9 @@ install_uv() {
     # Verify installation
     if [[ -x "$uv_bin" ]]; then
         local version
-        version=$(_lang_run_as_user "$uv_bin --version" 2>/dev/null || echo "unknown")
+        local uv_bin_q=""
+        printf -v uv_bin_q '%q' "$uv_bin"
+        version=$(_lang_run_as_user "$uv_bin_q --version" 2>/dev/null || echo "unknown")
         log_success "uv $version installed"
         return 0
     else
@@ -445,7 +465,9 @@ upgrade_uv() {
     fi
 
     log_detail "Upgrading uv..."
-    _lang_run_as_user "$uv_bin self update" && log_success "uv upgraded"
+    local uv_bin_q=""
+    printf -v uv_bin_q '%q' "$uv_bin"
+    _lang_run_as_user "$uv_bin_q self update" && log_success "uv upgraded"
 }
 
 # ============================================================
@@ -481,7 +503,13 @@ install_rust() {
         return 1
     fi
 
-    if ! _lang_run_as_user "source '$LANG_SCRIPT_DIR/security.sh'; verify_checksum '$url' '$expected_sha256' 'rust' | sh -s -- -y"; then
+    local security_lib_q=""
+    local url_q=""
+    local expected_sha256_q=""
+    printf -v security_lib_q '%q' "$LANG_SCRIPT_DIR/security.sh"
+    printf -v url_q '%q' "$url"
+    printf -v expected_sha256_q '%q' "$expected_sha256"
+    if ! _lang_run_as_user "source $security_lib_q; verify_checksum $url_q $expected_sha256_q rust | sh -s -- -y"; then
         log_warn "Rust installation failed"
         return 1
     fi
@@ -489,7 +517,9 @@ install_rust() {
     # Verify installation
     if [[ -x "$cargo_bin" ]]; then
         local version
-        version=$(_lang_run_as_user "$cargo_bin --version" 2>/dev/null || echo "unknown")
+        local cargo_bin_q=""
+        printf -v cargo_bin_q '%q' "$cargo_bin"
+        version=$(_lang_run_as_user "$cargo_bin_q --version" 2>/dev/null || echo "unknown")
         log_success "Rust $version installed"
         return 0
     else
@@ -512,7 +542,9 @@ upgrade_rust() {
     fi
 
     log_detail "Upgrading Rust..."
-    _lang_run_as_user "$rustup_bin update stable" && log_success "Rust upgraded"
+    local rustup_bin_q=""
+    printf -v rustup_bin_q '%q' "$rustup_bin"
+    _lang_run_as_user "$rustup_bin_q update stable" && log_success "Rust upgraded"
 }
 
 # ============================================================
@@ -583,7 +615,7 @@ install_go_latest() {
         log_warn "mktemp failed; cannot install Go"
         return 1
     fi
-    trap 'rm -rf -- "$tmpdir" 2>/dev/null' RETURN
+    trap 'rm -rf -- "${tmpdir:-}" 2>/dev/null || true; trap - RETURN' RETURN
     local tarball="${version}.linux-${arch}.tar.gz"
 
     log_detail "Downloading $tarball..."

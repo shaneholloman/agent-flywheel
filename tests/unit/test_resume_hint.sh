@@ -216,6 +216,32 @@ test_custom_ref() {
     return 0
 }
 
+# Test: Custom ACFS_REF is shell-escaped in copy-paste resume hints
+test_custom_ref_shell_escaped() {
+    setup_test_env
+    ACFS_REF_INPUT='bad;touch /tmp/acfs-pwned #'
+
+    local result
+    result=$(generate_resume_hint "" "")
+
+    if [[ "$result" == *"bad;touch"* ]]; then
+        log "  Expected escaped ref in output, got raw shell metacharacters: $result"
+        return 1
+    fi
+
+    if [[ "$result" != *"bad\\;touch"* ]]; then
+        log "  Expected shell-escaped semicolon in output, got: $result"
+        return 1
+    fi
+
+    if [[ "$result" != *"--ref bad\\;touch"* ]]; then
+        log "  Expected --ref value to be escaped, got: $result"
+        return 1
+    fi
+
+    return 0
+}
+
 # Test: Safe mode
 test_safe_mode() {
     setup_test_env
@@ -512,6 +538,7 @@ main() {
     run_test test_local_script_invocation_with_spaces
     run_test test_pinned_commit_sha
     run_test test_custom_ref
+    run_test test_custom_ref_shell_escaped
     run_test test_safe_mode
     run_test test_skip_flags
     run_test test_all_skip_flags

@@ -142,7 +142,7 @@ try_step() {
     # Execute command, capturing both stdout and stderr when possible.
     local exit_code=0
     if [[ -n "$temp_output" ]]; then
-        trap 'rm -f "$temp_output" 2>/dev/null || true; trap - RETURN' RETURN
+        trap 'rm -f "${temp_output:-}" 2>/dev/null || true; trap - RETURN' RETURN
         if "$@" > "$temp_output" 2>&1; then
             exit_code=0
         else
@@ -195,7 +195,7 @@ try_step_eval() {
     # Use `-e` so `cmd1; cmd2` doesn't accidentally mask failures.
     local exit_code=0
     if [[ -n "$temp_output" ]]; then
-        trap 'rm -f "$temp_output" 2>/dev/null || true; trap - RETURN' RETURN
+        trap 'rm -f "${temp_output:-}" 2>/dev/null || true; trap - RETURN' RETURN
         if bash -e -o pipefail -c "$command_str" > "$temp_output" 2>&1; then
             exit_code=0
         else

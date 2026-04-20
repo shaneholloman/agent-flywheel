@@ -338,21 +338,21 @@ changelog_home_for_user() {
         return 0
     fi
 
-    current_user="$(changelog_resolve_current_user 2>/dev/null || true)"
-    if [[ "$user" == "$current_user" ]]; then
-        home_candidate="${_CHANGELOG_CURRENT_HOME:-}"
-        if [[ -z "$home_candidate" ]]; then
-            home_candidate="$(changelog_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
-        fi
+    passwd_entry="$(changelog_getent_passwd_entry "$user" 2>/dev/null || true)"
+    if [[ -n "$passwd_entry" ]]; then
+        home_candidate="$(changelog_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0
         fi
     fi
 
-    passwd_entry="$(changelog_getent_passwd_entry "$user" 2>/dev/null || true)"
-    if [[ -n "$passwd_entry" ]]; then
-        home_candidate="$(changelog_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
+    current_user="$(changelog_resolve_current_user 2>/dev/null || true)"
+    if [[ "$user" == "$current_user" ]]; then
+        home_candidate="${_CHANGELOG_CURRENT_HOME:-}"
+        if [[ -z "$home_candidate" ]]; then
+            home_candidate="$(changelog_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        fi
         if [[ -n "$home_candidate" ]]; then
             printf '%s\n' "$home_candidate"
             return 0

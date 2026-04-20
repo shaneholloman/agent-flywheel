@@ -341,7 +341,7 @@ sanitize_session_export() {
         log_error "Failed to create temp file for sanitization in: $file_dir"
         return 1
     }
-    trap 'rm -f -- "$tmpfile" 2>/dev/null || true' RETURN
+    trap 'rm -f -- "${tmpfile:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     # Sanitize all string values in the JSON.
     # This processes transcript content, summary, key_prompts, etc.
@@ -658,7 +658,7 @@ export_session() {
         log_error "Failed to create temp file for session export"
         return 1
     }
-    trap 'rm -f -- "$tmp_export" "${tmp_export}.sanitized" 2>/dev/null || true' RETURN
+    trap 'if [[ -n "${tmp_export:-}" ]]; then rm -f -- "$tmp_export" "${tmp_export}.sanitized" 2>/dev/null || true; fi; trap - RETURN' RETURN
 
     # Export via CASS to temp file
     if ! cass export "$session_path" --format "$format" > "$tmp_export" 2>/dev/null; then
@@ -1259,7 +1259,7 @@ write_native_claude_from_canonical() {
         local index_file="$home_dir/projects/$dir_key/sessions-index.json"
         local index_tmp
         index_tmp=$(mktemp "${TMPDIR:-/tmp}/acfs_claude_index.XXXXXX") || return 1
-        trap 'rm -f -- "$index_tmp" 2>/dev/null || true' RETURN
+        trap 'rm -f -- "${index_tmp:-}" 2>/dev/null || true; trap - RETURN' RETURN
         if [[ ! -f "$index_file" ]]; then
             printf '{"version":1,"entries":[]}\n' > "$index_file"
         fi
@@ -1429,7 +1429,7 @@ write_native_gemini_from_canonical() {
 
         local msg_tmp logs_tmp=""
         msg_tmp=$(mktemp "${TMPDIR:-/tmp}/acfs_gemini_msgs.XXXXXX") || return 1
-        trap 'rm -f -- "$msg_tmp" "$logs_tmp" 2>/dev/null || true' RETURN
+        trap 'rm -f -- "${msg_tmp:-}" "${logs_tmp:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
         local first_ts=""
         local last_ts="$now_iso"
@@ -1673,7 +1673,7 @@ convert_session_native() {
         log_error "Failed to create temp file for canonical conversion"
         return 1
     }
-    trap 'rm -f -- "$canonical_tmp" 2>/dev/null || true' RETURN
+    trap 'rm -f -- "${canonical_tmp:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
     if ! parse_native_to_canonical "$input_file" "$from_agent" "$workspace_hint" > "$canonical_tmp"; then
         rm -f -- "$canonical_tmp" 2>/dev/null || true
@@ -1917,7 +1917,7 @@ import_session() {
             log_error "Failed to create temp file for import in: $sessions_dir"
             return 1
         }
-        trap 'rm -f -- "$tmp_dest" 2>/dev/null || true' RETURN
+        trap 'rm -f -- "${tmp_dest:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
         if ! convert_to_acfs_schema "$file" "$agent" > "$tmp_dest"; then
             rm -f -- "$tmp_dest" 2>/dev/null || true
@@ -1943,7 +1943,7 @@ import_session() {
             log_error "Failed to create temp file for import in: $sessions_dir"
             return 1
         }
-        trap 'rm -f -- "$tmp_dest" 2>/dev/null || true' RETURN
+        trap 'rm -f -- "${tmp_dest:-}" 2>/dev/null || true; trap - RETURN' RETURN
 
         if ! cp -- "$file" "$tmp_dest"; then
             rm -f -- "$tmp_dest" 2>/dev/null || true
