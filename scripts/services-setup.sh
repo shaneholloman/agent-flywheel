@@ -33,7 +33,8 @@ services_setup_system_binary_path() {
         "/usr/local/bin/$name" \
         "/usr/local/sbin/$name" \
         "/usr/sbin/$name" \
-        "/sbin/$name"; do
+        "/sbin/$name"
+    do
         [[ -x "$candidate" ]] || continue
         printf '%s\n' "$candidate"
         return 0

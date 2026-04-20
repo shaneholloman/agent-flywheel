@@ -43,7 +43,8 @@ workflow_system_binary_path() {
         "/usr/local/bin/$name" \
         "/usr/local/sbin/$name" \
         "/usr/sbin/$name" \
-        "/sbin/$name"; do
+        "/sbin/$name"
+    do
         if [[ -x "$candidate" ]]; then
             printf '%s\n' "$candidate"
             return 0

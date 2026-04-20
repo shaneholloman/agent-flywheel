@@ -110,7 +110,8 @@ acfs_early_system_binary_path() {
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \
-        "/sbin/$name"; do
+        "/sbin/$name"
+    do
         [[ -x "$candidate" ]] || continue
         echo "$candidate"
         return 0

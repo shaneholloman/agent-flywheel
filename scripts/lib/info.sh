@@ -931,6 +931,7 @@ info_binary_path() {
         "$base_home/google-cloud-sdk/bin/$name" \
         "$base_home/bin/$name" \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/snap/bin/$name"; do

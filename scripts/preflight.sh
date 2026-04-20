@@ -84,7 +84,8 @@ preflight_system_binary_path() {
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \
-        "/sbin/$name"; do
+        "/sbin/$name"
+    do
         [[ -x "$candidate" ]] || continue
         printf '%s\n' "$candidate"
         return 0

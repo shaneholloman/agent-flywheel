@@ -7704,18 +7704,37 @@ generated-install-all|$REPO_ROOT/scripts/generated/install_all.sh
 generated-doctor-checks|$REPO_ROOT/scripts/generated/doctor_checks.sh
 EOF
 
-    while IFS='|' read -r label script_path variable_name; do
+    while IFS='|' read -r label script_path function_name variable_name; do
         [[ -n "$label" ]] || continue
-        if ! grep -Fq "\"/usr/local/sbin/\$$variable_name\"" "$script_path"; then
-            printf -v failures '%s%s missing /usr/local/sbin command fallback\n' "$failures" "$label"
+        local function_body=""
+        function_body="$(
+            awk -v fn="$function_name" '
+                $0 ~ "^[[:space:]]*" fn "\\(\\)[[:space:]]*\\{" { in_function = 1 }
+                in_function { print }
+                in_function && $0 ~ "^}" { exit }
+            ' "$script_path"
+        )"
+        if [[ -z "$function_body" ]]; then
+            printf -v failures '%s%s missing function %s\n' "$failures" "$label" "$function_name"
+            continue
+        fi
+        if ! grep -Fq "\"/usr/local/bin/\$$variable_name\"" <<< "$function_body" \
+            || ! grep -Fq "\"/usr/local/sbin/\$$variable_name\"" <<< "$function_body"; then
+            printf -v failures '%s%s missing /usr/local command fallback in %s\n' "$failures" "$label" "$function_name"
         fi
     done <<EOF
-install-target-lookup|$REPO_ROOT/install.sh|name
-preflight-target-lookup|$REPO_ROOT/scripts/preflight.sh|name
-services-setup-target-lookup|$REPO_ROOT/scripts/services-setup.sh|name
-cli-tools-target-lookup|$REPO_ROOT/scripts/lib/cli_tools.sh|cmd
-stack-target-lookup|$REPO_ROOT/scripts/lib/stack.sh|cmd
-update-target-lookup|$REPO_ROOT/scripts/lib/update.sh|tool
+install-target-lookup|$REPO_ROOT/install.sh|binary_path|name
+preflight-target-lookup|$REPO_ROOT/scripts/preflight.sh|preflight_binary_path|name
+services-setup-target-lookup|$REPO_ROOT/scripts/services-setup.sh|find_user_bin|name
+cli-tools-target-lookup|$REPO_ROOT/scripts/lib/cli_tools.sh|_cli_target_has_command|cmd
+stack-target-lookup|$REPO_ROOT/scripts/lib/stack.sh|_stack_target_command_path|cmd
+update-target-lookup|$REPO_ROOT/scripts/lib/update.sh|update_binary_path|tool
+doctor-target-lookup|$REPO_ROOT/scripts/lib/doctor.sh|doctor_binary_path|name
+github-api-target-lookup|$REPO_ROOT/scripts/lib/github_api.sh|_github_api_binary_path|name
+info-target-lookup|$REPO_ROOT/scripts/lib/info.sh|info_binary_path|name
+smoke-target-lookup|$REPO_ROOT/scripts/lib/smoke_test.sh|_smoke_binary_path|name
+status-target-lookup|$REPO_ROOT/scripts/lib/status.sh|_status_binary_path|name
+onboard-target-lookup|$REPO_ROOT/packages/onboard/onboard.sh|onboard_runtime_binary_path|name
 EOF
 
     if [[ -z "$failures" ]]; then

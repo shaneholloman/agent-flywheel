@@ -745,6 +745,7 @@ onboard_runtime_binary_path() {
         "$runtime_home/google-cloud-sdk/bin/$name" \
         "/usr/local/go/bin/$name" \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/snap/bin/$name"; do

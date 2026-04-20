@@ -39,7 +39,14 @@ _update_early_system_binary_path() {
     local candidate=""
 
     [[ -n "$name" ]] || return 1
-    for candidate in "/usr/bin/$name" "/bin/$name" "/usr/local/bin/$name" "/usr/local/sbin/$name" "/usr/sbin/$name" "/sbin/$name"; do
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
         [[ -x "$candidate" ]] || continue
         printf '%s\n' "$candidate"
         return 0
@@ -1790,9 +1797,9 @@ update_binary_path() {
         "$target_home/bin/$tool" \
         "/usr/local/go/bin/$tool" \
         "/usr/local/bin/$tool" \
+        "/usr/local/sbin/$tool" \
         "/usr/bin/$tool" \
         "/bin/$tool" \
-        "/usr/local/sbin/$tool" \
         "/usr/sbin/$tool" \
         "/sbin/$tool" \
         "/snap/bin/$tool"; do
