@@ -7657,51 +7657,64 @@ EOF
 test_acfs_system_binary_resolvers_cover_usr_local() {
     local failures=""
 
-    while IFS='|' read -r label script_path; do
+    while IFS='|' read -r label script_path function_name variable_name; do
         [[ -n "$label" ]] || continue
-        if ! grep -Fq '"/usr/local/bin/$name"' "$script_path" \
-            || ! grep -Fq '"/usr/local/sbin/$name"' "$script_path"; then
-            printf -v failures '%s%s missing /usr/local system binary candidates\n' "$failures" "$label"
+        local function_body=""
+        function_body="$(
+            awk -v fn="$function_name" '
+                $0 ~ "^[[:space:]]*" fn "\\(\\)[[:space:]]*\\{" { in_function = 1 }
+                in_function { print }
+                in_function && $0 ~ "^[[:space:]]*}[[:space:]]*$" { exit }
+            ' "$script_path"
+        )"
+        if [[ -z "$function_body" ]]; then
+            printf -v failures '%s%s missing function %s\n' "$failures" "$label" "$function_name"
+            continue
+        fi
+        if ! grep -Fq "\"/usr/local/bin/\$$variable_name\"" <<< "$function_body" \
+            || ! grep -Fq "\"/usr/local/sbin/\$$variable_name\"" <<< "$function_body"; then
+            printf -v failures '%s%s missing /usr/local system binary candidates in %s\n' "$failures" "$label" "$function_name"
         fi
     done <<EOF
-install|$REPO_ROOT/install.sh
-preflight|$REPO_ROOT/scripts/preflight.sh
-services-setup|$REPO_ROOT/scripts/services-setup.sh
-install-workflow|$REPO_ROOT/scripts/install-acfs-workflow.sh
-acfs-update|$REPO_ROOT/scripts/acfs-update
-acfs-global|$REPO_ROOT/scripts/acfs-global
-onboard|$REPO_ROOT/packages/onboard/onboard.sh
-install-helpers|$REPO_ROOT/scripts/lib/install_helpers.sh
-update-lib|$REPO_ROOT/scripts/lib/update.sh
-cli-tools-lib|$REPO_ROOT/scripts/lib/cli_tools.sh
-agents-lib|$REPO_ROOT/scripts/lib/agents.sh
-languages-lib|$REPO_ROOT/scripts/lib/languages.sh
-cloud-db-lib|$REPO_ROOT/scripts/lib/cloud_db.sh
-stack-lib|$REPO_ROOT/scripts/lib/stack.sh
-autofix-lib|$REPO_ROOT/scripts/lib/autofix.sh
-changelog-lib|$REPO_ROOT/scripts/lib/changelog.sh
-cheatsheet-lib|$REPO_ROOT/scripts/lib/cheatsheet.sh
-continue-lib|$REPO_ROOT/scripts/lib/continue.sh
-dashboard-lib|$REPO_ROOT/scripts/lib/dashboard.sh
-doctor-lib|$REPO_ROOT/scripts/lib/doctor.sh
-doctor-fix-lib|$REPO_ROOT/scripts/lib/doctor_fix.sh
-export-config-lib|$REPO_ROOT/scripts/lib/export-config.sh
-github-api-lib|$REPO_ROOT/scripts/lib/github_api.sh
-info-lib|$REPO_ROOT/scripts/lib/info.sh
-nightly-update-lib|$REPO_ROOT/scripts/lib/nightly_update.sh
-notifications-lib|$REPO_ROOT/scripts/lib/notifications.sh
-notify-lib|$REPO_ROOT/scripts/lib/notify.sh
-os-detect-lib|$REPO_ROOT/scripts/lib/os_detect.sh
-smoke-test-lib|$REPO_ROOT/scripts/lib/smoke_test.sh
-state-lib|$REPO_ROOT/scripts/lib/state.sh
-status-lib|$REPO_ROOT/scripts/lib/status.sh
-support-lib|$REPO_ROOT/scripts/lib/support.sh
-user-lib|$REPO_ROOT/scripts/lib/user.sh
-webhook-lib|$REPO_ROOT/scripts/lib/webhook.sh
-ubuntu-upgrade-lib|$REPO_ROOT/scripts/lib/ubuntu_upgrade.sh
-zsh-lib|$REPO_ROOT/scripts/lib/zsh.sh
-generated-install-all|$REPO_ROOT/scripts/generated/install_all.sh
-generated-doctor-checks|$REPO_ROOT/scripts/generated/doctor_checks.sh
+install|$REPO_ROOT/install.sh|acfs_early_system_binary_path|name
+preflight|$REPO_ROOT/scripts/preflight.sh|preflight_system_binary_path|name
+services-setup|$REPO_ROOT/scripts/services-setup.sh|services_setup_system_binary_path|name
+install-workflow|$REPO_ROOT/scripts/install-acfs-workflow.sh|workflow_system_binary_path|name
+acfs-update|$REPO_ROOT/scripts/acfs-update|system_binary_path|name
+acfs-global|$REPO_ROOT/scripts/acfs-global|system_binary_path|name
+onboard|$REPO_ROOT/packages/onboard/onboard.sh|onboard_system_binary_path|name
+install-helpers|$REPO_ROOT/scripts/lib/install_helpers.sh|_acfs_system_binary_path|name
+update-early-lib|$REPO_ROOT/scripts/lib/update.sh|_update_early_system_binary_path|name
+update-system-lib|$REPO_ROOT/scripts/lib/update.sh|update_system_binary_path|name
+cli-tools-lib|$REPO_ROOT/scripts/lib/cli_tools.sh|_cli_system_binary_path|name
+agents-lib|$REPO_ROOT/scripts/lib/agents.sh|_agent_system_binary_path|name
+languages-lib|$REPO_ROOT/scripts/lib/languages.sh|_lang_system_binary_path|name
+cloud-db-lib|$REPO_ROOT/scripts/lib/cloud_db.sh|_cloud_system_binary_path|name
+stack-lib|$REPO_ROOT/scripts/lib/stack.sh|_stack_system_binary_path|name
+autofix-lib|$REPO_ROOT/scripts/lib/autofix.sh|autofix_system_binary_path|name
+changelog-lib|$REPO_ROOT/scripts/lib/changelog.sh|changelog_system_binary_path|name
+cheatsheet-lib|$REPO_ROOT/scripts/lib/cheatsheet.sh|cheatsheet_system_binary_path|name
+continue-lib|$REPO_ROOT/scripts/lib/continue.sh|continue_system_binary_path|name
+dashboard-lib|$REPO_ROOT/scripts/lib/dashboard.sh|dashboard_system_binary_path|name
+doctor-lib|$REPO_ROOT/scripts/lib/doctor.sh|_acfs_doctor_system_binary_path|name
+doctor-fix-lib|$REPO_ROOT/scripts/lib/doctor_fix.sh|doctor_fix_system_binary_path|name
+export-config-lib|$REPO_ROOT/scripts/lib/export-config.sh|export_system_binary_path|name
+github-api-lib|$REPO_ROOT/scripts/lib/github_api.sh|_github_api_system_binary_path|name
+info-lib|$REPO_ROOT/scripts/lib/info.sh|info_system_binary_path|name
+nightly-update-lib|$REPO_ROOT/scripts/lib/nightly_update.sh|system_binary_path|name
+notifications-lib|$REPO_ROOT/scripts/lib/notifications.sh|notifications_system_binary_path|name
+notify-lib|$REPO_ROOT/scripts/lib/notify.sh|_acfs_notify_system_binary_path|name
+os-detect-lib|$REPO_ROOT/scripts/lib/os_detect.sh|os_detect_system_binary_path|name
+smoke-test-lib|$REPO_ROOT/scripts/lib/smoke_test.sh|_smoke_system_binary_path|name
+state-lib|$REPO_ROOT/scripts/lib/state.sh|state_system_binary_path|name
+status-lib|$REPO_ROOT/scripts/lib/status.sh|_status_system_binary_path|name
+support-lib|$REPO_ROOT/scripts/lib/support.sh|support_system_binary_path|name
+user-lib|$REPO_ROOT/scripts/lib/user.sh|user_system_binary_path|name
+webhook-lib|$REPO_ROOT/scripts/lib/webhook.sh|webhook_system_binary_path|name
+ubuntu-upgrade-lib|$REPO_ROOT/scripts/lib/ubuntu_upgrade.sh|ubuntu_system_binary_path|name
+zsh-lib|$REPO_ROOT/scripts/lib/zsh.sh|zsh_system_binary_path|name
+generated-install-all|$REPO_ROOT/scripts/generated/install_all.sh|acfs_generated_system_binary_path|name
+generated-doctor-checks|$REPO_ROOT/scripts/generated/doctor_checks.sh|acfs_generated_system_binary_path|name
 EOF
 
     while IFS='|' read -r label script_path function_name variable_name; do
@@ -7711,7 +7724,7 @@ EOF
             awk -v fn="$function_name" '
                 $0 ~ "^[[:space:]]*" fn "\\(\\)[[:space:]]*\\{" { in_function = 1 }
                 in_function { print }
-                in_function && $0 ~ "^}" { exit }
+                in_function && $0 ~ "^[[:space:]]*}[[:space:]]*$" { exit }
             ' "$script_path"
         )"
         if [[ -z "$function_body" ]]; then
