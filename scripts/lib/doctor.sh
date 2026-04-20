@@ -1744,21 +1744,25 @@ doctor_version_probe() {
         return 1
     fi
 
+    local head_bin="/usr/bin/head"
     local timeout_bin="$1"
     local timeout_secs="$2"
     local stderr_mode="${3:-discard}"
     shift 3
 
+    [[ -x "$head_bin" ]] || head_bin="/bin/head"
+    [[ -x "$head_bin" ]] || return 1
+
     if [[ "$stderr_mode" == "merge" ]]; then
         if [[ -n "$timeout_bin" ]]; then
-            "$timeout_bin" "$timeout_secs" "$@" 2>&1 | head -n1
+            "$timeout_bin" "$timeout_secs" "$@" 2>&1 | "$head_bin" -n 1
         else
-            "$@" 2>&1 | head -n1
+            "$@" 2>&1 | "$head_bin" -n 1
         fi
     elif [[ -n "$timeout_bin" ]]; then
-        "$timeout_bin" "$timeout_secs" "$@" 2>/dev/null | head -n1
+        "$timeout_bin" "$timeout_secs" "$@" 2>/dev/null | "$head_bin" -n 1
     else
-        "$@" 2>/dev/null | head -n1
+        "$@" 2>/dev/null | "$head_bin" -n 1
     fi
 }
 
