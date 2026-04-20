@@ -91,6 +91,40 @@ test_doctor_sources_generated_checks() {
     fi
 }
 
+test_doctor_lsof_version_probe_captures_stderr() {
+    harness_section "Test: doctor lsof version probe captures stderr"
+
+    local doctor_file="$REPO_ROOT/scripts/lib/doctor.sh"
+    local probe_def=""
+    probe_def="$(awk '
+        /^doctor_version_probe\(\)[[:space:]]*\{/ { in_function = 1 }
+        in_function { print }
+        in_function && /^}[[:space:]]*$/ { exit }
+    ' "$doctor_file")"
+
+    if [[ -z "$probe_def" ]]; then
+        harness_fail "doctor_version_probe function not found"
+        return 1
+    fi
+
+    if ! grep -Fq 'merge "$exec_path" -v' "$doctor_file"; then
+        harness_fail "lsof version path does not request stderr capture"
+        return 1
+    fi
+
+    if [[ -x /usr/bin/lsof && -x /usr/bin/timeout ]]; then
+        local output=""
+        output="$(bash -c "$probe_def"$'\n''doctor_version_probe /usr/bin/timeout 2 merge /usr/bin/lsof -v' 2>&1 || true)"
+        if [[ "$output" == "lsof version information:" ]]; then
+            harness_pass "lsof -v stderr banner is captured"
+        else
+            harness_fail "lsof -v stderr banner was not captured" "$output"
+        fi
+    else
+        harness_pass "lsof/timeout unavailable; static stderr-capture path is present"
+    fi
+}
+
 test_fix_suggestion_builder_exists() {
     harness_section "Test: Fix suggestion builder exists"
 
@@ -651,6 +685,7 @@ main() {
     # Run tests
     test_generated_checks_file_exists
     test_doctor_sources_generated_checks
+    test_doctor_lsof_version_probe_captures_stderr
     test_fix_suggestion_builder_exists
     test_fix_suggestion_format
     test_doctor_json_includes_fix_hints

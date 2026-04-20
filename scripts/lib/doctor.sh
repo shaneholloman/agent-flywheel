@@ -1740,11 +1740,22 @@ doctor_agent_mail_cli_path() {
 # Try to retrieve a reasonably informative version line for a command without
 # assuming it supports `--version`.
 doctor_version_probe() {
+    if (( $# < 3 )); then
+        return 1
+    fi
+
     local timeout_bin="$1"
     local timeout_secs="$2"
-    shift 2
+    local stderr_mode="${3:-discard}"
+    shift 3
 
-    if [[ -n "$timeout_bin" ]]; then
+    if [[ "$stderr_mode" == "merge" ]]; then
+        if [[ -n "$timeout_bin" ]]; then
+            "$timeout_bin" "$timeout_secs" "$@" 2>&1 | head -n1
+        else
+            "$@" 2>&1 | head -n1
+        fi
+    elif [[ -n "$timeout_bin" ]]; then
         "$timeout_bin" "$timeout_secs" "$@" 2>/dev/null | head -n1
     else
         "$@" 2>/dev/null | head -n1
@@ -1765,17 +1776,17 @@ get_version_line() {
     timeout_bin="$(_acfs_doctor_system_binary_path timeout 2>/dev/null || true)"
     # UBS has a directory size check that can block --version; bypass it
     if [[ "$cmd" == "ubs" ]] || [[ "$exec_path" == */ubs ]]; then
-        version=$(UBS_MAX_DIR_SIZE_MB=10000 doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" --version) || true
+        version=$(UBS_MAX_DIR_SIZE_MB=10000 doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" discard "$exec_path" --version) || true
     elif [[ "$cmd" == "lsof" ]] || [[ "$exec_path" == */lsof ]]; then
-        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" -v) || true
+        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" merge "$exec_path" -v) || true
     else
-        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" --version) || true
+        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" discard "$exec_path" --version) || true
     fi
     if [[ -z "$version" ]]; then
-        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" -V) || true
+        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" discard "$exec_path" -V) || true
     fi
     if [[ -z "$version" ]]; then
-        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" "$exec_path" version) || true
+        version=$(doctor_version_probe "$timeout_bin" "$DOCTOR_VERSION_TIMEOUT" discard "$exec_path" version) || true
     fi
 
     if [[ -z "$version" ]]; then
