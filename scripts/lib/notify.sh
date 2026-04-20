@@ -31,9 +31,8 @@ _ACFS_NOTIFY_SH_LOADED=1
 # Default ntfy server
 ACFS_NTFY_SERVER_DEFAULT="https://ntfy.sh"
 
-# Runtime-home helpers. Prefer an explicit valid TARGET_HOME when available so
-# root-run installs and copied entrypoints read/write per-user config/state in
-# the actual install home rather than the caller's raw HOME.
+# Runtime-home helpers. When TARGET_USER is explicit, passwd/NSS owns the home
+# directory and stale TARGET_HOME/HOME values must not redirect config/state.
 _acfs_notify_sanitize_abs_nonroot_path() {
     local path_value="${1:-}"
 
@@ -169,12 +168,12 @@ _acfs_notify_resolve_current_home() {
 
 _acfs_notify_runtime_home() {
     local current_user=""
+    local explicit_target_home=""
     local passwd_entry=""
     local passwd_home=""
-    local target_home=""
     local target_user="${TARGET_USER:-}"
 
-    target_home="$(_acfs_notify_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    explicit_target_home="$(_acfs_notify_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
 
     if [[ -n "$target_user" ]]; then
         [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
@@ -199,8 +198,8 @@ _acfs_notify_runtime_home() {
         fi
     fi
 
-    if [[ -n "$target_home" ]]; then
-        printf '%s\n' "$target_home"
+    if [[ -n "$explicit_target_home" ]]; then
+        printf '%s\n' "$explicit_target_home"
         return 0
     fi
 
@@ -213,7 +212,7 @@ _ACFS_NOTIFY_RUNTIME_HOME="$(_acfs_notify_runtime_home 2>/dev/null || true)"
 if [[ -n "$_ACFS_NOTIFY_RUNTIME_HOME" ]]; then
     _ACFS_NOTIFY_STATE_DIR="${_ACFS_NOTIFY_RUNTIME_HOME}/.cache/acfs/notify"
 else
-    _ACFS_NOTIFY_STATE_DIR="${HOME}/.cache/acfs/notify"
+    _ACFS_NOTIFY_STATE_DIR=""
 fi
 
 # Minimum seconds between notifications with the same debounce key.
@@ -268,6 +267,7 @@ _acfs_notify_debounce_allowed() {
         return 0
     fi
 
+    [[ -n "$_ACFS_NOTIFY_STATE_DIR" ]] || return 0
     mkdir -p "$_ACFS_NOTIFY_STATE_DIR" 2>/dev/null || return 0
 
     # Sanitise the key so it is safe for a filename

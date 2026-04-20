@@ -149,6 +149,8 @@ _agent_system_binary_path() {
     for candidate in \
         "/usr/bin/$name" \
         "/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/sbin/$name" \
         "/sbin/$name"
     do
@@ -364,8 +366,17 @@ _agent_run_as_user() {
     local acfs_home_q=""
     local acfs_bin_dir_q=""
     local wrapped_cmd=""
+    local bash_bin=""
+    local sudo_bin=""
+    local runuser_bin=""
+    local su_bin=""
 
     _agent_validate_target_user "$target_user" || return 1
+    bash_bin="$(_agent_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || {
+        log_error "Unable to locate bash for target-user agent command"
+        return 1
+    }
 
     target_home="$(_agent_target_home "$target_user" 2>/dev/null || true)"
     if [[ -z "$target_home" ]] || [[ "$target_home" == "/" ]] || [[ "$target_home" != /* ]]; then
@@ -402,22 +413,30 @@ _agent_run_as_user() {
     wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"
 
     if [[ "$(_agent_resolve_current_user 2>/dev/null || true)" == "$target_user" ]]; then
-        bash -c "$wrapped_cmd"
+        "$bash_bin" -c "$wrapped_cmd"
         return $?
     fi
 
-    if command -v sudo &>/dev/null; then
-        sudo -u "$target_user" -H bash -c "$wrapped_cmd"
+    sudo_bin="$(_agent_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -u "$target_user" -H "$bash_bin" -c "$wrapped_cmd"
         return $?
     fi
 
-    if command -v runuser &>/dev/null; then
-        runuser -u "$target_user" -- bash -c "$wrapped_cmd"
+    runuser_bin="$(_agent_system_binary_path runuser 2>/dev/null || true)"
+    if [[ -n "$runuser_bin" ]]; then
+        "$runuser_bin" -u "$target_user" -- "$bash_bin" -c "$wrapped_cmd"
         return $?
     fi
+
+    su_bin="$(_agent_system_binary_path su 2>/dev/null || true)"
+    [[ -n "$su_bin" ]] || {
+        log_error "Unable to locate sudo, runuser, or su for target-user agent command"
+        return 1
+    }
 
     # Avoid login shells: profile files are not a stable API and can break non-interactive runs.
-    su "$target_user" -c "bash -c $(printf %q "$wrapped_cmd")"
+    "$su_bin" "$target_user" -c "$(printf '%q' "$bash_bin") -c $(printf %q "$wrapped_cmd")"
 }
 
 # Get bun binary path for target user

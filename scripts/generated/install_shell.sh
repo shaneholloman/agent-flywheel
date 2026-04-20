@@ -37,6 +37,7 @@ acfs_generated_system_binary_path() {
 
     for candidate in \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \
@@ -188,8 +189,6 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
     fi
     if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then
         TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"
-    elif [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
-        TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"
     fi
     unset _ACFS_EXPLICIT_TARGET_HOME _ACFS_RESOLVED_TARGET_HOME
 
@@ -504,7 +503,7 @@ if [[ ! -f ~/.profile ]]; then
   echo '# User binary paths' >> ~/.profile
   echo "$profile_path_line" >> ~/.profile
 elif grep -Fxq "$legacy_profile_path_line" ~/.profile; then
-  sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" ~/.profile
+  sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[][\\.^$*|]/\\&/g')$|$profile_path_line|" ~/.profile
 elif ! profile_path_has_fragment ~/.profile '.local/bin' || ! profile_path_has_fragment ~/.profile '.atuin/bin'; then
   echo '' >> ~/.profile
   echo '# Added by ACFS - user binary paths' >> ~/.profile
@@ -541,7 +540,7 @@ if [[ ! -f ~/.zprofile ]]; then
   echo '# User binary paths' >> ~/.zprofile
   echo "$profile_path_line" >> ~/.zprofile
 elif grep -Fxq "$legacy_profile_path_line" ~/.zprofile; then
-  sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" ~/.zprofile
+  sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[][\\.^$*|]/\\&/g')$|$profile_path_line|" ~/.zprofile
 elif ! profile_path_has_fragment ~/.zprofile '.local/bin' || ! profile_path_has_fragment ~/.zprofile '.atuin/bin'; then
   echo '' >> ~/.zprofile
   echo '# Added by ACFS - user binary paths' >> ~/.zprofile
@@ -566,6 +565,7 @@ acfs_generated_system_binary_path() {
 
     for candidate in \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \

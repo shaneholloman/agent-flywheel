@@ -120,7 +120,8 @@ _github_api_runtime_home() {
     current_home="$(_github_api_existing_abs_home "${HOME:-}" 2>/dev/null || true)"
     initial_env_home="$(_github_api_existing_abs_home "${ACFS_INITIAL_ENV_HOME:-${_UPDATE_INITIAL_ENV_HOME:-}}" 2>/dev/null || true)"
 
-    if [[ -n "$target_user" && "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+    if [[ -n "$target_user" ]]; then
+        [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
         if [[ "$target_user" == "root" ]]; then
             target_user_home="/root"
         else
@@ -128,19 +129,21 @@ _github_api_runtime_home() {
             target_user_home="$(_github_api_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
             target_user_home="$(_github_api_existing_abs_home "$target_user_home" 2>/dev/null || true)"
         fi
+
+        if [[ -n "$explicit_home" && -n "$target_user_home" && "$explicit_home" == "$target_user_home" ]]; then
+            printf '%s\n' "$explicit_home"
+            return 0
+        fi
+
+        if [[ -n "$target_user_home" ]]; then
+            printf '%s\n' "$target_user_home"
+            return 0
+        fi
+
+        return 1
     fi
 
-    if [[ -n "$explicit_home" && -n "$target_user_home" && "$explicit_home" == "$target_user_home" ]]; then
-        printf '%s\n' "$explicit_home"
-        return 0
-    fi
-
-    if [[ -n "$target_user_home" ]]; then
-        printf '%s\n' "$target_user_home"
-        return 0
-    fi
-
-    if [[ -z "$target_user" && -n "$current_home" ]]; then
+    if [[ -n "$current_home" ]]; then
         printf '%s\n' "$current_home"
         return 0
     fi

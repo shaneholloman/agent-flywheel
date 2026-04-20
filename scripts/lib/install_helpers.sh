@@ -582,22 +582,35 @@ _acfs_user_paths() {
 _run_shell_with_strict_mode() {
     local cmd="$1"
     local path_prefix
+    local env_bin=""
+    local bash_bin=""
     path_prefix="$(_acfs_user_paths)"
+
+    env_bin="$(_acfs_system_binary_path env 2>/dev/null || true)"
+    [[ -n "$env_bin" ]] || {
+        log_error "Unable to locate env for strict shell execution"
+        return 1
+    }
+    bash_bin="$(_acfs_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || {
+        log_error "Unable to locate bash for strict shell execution"
+        return 1
+    }
 
     # Keep path data out of the shell source. ACFS_BIN_DIR may come from the
     # environment, so pass it through env rather than interpolating it into
     # bash -c where command substitutions would execute.
-    local -a shell_env=("ACFS_TARGET_PATH_PREFIX=$path_prefix" "UV_NO_CONFIG=1")
+    local -a shell_env=("ACFS_TARGET_PATH_PREFIX=$path_prefix" "ACFS_BASH_BIN=$bash_bin" "UV_NO_CONFIG=1")
 
     if [[ -n "$cmd" ]]; then
         # IMPORTANT: Avoid `bash -l` (login shell). Third-party installers can
         # leave broken profile files that would break non-interactive runs.
-        env "${shell_env[@]}" bash -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; eval "$1"' _ "$cmd"
+        "$env_bin" "${shell_env[@]}" "$bash_bin" -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; eval "$1"' _ "$cmd"
         return $?
     fi
 
     # stdin mode (supports heredocs/pipes)
-    env "${shell_env[@]}" bash -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | bash -s'
+    "$env_bin" "${shell_env[@]}" "$bash_bin" -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | "$ACFS_BASH_BIN" -s'
 }
 
 # Resolve a target user's home via NSS/getent with safe fallbacks.
@@ -638,6 +651,8 @@ if ! declare -f _acfs_system_binary_path >/dev/null 2>&1; then
         for candidate in \
             "/usr/bin/$name" \
             "/bin/$name" \
+            "/usr/local/bin/$name" \
+            "/usr/local/sbin/$name" \
             "/usr/sbin/$name" \
             "/sbin/$name"
         do
@@ -765,12 +780,35 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
         local user="${TARGET_USER:-ubuntu}"
         local explicit_user_home="${TARGET_HOME:-}"
         local explicit_user_home_for_repair=""
+        local invalid_explicit_user_home=""
         local user_home=""
         local passwd_entry=""
         local primary_bin_dir=""
         local acfs_home_for_target=""
+        local env_bin=""
+        local bash_bin=""
+        local sh_bin=""
+        local sudo_bin=""
+        local runuser_bin=""
+        local su_bin=""
+        local -a command_argv=()
 
         _acfs_validate_target_user "$user" "TARGET_USER" || return 1
+        env_bin="$(_acfs_system_binary_path env 2>/dev/null || true)"
+        [[ -n "$env_bin" ]] || {
+            log_error "Unable to locate env for target-user command"
+            return 1
+        }
+        bash_bin="$(_acfs_system_binary_path bash 2>/dev/null || true)"
+        [[ -n "$bash_bin" ]] || {
+            log_error "Unable to locate bash for target-user command"
+            return 1
+        }
+        sh_bin="$(_acfs_system_binary_path sh 2>/dev/null || true)"
+        [[ -n "$sh_bin" ]] || {
+            log_error "Unable to locate sh for target-user command"
+            return 1
+        }
 
         if [[ "$user" == "root" ]]; then
             user_home="/root"
@@ -784,14 +822,8 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
         if [[ "$explicit_user_home" == /* ]] && [[ "$explicit_user_home" != "/" ]]; then
             explicit_user_home_for_repair="${explicit_user_home%/}"
             [[ "$explicit_user_home_for_repair" != "/" ]] || explicit_user_home_for_repair=""
-        fi
-
-        if [[ -z "$user_home" && -n "$explicit_user_home" ]]; then
-            if [[ "$explicit_user_home" == "/" ]]; then
-                user_home="/"
-            else
-                user_home="${explicit_user_home%/}"
-            fi
+        elif [[ -n "$explicit_user_home" ]]; then
+            invalid_explicit_user_home="$explicit_user_home"
         fi
 
         if [[ -z "$user_home" ]]; then
@@ -799,7 +831,9 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
         fi
 
         if [[ -z "$user_home" ]] || [[ "$user_home" == "/" ]] || [[ "$user_home" != /* ]]; then
-            log_error "Invalid TARGET_HOME for '$user': ${user_home:-<empty>} (must be an absolute path and cannot be '/')"
+            local displayed_user_home="${user_home:-}"
+            [[ -n "$displayed_user_home" ]] || displayed_user_home="$invalid_explicit_user_home"
+            log_error "Invalid TARGET_HOME for '$user': ${displayed_user_home:-<empty>} (must be an absolute path and cannot be '/')"
             return 1
         fi
 
@@ -847,30 +881,65 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
         [[ -n "${ACFS_VERSION:-}" ]] && env_args+=("ACFS_VERSION=$ACFS_VERSION")
         [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
 
+        command_argv=("$@")
+        if [[ ${#command_argv[@]} -gt 0 ]]; then
+            case "${command_argv[0]}" in
+                env)
+                    command_argv[0]="$env_bin"
+                    local env_command_index=1
+                    while [[ "$env_command_index" -lt "${#command_argv[@]}" ]]; do
+                        case "${command_argv[env_command_index]}" in
+                            *=*) ((env_command_index += 1)) ;;
+                            --) ((env_command_index += 1)); break ;;
+                            -*) break ;;
+                            *) break ;;
+                        esac
+                    done
+                    if [[ "$env_command_index" -lt "${#command_argv[@]}" ]]; then
+                        case "${command_argv[env_command_index]}" in
+                            env) command_argv[env_command_index]="$env_bin" ;;
+                            bash) command_argv[env_command_index]="$bash_bin" ;;
+                            sh) command_argv[env_command_index]="$sh_bin" ;;
+                        esac
+                    fi
+                    ;;
+                bash) command_argv[0]="$bash_bin" ;;
+                sh) command_argv[0]="$sh_bin" ;;
+            esac
+        fi
+
         # Already the target user
         if [[ "$(_acfs_resolve_current_user 2>/dev/null || true)" == "$user" ]]; then
             # Use explicit home path to avoid ambiguity if $HOME was mutated.
             if [[ -d "$user_home" ]]; then
                 cd "$user_home" || return 1
             fi
-            env "${env_args[@]}" "$@"
+            "$env_bin" "${env_args[@]}" "${command_argv[@]}"
             return $?
         fi
 
         # Prefer sudo (non-login) when available.
-        if command_exists sudo; then
+        sudo_bin="$(_acfs_system_binary_path sudo 2>/dev/null || true)"
+        if [[ -n "$sudo_bin" ]]; then
             # shellcheck disable=SC2016  # $HOME/$@ expand inside sh -c
             # Use sh -c to ensure the cd happens as the target user.
-            sudo -u "$user" env "${env_args[@]}" sh -c 'cd "$HOME" || exit 1; exec "$@"' _ "$@"
+            "$sudo_bin" -u "$user" "$env_bin" "${env_args[@]}" "$sh_bin" -c 'cd "$HOME" || exit 1; exec "$@"' _ "${command_argv[@]}"
             return $?
         fi
 
         # Root-only fallbacks.
-        if command_exists runuser; then
+        runuser_bin="$(_acfs_system_binary_path runuser 2>/dev/null || true)"
+        if [[ -n "$runuser_bin" ]]; then
             # shellcheck disable=SC2016  # $HOME/$@ expand inside sh -c
-            runuser -u "$user" -- env "${env_args[@]}" sh -c 'cd "$HOME" || exit 1; exec "$@"' _ "$@"
+            "$runuser_bin" -u "$user" -- "$env_bin" "${env_args[@]}" "$sh_bin" -c 'cd "$HOME" || exit 1; exec "$@"' _ "${command_argv[@]}"
             return $?
         fi
+
+        su_bin="$(_acfs_system_binary_path su 2>/dev/null || true)"
+        [[ -n "$su_bin" ]] || {
+            log_error "Unable to locate sudo, runuser, or su for target-user command"
+            return 1
+        }
 
         # su without login (-) to avoid sourcing profile files.
         local env_assignments=""
@@ -880,8 +949,10 @@ if ! declare -f run_as_target >/dev/null 2>&1; then
         done
         env_assignments="${env_assignments# }"
         local user_home_q
+        local env_bin_q
         user_home_q="$(printf '%q' "$user_home")"
-        su "$user" -c "cd $user_home_q 2>/dev/null; env $env_assignments $(printf '%q ' "$@")"
+        env_bin_q="$(printf '%q' "$env_bin")"
+        "$su_bin" "$user" -c "cd $user_home_q 2>/dev/null; $env_bin_q $env_assignments $(printf '%q ' "${command_argv[@]}")"
     }
 fi
 
@@ -910,13 +981,16 @@ acfs_primary_bin_dir_uses_root() {
 }
 
 _acfs_run_root_bin_command() {
+    local sudo_bin=""
+
     if [[ $EUID -eq 0 ]]; then
         "$@"
         return $?
     fi
 
-    if command -v sudo >/dev/null 2>&1; then
-        sudo -n "$@"
+    sudo_bin="$(_acfs_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -n "$@"
         return $?
     fi
 
@@ -971,25 +1045,37 @@ acfs_install_executable_into_primary_bin() {
 run_as_target_shell() {
     local cmd="${1:-}"
     local path_prefix
+    local env_bin=""
+    local bash_bin=""
     path_prefix="$(_acfs_user_paths)"
 
     if ! declare -f run_as_target >/dev/null 2>&1; then
         log_error "run_as_target_shell requires run_as_target"
         return 1
     fi
+    env_bin="$(_acfs_system_binary_path env 2>/dev/null || true)"
+    [[ -n "$env_bin" ]] || {
+        log_error "Unable to locate env for target-user shell command"
+        return 1
+    }
+    bash_bin="$(_acfs_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || {
+        log_error "Unable to locate bash for target-user shell command"
+        return 1
+    }
 
     # Keep path data out of the shell source. run_as_target passes env
     # assignments as argv, so poisoned path values remain inert data.
-    local -a shell_env=("ACFS_TARGET_PATH_PREFIX=$path_prefix" "UV_NO_CONFIG=1")
+    local -a shell_env=("ACFS_TARGET_PATH_PREFIX=$path_prefix" "ACFS_BASH_BIN=$bash_bin" "UV_NO_CONFIG=1")
 
     if [[ -n "$cmd" ]]; then
         # IMPORTANT: Avoid `bash -l` (login shell). Profile files are not a stable API.
-        run_as_target env "${shell_env[@]}" bash -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; eval "$1"' _ "$cmd"
+        run_as_target "$env_bin" "${shell_env[@]}" "$bash_bin" -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; eval "$1"' _ "$cmd"
         return $?
     fi
 
     # stdin mode
-    run_as_target env "${shell_env[@]}" bash -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | bash -s'
+    run_as_target "$env_bin" "${shell_env[@]}" "$bash_bin" -c 'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | "$ACFS_BASH_BIN" -s'
 }
 
 # Run a command as TARGET_USER while preserving stdin for the final runner.
@@ -1013,11 +1099,24 @@ run_as_target_runner() {
 # Run a shell string (or stdin) as root
 run_as_root_shell() {
     local cmd="${1:-}"
+    local env_bin=""
+    local bash_bin=""
+    local sudo_bin=""
 
     if [[ "$EUID" -eq 0 ]]; then
         _run_shell_with_strict_mode "$cmd"
         return $?
     fi
+    env_bin="$(_acfs_system_binary_path env 2>/dev/null || true)"
+    [[ -n "$env_bin" ]] || {
+        log_error "Unable to locate env for root shell command"
+        return 1
+    }
+    bash_bin="$(_acfs_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || {
+        log_error "Unable to locate bash for root shell command"
+        return 1
+    }
 
     # Build env args for passing through sudo
     local -a env_cmd=()
@@ -1039,24 +1138,34 @@ run_as_root_shell() {
     [[ -n "${ACFS_REF:-}" ]] && env_args+=("ACFS_REF=$ACFS_REF")
 
     if [[ ${#env_args[@]} -gt 0 ]]; then
-        env_cmd=(env "${env_args[@]}")
+        env_cmd=("$env_bin" "${env_args[@]}")
     fi
 
     if [[ -n "${SUDO:-}" ]]; then
+        if [[ "$SUDO" == /* && -x "$SUDO" ]]; then
+            sudo_bin="$SUDO"
+        else
+            sudo_bin="$(_acfs_system_binary_path sudo 2>/dev/null || true)"
+        fi
+        [[ -n "$sudo_bin" ]] || {
+            log_error "run_as_root_shell requires root or sudo"
+            return 1
+        }
         if [[ -n "$cmd" ]]; then
-            "$SUDO" "${env_cmd[@]}" bash -c "set -euo pipefail; $cmd"
+            "$sudo_bin" "${env_cmd[@]}" "$bash_bin" -c "set -euo pipefail; $cmd"
             return $?
         fi
-        "$SUDO" "${env_cmd[@]}" bash -c 'set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | bash -s'
+        "$sudo_bin" "${env_cmd[@]}" "$bash_bin" -c 'set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | "$0" -s' "$bash_bin"
         return $?
     fi
 
-    if command -v sudo >/dev/null 2>&1; then
+    sudo_bin="$(_acfs_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
         if [[ -n "$cmd" ]]; then
-            sudo "${env_cmd[@]}" bash -c "set -euo pipefail; $cmd"
+            "$sudo_bin" "${env_cmd[@]}" "$bash_bin" -c "set -euo pipefail; $cmd"
             return $?
         fi
-        sudo "${env_cmd[@]}" bash -c 'set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | bash -s'
+        "$sudo_bin" "${env_cmd[@]}" "$bash_bin" -c 'set -euo pipefail; (printf "%s\n" "set -euo pipefail"; cat) | "$0" -s' "$bash_bin"
         return $?
     fi
 
@@ -1094,6 +1203,9 @@ _acfs_force_reinstall_enabled() {
 # Returns 0 (true) if installed, 1 (false) if not installed or check fails
 acfs_module_is_installed() {
     local module_id="$1"
+    local env_bin=""
+    local bash_bin=""
+    local sudo_bin=""
 
     # If force reinstall is enabled, always return "not installed"
     if _acfs_force_reinstall_enabled; then
@@ -1121,8 +1233,11 @@ acfs_module_is_installed() {
             local path_prefix=""
             path_prefix="$(_acfs_user_paths)"
             if declare -f run_as_target >/dev/null 2>&1; then
-                run_as_target env "ACFS_TARGET_PATH_PREFIX=$path_prefix" \
-                    bash -c "export PATH=\"\$ACFS_TARGET_PATH_PREFIX:\$PATH\"; $check_cmd" >/dev/null 2>&1
+                env_bin="$(_acfs_system_binary_path env 2>/dev/null || true)"
+                bash_bin="$(_acfs_system_binary_path bash 2>/dev/null || true)"
+                [[ -n "$env_bin" && -n "$bash_bin" ]] || return 1
+                run_as_target "$env_bin" "ACFS_TARGET_PATH_PREFIX=$path_prefix" \
+                    "$bash_bin" -c "export PATH=\"\$ACFS_TARGET_PATH_PREFIX:\$PATH\"; $check_cmd" >/dev/null 2>&1
                 return $?
             fi
             # Target-user checks must fail closed when we cannot execute in the
@@ -1131,12 +1246,15 @@ acfs_module_is_installed() {
             return 1
             ;;
         root)
+            bash_bin="$(_acfs_system_binary_path bash 2>/dev/null || true)"
+            [[ -n "$bash_bin" ]] || return 1
             if [[ "$EUID" -eq 0 ]]; then
-                bash -c "$check_cmd" >/dev/null 2>&1
+                "$bash_bin" -c "$check_cmd" >/dev/null 2>&1
                 return $?
             fi
-            if command -v sudo >/dev/null 2>&1; then
-                sudo bash -c "$check_cmd" >/dev/null 2>&1
+            sudo_bin="$(_acfs_system_binary_path sudo 2>/dev/null || true)"
+            if [[ -n "$sudo_bin" ]]; then
+                "$sudo_bin" "$bash_bin" -c "$check_cmd" >/dev/null 2>&1
                 return $?
             fi
             # Root checks must fail closed when sudo is unavailable. Falling
@@ -1145,7 +1263,9 @@ acfs_module_is_installed() {
             return 1
             ;;
         current|*)
-            bash -c "$check_cmd" >/dev/null 2>&1
+            bash_bin="$(_acfs_system_binary_path bash 2>/dev/null || true)"
+            [[ -n "$bash_bin" ]] || return 1
+            "$bash_bin" -c "$check_cmd" >/dev/null 2>&1
             return $?
             ;;
     esac
@@ -1180,18 +1300,23 @@ command_exists() {
 command_exists_as_target() {
     local cmd="$1"
     local path_prefix
+    local env_bin=""
+    local bash_bin=""
     if ! declare -f run_as_target >/dev/null 2>&1; then
         return 1
     fi
 
     path_prefix="$(_acfs_user_paths)"
+    env_bin="$(_acfs_system_binary_path env 2>/dev/null || true)"
+    bash_bin="$(_acfs_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$env_bin" && -n "$bash_bin" ]] || return 1
 
     # NOTE: We intentionally avoid embedding $cmd into the shell string.
     # Passing as $1 avoids quoting bugs when cmd contains special chars.
     #
     # Also, extend PATH with common user install locations so we can detect
     # tools installed under the configured user bin dir, cargo, bun, etc.
-    run_as_target env "ACFS_TARGET_PATH_PREFIX=$path_prefix" bash -c \
+    run_as_target "$env_bin" "ACFS_TARGET_PATH_PREFIX=$path_prefix" "$bash_bin" -c \
         'export PATH="${ACFS_TARGET_PATH_PREFIX}:$PATH"; command -v -- "$1" >/dev/null 2>&1' \
         _ "$cmd"
 }

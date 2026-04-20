@@ -478,7 +478,10 @@ file_contains_exact_line() {
 }
 
 doctor_fix_sed_literal() {
-    printf '%s' "$1" | sed 's/[.[\*^$()+?{|]/\\&/g'
+    # This helper builds a basic-regex pattern for sed, not an extended regex.
+    # Escaping literal parentheses would turn them into BRE capture groups and
+    # make managed-marker removal miss lines like "(added by doctor --fix)".
+    printf '%s' "$1" | sed 's/[][\\.^$*|]/\\&/g'
 }
 
 doctor_fix_remove_exact_line_and_next() {
@@ -1603,18 +1606,23 @@ doctor_fix_agent_mail_bin() {
     local candidate=""
     local resolved=""
 
+    runtime_user="$(doctor_fix_runtime_user)"
+    runtime_home="$(doctor_fix_runtime_home)"
+    [[ -n "$runtime_home" ]] || return 1
+
+    if [[ -x "$runtime_home/mcp_agent_mail/am" ]]; then
+        printf '%s\n' "$runtime_home/mcp_agent_mail/am"
+        return 0
+    fi
+
     resolved="$(doctor_fix_agent_mail_cli_path 2>/dev/null || true)"
     if [[ -n "$resolved" ]]; then
         printf '%s\n' "$resolved"
         return 0
     fi
 
-    runtime_user="$(doctor_fix_runtime_user)"
-    runtime_home="$(doctor_fix_runtime_home)"
-    [[ -n "$runtime_home" ]] || return 1
-
     if doctor_fix_source_stack_lib >/dev/null 2>&1; then
-        resolved="$(TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_agent_mail_cli_path 2>/dev/null || true)"
+        resolved="$(ACFS_STACK_TRUST_TARGET_HOME=true TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_agent_mail_cli_path 2>/dev/null || true)"
         if [[ -n "$resolved" ]]; then
             printf '%s\n' "$resolved"
             return 0
@@ -1685,7 +1693,7 @@ agent_mail_fix_doctor_healthy() {
 
 agent_mail_fix_wait_for_health() {
     doctor_fix_source_stack_lib || return 1
-    TARGET_USER="$(doctor_fix_runtime_user)" TARGET_HOME="$(doctor_fix_runtime_home)" _stack_wait_for_agent_mail_health
+    ACFS_STACK_TRUST_TARGET_HOME=true TARGET_USER="$(doctor_fix_runtime_user)" TARGET_HOME="$(doctor_fix_runtime_home)" _stack_wait_for_agent_mail_health
 }
 
 agent_mail_fix_write_unit() {
@@ -1844,7 +1852,7 @@ fix_mcp_agent_mail() {
             if [[ "$DOCTOR_FIX_DRY_RUN" == "true" ]]; then
                 FIXES_DRY_RUN+=("fix.stack.mcp_agent_mail.symlink|Ensure am symlink points at installed Rust CLI|$am_dst|ln -sf $am_src $am_dst")
                 doctor_fix_log DRY "Ensure am symlink points at $am_src"
-            elif TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
+            elif ACFS_STACK_TRUST_TARGET_HOME=true TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
                 hash -r
                 resolved_am_cli="$(doctor_fix_agent_mail_cli_path 2>/dev/null || true)"
                 resolved_am_target="$(doctor_fix_resolve_path_target "$resolved_am_cli" 2>/dev/null || true)"
@@ -1892,7 +1900,7 @@ fix_mcp_agent_mail() {
             local installed_cli_target=""
             local am_src_target=""
             hash -r
-            if TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
+            if ACFS_STACK_TRUST_TARGET_HOME=true TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_repair_agent_mail_cli_symlink; then
                 hash -r
             fi
             installed_cli="$(doctor_fix_agent_mail_cli_path 2>/dev/null || true)"
@@ -1985,7 +1993,7 @@ fix_mcp_agent_mail() {
         service_healthy=true
     fi
 
-    if TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_configure_agent_mail_service; then
+    if ACFS_STACK_TRUST_TARGET_HOME=true TARGET_USER="$runtime_user" TARGET_HOME="$runtime_home" _stack_configure_agent_mail_service; then
         if ! doctor_fix_record_change_or_rollback \
             "" \
             false \

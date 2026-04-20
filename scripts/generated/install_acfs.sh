@@ -37,6 +37,7 @@ acfs_generated_system_binary_path() {
 
     for candidate in \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \
@@ -188,8 +189,6 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
     fi
     if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then
         TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"
-    elif [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
-        TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"
     fi
     unset _ACFS_EXPLICIT_TARGET_HOME _ACFS_RESOLVED_TARGET_HOME
 
@@ -492,8 +491,10 @@ acfs_child_run_root_bin_command() {
         return $?
     fi
 
-    if command -v sudo >/dev/null 2>&1; then
-        sudo -n "$@"
+    local sudo_bin=""
+    sudo_bin="$(acfs_generated_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -n "$@"
         return $?
     fi
 
@@ -678,8 +679,10 @@ acfs_child_run_root_bin_command() {
         return $?
     fi
 
-    if command -v sudo >/dev/null 2>&1; then
-        sudo -n "$@"
+    local sudo_bin=""
+    sudo_bin="$(acfs_generated_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -n "$@"
         return $?
     fi
 
@@ -975,8 +978,10 @@ acfs_child_run_root_bin_command() {
         return $?
     fi
 
-    if command -v sudo >/dev/null 2>&1; then
-        sudo -n "$@"
+    local sudo_bin=""
+    sudo_bin="$(acfs_generated_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -n "$@"
         return $?
     fi
 

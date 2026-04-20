@@ -79,6 +79,7 @@ acfs_generated_system_binary_path() {
 
     for candidate in \\
         "/usr/local/bin/\$name" \\
+        "/usr/local/sbin/\$name" \\
         "/usr/bin/\$name" \\
         "/bin/\$name" \\
         "/usr/sbin/\$name" \\
@@ -230,8 +231,6 @@ if [[ "\${BASH_SOURCE[0]}" = "\${0}" ]]; then
     fi
     if [[ -n "\$_ACFS_RESOLVED_TARGET_HOME" ]]; then
         TARGET_HOME="\${_ACFS_RESOLVED_TARGET_HOME%/}"
-    elif [[ -n "\$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
-        TARGET_HOME="\$_ACFS_EXPLICIT_TARGET_HOME"
     fi
     unset _ACFS_EXPLICIT_TARGET_HOME _ACFS_RESOLVED_TARGET_HOME
 
@@ -650,8 +649,10 @@ function primaryBinHelperPreludeLines(): string[] {
     '        return $?',
     '    fi',
     '',
-    '    if command -v sudo >/dev/null 2>&1; then',
-    '        sudo -n "$@"',
+    '    local sudo_bin=""',
+    '    sudo_bin="$(acfs_generated_system_binary_path sudo 2>/dev/null || true)"',
+    '    if [[ -n "$sudo_bin" ]]; then',
+    '        "$sudo_bin" -n "$@"',
     '        return $?',
     '    fi',
     '',
@@ -1661,8 +1662,6 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('    fi');
   lines.push('    if [[ -n "$resolved_target_home" ]]; then');
   lines.push('        target_home="${resolved_target_home%/}"');
-  lines.push('    elif [[ -n "$explicit_target_home" ]]; then');
-  lines.push('        target_home="$explicit_target_home"');
   lines.push('    fi');
   lines.push('');
   lines.push('    if [[ "$cmd" == *"acfs_generated_"* ]]; then');
@@ -1673,6 +1672,14 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('            return 1');
   lines.push('        fi');
   lines.push("        cmd=\"${helper_prelude}\"$'\\n'\"${cmd}\"");
+  lines.push('    fi');
+  lines.push('');
+  lines.push('    local env_bin=""');
+  lines.push('    local bash_bin=""');
+  lines.push('    env_bin="$(acfs_generated_system_binary_path env 2>/dev/null || true)"');
+  lines.push('    bash_bin="$(acfs_generated_system_binary_path bash 2>/dev/null || true)"');
+  lines.push('    if [[ -z "$env_bin" || -z "$bash_bin" ]]; then');
+  lines.push('        return 1');
   lines.push('    fi');
   lines.push('');
   lines.push('    case "$run_as" in');
@@ -1718,15 +1725,19 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('            target_path="$target_path_prefix${PATH:+:$PATH}"');
   lines.push('            current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"');
   lines.push('            if [[ "${current_user:-}" == "$target_user" ]]; then');
-  lines.push('                TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"');
+  lines.push('                "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"');
   lines.push('                return $?');
   lines.push('            fi');
-  lines.push('            if [[ $EUID -eq 0 ]] && command -v runuser >/dev/null 2>&1; then');
-  lines.push('                runuser -u "$target_user" -- env TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"');
+  lines.push('            local runuser_bin=""');
+  lines.push('            runuser_bin="$(acfs_generated_system_binary_path runuser 2>/dev/null || true)"');
+  lines.push('            if [[ $EUID -eq 0 && -n "$runuser_bin" ]]; then');
+  lines.push('                "$runuser_bin" -u "$target_user" -- "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"');
   lines.push('                return $?');
   lines.push('            fi');
-  lines.push('            if command -v sudo >/dev/null 2>&1; then');
-  lines.push('                sudo -n -u "$target_user" env TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"');
+  lines.push('            local sudo_bin=""');
+  lines.push('            sudo_bin="$(acfs_generated_system_binary_path sudo 2>/dev/null || true)"');
+  lines.push('            if [[ -n "$sudo_bin" ]]; then');
+  lines.push('                "$sudo_bin" -n -u "$target_user" "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"');
   lines.push('                return $?');
   lines.push('            fi');
   lines.push('            return 1');
@@ -1734,17 +1745,19 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('        root)');
   lines.push('            if [[ $EUID -eq 0 ]]; then');
   lines.push('                if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then');
-  lines.push('                    TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"');
+  lines.push('                    "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"');
   lines.push('                else');
-  lines.push('                    TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"');
+  lines.push('                    "$env_bin" TARGET_USER="$target_user" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"');
   lines.push('                fi');
   lines.push('                return $?');
   lines.push('            fi');
-  lines.push('            if command -v sudo >/dev/null 2>&1; then');
+  lines.push('            local sudo_bin=""');
+  lines.push('            sudo_bin="$(acfs_generated_system_binary_path sudo 2>/dev/null || true)"');
+  lines.push('            if [[ -n "$sudo_bin" ]]; then');
   lines.push('                if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then');
-  lines.push('                    sudo -n env TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"');
+  lines.push('                    "$sudo_bin" -n "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"');
   lines.push('                else');
-  lines.push('                    sudo -n env TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"');
+  lines.push('                    "$sudo_bin" -n "$env_bin" TARGET_USER="$target_user" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"');
   lines.push('                fi');
   lines.push('                return $?');
   lines.push('            fi');
@@ -1752,9 +1765,9 @@ function generateDoctorChecks(manifest: Manifest): string {
   lines.push('            ;;');
   lines.push('        current|*)');
   lines.push('            if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then');
-  lines.push('                TARGET_USER="$target_user" TARGET_HOME="$target_home" bash -o pipefail -c "$cmd"');
+  lines.push('                "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" "$bash_bin" -o pipefail -c "$cmd"');
   lines.push('            else');
-  lines.push('                TARGET_USER="$target_user" bash -o pipefail -c "$cmd"');
+  lines.push('                "$env_bin" TARGET_USER="$target_user" "$bash_bin" -o pipefail -c "$cmd"');
   lines.push('            fi');
   lines.push('            ;;');
   lines.push('    esac');

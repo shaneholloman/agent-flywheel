@@ -163,6 +163,7 @@ is_fresh_vps() {
     local explicit_target_home="${TARGET_HOME:-}"
     local resolved_target_home=""
     local current_home=""
+    local current_user=""
     local passwd_entry=""
     if [[ -n "$explicit_target_home" ]]; then
         explicit_target_home="${explicit_target_home%/}"
@@ -172,23 +173,21 @@ is_fresh_vps() {
         resolved_target_home="$(os_detect_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
     elif [[ "$target_user" == "root" ]]; then
         resolved_target_home="/root"
-    elif [[ "$target_user" == "$(os_detect_resolve_current_user 2>/dev/null || true)" ]] && [[ -n "${HOME:-}" ]]; then
+    else
+        current_user="$(os_detect_resolve_current_user 2>/dev/null || true)"
+    fi
+    if [[ -z "$resolved_target_home" && "$target_user" == "$current_user" ]] && [[ -n "${HOME:-}" ]]; then
         current_home="${HOME%/}"
         if [[ "$current_home" == /* ]] && [[ "$current_home" != "/" ]] && { [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }; then
             resolved_target_home="$current_home"
+        fi
+        if [[ -z "$resolved_target_home" ]] && [[ "$explicit_target_home" == /* ]] && [[ "$explicit_target_home" != "/" ]]; then
+            resolved_target_home="$explicit_target_home"
         fi
     fi
     if [[ -n "$resolved_target_home" ]]; then
         if [[ "$resolved_target_home" == /* ]] && [[ "$resolved_target_home" != "/" ]]; then
             target_home="${resolved_target_home%/}"
-        fi
-    else
-        if [[ -n "$explicit_target_home" ]]; then
-            if [[ "$explicit_target_home" == /* ]] && [[ "$explicit_target_home" != "/" ]]; then
-                target_home="$explicit_target_home"
-            else
-                target_home=""
-            fi
         fi
     fi
     if [[ -z "$target_home" ]]; then

@@ -312,6 +312,28 @@ EOF
     assert_output "target_home="
 }
 
+@test "user.sh: sourcing clears stale TARGET_HOME when target is unresolved" {
+    local stale_home
+    stale_home="$(create_temp_dir)"
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" TARGET_USER="john.doe" TARGET_HOME="$stale_home" HOME="$stale_home" bash -c '
+        set -euo pipefail
+        getent() { return 2; }
+        id() { printf "caller\n"; }
+        whoami() { printf "caller\n"; }
+        source "$PROJECT_ROOT/scripts/lib/logging.sh"
+        source "$PROJECT_ROOT/scripts/lib/user.sh"
+        printf "target_home=%s\n" "${TARGET_HOME:-}"
+    '
+    assert_success
+    assert_output "target_home="
+}
+
+@test "user.sh: sourcing preserves explicit TARGET_HOME for current target without passwd" {
+    run grep -F 'elif [[ -n "$_ACFS_USER_EXPLICIT_TARGET_HOME" ]] && [[ "$TARGET_USER" == "$_ACFS_USER_CURRENT_USER" ]]; then' "$PROJECT_ROOT/scripts/lib/user.sh"
+    assert_success
+}
+
 @test "migrate_ssh_keys: fails closed when TARGET_HOME is unresolved" {
     mkdir -p "$HOME/.ssh"
     echo "ssh-rsa TESTKEY" > "$HOME/.ssh/authorized_keys"

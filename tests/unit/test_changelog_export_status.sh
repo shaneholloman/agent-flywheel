@@ -31,6 +31,8 @@ UBUNTU_UPGRADE_SH="$REPO_ROOT/scripts/lib/ubuntu_upgrade.sh"
 STACK_SH="$REPO_ROOT/scripts/lib/stack.sh"
 CLI_TOOLS_SH="$REPO_ROOT/scripts/lib/cli_tools.sh"
 AGENTS_SH="$REPO_ROOT/scripts/lib/agents.sh"
+LANGUAGES_SH="$REPO_ROOT/scripts/lib/languages.sh"
+CLOUD_DB_SH="$REPO_ROOT/scripts/lib/cloud_db.sh"
 GITHUB_API_SH="$REPO_ROOT/scripts/lib/github_api.sh"
 NIGHTLY_UPDATE_SH="$REPO_ROOT/scripts/lib/nightly_update.sh"
 OS_DETECT_SH="$REPO_ROOT/scripts/lib/os_detect.sh"
@@ -1033,17 +1035,19 @@ export PATH="/usr/bin:/bin"
 export TARGET_USER="ubuntu"
 export TARGET_HOME="$target_home"
 export ACFS_BIN_DIR="$target_home/.local/bin"
+export ACFS_STACK_TRUST_TARGET_HOME=true
 # shellcheck source=/dev/null
 source "$STACK_SH"
 
-if _stack_target_has_command "claude"; then
-    printf 'rc=0\n'
+resolved="$(_stack_target_command_path "claude" 2>/dev/null || true)"
+if [[ "$resolved" == "$target_home/.local/bin/claude" ]] && _stack_target_has_command "claude"; then
+    printf 'rc=0 path=%s\n' "$resolved"
 else
-    printf 'rc=%s\n' "$?"
+    printf 'rc=%s path=%s\n' "$?" "$resolved"
 fi
 EOF
     ); then
-        if [[ "$output" == "rc=0" ]]; then
+        if [[ "$output" == "rc=0 path="*"/target-home/.local/bin/claude" ]]; then
             harness_pass "stack helper finds target-user local claude binary"
         else
             harness_fail "stack helper finds target-user local claude binary" "$output"
@@ -1224,6 +1228,7 @@ export PATH="$global_bin:/usr/bin:/bin"
 export TARGET_USER="ubuntu"
 export TARGET_HOME="$target_home"
 export ACFS_BIN_DIR="$target_home/.local/bin"
+export ACFS_STACK_TRUST_TARGET_HOME=true
 # shellcheck source=/dev/null
 source "$STACK_SH"
 
@@ -1282,6 +1287,7 @@ export HOME="$target_home"
 export TARGET_USER="ubuntu"
 export TARGET_HOME="$target_home"
 export ACFS_BIN_DIR="$target_home/.local/bin"
+export ACFS_STACK_TRUST_TARGET_HOME=true
 # shellcheck source=/dev/null
 source "$STACK_SH"
 _stack_run_as_user() {
@@ -4230,6 +4236,60 @@ EOF
         harness_pass "agents ignore other-user home bin_dir override"
     else
         harness_fail "agents ignore other-user home bin_dir override" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_language_cloud_ignore_other_user_home_bin_dir_override() {
+    setup_mock_env
+
+    local target_user="acfstestuser"
+    local target_home="$TEST_HOME/users/$target_user"
+    local stale_home="$TEST_HOME/users/staleuser"
+
+    mkdir -p "$target_home" "$stale_home/.local/bin"
+
+    local output=""
+    output=$(HOME="$TEST_ROOT_HOME" TARGET_HOME="$target_home" TARGET_USER="$target_user" \
+        ACFS_BIN_DIR="$stale_home/.local/bin" TEST_LANGUAGES_SCRIPT="$LANGUAGES_SH" TEST_CLOUD_DB_SCRIPT="$CLOUD_DB_SH" \
+        TEST_TARGET_USER="$target_user" TEST_TARGET_HOME="$target_home" TEST_STALE_HOME="$stale_home" \
+        bash <<'EOF'
+set -u
+emit_test_passwd_entry() {
+    local user="${1-}"
+
+    case "$user" in
+        "$TEST_TARGET_USER")
+            printf '%s:x:1001:1001::%s:/bin/bash\n' "$TEST_TARGET_USER" "$TEST_TARGET_HOME"
+            ;;
+        staleuser)
+            printf 'staleuser:x:1002:1002::%s:/bin/bash\n' "$TEST_STALE_HOME"
+            ;;
+        "")
+            printf '%s:x:1001:1001::%s:/bin/bash\n' "$TEST_TARGET_USER" "$TEST_TARGET_HOME"
+            printf 'staleuser:x:1002:1002::%s:/bin/bash\n' "$TEST_STALE_HOME"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+source "$TEST_LANGUAGES_SCRIPT"
+_lang_resolve_current_user() { printf '%s\n' "$TEST_TARGET_USER"; }
+_lang_getent_passwd_entry() { emit_test_passwd_entry "${1-}"; }
+_lang_run_as_user 'printf "lang=%s\n" "${ACFS_BIN_DIR:-}"'
+source "$TEST_CLOUD_DB_SCRIPT"
+_cloud_resolve_current_user() { printf '%s\n' "$TEST_TARGET_USER"; }
+_cloud_getent_passwd_entry() { emit_test_passwd_entry "${1-}"; }
+_cloud_run_as_user 'printf "cloud=%s\n" "${ACFS_BIN_DIR:-}"'
+EOF
+)
+
+    if [[ "$output" == $'lang='"$target_home/.local/bin"$'\ncloud='"$target_home/.local/bin" ]]; then
+        harness_pass "language/cloud run_as_user ignore other-user home bin_dir override"
+    else
+        harness_fail "language/cloud run_as_user ignore other-user home bin_dir override" "$output"
     fi
 
     cleanup_mock_env
@@ -7594,6 +7654,53 @@ EOF
     cleanup_mock_env
 }
 
+test_acfs_system_binary_resolvers_cover_usr_local() {
+    local failures=""
+
+    while IFS='|' read -r label script_path; do
+        [[ -n "$label" ]] || continue
+        if ! grep -Fq '"/usr/local/bin/$name"' "$script_path" \
+            || ! grep -Fq '"/usr/local/sbin/$name"' "$script_path"; then
+            printf -v failures '%s%s missing /usr/local system binary candidates\n' "$failures" "$label"
+        fi
+    done <<EOF
+install|$REPO_ROOT/install.sh
+preflight|$REPO_ROOT/scripts/preflight.sh
+services-setup|$REPO_ROOT/scripts/services-setup.sh
+acfs-update|$REPO_ROOT/scripts/acfs-update
+acfs-global|$REPO_ROOT/scripts/acfs-global
+install-helpers|$REPO_ROOT/scripts/lib/install_helpers.sh
+update-lib|$REPO_ROOT/scripts/lib/update.sh
+cli-tools-lib|$REPO_ROOT/scripts/lib/cli_tools.sh
+agents-lib|$REPO_ROOT/scripts/lib/agents.sh
+languages-lib|$REPO_ROOT/scripts/lib/languages.sh
+cloud-db-lib|$REPO_ROOT/scripts/lib/cloud_db.sh
+stack-lib|$REPO_ROOT/scripts/lib/stack.sh
+generated-install-all|$REPO_ROOT/scripts/generated/install_all.sh
+generated-doctor-checks|$REPO_ROOT/scripts/generated/doctor_checks.sh
+EOF
+
+    while IFS='|' read -r label script_path variable_name; do
+        [[ -n "$label" ]] || continue
+        if ! grep -Fq "\"/usr/local/sbin/\$$variable_name\"" "$script_path"; then
+            printf -v failures '%s%s missing /usr/local/sbin command fallback\n' "$failures" "$label"
+        fi
+    done <<EOF
+install-target-lookup|$REPO_ROOT/install.sh|name
+preflight-target-lookup|$REPO_ROOT/scripts/preflight.sh|name
+services-setup-target-lookup|$REPO_ROOT/scripts/services-setup.sh|name
+cli-tools-target-lookup|$REPO_ROOT/scripts/lib/cli_tools.sh|cmd
+stack-target-lookup|$REPO_ROOT/scripts/lib/stack.sh|cmd
+update-target-lookup|$REPO_ROOT/scripts/lib/update.sh|tool
+EOF
+
+    if [[ -z "$failures" ]]; then
+        harness_pass "acfs system binary resolvers cover /usr/local"
+    else
+        harness_fail "acfs system binary resolvers cover /usr/local" "$failures"
+    fi
+}
+
 test_acfs_update_wrapper_uses_system_state_target_home_when_getent_unavailable() {
     setup_system_state_target_home_only_env
 
@@ -10736,6 +10843,7 @@ main() {
     test_services_setup_repairs_invalid_bun_bin_from_target_user_paths || true
     test_services_setup_init_target_context_repairs_stale_other_user_bun_bin || true
     test_services_setup_cloud_clis_use_find_user_bin || true
+    test_language_cloud_ignore_other_user_home_bin_dir_override || true
 
     harness_section "Stack"
     test_stack_is_installed_handles_unknown_tool_under_set_u || true
@@ -10971,6 +11079,7 @@ main() {
     test_doctor_prefers_target_home_over_poisoned_acfs_home || true
     test_acfs_wrappers_prefer_passwd_home_over_mismatched_absolute_home || true
     test_acfs_wrappers_ignore_poisoned_current_user_path_tools || true
+    test_acfs_system_binary_resolvers_cover_usr_local || true
     test_doctor_manifest_checks_prefer_system_bins_over_current_shell_path || true
     test_doctor_manifest_checks_fail_closed_when_target_home_is_unresolved || true
     test_doctor_manifest_checks_reject_invalid_target_user_before_sudo || true

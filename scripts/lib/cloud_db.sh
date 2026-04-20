@@ -93,6 +93,8 @@ _cloud_system_binary_path() {
     for candidate in \
         "/usr/bin/$name" \
         "/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/sbin/$name" \
         "/sbin/$name"
     do
@@ -221,11 +223,74 @@ _cloud_target_home() {
     return 1
 }
 
+_cloud_validate_bin_dir_for_home() {
+    local bin_dir="${1:-}"
+    local base_home="${2:-}"
+    local passwd_line=""
+    local passwd_home=""
+    local hinted_home=""
+
+    bin_dir="${bin_dir%/}"
+    [[ -n "$bin_dir" ]] || return 1
+    [[ "$bin_dir" == /* ]] || return 1
+    [[ "$bin_dir" != "/" ]] || return 1
+    base_home="$(_cloud_existing_abs_home "$base_home" 2>/dev/null || true)"
+
+    if [[ -n "$base_home" ]] && [[ "$bin_dir" == "$base_home" || "$bin_dir" == "$base_home/"* ]]; then
+        printf '%s\n' "$bin_dir"
+        return 0
+    fi
+
+    case "$bin_dir" in
+        */.local/bin) hinted_home="${bin_dir%/.local/bin}" ;;
+        */.acfs/bin) hinted_home="${bin_dir%/.acfs/bin}" ;;
+        */.bun/bin) hinted_home="${bin_dir%/.bun/bin}" ;;
+        */.cargo/bin) hinted_home="${bin_dir%/.cargo/bin}" ;;
+        */.atuin/bin) hinted_home="${bin_dir%/.atuin/bin}" ;;
+        */go/bin) hinted_home="${bin_dir%/go/bin}" ;;
+        */google-cloud-sdk/bin) hinted_home="${bin_dir%/google-cloud-sdk/bin}" ;;
+    esac
+    hinted_home="${hinted_home%/}"
+    if [[ "$hinted_home" != /* ]] || [[ "$hinted_home" == "/" ]]; then
+        hinted_home=""
+    fi
+    if [[ -n "$hinted_home" ]] && [[ -n "$base_home" ]] && [[ "$hinted_home" != "$base_home" ]]; then
+        return 1
+    fi
+
+    while IFS= read -r passwd_line; do
+        passwd_home="$(_cloud_passwd_home_from_entry "$passwd_line" 2>/dev/null || true)"
+        [[ -n "$passwd_home" ]] || continue
+        [[ -n "$base_home" && "$passwd_home" == "$base_home" ]] && continue
+        if [[ "$bin_dir" == "$passwd_home" || "$bin_dir" == "$passwd_home/"* ]]; then
+            return 1
+        fi
+    done < <(_cloud_getent_passwd_entry 2>/dev/null || true)
+
+    printf '%s\n' "$bin_dir"
+}
+
+_cloud_preferred_bin_dir() {
+    local target_home="${1:-}"
+    local candidate=""
+
+    [[ -n "$target_home" ]] || return 1
+
+    candidate="$(_cloud_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$target_home" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+
+    printf '%s\n' "$target_home/.local/bin"
+}
+
 # Run a command as target user
 _cloud_run_as_user() {
     local target_user="${TARGET_USER:-ubuntu}"
     local target_home=""
     local target_path_prefix=""
+    local preferred_bin_dir=""
     local cmd="$1"
     local target_user_q=""
     local target_home_q=""
@@ -233,8 +298,17 @@ _cloud_run_as_user() {
     local acfs_home_q=""
     local acfs_bin_dir_q=""
     local wrapped_cmd=""
+    local bash_bin=""
+    local sudo_bin=""
+    local runuser_bin=""
+    local su_bin=""
 
     _cloud_validate_target_user "$target_user" || return 1
+    bash_bin="$(_cloud_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || {
+        log_error "Unable to locate bash for target-user cloud command"
+        return 1
+    }
 
     target_home="$(_cloud_target_home "$target_user" 2>/dev/null || true)"
     if [[ -z "$target_home" ]] || [[ "$target_home" == "/" ]] || [[ "$target_home" != /* ]]; then
@@ -247,7 +321,9 @@ _cloud_run_as_user() {
         return 1
     fi
 
-    target_path_prefix="${ACFS_BIN_DIR:-$target_home/.local/bin}:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
+    preferred_bin_dir="$(_cloud_preferred_bin_dir "$target_home" 2>/dev/null || true)"
+    [[ -n "$preferred_bin_dir" ]] || preferred_bin_dir="$target_home/.local/bin"
+    target_path_prefix="$preferred_bin_dir:$target_home/.local/bin:$target_home/.acfs/bin:$target_home/.cargo/bin:$target_home/.bun/bin:$target_home/.atuin/bin:$target_home/go/bin"
 
     printf -v target_user_q '%q' "$target_user"
     printf -v target_home_q '%q' "$target_home"
@@ -255,54 +331,80 @@ _cloud_run_as_user() {
     if [[ -n "${ACFS_HOME:-}" ]]; then
         printf -v acfs_home_q '%q' "$ACFS_HOME"
     fi
-    if [[ -n "${ACFS_BIN_DIR:-}" ]]; then
-        printf -v acfs_bin_dir_q '%q' "$ACFS_BIN_DIR"
-    fi
+    printf -v acfs_bin_dir_q '%q' "$preferred_bin_dir"
 
     wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"
     if [[ -n "$acfs_home_q" ]]; then
         wrapped_cmd+=" export ACFS_HOME=$acfs_home_q;"
     fi
-    if [[ -n "$acfs_bin_dir_q" ]]; then
-        wrapped_cmd+=" export ACFS_BIN_DIR=$acfs_bin_dir_q;"
-    fi
+    wrapped_cmd+=" export ACFS_BIN_DIR=$acfs_bin_dir_q;"
     wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"
 
     if [[ "$(_cloud_resolve_current_user 2>/dev/null || true)" == "$target_user" ]]; then
-        bash -c "$wrapped_cmd"
+        "$bash_bin" -c "$wrapped_cmd"
         return $?
     fi
 
-    if command -v sudo &>/dev/null; then
-        sudo -u "$target_user" -H bash -c "$wrapped_cmd"
+    sudo_bin="$(_cloud_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -u "$target_user" -H "$bash_bin" -c "$wrapped_cmd"
         return $?
     fi
 
-    if command -v runuser &>/dev/null; then
-        runuser -u "$target_user" -- bash -c "$wrapped_cmd"
+    runuser_bin="$(_cloud_system_binary_path runuser 2>/dev/null || true)"
+    if [[ -n "$runuser_bin" ]]; then
+        "$runuser_bin" -u "$target_user" -- "$bash_bin" -c "$wrapped_cmd"
         return $?
     fi
+
+    su_bin="$(_cloud_system_binary_path su 2>/dev/null || true)"
+    [[ -n "$su_bin" ]] || {
+        log_error "Unable to locate sudo, runuser, or su for target-user cloud command"
+        return 1
+    }
 
     # Avoid login shells: profile files are not a stable API and can break non-interactive runs.
-    su "$target_user" -c "bash -c $(printf %q "$wrapped_cmd")"
+    "$su_bin" "$target_user" -c "$(printf '%q' "$bash_bin") -c $(printf %q "$wrapped_cmd")"
 }
 
 _cloud_run_as_postgres() {
     local cmd="$1"
     local wrapped_cmd="set -o pipefail; $cmd"
+    local bash_bin=""
+    local sudo_bin=""
+    local runuser_bin=""
+    local su_bin=""
+
+    bash_bin="$(_cloud_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || {
+        log_error "Unable to locate bash for postgres command"
+        return 1
+    }
 
     if [[ $EUID -eq 0 ]]; then
-        if command -v runuser &>/dev/null; then
-            runuser -u postgres -- bash -c "$wrapped_cmd"
+        runuser_bin="$(_cloud_system_binary_path runuser 2>/dev/null || true)"
+        if [[ -n "$runuser_bin" ]]; then
+            "$runuser_bin" -u postgres -- "$bash_bin" -c "$wrapped_cmd"
             return $?
         fi
 
+        su_bin="$(_cloud_system_binary_path su 2>/dev/null || true)"
+        [[ -n "$su_bin" ]] || {
+            log_error "Unable to locate runuser or su for postgres command"
+            return 1
+        }
+
         # Avoid login shells: profile files are not a stable API and can break non-interactive runs.
-        su postgres -c "bash -c $(printf %q "$wrapped_cmd")"
+        "$su_bin" postgres -c "$(printf '%q' "$bash_bin") -c $(printf %q "$wrapped_cmd")"
         return $?
     fi
 
-    sudo -u postgres -H bash -c "$wrapped_cmd"
+    sudo_bin="$(_cloud_system_binary_path sudo 2>/dev/null || true)"
+    [[ -n "$sudo_bin" ]] || {
+        log_error "Unable to locate sudo for postgres command"
+        return 1
+    }
+    "$sudo_bin" -u postgres -H "$bash_bin" -c "$wrapped_cmd"
 }
 
 # Get bun binary path for target user

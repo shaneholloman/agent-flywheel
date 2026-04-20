@@ -316,6 +316,12 @@ _zsh_profile_path_has_fragment() {
     ' "$file" 2>/dev/null
 }
 
+_zsh_sed_literal() {
+    # This is used in sed's default BRE mode with | as the delimiter.
+    # Do not escape literal parentheses: \(...\) is a BRE capture group.
+    printf '%s' "$1" | sed 's/[][\\.^$*|]/\\&/g'
+}
+
 _zsh_is_managed_loader() {
     local file="${1:-}"
 
@@ -380,7 +386,7 @@ EOF
             echo "$profile_path_line"
         } > "$user_profile"
     elif grep -Fxq "$legacy_profile_path_line" "$user_profile" 2>/dev/null; then
-        sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" "$user_profile"
+        sed -i "s|^$(_zsh_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_profile"
     elif ! _zsh_profile_path_has_fragment "$user_profile" '.local/bin' || \
          ! _zsh_profile_path_has_fragment "$user_profile" '.atuin/bin'; then
         {
@@ -398,7 +404,7 @@ EOF
             echo "$profile_path_line"
         } > "$user_zprofile"
     elif grep -Fxq "$legacy_profile_path_line" "$user_zprofile" 2>/dev/null; then
-        sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" "$user_zprofile"
+        sed -i "s|^$(_zsh_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_zprofile"
     elif ! _zsh_profile_path_has_fragment "$user_zprofile" '.local/bin' || \
          ! _zsh_profile_path_has_fragment "$user_zprofile" '.atuin/bin'; then
         {

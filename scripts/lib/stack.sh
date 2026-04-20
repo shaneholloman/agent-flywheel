@@ -184,6 +184,7 @@ _stack_target_command_path() {
         "$target_home/go/bin/$cmd" \
         "$target_home/bin/$cmd" \
         "/usr/local/bin/$cmd" \
+        "/usr/local/sbin/$cmd" \
         "/usr/bin/$cmd" \
         "/bin/$cmd" \
         "/snap/bin/$cmd"; do
@@ -285,6 +286,8 @@ _stack_system_binary_path() {
     for candidate in \
         "/usr/bin/$name" \
         "/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/sbin/$name" \
         "/sbin/$name"
     do
@@ -385,6 +388,12 @@ _stack_target_home() {
     explicit_bin_dir="$(_stack_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "$explicit_home" 2>/dev/null || true)"
     if [[ "$target_user" == "root" ]]; then
         printf '/root\n'
+        return 0
+    fi
+    # Doctor/update call this only after they have already resolved TARGET_HOME.
+    # Normal installer paths still prefer passwd/NSS data over inherited env.
+    if [[ "${ACFS_STACK_TRUST_TARGET_HOME:-false}" == "true" && -n "$explicit_home" ]]; then
+        printf '%s\n' "$explicit_home"
         return 0
     fi
     if [[ -n "$explicit_home" && -z "${TARGET_USER:-}" && "$target_user" == "$current_user" ]]; then
@@ -621,6 +630,16 @@ _stack_run_as_user() {
     local acfs_bin_dir_q=""
     local target_path_prefix_q=""
     local wrapped_cmd=""
+    local bash_bin=""
+    local sudo_bin=""
+    local runuser_bin=""
+    local su_bin=""
+
+    bash_bin="$(_stack_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || {
+        log_error "Unable to locate bash for target-user stack command"
+        return 1
+    }
 
     printf -v target_user_q '%q' "$target_user"
     printf -v target_home_q '%q' "$target_home"
@@ -631,22 +650,30 @@ _stack_run_as_user() {
     wrapped_cmd+=" export PATH=$target_path_prefix_q:$system_path_prefix:\$PATH; set -o pipefail; $cmd"
 
     if [[ "$(_stack_resolve_current_user 2>/dev/null || true)" == "$target_user" ]]; then
-        bash -c "$wrapped_cmd"
+        "$bash_bin" -c "$wrapped_cmd"
         return $?
     fi
 
-    if command -v sudo &>/dev/null; then
-        sudo -u "$target_user" -H bash -c "$wrapped_cmd"
+    sudo_bin="$(_stack_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -u "$target_user" -H "$bash_bin" -c "$wrapped_cmd"
         return $?
     fi
 
-    if command -v runuser &>/dev/null; then
-        runuser -u "$target_user" -- bash -c "$wrapped_cmd"
+    runuser_bin="$(_stack_system_binary_path runuser 2>/dev/null || true)"
+    if [[ -n "$runuser_bin" ]]; then
+        "$runuser_bin" -u "$target_user" -- "$bash_bin" -c "$wrapped_cmd"
         return $?
     fi
+
+    su_bin="$(_stack_system_binary_path su 2>/dev/null || true)"
+    [[ -n "$su_bin" ]] || {
+        log_error "Unable to locate sudo, runuser, or su for target-user stack command"
+        return 1
+    }
 
     # Avoid login shells: profile files are not a stable API and can break non-interactive runs.
-    su "$target_user" -c "bash -c $(printf %q "$wrapped_cmd")"
+    "$su_bin" "$target_user" -c "$(printf '%q' "$bash_bin") -c $(printf %q "$wrapped_cmd")"
 }
 
 # Load security helpers + checksums.yaml (fail closed if unavailable).

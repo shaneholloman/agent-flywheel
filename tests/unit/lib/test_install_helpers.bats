@@ -166,6 +166,14 @@ teardown() {
     export TARGET_HOME="/home/testuser"
     export ACFS_BIN_DIR="/home/testuser/.local/bin"
 
+    _acfs_getent_passwd_entry() {
+        if [[ "${1:-}" == "testuser" ]]; then
+            printf 'testuser:x:1000:1000::/home/testuser:/bin/bash\n'
+            return 0
+        fi
+        return 1
+    }
+
     spy_command "sudo"
 
     run run_as_target env
@@ -269,6 +277,14 @@ teardown() {
     export ACFS_MANIFEST_YAML="/tmp/acfs-bootstrap/acfs.manifest.yaml"
     export CHECKSUMS_FILE="/tmp/acfs-bootstrap/checksums.yaml"
     export ACFS_REF="main"
+
+    _acfs_getent_passwd_entry() {
+        if [[ "${1:-}" == "testuser" ]]; then
+            printf 'testuser:x:1000:1000::/home/testuser:/bin/bash\n'
+            return 0
+        fi
+        return 1
+    }
 
     spy_command "sudo"
 

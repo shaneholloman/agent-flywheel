@@ -80,6 +80,7 @@ preflight_system_binary_path() {
 
     for candidate in \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \
@@ -192,12 +193,15 @@ preflight_validate_bin_dir_for_home() {
 
 resolve_home_dir() {
     local user="$1"
+    local expected_home="${2:-}"
+    local current_user=""
     local home=""
     local passwd_entry=""
 
     if [[ -z "$user" ]]; then
         return 1
     fi
+    expected_home="$(preflight_sanitize_abs_nonroot_path "$expected_home" 2>/dev/null || true)"
 
     if [[ "$user" == "root" ]]; then
         printf '/root\n'
@@ -213,6 +217,15 @@ resolve_home_dir() {
     if [[ -n "$home" ]]; then
         printf '%s\n' "$home"
         return 0
+    fi
+
+    current_user="$(resolve_current_user 2>/dev/null || true)"
+    if [[ "$current_user" == "$user" ]]; then
+        home="$(preflight_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$home" ]] && { [[ -z "$expected_home" ]] || [[ "$home" == "$expected_home" ]]; }; then
+            printf '%s\n' "$home"
+            return 0
+        fi
     fi
 
     return 1
@@ -252,16 +265,19 @@ resolve_install_target_home() {
     fi
 
     if [[ -n "$target_user_raw" ]]; then
-        target_home="$(resolve_home_dir "$target_user" 2>/dev/null || true)"
+        target_home="$(resolve_home_dir "$target_user" "$explicit_target_home" 2>/dev/null || true)"
         if [[ -n "$target_home" ]]; then
             printf '%s\n' "$target_home"
             return 0
         fi
 
         current_user="$(resolve_current_user 2>/dev/null || true)"
-        if [[ -z "$current_user" ]] || [[ "$target_user" != "$current_user" ]]; then
-            return 1
+        if [[ -n "$current_user" ]] && [[ "$target_user" == "$current_user" ]] && [[ -n "$explicit_target_home" ]]; then
+            printf '%s\n' "$explicit_target_home"
+            return 0
         fi
+
+        return 1
     fi
 
     if [[ -n "$explicit_target_home" ]]; then
@@ -329,6 +345,7 @@ preflight_binary_path() {
 
     for candidate in \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/snap/bin/$name"; do
@@ -770,26 +787,34 @@ check_apt_mirrors() {
 
 check_apt_lock() {
     # Only relevant on Debian/Ubuntu systems with apt
-    if ! command -v apt-get &>/dev/null; then
+    local apt_get_bin=""
+    apt_get_bin="$(preflight_system_binary_path apt-get 2>/dev/null || true)"
+    if [[ -z "$apt_get_bin" ]]; then
         return
     fi
 
     # Check for dpkg lock
     if [[ -f /var/lib/dpkg/lock-frontend ]]; then
         local lock_held=false
+        local sudo_bin=""
+        local fuser_bin=""
+        local lsof_bin=""
+        sudo_bin="$(preflight_system_binary_path sudo 2>/dev/null || true)"
+        fuser_bin="$(preflight_system_binary_path fuser 2>/dev/null || true)"
+        lsof_bin="$(preflight_system_binary_path lsof 2>/dev/null || true)"
 
-        if command -v fuser &>/dev/null; then
-            if fuser /var/lib/dpkg/lock-frontend &>/dev/null; then
+        if [[ -n "$fuser_bin" ]]; then
+            if "$fuser_bin" /var/lib/dpkg/lock-frontend &>/dev/null; then
                 lock_held=true
-            elif command -v sudo &>/dev/null && sudo -n fuser /var/lib/dpkg/lock-frontend &>/dev/null; then
+            elif [[ -n "$sudo_bin" ]] && "$sudo_bin" -n "$fuser_bin" /var/lib/dpkg/lock-frontend &>/dev/null; then
                 lock_held=true
             fi
         fi
 
-        if [[ "$lock_held" != "true" ]] && command -v lsof &>/dev/null; then
-            if lsof /var/lib/dpkg/lock-frontend &>/dev/null; then
+        if [[ "$lock_held" != "true" && -n "$lsof_bin" ]]; then
+            if "$lsof_bin" /var/lib/dpkg/lock-frontend &>/dev/null; then
                 lock_held=true
-            elif command -v sudo &>/dev/null && sudo -n lsof /var/lib/dpkg/lock-frontend &>/dev/null; then
+            elif [[ -n "$sudo_bin" ]] && "$sudo_bin" -n "$lsof_bin" /var/lib/dpkg/lock-frontend &>/dev/null; then
                 lock_held=true
             fi
         fi
@@ -802,18 +827,22 @@ check_apt_lock() {
 
     # Check for active package manager processes
     # Use exact process names to avoid false positives from unrelated commands.
-    if pgrep -x apt >/dev/null 2>&1 || \
-       pgrep -x apt-get >/dev/null 2>&1 || \
-       pgrep -x dpkg >/dev/null 2>&1 || \
-       pgrep -x apt.systemd.daily >/dev/null 2>&1; then
-        warn "APT process running" "Another package operation in progress"
-        return
-    fi
+    local pgrep_bin=""
+    pgrep_bin="$(preflight_system_binary_path pgrep 2>/dev/null || true)"
+    if [[ -n "$pgrep_bin" ]]; then
+        if "$pgrep_bin" -x apt >/dev/null 2>&1 || \
+           "$pgrep_bin" -x apt-get >/dev/null 2>&1 || \
+           "$pgrep_bin" -x dpkg >/dev/null 2>&1 || \
+           "$pgrep_bin" -x apt.systemd.daily >/dev/null 2>&1; then
+            warn "APT process running" "Another package operation in progress"
+            return
+        fi
 
-    # Check for unattended-upgrades
-    if pgrep -f "unattended-upgr" >/dev/null 2>&1; then
-        warn "unattended-upgrades running" "May cause apt conflicts; consider: sudo systemctl stop unattended-upgrades"
-        return
+        # Check for unattended-upgrades
+        if "$pgrep_bin" -f "unattended-upgr" >/dev/null 2>&1; then
+            warn "unattended-upgrades running" "May cause apt conflicts; consider: sudo systemctl stop unattended-upgrades"
+            return
+        fi
     fi
 
     pass "APT: No locks detected"
@@ -863,7 +892,9 @@ check_shell() {
 }
 
 check_sudo() {
-    if ! command -v sudo &>/dev/null; then
+    local sudo_bin=""
+    sudo_bin="$(preflight_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -z "$sudo_bin" ]]; then
         fail "sudo not installed" "sudo is required for system package installation"
         return
     fi
@@ -871,7 +902,7 @@ check_sudo() {
     # Check if user can sudo
     if [[ "$EUID" -eq 0 ]]; then
         pass "Privileges: Running as root"
-    elif sudo -n true 2>/dev/null; then
+    elif "$sudo_bin" -n true 2>/dev/null; then
         pass "Privileges: Passwordless sudo available"
     else
         pass "Privileges: sudo available" "Password may be required during install"

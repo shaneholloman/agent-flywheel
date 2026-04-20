@@ -27,6 +27,14 @@ readonly -a APT_LOCK_FILES=(
     "/var/cache/apt/archives/lock"
 )
 
+_autofix_unattended_sudo_cmd() {
+    if [[ $EUID -eq 0 ]]; then
+        return 0
+    fi
+
+    autofix_system_binary_path sudo
+}
+
 # =============================================================================
 # Detection Functions
 # =============================================================================
@@ -188,7 +196,7 @@ autofix_unattended_upgrades_fix() {
 # Stop unattended-upgrades service
 _autofix_stop_unattended_service() {
     local sudo_cmd=""
-    [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
+    sudo_cmd="$(_autofix_unattended_sudo_cmd 2>/dev/null || true)"
 
     if ! systemctl is-active unattended-upgrades &>/dev/null; then
         log_debug "[AUTO-FIX:unattended] Service not active, skipping stop"
@@ -258,7 +266,7 @@ _autofix_kill_stuck_processes() {
 
     # Kill each process type
     local sudo_cmd=""
-    [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
+    sudo_cmd="$(_autofix_unattended_sudo_cmd 2>/dev/null || true)"
     
     $sudo_cmd pkill -9 -x "apt" 2>/dev/null || true
     $sudo_cmd pkill -9 -x "apt-get" 2>/dev/null || true
@@ -308,7 +316,7 @@ _autofix_remove_stale_locks() {
         fi
 
         local sudo_cmd=""
-        [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
+        sudo_cmd="$(_autofix_unattended_sudo_cmd 2>/dev/null || true)"
 
         if $sudo_cmd rm -f "$lock" 2>&1; then
             if ! record_change \
@@ -344,7 +352,7 @@ _autofix_reconfigure_dpkg() {
     log_info "[AUTO-FIX:unattended] Running dpkg --configure -a"
 
     local sudo_cmd=""
-    [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
+    sudo_cmd="$(_autofix_unattended_sudo_cmd 2>/dev/null || true)"
 
     local output
     if output=$($sudo_cmd dpkg --configure -a 2>&1); then
@@ -366,7 +374,7 @@ _autofix_update_apt() {
     log_info "[AUTO-FIX:unattended] Running apt-get update"
 
     local sudo_cmd=""
-    [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
+    sudo_cmd="$(_autofix_unattended_sudo_cmd 2>/dev/null || true)"
 
     local output
     if output=$($sudo_cmd apt-get update 2>&1); then
@@ -420,7 +428,7 @@ autofix_unattended_upgrades_restore() {
     log_info "[POST-INSTALL] Re-enabling unattended-upgrades service"
 
     local sudo_cmd=""
-    [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
+    sudo_cmd="$(_autofix_unattended_sudo_cmd 2>/dev/null || true)"
 
     if ! autofix_ensure_session session_owned; then
         log_error "[POST-INSTALL] Failed to start autofix session for restore"

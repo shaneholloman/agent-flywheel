@@ -232,6 +232,15 @@ EOF
     assert_output "HOME=$current_home target=$current_home"
 }
 
+@test "update.sh: source-time HOME repair fails closed for unresolved target with stale TARGET_HOME" {
+    local stale_home
+    stale_home="$(create_temp_dir)"
+
+    run env TARGET_USER="missinguser" TARGET_HOME="$stale_home" HOME="$stale_home" bash -c 'source "$1"; printf "HOME=%s target=%s\n" "$HOME" "$(update_target_home "$TARGET_USER" 2>/dev/null || true)"' _ "$PROJECT_ROOT/scripts/lib/update.sh"
+    assert_success
+    assert_output "HOME=$stale_home target="
+}
+
 @test "update_target_home: rejects invalid fallback usernames" {
     export TARGET_HOME="/"
     export HOME="/"
@@ -254,6 +263,27 @@ EOF
 
     run update_target_home "missinguser"
     assert_failure
+}
+
+@test "update_target_home: fails closed for unresolved target with stale TARGET_HOME" {
+    local stale_home
+    stale_home="$(create_temp_dir)"
+
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+
+    update_current_user() {
+        printf 'calleruser\n'
+    }
+
+    update_getent_passwd_entry() {
+        return 2
+    }
+
+    run update_target_home "missinguser"
+    assert_failure
+    assert_output ""
 }
 
 @test "update.sh: sources under set -u without HOME" {
@@ -677,6 +707,13 @@ exit 0
 EOF
     chmod +x "$STUB_DIR/fuser"
 
+    update_system_binary_path() {
+        case "${1:-}" in
+            fuser) printf '%s\n' "$STUB_DIR/fuser" ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+
     run apt_lock_is_held "$lockfile"
     assert_success
 
@@ -706,11 +743,19 @@ exit 1
 EOF
     chmod +x "$STUB_DIR/sudo"
 
+    update_system_binary_path() {
+        case "${1:-}" in
+            fuser) printf '%s\n' "$STUB_DIR/fuser" ;;
+            sudo) printf '%s\n' "$STUB_DIR/sudo" ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+
     run apt_lock_is_held "$lockfile"
     assert_success
 
     run cat "$sudo_log"
-    assert_output --partial "-n fuser $lockfile"
+    assert_output --partial "-n $STUB_DIR/fuser $lockfile"
 }
 
 @test "update_require_security: sources repo-local scripts/lib/security.sh" {
@@ -1089,6 +1134,17 @@ EOF
 
     run cat "$HOME/.zshrc"
     assert_output --partial '[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"'
+}
+
+@test "_update_sed_literal: keeps parentheses literal in sed BRE replacements" {
+    local literal='export PATH="$HOME/(weird)[bin]*.^$|\end:$PATH"'
+    local escaped
+
+    escaped="$(_update_sed_literal "$literal")"
+
+    run bash -c 'printf "%s\n" "$1" | sed "s|^$2$|replaced|"' _ "$literal" "$escaped"
+    assert_success
+    assert_output "replaced"
 }
 
 @test "sync_acfs_profile_paths: upgrades legacy ACFS login PATH line" {
@@ -1619,6 +1675,9 @@ EOF
     run grep -F '_ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" "$_ACFS_EXPLICIT_TARGET_HOME" || true)"' "$generated"
     assert_success
 
+    run grep -F 'TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"' "$generated"
+    assert_failure
+
     run grep -F '_ACFS_RESOLVED_TARGET_HOME="$_acfs_current_home"' "$generated"
     assert_success
 
@@ -2003,6 +2062,177 @@ EOF
     assert_output "$current_home"
 }
 
+@test "services-setup: privilege handoff ignores function-poisoned system commands" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local stub_dir
+    local safe_sudo
+    local marker
+    local env_bin
+    local bash_bin
+    local sh_bin
+    stub_dir="$(create_temp_dir)"
+    safe_sudo="$stub_dir/sudo"
+    marker="$stub_dir/poisoned"
+    env_bin="$(command -v env)"
+    bash_bin="$(command -v bash)"
+    sh_bin="$(command -v sh)"
+    export TEST_SERVICES_ENV_BIN="$env_bin"
+    export TEST_SERVICES_BASH_BIN="$bash_bin"
+    export TEST_SERVICES_SH_BIN="$sh_bin"
+    export TEST_SERVICES_SAFE_SUDO="$safe_sudo"
+    export TEST_SERVICES_POISON_MARKER="$marker"
+
+    cat > "$safe_sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'safe-sudo:%s\n' "$*"
+EOF
+    chmod +x "$safe_sudo"
+
+    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_valid_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_bin_dir_for_home()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^run_as_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^run_as_user_shell()/,/^}$/p' "$services_setup")"
+
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+
+    services_setup_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    services_setup_system_binary_path() {
+        case "${1:-}" in
+            env) printf '%s\n' "$TEST_SERVICES_ENV_BIN" ;;
+            bash) printf '%s\n' "$TEST_SERVICES_BASH_BIN" ;;
+            sh) printf '%s\n' "$TEST_SERVICES_SH_BIN" ;;
+            sudo) printf '%s\n' "$TEST_SERVICES_SAFE_SUDO" ;;
+            runuser|su) return 1 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    env() {
+        printf 'env\n' > "$TEST_SERVICES_POISON_MARKER"
+        return 99
+    }
+    sudo() {
+        printf 'sudo\n' > "$TEST_SERVICES_POISON_MARKER"
+        return 99
+    }
+    runuser() {
+        printf 'runuser\n' > "$TEST_SERVICES_POISON_MARKER"
+        return 99
+    }
+    su() {
+        printf 'su\n' > "$TEST_SERVICES_POISON_MARKER"
+        return 99
+    }
+
+    export TARGET_USER="acfsuser"
+    export TARGET_HOME="$stub_dir/home"
+    export ACFS_BIN_DIR="$TARGET_HOME/.local/bin"
+    mkdir -p "$ACFS_BIN_DIR"
+
+    run run_as_user printf ok
+    assert_success
+    assert_output --partial "safe-sudo:"
+    [[ ! -e "$marker" ]] || fail "function-poisoned command executed: $(<"$marker")"
+
+    run run_as_user_shell 'printf ok'
+    assert_success
+    assert_output --partial "safe-sudo:"
+    [[ ! -e "$marker" ]] || fail "function-poisoned command executed: $(<"$marker")"
+}
+
+@test "services-setup: run_as_user normalizes env/bash infrastructure argv" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local target_home
+    local fake_env
+    local fake_bash
+    local marker
+    local env_bin
+    local bash_bin
+    local sh_bin
+
+    target_home="$(create_temp_dir)"
+    fake_env="$target_home/.local/bin/env"
+    fake_bash="$target_home/.local/bin/bash"
+    marker="$target_home/poisoned"
+    env_bin="$(command -v env)"
+    bash_bin="$(command -v bash)"
+    sh_bin="$(command -v sh)"
+    mkdir -p "$(dirname "$fake_bash")"
+    export TEST_SERVICES_TARGET_HOME="$target_home"
+    export TEST_SERVICES_MARKER="$marker"
+    export TEST_SERVICES_ENV_BIN="$env_bin"
+    export TEST_SERVICES_BASH_BIN="$bash_bin"
+    export TEST_SERVICES_SH_BIN="$sh_bin"
+
+    cat > "$fake_env" <<'EOF'
+#!/bin/sh
+printf 'fake-env\n' > "$TEST_SERVICES_MARKER"
+exit 99
+EOF
+    chmod +x "$fake_env"
+
+    cat > "$fake_bash" <<'EOF'
+#!/usr/bin/env bash
+printf 'fake-bash\n' > "$TEST_SERVICES_MARKER"
+exit 99
+EOF
+    chmod +x "$fake_bash"
+
+    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_valid_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_bin_dir_for_home()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^run_as_user()/,/^}$/p' "$services_setup")"
+
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+
+    services_setup_resolve_current_user() {
+        printf 'acfsuser\n'
+    }
+
+    services_setup_system_binary_path() {
+        case "${1:-}" in
+            env) printf '%s\n' "$TEST_SERVICES_ENV_BIN" ;;
+            bash) printf '%s\n' "$TEST_SERVICES_BASH_BIN" ;;
+            sh) printf '%s\n' "$TEST_SERVICES_SH_BIN" ;;
+            sudo|runuser|su) return 1 ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+
+    env() {
+        printf 'env\n' > "$TEST_SERVICES_MARKER"
+        return 99
+    }
+    bash() {
+        printf 'bash\n' > "$TEST_SERVICES_MARKER"
+        return 99
+    }
+    sh() {
+        printf 'sh\n' > "$TEST_SERVICES_MARKER"
+        return 99
+    }
+
+    export TARGET_USER="acfsuser"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$target_home/.local/bin"
+    export PATH="$target_home/.local/bin:$PATH"
+
+    run run_as_user env TEST_SERVICES_FLAG=ok bash -c 'printf "%s" "$TEST_SERVICES_FLAG"'
+    assert_success
+    assert_output "ok"
+    [[ ! -e "$marker" ]] || fail "function or PATH-poisoned helper executed: $(<"$marker")"
+}
+
 @test "services-setup: init_target_context repairs stale TARGET_HOME from trusted passwd data" {
     local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
     local test_current_user
@@ -2024,6 +2254,7 @@ EOF
     eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
     eval "$(sed -n '/^services_setup_valid_target_user()/,/^}$/p' "$services_setup")"
     eval "$(sed -n '/^services_setup_validate_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_system_binary_path()/,/^}$/p' "$services_setup")"
     eval "$(sed -n '/^services_setup_passwd_home_from_entry()/,/^}$/p' "$services_setup")"
     eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$services_setup")"
     eval "$(sed -n '/^services_setup_validate_bin_dir_for_home()/,/^}$/p' "$services_setup")"
@@ -2196,6 +2427,49 @@ EOF
     assert_output --partial "Unable to determine home directory for user: missinguser"
 }
 
+@test "services-setup: init_target_context honors explicit TARGET_HOME for current target without passwd" {
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local caller_home
+    local stale_home
+
+    caller_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    mkdir -p "$caller_home/.local/bin" "$stale_home/.local/bin" "$stale_home/.acfs"
+
+    eval "$(sed -n '/^services_setup_sanitize_abs_nonroot_path()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_valid_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_target_user()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_passwd_home_from_entry()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^services_setup_validate_bin_dir_for_home()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^find_user_bin()/,/^}$/p' "$services_setup")"
+    eval "$(sed -n '/^init_target_context()/,/^}$/p' "$services_setup")"
+
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+
+    services_setup_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    services_setup_getent_passwd_entry() {
+        return 1
+    }
+
+    export TARGET_USER="calleruser"
+    export TARGET_HOME="$stale_home"
+    export HOME="$caller_home"
+    export ACFS_BIN_DIR="$stale_home/.local/bin"
+    export ACFS_HOME="$stale_home/.acfs"
+
+    init_target_context
+    [[ "$TARGET_HOME" == "$stale_home" ]] || {
+        printf 'TARGET_HOME did not preserve explicit same-user home: %s\n' "$TARGET_HOME" >&2
+        return 1
+    }
+}
+
 @test "diagnostic helpers: prepend primary ACFS bin dir and ~/.acfs/bin" {
     local doctor="$PROJECT_ROOT/scripts/lib/doctor.sh"
     local info="$PROJECT_ROOT/scripts/lib/info.sh"
@@ -2224,7 +2498,7 @@ EOF
     assert_success
     run grep -F 'target_home="/home/$target_user"' "$doctor"
     assert_failure
-    run grep -F 'sudo -n env TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"' "$doctor"
+    run grep -F '"$sudo_bin" -n "$env_bin" TARGET_USER="$target_user" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"' "$doctor"
     assert_success
     run grep -F 'export PATH="$prefix${current_path:+:$current_path}"' "$doctor"
     assert_success
@@ -2718,6 +2992,89 @@ EOF
     run validated_target_user_for_dispatch "$TEST_CURRENT_USER" "$TEST_TARGET_HOME"
     assert_success
     assert_output "$TEST_CURRENT_USER"
+}
+
+@test "acfs-update wrapper resolves non-current owner home after owner discovery" {
+    local update_wrapper="$PROJECT_ROOT/scripts/acfs-update"
+    local target_home
+    target_home="$(create_temp_dir)"
+    export TEST_UPDATE_WRAPPER_TARGET_HOME="$target_home"
+
+    mkdir -p "$target_home/.acfs/scripts/lib"
+    touch "$target_home/.acfs/scripts/lib/update.sh"
+
+    eval "$(sed -n '/^sanitize_abs_nonroot_path()/,/^}$/p' "$update_wrapper")"
+    eval "$(sed -n '/^is_valid_username()/,/^}$/p' "$update_wrapper")"
+    eval "$(sed -n '/^find_update_script_for_home()/,/^}$/p' "$update_wrapper")"
+    eval "$(sed -n '/^find_update_script_for_user()/,/^}$/p' "$update_wrapper")"
+
+    validated_target_user_for_dispatch() {
+        return 1
+    }
+
+    resolve_current_user() {
+        printf 'caller\n'
+    }
+
+    current_home_matches_update_install() {
+        return 1
+    }
+
+    resolve_home_for_user() {
+        if [[ "${1:-}" == "acfsuser" ]]; then
+            printf '%s\n' "$TEST_UPDATE_WRAPPER_TARGET_HOME"
+            return 0
+        fi
+        return 1
+    }
+
+    unset TARGET_HOME
+
+    run find_update_script_for_user "acfsuser"
+    assert_success
+    assert_output "$target_home/.acfs/scripts/lib/update.sh"
+}
+
+@test "acfs global wrapper resolves non-current owner home after owner discovery" {
+    local global_wrapper="$PROJECT_ROOT/scripts/acfs-global"
+    local target_home
+    target_home="$(create_temp_dir)"
+    export TEST_GLOBAL_WRAPPER_TARGET_HOME="$target_home"
+
+    mkdir -p "$target_home/.local/bin"
+    touch "$target_home/.local/bin/acfs"
+    chmod +x "$target_home/.local/bin/acfs"
+
+    eval "$(sed -n '/^sanitize_abs_nonroot_path()/,/^}$/p' "$global_wrapper")"
+    eval "$(sed -n '/^is_valid_username()/,/^}$/p' "$global_wrapper")"
+    eval "$(sed -n '/^find_acfs_bin_for_home()/,/^}$/p' "$global_wrapper")"
+    eval "$(sed -n '/^find_acfs_bin()/,/^}$/p' "$global_wrapper")"
+
+    validated_target_user_for_dispatch() {
+        return 1
+    }
+
+    resolve_current_user() {
+        printf 'caller\n'
+    }
+
+    current_home_matches_acfs_install() {
+        return 1
+    }
+
+    resolve_home_for_user() {
+        if [[ "${1:-}" == "acfsuser" ]]; then
+            printf '%s\n' "$TEST_GLOBAL_WRAPPER_TARGET_HOME"
+            return 0
+        fi
+        return 1
+    }
+
+    unset TARGET_HOME
+
+    run find_acfs_bin "acfsuser"
+    assert_success
+    assert_output "$target_home/.local/bin/acfs"
 }
 
 @test "acfs-update wrapper only promotes system state homes with an update script" {
@@ -3804,6 +4161,28 @@ EOF_DASHBOARD_TRAP
     [[ ! -e "$marker" ]] || fail "_stack_run_as_user executed target PATH as shell source"
 }
 
+@test "stack helpers can trust explicitly resolved TARGET_HOME for doctor/update repairs" {
+    source_lib "stack"
+
+    local target_home="$BATS_TEST_TMPDIR/target-home"
+    local target_am="$target_home/mcp_agent_mail/am"
+    mkdir -p "$(dirname "$target_am")"
+    cat > "$target_am" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$target_am"
+
+    export TARGET_USER="ubuntu"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="/home/ubuntu/.local/bin"
+    export ACFS_STACK_TRUST_TARGET_HOME=true
+
+    run _stack_agent_mail_cli_path
+    assert_success
+    assert_output "$target_am"
+}
+
 @test "stack SLB installer checks active Go PATH lines only" {
     local stack="$PROJECT_ROOT/scripts/lib/stack.sh"
 
@@ -4059,6 +4438,35 @@ EOF_DASHBOARD_TRAP
     assert_output "$resolved_home"
 }
 
+@test "autofix runtime homes fail closed for unresolved target with stale TARGET_HOME" {
+    local stale_home
+
+    stale_home="$(create_temp_dir)"
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+    unset SUDO_USER
+
+    source_lib "autofix"
+    source_lib "autofix_existing"
+
+    autofix_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    autofix_lookup_passwd_home() {
+        return 1
+    }
+
+    run autofix_runtime_home
+    assert_failure
+    assert_output ""
+
+    run autofix_existing_runtime_home
+    assert_failure
+    assert_output ""
+}
+
 @test "helper home resolvers prefer root home over stale explicit TARGET_HOME" {
     local stale_home
     stale_home="$BATS_TEST_TMPDIR/stale-root-target-home"
@@ -4227,6 +4635,130 @@ EOF_DASHBOARD_TRAP
     assert_success
     assert_output "$current_home"
     [[ ! -s "$STUB_DIR/sudo.log" ]] || fail "_stack_run_as_user should not invoke sudo for same-user fast path"
+}
+
+@test "run-as-user helper libs ignore function-poisoned privilege helpers" {
+    local target_home
+    local safe_sudo
+    local bash_bin
+    local marker
+
+    target_home="$(create_temp_dir)"
+    safe_sudo="$target_home/safe-sudo"
+    bash_bin="$(command -v bash)"
+    marker="$target_home/poisoned"
+    mkdir -p "$target_home/.local/bin"
+    export TARGET_USER="acfsuser"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$target_home/.local/bin"
+    export TEST_PRIV_TARGET_HOME="$target_home"
+    export TEST_PRIV_SAFE_SUDO="$safe_sudo"
+    export TEST_PRIV_BASH_BIN="$bash_bin"
+    export TEST_PRIV_MARKER="$marker"
+
+    cat > "$safe_sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'safe-sudo:%s\n' "$*"
+EOF
+    chmod +x "$safe_sudo"
+
+    bash() {
+        printf 'bash\n' > "$TEST_PRIV_MARKER"
+        return 99
+    }
+    sudo() {
+        printf 'sudo\n' > "$TEST_PRIV_MARKER"
+        return 99
+    }
+    runuser() {
+        printf 'runuser\n' > "$TEST_PRIV_MARKER"
+        return 99
+    }
+    su() {
+        printf 'su\n' > "$TEST_PRIV_MARKER"
+        return 99
+    }
+
+    source_lib "cli_tools"
+    _cli_resolve_current_user() { printf 'calleruser\n'; }
+    _cli_target_home() { printf '%s\n' "$TEST_PRIV_TARGET_HOME"; }
+    _cli_system_binary_path() {
+        case "${1:-}" in
+            bash) printf '%s\n' "$TEST_PRIV_BASH_BIN" ;;
+            sudo) printf '%s\n' "$TEST_PRIV_SAFE_SUDO" ;;
+            runuser|su) return 1 ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+    run _cli_run_as_user "printf ok"
+    assert_success
+    assert_output --partial "safe-sudo:"
+    [[ ! -e "$marker" ]] || fail "_cli_run_as_user executed function-poisoned helper: $(<"$marker")"
+
+    source_lib "agents"
+    _agent_resolve_current_user() { printf 'calleruser\n'; }
+    _agent_target_home() { printf '%s\n' "$TEST_PRIV_TARGET_HOME"; }
+    _agent_system_binary_path() {
+        case "${1:-}" in
+            bash) printf '%s\n' "$TEST_PRIV_BASH_BIN" ;;
+            sudo) printf '%s\n' "$TEST_PRIV_SAFE_SUDO" ;;
+            runuser|su) return 1 ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+    run _agent_run_as_user "printf ok"
+    assert_success
+    assert_output --partial "safe-sudo:"
+    [[ ! -e "$marker" ]] || fail "_agent_run_as_user executed function-poisoned helper: $(<"$marker")"
+
+    source_lib "languages"
+    _lang_resolve_current_user() { printf 'calleruser\n'; }
+    _lang_target_home() { printf '%s\n' "$TEST_PRIV_TARGET_HOME"; }
+    _lang_system_binary_path() {
+        case "${1:-}" in
+            bash) printf '%s\n' "$TEST_PRIV_BASH_BIN" ;;
+            sudo) printf '%s\n' "$TEST_PRIV_SAFE_SUDO" ;;
+            runuser|su) return 1 ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+    run _lang_run_as_user "printf ok"
+    assert_success
+    assert_output --partial "safe-sudo:"
+    [[ ! -e "$marker" ]] || fail "_lang_run_as_user executed function-poisoned helper: $(<"$marker")"
+
+    source_lib "cloud_db"
+    _cloud_resolve_current_user() { printf 'calleruser\n'; }
+    _cloud_target_home() { printf '%s\n' "$TEST_PRIV_TARGET_HOME"; }
+    _cloud_system_binary_path() {
+        case "${1:-}" in
+            bash) printf '%s\n' "$TEST_PRIV_BASH_BIN" ;;
+            sudo) printf '%s\n' "$TEST_PRIV_SAFE_SUDO" ;;
+            runuser|su) return 1 ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+    run _cloud_run_as_user "printf ok"
+    assert_success
+    assert_output --partial "safe-sudo:"
+    [[ ! -e "$marker" ]] || fail "_cloud_run_as_user executed function-poisoned helper: $(<"$marker")"
+
+    source_lib "stack"
+    _stack_resolve_current_user() { printf 'calleruser\n'; }
+    _stack_target_home() { printf '%s\n' "$TEST_PRIV_TARGET_HOME"; }
+    _stack_target_bin_dir() { printf '%s\n' "$TEST_PRIV_TARGET_HOME/.local/bin"; }
+    _stack_system_binary_path() {
+        case "${1:-}" in
+            bash) printf '%s\n' "$TEST_PRIV_BASH_BIN" ;;
+            sudo) printf '%s\n' "$TEST_PRIV_SAFE_SUDO" ;;
+            runuser|su) return 1 ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+    run _stack_run_as_user "printf ok"
+    assert_success
+    assert_output --partial "safe-sudo:"
+    [[ ! -e "$marker" ]] || fail "_stack_run_as_user executed function-poisoned helper: $(<"$marker")"
 }
 
 @test "helper bin-dir selectors ignore function-poisoned getent passwd streams" {
@@ -4923,6 +5455,22 @@ EOF
     fi
 }
 
+@test "notification source-time paths fail closed for unresolved target user" {
+    local stale_home
+    local notify_script="$PROJECT_ROOT/scripts/lib/notify.sh"
+    local notifications_script="$PROJECT_ROOT/scripts/lib/notifications.sh"
+
+    stale_home="$(create_temp_dir)"
+
+    run env TARGET_USER="missinguser" TARGET_HOME="$stale_home" HOME="$stale_home" bash -c 'source "$1"; printf "runtime=%s state=%s\n" "${_ACFS_NOTIFY_RUNTIME_HOME:-}" "${_ACFS_NOTIFY_STATE_DIR:-}"' _ "$notify_script"
+    assert_success
+    assert_output "runtime= state="
+
+    run env TARGET_USER="missinguser" TARGET_HOME="$stale_home" HOME="$stale_home" bash -c 'source "$1" status >/dev/null || true; printf "runtime=%s dir=%s file=%s\n" "${_ACFS_NOTIFICATIONS_RUNTIME_HOME:-}" "${ACFS_CONFIG_DIR:-}" "${ACFS_CONFIG_FILE:-}"' _ "$notifications_script"
+    assert_success
+    assert_output "runtime= dir= file="
+}
+
 @test "preflight: resolve_current_home fails closed when HOME is invalid and passwd lookup fails" {
     local preflight="$PROJECT_ROOT/scripts/preflight.sh"
 
@@ -4988,10 +5536,11 @@ EOF
     eval "$(sed -n '/^resolve_install_target_home()/,/^}$/p' "$preflight")"
 
     stale_home="$(create_temp_dir)"
-    target_home="$(create_temp_dir)"
+    trusted_home="$(create_temp_dir)"
     export HOME="$stale_home"
     export TARGET_USER="targetuser"
     export TARGET_HOME="$stale_home"
+    export TEST_PREFLIGHT_TARGET_HOME="$trusted_home"
 
     resolve_current_user() {
         printf 'calleruser\n'
@@ -4999,7 +5548,7 @@ EOF
 
     preflight_getent_passwd_entry() {
         if [[ "${1:-}" == "targetuser" ]]; then
-            printf 'targetuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'targetuser:x:1000:1000::%s:/bin/bash\n' "$TEST_PREFLIGHT_TARGET_HOME"
             return 0
         fi
         return 1
@@ -5007,7 +5556,7 @@ EOF
 
     run resolve_install_target_home
     assert_success
-    assert_output "$target_home"
+    assert_output "$trusted_home"
 }
 
 @test "preflight: resolve_install_target_home rejects invalid TARGET_USER before TARGET_HOME" {
@@ -5055,6 +5604,44 @@ EOF
     run resolve_install_target_home
     assert_failure
     assert_output ""
+}
+
+@test "preflight: resolve_install_target_home honors explicit TARGET_HOME for current target without passwd" {
+    local preflight="$PROJECT_ROOT/scripts/preflight.sh"
+    local caller_home
+    local stale_home
+
+    eval "$(sed -n '/^preflight_sanitize_abs_nonroot_path()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_is_valid_username()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^preflight_getent_passwd_entry()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_user()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_home_dir()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_current_home()/,/^}$/p' "$preflight")"
+    eval "$(sed -n '/^resolve_install_target_home()/,/^}$/p' "$preflight")"
+
+    caller_home="$(create_temp_dir)"
+    stale_home="$(create_temp_dir)"
+    export HOME="$caller_home"
+    export TARGET_USER="calleruser"
+    export TARGET_HOME="$stale_home"
+
+    resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    preflight_getent_passwd_entry() {
+        return 1
+    }
+
+    run resolve_install_target_home
+    assert_success
+    assert_output "$stale_home"
+
+    export TARGET_HOME="$caller_home"
+
+    run resolve_install_target_home
+    assert_success
+    assert_output "$caller_home"
 }
 
 @test "preflight: binary helper ignores stale other-user ACFS_BIN_DIR" {
@@ -5181,6 +5768,48 @@ EOF
     run _github_api_runtime_home
     assert_success
     assert_output "$current_home"
+}
+
+@test "github_api runtime home fails closed for unresolved TARGET_USER with stale TARGET_HOME" {
+    source_lib "github_api"
+
+    local stale_home
+    stale_home="$(create_temp_dir)"
+
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+
+    _github_api_getent_passwd_entry() {
+        return 1
+    }
+
+    run _github_api_runtime_home
+    assert_failure
+    assert_output ""
+}
+
+@test "ubuntu upgrade target home fails closed for unresolved target with stale TARGET_HOME" {
+    source_lib "ubuntu_upgrade"
+
+    local stale_home
+    stale_home="$(create_temp_dir)"
+
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+
+    ubuntu_lookup_passwd_home() {
+        return 1
+    }
+
+    ubuntu_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    run ubuntu_resolve_target_home "missinguser"
+    assert_failure
+    assert_output ""
 }
 
 @test "update init honors explicit TARGET_HOME for early runtime paths" {
@@ -5448,7 +6077,7 @@ EOF
     assert_success
 
     run grep -F 'TARGET_HOME="${TARGET_HOME%/}"' "$installer"
-    assert_success
+    assert_failure
 
     run grep -F 'resolved_target_home="${resolved_target_home%/}"' "$installer"
     assert_success
@@ -5468,6 +6097,9 @@ EOF
     run bash -c 'sed -n "/^init_target_paths()/,/^}/p" "$1" | grep -F "local explicit_target_home=\"\""' _ "$installer"
     assert_success
 
+    run bash -c 'sed -n "/^init_target_paths()/,/^}/p" "$1" | grep -F "elif [[ -n \"\${TARGET_HOME:-}\" ]]; then"' _ "$installer"
+    assert_failure
+
     run grep -F 'local explicit_user_home_for_repair=""' "$installer"
     assert_success
 
@@ -5485,6 +6117,462 @@ EOF
 
     run bash -c 'sed -n "/^acfs_summary_emit()/,/^}/p" "$1" | grep -F "local resolved_target_home=\"\${TARGET_HOME:-}\""' _ "$installer"
     assert_failure
+}
+
+@test "install_helpers run_as_target fails closed for unresolved target with stale TARGET_HOME" {
+    local install_helpers="$PROJECT_ROOT/scripts/lib/install_helpers.sh"
+    local stale_home
+
+    stale_home="$(create_temp_dir)"
+    # shellcheck source=scripts/lib/install_helpers.sh
+    source "$install_helpers"
+
+    export TARGET_USER="missinguser"
+    export TARGET_HOME="$stale_home"
+    export HOME="$stale_home"
+
+    _acfs_getent_passwd_entry() {
+        return 1
+    }
+
+    _acfs_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    sudo() {
+        printf 'sudo-called\n'
+        return 0
+    }
+
+    runuser() {
+        printf 'runuser-called\n'
+        return 0
+    }
+
+    su() {
+        printf 'su-called\n'
+        return 0
+    }
+
+    run run_as_target true
+    assert_failure
+    refute_output --partial "sudo-called"
+    refute_output --partial "runuser-called"
+    refute_output --partial "su-called"
+}
+
+@test "install_helpers shell wrappers ignore poisoned env/bash and target PATH bash" {
+    local install_helpers="$PROJECT_ROOT/scripts/lib/install_helpers.sh"
+    local target_home
+    local fake_env
+    local fake_bash
+    local marker
+
+    target_home="$(create_temp_dir)"
+    fake_env="$target_home/.local/bin/env"
+    fake_bash="$target_home/.local/bin/bash"
+    marker="$target_home/poisoned"
+    mkdir -p "$(dirname "$fake_bash")"
+    export TEST_INSTALL_HELPERS_TARGET_HOME="$target_home"
+    export TEST_INSTALL_HELPERS_MARKER="$marker"
+
+    cat > "$fake_env" <<'EOF'
+#!/bin/sh
+printf 'fake-env\n' > "$TEST_INSTALL_HELPERS_MARKER"
+exit 99
+EOF
+    chmod +x "$fake_env"
+
+    cat > "$fake_bash" <<'EOF'
+#!/usr/bin/env bash
+printf 'fake-bash\n' > "$TEST_INSTALL_HELPERS_MARKER"
+exit 99
+EOF
+    chmod +x "$fake_bash"
+
+    # shellcheck source=scripts/lib/install_helpers.sh
+    source "$install_helpers"
+
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+
+    _acfs_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    _acfs_getent_passwd_entry() {
+        if [[ "${1:-}" == "calleruser" ]]; then
+            printf 'calleruser:x:1000:1000::%s:/bin/bash\n' "$TEST_INSTALL_HELPERS_TARGET_HOME"
+            return 0
+        fi
+        return 1
+    }
+
+    env() {
+        printf 'env\n' > "$TEST_INSTALL_HELPERS_MARKER"
+        return 99
+    }
+    bash() {
+        printf 'bash\n' > "$TEST_INSTALL_HELPERS_MARKER"
+        return 99
+    }
+    sh() {
+        printf 'sh\n' > "$TEST_INSTALL_HELPERS_MARKER"
+        return 99
+    }
+
+    export TARGET_USER="calleruser"
+    export TARGET_HOME="$target_home"
+    export HOME="$target_home"
+    export ACFS_BIN_DIR="$target_home/.local/bin"
+    export PATH="$target_home/.local/bin:$PATH"
+
+    run run_as_current_shell 'printf current'
+    assert_success
+    assert_output "current"
+    [[ ! -e "$marker" ]] || fail "function or PATH-poisoned helper executed: $(<"$marker")"
+
+    run run_as_target_shell 'printf target'
+    assert_success
+    assert_output "target"
+    [[ ! -e "$marker" ]] || fail "function or PATH-poisoned helper executed: $(<"$marker")"
+
+    run run_as_target env TEST_INSTALL_HELPERS_FLAG=ok bash -c 'printf "%s" "$TEST_INSTALL_HELPERS_FLAG"'
+    assert_success
+    assert_output "ok"
+    [[ ! -e "$marker" ]] || fail "function or PATH-poisoned helper executed: $(<"$marker")"
+}
+
+@test "install_helpers run_as_target ignores function-poisoned privilege helpers" {
+    local install_helpers="$PROJECT_ROOT/scripts/lib/install_helpers.sh"
+    local target_home
+    local safe_sudo
+    local env_bin
+    local bash_bin
+    local sh_bin
+    local marker
+
+    target_home="$(create_temp_dir)"
+    safe_sudo="$target_home/safe-sudo"
+    marker="$target_home/poisoned"
+    env_bin="$(command -v env)"
+    bash_bin="$(command -v bash)"
+    sh_bin="$(command -v sh)"
+    mkdir -p "$target_home/.local/bin"
+    export TEST_INSTALL_HELPERS_TARGET_HOME="$target_home"
+    export TEST_INSTALL_HELPERS_SAFE_SUDO="$safe_sudo"
+    export TEST_INSTALL_HELPERS_ENV_BIN="$env_bin"
+    export TEST_INSTALL_HELPERS_BASH_BIN="$bash_bin"
+    export TEST_INSTALL_HELPERS_SH_BIN="$sh_bin"
+    export TEST_INSTALL_HELPERS_MARKER="$marker"
+
+    cat > "$safe_sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'safe-sudo:%s\n' "$*"
+EOF
+    chmod +x "$safe_sudo"
+
+    # shellcheck source=scripts/lib/install_helpers.sh
+    source "$install_helpers"
+
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+
+    _acfs_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    _acfs_getent_passwd_entry() {
+        if [[ "${1:-}" == "acfsuser" ]]; then
+            printf 'acfsuser:x:1000:1000::%s:/bin/bash\n' "$TEST_INSTALL_HELPERS_TARGET_HOME"
+            return 0
+        fi
+        return 1
+    }
+
+    _acfs_system_binary_path() {
+        case "${1:-}" in
+            env) printf '%s\n' "$TEST_INSTALL_HELPERS_ENV_BIN" ;;
+            bash) printf '%s\n' "$TEST_INSTALL_HELPERS_BASH_BIN" ;;
+            sh) printf '%s\n' "$TEST_INSTALL_HELPERS_SH_BIN" ;;
+            sudo) printf '%s\n' "$TEST_INSTALL_HELPERS_SAFE_SUDO" ;;
+            runuser|su) return 1 ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+
+    env() {
+        printf 'env\n' > "$TEST_INSTALL_HELPERS_MARKER"
+        return 99
+    }
+    bash() {
+        printf 'bash\n' > "$TEST_INSTALL_HELPERS_MARKER"
+        return 99
+    }
+    sh() {
+        printf 'sh\n' > "$TEST_INSTALL_HELPERS_MARKER"
+        return 99
+    }
+    sudo() {
+        printf 'sudo\n' > "$TEST_INSTALL_HELPERS_MARKER"
+        return 99
+    }
+    runuser() {
+        printf 'runuser\n' > "$TEST_INSTALL_HELPERS_MARKER"
+        return 99
+    }
+    su() {
+        printf 'su\n' > "$TEST_INSTALL_HELPERS_MARKER"
+        return 99
+    }
+
+    export TARGET_USER="acfsuser"
+    export TARGET_HOME="$target_home"
+    export ACFS_BIN_DIR="$target_home/.local/bin"
+
+    run run_as_target true
+    assert_success
+    assert_output --partial "safe-sudo:"
+    [[ ! -e "$marker" ]] || fail "function-poisoned helper executed: $(<"$marker")"
+}
+
+@test "install.sh run_as_target normalizes env/bash infrastructure argv" {
+    local installer="$PROJECT_ROOT/install.sh"
+    local target_home
+    local fake_env
+    local fake_bash
+    local marker
+    local env_bin
+    local bash_bin
+    local sh_bin
+
+    target_home="$(create_temp_dir)"
+    fake_env="$target_home/.local/bin/env"
+    fake_bash="$target_home/.local/bin/bash"
+    marker="$target_home/poisoned"
+    env_bin="$(command -v env)"
+    bash_bin="$(command -v bash)"
+    sh_bin="$(command -v sh)"
+    mkdir -p "$(dirname "$fake_bash")"
+    export TEST_INSTALL_SH_TARGET_HOME="$target_home"
+    export TEST_INSTALL_SH_MARKER="$marker"
+    export TEST_INSTALL_SH_ENV_BIN="$env_bin"
+    export TEST_INSTALL_SH_BASH_BIN="$bash_bin"
+    export TEST_INSTALL_SH_SH_BIN="$sh_bin"
+
+    cat > "$fake_env" <<'EOF'
+#!/bin/sh
+printf 'fake-env\n' > "$TEST_INSTALL_SH_MARKER"
+exit 99
+EOF
+    chmod +x "$fake_env"
+
+    cat > "$fake_bash" <<'EOF'
+#!/usr/bin/env bash
+printf 'fake-bash\n' > "$TEST_INSTALL_SH_MARKER"
+exit 99
+EOF
+    chmod +x "$fake_bash"
+
+    eval "$(sed -n '/^run_as_target()/,/^}$/p' "$installer")"
+
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+
+    acfs_early_system_binary_path() {
+        case "${1:-}" in
+            env) printf '%s\n' "$TEST_INSTALL_SH_ENV_BIN" ;;
+            bash) printf '%s\n' "$TEST_INSTALL_SH_BASH_BIN" ;;
+            sh) printf '%s\n' "$TEST_INSTALL_SH_SH_BIN" ;;
+            sudo|runuser|su) return 1 ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+
+    acfs_early_resolve_current_user() {
+        printf 'calleruser\n'
+    }
+
+    acfs_early_getent_passwd_entry() {
+        if [[ "${1:-}" == "calleruser" ]]; then
+            printf 'calleruser:x:1000:1000::%s:/bin/bash\n' "$TEST_INSTALL_SH_TARGET_HOME"
+            return 0
+        fi
+        return 1
+    }
+
+    acfs_home_for_user() {
+        if [[ "${1:-}" == "calleruser" ]]; then
+            printf '%s\n' "$TEST_INSTALL_SH_TARGET_HOME"
+            return 0
+        fi
+        return 1
+    }
+
+    env() {
+        printf 'env\n' > "$TEST_INSTALL_SH_MARKER"
+        return 99
+    }
+    bash() {
+        printf 'bash\n' > "$TEST_INSTALL_SH_MARKER"
+        return 99
+    }
+    sh() {
+        printf 'sh\n' > "$TEST_INSTALL_SH_MARKER"
+        return 99
+    }
+
+    export TARGET_USER="calleruser"
+    export TARGET_HOME="$target_home"
+    export HOME="$target_home"
+    export ACFS_BIN_DIR="$target_home/.local/bin"
+    export PATH="$target_home/.local/bin:$PATH"
+
+    run run_as_target bash -c 'printf direct'
+    assert_success
+    assert_output "direct"
+    [[ ! -e "$marker" ]] || fail "function or PATH-poisoned helper executed: $(<"$marker")"
+
+    run run_as_target env TEST_INSTALL_SH_FLAG=ok bash -c 'printf "%s" "$TEST_INSTALL_SH_FLAG"'
+    assert_success
+    assert_output "ok"
+    [[ ! -e "$marker" ]] || fail "function or PATH-poisoned helper executed: $(<"$marker")"
+}
+
+@test "install.sh sudo resolver ignores bare SUDO and function-poisoned sudo" {
+    local installer="$PROJECT_ROOT/install.sh"
+    local safe_sudo
+    local marker
+
+    safe_sudo="$BATS_TEST_TMPDIR/safe-sudo"
+    marker="$BATS_TEST_TMPDIR/poisoned"
+    printf '#!/bin/sh\nexit 0\n' > "$safe_sudo"
+    chmod +x "$safe_sudo"
+    export TEST_INSTALL_SH_SAFE_SUDO="$safe_sudo"
+    export TEST_INSTALL_SH_MARKER="$marker"
+    export SUDO="sudo"
+
+    eval "$(sed -n '/^acfs_early_sudo_binary_path()/,/^}/p' "$installer")"
+
+    acfs_early_system_binary_path() {
+        case "${1:-}" in
+            sudo) printf '%s\n' "$TEST_INSTALL_SH_SAFE_SUDO" ;;
+            *) return 1 ;;
+        esac
+    }
+
+    sudo() {
+        printf 'sudo\n' > "$TEST_INSTALL_SH_MARKER"
+        return 99
+    }
+
+    run acfs_early_sudo_binary_path
+    assert_success
+    assert_output "$safe_sudo"
+    [[ ! -e "$marker" ]] || fail "function-poisoned sudo executed: $(<"$marker")"
+}
+
+@test "install.sh install_asset_from_path uses resolved sudo and coreutils argv" {
+    [[ $EUID -ne 0 ]] || skip "sudo branch requires non-root test user"
+
+    local installer="$PROJECT_ROOT/install.sh"
+    local src_path
+    local parent_dir
+    local dest_path
+    local safe_sudo
+    local sudo_log
+    local marker
+    local mkdir_bin
+    local cp_bin
+
+    src_path="$BATS_TEST_TMPDIR/source.txt"
+    parent_dir="$BATS_TEST_TMPDIR/protected-parent"
+    dest_path="$parent_dir/nested/dest.txt"
+    safe_sudo="$BATS_TEST_TMPDIR/safe-sudo"
+    sudo_log="$BATS_TEST_TMPDIR/sudo.log"
+    marker="$BATS_TEST_TMPDIR/poisoned"
+    mkdir_bin="$(command -v mkdir)"
+    cp_bin="$(command -v cp)"
+
+    printf 'payload\n' > "$src_path"
+    mkdir -p "$parent_dir"
+    chmod u-w "$parent_dir"
+    trap 'chmod u+w "${TEST_INSTALL_SH_PARENT:-}" 2>/dev/null || true' RETURN
+
+    export TEST_INSTALL_SH_PARENT="$parent_dir"
+    export TEST_INSTALL_SH_SAFE_SUDO="$safe_sudo"
+    export TEST_INSTALL_SH_SUDO_LOG="$sudo_log"
+    export TEST_INSTALL_SH_MARKER="$marker"
+    export TEST_INSTALL_SH_MKDIR_BIN="$mkdir_bin"
+    export TEST_INSTALL_SH_CP_BIN="$cp_bin"
+
+    cat > "$safe_sudo" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_INSTALL_SH_SUDO_LOG"
+case "${1:-}" in
+    "$TEST_INSTALL_SH_MKDIR_BIN")
+        shift
+        chmod u+w "$TEST_INSTALL_SH_PARENT"
+        "$TEST_INSTALL_SH_MKDIR_BIN" "$@"
+        chmod u-w "$TEST_INSTALL_SH_PARENT"
+        ;;
+    "$TEST_INSTALL_SH_CP_BIN")
+        shift
+        "$TEST_INSTALL_SH_CP_BIN" "$@"
+        ;;
+    *)
+        exit 97
+        ;;
+esac
+EOF
+    chmod +x "$safe_sudo"
+
+    eval "$(sed -n '/^install_asset_from_path()/,/^}$/p' "$installer")"
+
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+
+    acfs_early_sudo_binary_path() {
+        printf '%s\n' "$TEST_INSTALL_SH_SAFE_SUDO"
+    }
+
+    acfs_early_system_binary_path() {
+        case "${1:-}" in
+            mkdir) printf '%s\n' "$TEST_INSTALL_SH_MKDIR_BIN" ;;
+            cp) printf '%s\n' "$TEST_INSTALL_SH_CP_BIN" ;;
+            *) command -v -- "${1:-}" 2>/dev/null || return 1 ;;
+        esac
+    }
+
+    sudo() {
+        printf 'sudo\n' > "$TEST_INSTALL_SH_MARKER"
+        return 99
+    }
+    mkdir() {
+        printf 'mkdir\n' > "$TEST_INSTALL_SH_MARKER"
+        return 99
+    }
+    cp() {
+        printf 'cp\n' > "$TEST_INSTALL_SH_MARKER"
+        return 99
+    }
+
+    run install_asset_from_path "$src_path" "$dest_path"
+    assert_success
+    run cat "$dest_path"
+    assert_success
+    assert_output "payload"
+    run grep -F "$safe_sudo" "$sudo_log"
+    assert_failure
+    run grep -F "$mkdir_bin -p $parent_dir/nested" "$sudo_log"
+    assert_success
+    run grep -F "$cp_bin $src_path $dest_path" "$sudo_log"
+    assert_success
+    [[ ! -e "$marker" ]] || fail "function-poisoned helper executed: $(<"$marker")"
 }
 
 @test "install.sh: target install checks avoid inherited PATH leaks" {
@@ -5697,6 +6785,9 @@ EOF
 
     run grep -F 'resolved_target_home="$(_acfs_resolve_target_home "$target_user" "$explicit_target_home" || true)"' "$generator"
     assert_success
+
+    run grep -F 'target_home="$explicit_target_home"' "$generator"
+    assert_failure
 
     run grep -F '{ [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }' "$generator"
     assert_success
@@ -6475,6 +7566,56 @@ EOF
     assert_success
 }
 
+@test "doctor.sh: manifest check runner ignores poisoned env and bash functions" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local target_home="$BATS_TEST_TMPDIR/doctor-target-home"
+    local output_file="$BATS_TEST_TMPDIR/doctor-manifest-check.out"
+    local marker="$BATS_TEST_TMPDIR/poisoned-command.marker"
+    local output_q
+
+    mkdir -p "$target_home"
+    printf -v output_q '%q' "$output_file"
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_sanitize_abs_nonroot_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_system_binary_path()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_acfs_doctor_passwd_home_from_entry()/,/^}$/p' "$doctor_lib")"
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_doctor_run_manifest_check()/,/^}$/p' "$doctor_lib")"
+
+    _acfs_doctor_getent_passwd_entry() {
+        printf 'tester:x:1000:1000::%s:/bin/bash\n' "$target_home"
+    }
+    _acfs_doctor_resolve_current_user() {
+        printf 'tester\n'
+    }
+    _acfs_doctor_validate_bin_dir_for_home() {
+        return 1
+    }
+    log_error() {
+        printf '%s\n' "$*" >&2
+    }
+    env() {
+        printf 'env\n' > "$marker"
+        return 127
+    }
+    bash() {
+        printf 'bash\n' > "$marker"
+        return 127
+    }
+
+    TARGET_USER="tester"
+    TARGET_HOME="$target_home"
+    ACFS_BIN_DIR=""
+
+    run _doctor_run_manifest_check target_user "printf '%s\n' \"\$TARGET_USER:\$TARGET_HOME\" > $output_q"
+    assert_success
+    [[ ! -e "$marker" ]] || fail "poisoned shell function executed: $(<"$marker")"
+    [[ "$(<"$output_file")" == "tester:$target_home" ]] || fail "manifest check did not run in target context"
+}
+
 @test "doctor.sh: fix suggestions do not emit malicious pinned refs from state" {
     local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
     local fixture_state_file="$BATS_TEST_TMPDIR/doctor-state.json"
@@ -6561,6 +7702,22 @@ EOF
     }
 }
 
+@test "doctor.sh: explicit unresolved TARGET_USER is not replaced by installed state" {
+    local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
+    local stale_home
+
+    stale_home="$(create_temp_dir)"
+
+    run env \
+        TARGET_USER="missinguser" \
+        TARGET_HOME="$stale_home" \
+        HOME="$stale_home" \
+        PATH="/usr/bin:/bin" \
+        bash -c 'source <(sed "$ d" "$1"); printf "TARGET_USER=%s TARGET_HOME=%s ACFS_HOME=%s\n" "${TARGET_USER:-}" "${TARGET_HOME:-}" "${ACFS_HOME:-}"' _ "$doctor_lib"
+    assert_success
+    assert_output "TARGET_USER=missinguser TARGET_HOME= ACFS_HOME="
+}
+
 @test "doctor manifest checks and fresh-vps heuristic repair stale TARGET_HOME" {
     local doctor_lib="$PROJECT_ROOT/scripts/lib/doctor.sh"
     local os_detect_lib="$PROJECT_ROOT/scripts/lib/os_detect.sh"
@@ -6575,8 +7732,8 @@ EOF
     assert_success
     run grep -F 'target_home="${resolved_target_home%/}"' "$doctor_lib"
     assert_success
-    run grep -F 'target_home="$explicit_target_home"' "$doctor_lib"
-    assert_success
+    run grep -E '^[[:space:]]+target_home="\$explicit_target_home"' "$doctor_lib"
+    assert_failure
     run grep -F '{ [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }' "$doctor_lib"
     assert_success
     run grep -F 'target_home="${target_home%/}"' "$doctor_lib"
@@ -6594,8 +7751,10 @@ EOF
     assert_success
     run grep -F '{ [[ -z "$explicit_target_home" ]] || [[ "$current_home" == "$explicit_target_home" ]]; }' "$os_detect_lib"
     assert_success
-    run grep -F 'target_home="$explicit_target_home"' "$os_detect_lib"
+    run grep -F 'resolved_target_home="$explicit_target_home"' "$os_detect_lib"
     assert_success
+    run grep -E '^[[:space:]]+target_home="\$explicit_target_home"' "$os_detect_lib"
+    assert_failure
     run grep -E '^[[:space:]]+target_home="\$\{TARGET_HOME:-\}"' "$os_detect_lib"
     assert_failure
 }
@@ -6608,6 +7767,7 @@ EOF
     target_home="$(create_temp_dir)"
     stale_home="$(create_temp_dir)"
 
+    eval "$(sed -n '/^_acfs_doctor_system_binary_path()/,/^}$/p' "$doctor_lib")"
     eval "$(sed -n '/^_doctor_run_manifest_check()/,/^}/p' "$doctor_lib")"
 
     _acfs_doctor_sanitize_abs_nonroot_path() {
@@ -6781,6 +7941,49 @@ status|$PROJECT_ROOT/scripts/lib/status.sh|_status_prepare_context|TARGET_HOME
 info|$PROJECT_ROOT/scripts/lib/info.sh|info_prepare_context|TARGET_HOME
 export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|prepare_target_context|TARGET_HOME
 smoke|$PROJECT_ROOT/scripts/lib/smoke_test.sh|:|_SMOKE_TARGET_HOME
+EOF
+
+    if [[ -n "$failures" ]]; then
+        printf '%s' "$failures" >&2
+        return 1
+    fi
+}
+
+@test "read-only explicit target resolvers fail closed for unresolved target user with stale TARGET_HOME" {
+    local stale_home
+    local label
+    local script
+    local func
+    local failures=""
+
+    stale_home="$(create_temp_dir)"
+
+    while IFS='|' read -r label script func; do
+        [[ -n "$label" ]] || continue
+        run env \
+            TARGET_USER="missinguser" \
+            TARGET_HOME="$stale_home" \
+            HOME="$stale_home" \
+            PATH="/usr/bin:/bin" \
+            bash -c '
+                set -euo pipefail
+                source "$1" >/dev/null
+                "$2"
+            ' _ "$script" "$func"
+
+        if [[ "$status" -eq 0 || -n "$output" ]]; then
+            printf -v failures '%s%s: status=%s output=%s\n' "$failures" "$label" "$status" "$output"
+        fi
+    done <<EOF
+status|$PROJECT_ROOT/scripts/lib/status.sh|_status_resolve_explicit_target_home
+support|$PROJECT_ROOT/scripts/lib/support.sh|support_resolve_explicit_target_home
+cheatsheet|$PROJECT_ROOT/scripts/lib/cheatsheet.sh|cheatsheet_resolve_explicit_target_home
+continue|$PROJECT_ROOT/scripts/lib/continue.sh|continue_resolve_explicit_target_home
+changelog|$PROJECT_ROOT/scripts/lib/changelog.sh|changelog_resolve_explicit_target_home
+info|$PROJECT_ROOT/scripts/lib/info.sh|info_resolve_explicit_target_home
+dashboard|$PROJECT_ROOT/scripts/lib/dashboard.sh|dashboard_resolve_explicit_target_home
+export-config|$PROJECT_ROOT/scripts/lib/export-config.sh|resolve_explicit_target_home
+onboard|$PROJECT_ROOT/packages/onboard/onboard.sh|onboard_resolve_explicit_runtime_home
 EOF
 
     if [[ -n "$failures" ]]; then
@@ -7263,16 +8466,17 @@ EOF
     export TARGET_USER="acfstestuser"
     export TARGET_HOME="$target_home"
     export ACFS_BIN_DIR="$stale_home/.local/bin"
+    export TEST_UPDATE_TARGET_HOME="$target_home"
     unset ACFS_STATE_FILE
     unset ACFS_HOME
 
     update_getent_passwd_entry() {
         if [[ "${1:-}" == "acfstestuser" ]]; then
-            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$TEST_UPDATE_TARGET_HOME"
             return 0
         fi
         if [[ -z "${1:-}" ]]; then
-            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$TEST_UPDATE_TARGET_HOME"
             printf 'other:x:1001:1001::%s:/bin/bash\n' "$stale_home"
             return 0
         fi
@@ -7298,6 +8502,7 @@ EOF
     export TARGET_USER="acfstestuser"
     export TARGET_HOME="$target_home"
     export ACFS_BIN_DIR="$stale_home/.local/bin"
+    export TEST_UPDATE_TARGET_HOME="$target_home"
     unset ACFS_STATE_FILE
     unset ACFS_HOME
 
@@ -7315,11 +8520,11 @@ EOF
 
     update_getent_passwd_entry() {
         if [[ "${1:-}" == "acfstestuser" ]]; then
-            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$TEST_UPDATE_TARGET_HOME"
             return 0
         fi
         if [[ -z "${1:-}" ]]; then
-            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$TEST_UPDATE_TARGET_HOME"
             printf 'other:x:1001:1001::%s:/bin/bash\n' "$stale_home"
             return 0
         fi
@@ -7396,6 +8601,7 @@ EOF
     export TARGET_HOME="$target_home"
     export ACFS_BIN_DIR="$stale_home/.local/bin"
     export ACFS_HOME="$current_home/missing-acfs"
+    export TEST_UPDATE_TARGET_HOME="$target_home"
     unset ACFS_REPO_ROOT
     export CHECKSUMS_LOCAL="$current_home/checksums.yaml"
     UPDATE_SECURITY_READY=false
@@ -7406,11 +8612,11 @@ EOF
 
     update_getent_passwd_entry() {
         if [[ "${1:-}" == "acfstestuser" ]]; then
-            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$TEST_UPDATE_TARGET_HOME"
             return 0
         fi
         if [[ -z "${1:-}" ]]; then
-            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$target_home"
+            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$TEST_UPDATE_TARGET_HOME"
             printf 'other:x:1001:1001::%s:/bin/bash\n' "$stale_home"
             return 0
         fi

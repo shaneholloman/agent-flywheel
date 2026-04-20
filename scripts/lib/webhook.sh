@@ -159,12 +159,12 @@ webhook_resolve_current_home() {
 
 webhook_runtime_home() {
     local current_user=""
+    local explicit_target_home=""
     local passwd_entry=""
     local passwd_home=""
-    local target_home=""
     local target_user="${TARGET_USER:-}"
 
-    target_home="$(webhook_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    explicit_target_home="$(webhook_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
 
     if [[ -n "$target_user" ]]; then
         [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
@@ -189,8 +189,8 @@ webhook_runtime_home() {
         fi
     fi
 
-    if [[ -n "$target_home" ]]; then
-        printf '%s\n' "$target_home"
+    if [[ -n "$explicit_target_home" ]]; then
+        printf '%s\n' "$explicit_target_home"
         return 0
     fi
 

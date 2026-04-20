@@ -32,20 +32,20 @@ jobs:
           echo "Size: $(stat -c%s "${{ env.INSTALLER_PATH }}") bytes"
           echo "SHA256: $(sha256sum "${{ env.INSTALLER_PATH }}" | cut -d' ' -f1)"
 
-      - name: Check ACFS_NOTIFY_TOKEN secret
+      - name: Check ACFS_REPO_DISPATCH_TOKEN secret
         env:
-          TOKEN: ${{ secrets.ACFS_NOTIFY_TOKEN }}
+          TOKEN: ${{ secrets.ACFS_REPO_DISPATCH_TOKEN }}
         run: |
           if [[ -z "$TOKEN" ]]; then
-            echo "::error::ACFS_NOTIFY_TOKEN secret is not set"
-            echo "Go to Settings > Secrets > Actions and create ACFS_NOTIFY_TOKEN"
+            echo "::error::ACFS_REPO_DISPATCH_TOKEN secret is not set"
+            echo "Go to Settings > Secrets > Actions and create ACFS_REPO_DISPATCH_TOKEN"
             exit 1
           fi
-          echo "ACFS_NOTIFY_TOKEN secret is configured"
+          echo "ACFS_REPO_DISPATCH_TOKEN secret is configured"
 
       - name: Validate token has repo scope
         env:
-          GH_TOKEN: ${{ secrets.ACFS_NOTIFY_TOKEN }}
+          GH_TOKEN: ${{ secrets.ACFS_REPO_DISPATCH_TOKEN }}
         run: |
           if ! gh api /repos/Dicklesworthstone/agentic_coding_flywheel_setup > /dev/null 2>&1; then
             echo "::error::Token does not have access to ACFS repository"
@@ -95,7 +95,7 @@ jobs:
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Installer exists | Pass |" >> $GITHUB_STEP_SUMMARY
-          echo "| ACFS_NOTIFY_TOKEN | Pass |" >> $GITHUB_STEP_SUMMARY
+          echo "| ACFS_REPO_DISPATCH_TOKEN | Pass |" >> $GITHUB_STEP_SUMMARY
           echo "| Token has access | Pass |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "All validation checks passed" >> $GITHUB_STEP_SUMMARY

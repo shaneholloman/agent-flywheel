@@ -105,12 +105,12 @@ teardown() {
     export TARGET_HOME=""
     export HOME="/tmp/not-the-target-home"
 
-    getent() {
-        if [[ "$1" == "passwd" && "$2" == "dummy" ]]; then
+    state_getent_passwd_entry() {
+        if [[ "${1:-}" == "dummy" ]]; then
             printf "dummy:x:1000:1000::%s:/bin/bash\n" "$stub_home"
             return 0
         fi
-        command getent "$@"
+        return 1
     }
 
     run state_get_file
@@ -128,12 +128,12 @@ teardown() {
     export TARGET_HOME=""
     export HOME="/tmp/not-the-target-home"
 
-    getent() {
-        if [[ "$1" == "passwd" && "$2" == "dummy" ]]; then
+    state_getent_passwd_entry() {
+        if [[ "${1:-}" == "dummy" ]]; then
             printf "dummy:x:1000:1000::%s:/bin/bash\n" "$stub_home"
             return 0
         fi
-        command getent "$@"
+        return 1
     }
 
     run state_init
@@ -153,12 +153,12 @@ teardown() {
     export TARGET_HOME=""
     export HOME="/tmp/not-the-target-home"
 
-    getent() {
-        if [[ "$1" == "passwd" && "$2" == "dummy" ]]; then
+    state_getent_passwd_entry() {
+        if [[ "${1:-}" == "dummy" ]]; then
             printf "dummy:x:1000:1000::%s:/bin/bash\n" "$stub_home"
             return 0
         fi
-        command getent "$@"
+        return 1
     }
 
     run state_init
@@ -179,12 +179,12 @@ teardown() {
     export TARGET_HOME=""
     export HOME="/tmp/not-the-target-home"
 
-    getent() {
-        if [[ "$1" == "passwd" && "$2" == "dummy" ]]; then
+    state_getent_passwd_entry() {
+        if [[ "${1:-}" == "dummy" ]]; then
             printf "dummy:x:1000:1000::%s:/bin/bash\n" "$stub_home"
             return 0
         fi
-        command getent "$@"
+        return 1
     }
 
     mkdir -p "$stub_home/.acfs"
@@ -292,5 +292,10 @@ teardown() {
     }
 
     run state_resolve_target_home
+    assert_failure
+}
+
+@test "state.sh: ownership target-home probes are best-effort under set -e" {
+    run grep -n 'target_home="$(state_resolve_target_home)"' "$PROJECT_ROOT/scripts/lib/state.sh"
     assert_failure
 }

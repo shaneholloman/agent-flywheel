@@ -36,6 +36,8 @@ _acfs_doctor_system_binary_path() {
     [[ -n "$name" ]] || return 1
 
     for candidate in \
+        "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \
@@ -212,6 +214,10 @@ elif [[ -n "$_acfs_doctor_current_home" ]]; then
     export HOME
 fi
 _ACFS_DOCTOR_ENV_TARGET_USER="${TARGET_USER:-}"
+_ACFS_DOCTOR_ENV_TARGET_USER_WAS_SET=false
+if [[ -n "$_ACFS_DOCTOR_ENV_TARGET_USER" ]]; then
+    _ACFS_DOCTOR_ENV_TARGET_USER_WAS_SET=true
+fi
 _ACFS_DOCTOR_ENV_TARGET_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
 TARGET_HOME="$_ACFS_DOCTOR_ENV_TARGET_HOME"
 ACFS_HOME="$(_acfs_doctor_sanitize_abs_nonroot_path "${ACFS_HOME:-}" 2>/dev/null || true)"
@@ -565,16 +571,21 @@ if [[ -n "${_acfs_doctor_current_home:-}" ]]; then
 fi
 
 TARGET_USER=""
-for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
-    [[ -f "$_acfs_doctor_state_file" ]] || continue
-    if command -v jq &>/dev/null; then
-        TARGET_USER="$(jq -r '.target_user // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
-    fi
-    if [[ -z "${TARGET_USER:-}" ]]; then
-        TARGET_USER="$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
-    fi
-    [[ -n "${TARGET_USER:-}" ]] && break
-done
+if [[ "$_ACFS_DOCTOR_ENV_TARGET_USER_WAS_SET" == true ]]; then
+    TARGET_USER="$_ACFS_DOCTOR_ENV_TARGET_USER"
+fi
+if [[ -z "${TARGET_USER:-}" ]]; then
+    for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
+        [[ -f "$_acfs_doctor_state_file" ]] || continue
+        if command -v jq &>/dev/null; then
+            TARGET_USER="$(jq -r '.target_user // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
+        fi
+        if [[ -z "${TARGET_USER:-}" ]]; then
+            TARGET_USER="$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+        fi
+        [[ -n "${TARGET_USER:-}" ]] && break
+    done
+fi
 if [[ -z "${TARGET_USER:-}" ]]; then
     for _acfs_doctor_state_file in "${_acfs_doctor_ambient_state_files[@]}"; do
         [[ -f "$_acfs_doctor_state_file" ]] || continue
@@ -587,9 +598,6 @@ if [[ -z "${TARGET_USER:-}" ]]; then
         [[ -n "${TARGET_USER:-}" ]] && break
     done
 fi
-if [[ -z "${TARGET_USER:-}" ]] && [[ -n "${_ACFS_DOCTOR_ENV_TARGET_USER:-}" ]]; then
-    TARGET_USER="$_ACFS_DOCTOR_ENV_TARGET_USER"
-fi
 if [[ -z "${TARGET_USER:-}" ]]; then
     _acfs_current_user="$(_acfs_doctor_resolve_current_user 2>/dev/null || true)"
     if [[ -n "$_acfs_current_user" ]] && [[ "$_acfs_current_user" != "root" ]]; then
@@ -597,36 +605,19 @@ if [[ -z "${TARGET_USER:-}" ]]; then
     fi
     unset _acfs_current_user
 fi
-TARGET_USER="${TARGET_USER:-ubuntu}"
-if [[ ! "$TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+if [[ -z "${TARGET_USER:-}" ]] && [[ "$_ACFS_DOCTOR_ENV_TARGET_USER_WAS_SET" != true ]]; then
     TARGET_USER="ubuntu"
+fi
+if [[ ! "$TARGET_USER" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+    if [[ "$_ACFS_DOCTOR_ENV_TARGET_USER_WAS_SET" != true ]]; then
+        TARGET_USER="ubuntu"
+    fi
 fi
 
 TARGET_HOME=""
-for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
-    [[ -f "$_acfs_doctor_state_file" ]] || continue
-    if command -v jq &>/dev/null; then
-        TARGET_HOME="$(jq -r '.target_home // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
-    fi
-    if [[ -z "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="$(sed -n 's/.*"target_home"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
-    fi
-    if [[ -n "${TARGET_HOME:-}" ]]; then
-        TARGET_HOME="$(_acfs_doctor_existing_abs_nonroot_dir "${TARGET_HOME%/}" 2>/dev/null || true)"
-    fi
-    [[ -n "${TARGET_HOME:-}" ]] && break
-done
-if [[ -z "${TARGET_HOME:-}" ]]; then
-    _acfs_doctor_ambient_target_user=""
-    for _acfs_doctor_state_file in "${_acfs_doctor_ambient_state_files[@]}"; do
+if [[ "$_ACFS_DOCTOR_ENV_TARGET_USER_WAS_SET" != true ]]; then
+    for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
         [[ -f "$_acfs_doctor_state_file" ]] || continue
-        if command -v jq &>/dev/null; then
-            _acfs_doctor_ambient_target_user="$(jq -r '.target_user // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
-        fi
-        if [[ -z "${_acfs_doctor_ambient_target_user:-}" ]]; then
-            _acfs_doctor_ambient_target_user="$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
-        fi
-        [[ "${_acfs_doctor_ambient_target_user:-}" == "$TARGET_USER" ]] || continue
         if command -v jq &>/dev/null; then
             TARGET_HOME="$(jq -r '.target_home // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
         fi
@@ -638,7 +629,30 @@ if [[ -z "${TARGET_HOME:-}" ]]; then
         fi
         [[ -n "${TARGET_HOME:-}" ]] && break
     done
-    unset _acfs_doctor_ambient_target_user
+    if [[ -z "${TARGET_HOME:-}" ]]; then
+        _acfs_doctor_ambient_target_user=""
+        for _acfs_doctor_state_file in "${_acfs_doctor_ambient_state_files[@]}"; do
+            [[ -f "$_acfs_doctor_state_file" ]] || continue
+            if command -v jq &>/dev/null; then
+                _acfs_doctor_ambient_target_user="$(jq -r '.target_user // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
+            fi
+            if [[ -z "${_acfs_doctor_ambient_target_user:-}" ]]; then
+                _acfs_doctor_ambient_target_user="$(sed -n 's/.*"target_user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+            fi
+            [[ "${_acfs_doctor_ambient_target_user:-}" == "$TARGET_USER" ]] || continue
+            if command -v jq &>/dev/null; then
+                TARGET_HOME="$(jq -r '.target_home // empty' "$_acfs_doctor_state_file" 2>/dev/null || true)"
+            fi
+            if [[ -z "${TARGET_HOME:-}" ]]; then
+                TARGET_HOME="$(sed -n 's/.*"target_home"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_acfs_doctor_state_file" | head -n 1)"
+            fi
+            if [[ -n "${TARGET_HOME:-}" ]]; then
+                TARGET_HOME="$(_acfs_doctor_existing_abs_nonroot_dir "${TARGET_HOME%/}" 2>/dev/null || true)"
+            fi
+            [[ -n "${TARGET_HOME:-}" ]] && break
+        done
+        unset _acfs_doctor_ambient_target_user
+    fi
 fi
 for _acfs_doctor_state_file in "${_acfs_doctor_state_files[@]}"; do
     [[ -f "$_acfs_doctor_state_file" ]] || continue
@@ -696,7 +710,7 @@ if [[ -n "$_acfs_doctor_resolved_target_home" ]]; then
 fi
 unset _acfs_doctor_resolved_target_home
 
-if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "${_ACFS_DOCTOR_ENV_TARGET_HOME:-}" ]]; then
+if [[ -z "${TARGET_HOME:-}" ]] && [[ -n "${_ACFS_DOCTOR_ENV_TARGET_HOME:-}" ]] && [[ "$_ACFS_DOCTOR_ENV_TARGET_USER_WAS_SET" != true ]]; then
     TARGET_HOME="$_ACFS_DOCTOR_ENV_TARGET_HOME"
 fi
 if [[ -n "${TARGET_HOME:-}" ]] && { [[ "$TARGET_HOME" != /* ]] || [[ "$TARGET_HOME" == "/" ]]; }; then
@@ -737,6 +751,7 @@ unset _acfs_doctor_installed_state
 unset _ACFS_DOCTOR_ENV_BIN_DIR
 unset _ACFS_DOCTOR_ENV_TARGET_HOME
 unset _ACFS_DOCTOR_ENV_TARGET_USER
+unset _ACFS_DOCTOR_ENV_TARGET_USER_WAS_SET
 
 ensure_path
 if command -v gum &>/dev/null; then
@@ -1006,6 +1021,20 @@ print_acfs_help() {
     echo "  support-bundle      Collect diagnostic data for troubleshooting"
     echo "  version             Show ACFS version"
     echo "  help                Show this help message"
+}
+
+_acfs_doctor_exec_bash_script() {
+    local script_path="${1:-}"
+    local bash_bin=""
+    shift || true
+
+    bash_bin="$(_acfs_doctor_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$bash_bin" ]]; then
+        echo "Error: bash not found" >&2
+        return 1
+    fi
+
+    exec "$bash_bin" "$script_path" "$@"
 }
 
 resolve_session_lib() {
@@ -1781,6 +1810,9 @@ check_identity() {
 
     # Check user
     local user
+    local sudo_bin=""
+    local id_bin=""
+    local grep_bin=""
     user="$(_acfs_doctor_resolve_current_user 2>/dev/null || true)"
     if [[ "$user" == "$TARGET_USER" ]]; then
         check "identity.user_is_ubuntu" "Logged in as $TARGET_USER" "pass" "whoami=$user"
@@ -1789,14 +1821,17 @@ check_identity() {
     fi
 
     # Check sudo configuration (passwordless only required in vibe mode)
+    sudo_bin="$(_acfs_doctor_system_binary_path sudo 2>/dev/null || true)"
     if [[ "${ACFS_MODE:-vibe}" == "vibe" ]]; then
-        if sudo -n true 2>/dev/null; then
+        if [[ -n "$sudo_bin" ]] && "$sudo_bin" -n true 2>/dev/null; then
             check "identity.passwordless_sudo" "Passwordless sudo (vibe mode)" "pass"
         else
             check "identity.passwordless_sudo" "Passwordless sudo (vibe mode)" "fail" "requires password" "Re-run ACFS installer with --mode vibe"
         fi
     else
-        if command -v sudo &>/dev/null && id -nG 2>/dev/null | grep -qw sudo; then
+        id_bin="$(_acfs_doctor_system_binary_path id 2>/dev/null || true)"
+        grep_bin="$(_acfs_doctor_system_binary_path grep 2>/dev/null || true)"
+        if [[ -n "$sudo_bin" && -n "$id_bin" && -n "$grep_bin" ]] && "$id_bin" -nG 2>/dev/null | "$grep_bin" -qw sudo; then
             check "identity.sudo" "Sudo available (safe mode)" "pass"
         else
             check "identity.sudo" "Sudo available (safe mode)" "fail" "sudo unavailable" "Ensure ${TARGET_USER} is in the sudo group and sudo is installed"
@@ -2073,9 +2108,13 @@ check_cloud() {
 
     # SSH server installed and running (fixes #161)
     # Fresh installs (WSL, VM, containers) may not have openssh-server
-    if command -v sshd &>/dev/null || [[ -f /etc/ssh/sshd_config ]]; then
-        if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
-            if systemctl is-active --quiet ssh 2>/dev/null || systemctl is-active --quiet sshd 2>/dev/null; then
+    local sshd_bin=""
+    local systemctl_bin=""
+    sshd_bin="$(_acfs_doctor_system_binary_path sshd 2>/dev/null || true)"
+    systemctl_bin="$(_acfs_doctor_system_binary_path systemctl 2>/dev/null || true)"
+    if [[ -n "$sshd_bin" ]] || [[ -f /etc/ssh/sshd_config ]]; then
+        if [[ -n "$systemctl_bin" && -d /run/systemd/system ]]; then
+            if "$systemctl_bin" is-active --quiet ssh 2>/dev/null || "$systemctl_bin" is-active --quiet sshd 2>/dev/null; then
                 check "network.ssh_server" "SSH server" "pass" "installed and running"
             else
                 check "network.ssh_server" "SSH server" "warn" "installed but not running" \
@@ -2203,22 +2242,33 @@ check_stack() {
 
     if am_bin="$(doctor_agent_mail_cli_path 2>/dev/null || true)" && [[ -n "$am_bin" ]]; then
         local am_global_doctor_json am_project_doctor_json am_project_path am_details
+        local curl_bin=""
+        local id_bin=""
+        local systemctl_bin=""
 
         am_version=$(get_version_line "$am_bin")
         am_label="MCP Agent Mail ($am_version)"
+        curl_bin="$(_acfs_doctor_system_binary_path curl 2>/dev/null || true)"
 
-        if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
+        if [[ -z "$curl_bin" ]] || ! "$curl_bin" -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1; then
             check "stack.mcp_agent_mail" "$am_label" "warn" "installed but service is not running" "$am_install_fix"
         elif {
-            local am_runtime_dir="/run/user/$(id -u)"
+            id_bin="$(_acfs_doctor_system_binary_path id 2>/dev/null || true)"
+            systemctl_bin="$(_acfs_doctor_system_binary_path systemctl 2>/dev/null || true)"
+            local am_uid=""
+            local am_runtime_dir=""
+            if [[ -n "$id_bin" ]]; then
+                am_uid="$("$id_bin" -u 2>/dev/null || true)"
+            fi
+            [[ -n "$am_uid" ]] && am_runtime_dir="/run/user/$am_uid"
             if [[ -d "$am_runtime_dir" ]]; then
                 export XDG_RUNTIME_DIR="$am_runtime_dir"
                 if [[ -S "$am_runtime_dir/bus" ]]; then
                     export DBUS_SESSION_BUS_ADDRESS="unix:path=$am_runtime_dir/bus"
                 fi
             fi
-            command -v systemctl &>/dev/null && systemctl --user show-environment >/dev/null 2>&1 && \
-                ! systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1
+            [[ -n "$systemctl_bin" ]] && "$systemctl_bin" --user show-environment >/dev/null 2>&1 && \
+                ! "$systemctl_bin" --user is-active --quiet agent-mail.service >/dev/null 2>&1
         }; then
             check "stack.mcp_agent_mail" "$am_label" "warn" \
                 "HTTP endpoint is healthy but agent-mail.service is inactive; rerun install/update to migrate off the fallback launcher" \
@@ -2385,13 +2435,15 @@ check_stack() {
     # Gracefully handle missing systemd user session (curl|bash installs as
     # root don't have a D-Bus session, so systemctl --user always fails).
     local _nightly_status="unknown"
-    if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
+    local systemctl_bin=""
+    systemctl_bin="$(_acfs_doctor_system_binary_path systemctl 2>/dev/null || true)"
+    if [[ -n "$systemctl_bin" && -d /run/systemd/system ]]; then
         # Try to access the user session; if no D-Bus, fall back to checking
         # the unit file exists on disk instead.
         local _target_home=""
         _target_home="$(doctor_runtime_home)"
         local _nightly_unit_file="${_target_home}/.config/systemd/user/acfs-nightly-update.timer"
-        if systemctl --user is-enabled acfs-nightly-update.timer &>/dev/null 2>&1; then
+        if "$systemctl_bin" --user is-enabled acfs-nightly-update.timer &>/dev/null 2>&1; then
             _nightly_status="enabled"
         elif [[ -f "$_nightly_unit_file" ]]; then
             _nightly_status="unit_exists"
@@ -2606,6 +2658,11 @@ _doctor_run_manifest_check() {
     local resolved_target_home=""
     local current_home=""
     local target_path=""
+    local env_bin=""
+    local bash_bin=""
+    local sudo_bin=""
+    local runuser_bin=""
+    local su_bin=""
 
     explicit_target_home="$target_home"
     if [[ -n "$explicit_target_home" ]]; then
@@ -2639,12 +2696,13 @@ _doctor_run_manifest_check() {
         else
             target_home=""
         fi
-    elif [[ -n "$explicit_target_home" ]]; then
-        if [[ "$explicit_target_home" == /* ]] && [[ "$explicit_target_home" != "/" ]]; then
-            target_home="$explicit_target_home"
-        else
-            target_home=""
-        fi
+    fi
+
+    env_bin="$(_acfs_doctor_system_binary_path env 2>/dev/null || true)"
+    bash_bin="$(_acfs_doctor_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$env_bin" || -z "$bash_bin" ]]; then
+        log_error "Unable to locate env/bash for manifest check"
+        return 1
     fi
 
     local system_path_prefix="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
@@ -2693,20 +2751,22 @@ _doctor_run_manifest_check() {
             target_path_prefix=$(IFS=:; echo "${target_path_entries[*]}")
             target_path="$target_path_prefix${PATH:+:$PATH}"
             if [[ "$(_acfs_doctor_resolve_current_user 2>/dev/null || true)" == "$target_user" ]]; then
-                TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
+                "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"
                 return $?
             fi
-            if [[ $EUID -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
-                runuser -u "$target_user" -- env TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
+            runuser_bin="$(_acfs_doctor_system_binary_path runuser 2>/dev/null || true)"
+            if [[ $EUID -eq 0 && -n "$runuser_bin" ]]; then
+                "$runuser_bin" -u "$target_user" -- "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"
                 return $?
             fi
-            if command -v sudo >/dev/null 2>&1; then
-                sudo -n -u "$target_user" env TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
+            sudo_bin="$(_acfs_doctor_system_binary_path sudo 2>/dev/null || true)"
+            if [[ -n "$sudo_bin" ]]; then
+                "$sudo_bin" -n -u "$target_user" "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"
                 return $?
             fi
-            # Absolute fallback
-            if [[ $EUID -eq 0 ]]; then
-                su "$target_user" -c "env TARGET_USER=$(printf '%q' "$target_user") TARGET_HOME=$(printf '%q' "$target_home") HOME=$(printf '%q' "$target_home") PATH=$(printf '%q' "$target_path") bash -o pipefail -c $(printf '%q' "$cmd")"
+            su_bin="$(_acfs_doctor_system_binary_path su 2>/dev/null || true)"
+            if [[ $EUID -eq 0 && -n "$su_bin" ]]; then
+                "$su_bin" "$target_user" -c "$(printf '%q' "$env_bin") TARGET_USER=$(printf '%q' "$target_user") TARGET_HOME=$(printf '%q' "$target_home") HOME=$(printf '%q' "$target_home") PATH=$(printf '%q' "$target_path") $(printf '%q' "$bash_bin") -o pipefail -c $(printf '%q' "$cmd")"
                 return $?
             fi
             return 1
@@ -2714,17 +2774,18 @@ _doctor_run_manifest_check() {
         root)
             if [[ $EUID -eq 0 ]]; then
                 if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-                    TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                    "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"
                 else
-                    TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                    "$env_bin" TARGET_USER="$target_user" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"
                 fi
                 return $?
             fi
-            if command -v sudo >/dev/null 2>&1; then
+            sudo_bin="$(_acfs_doctor_system_binary_path sudo 2>/dev/null || true)"
+            if [[ -n "$sudo_bin" ]]; then
                 if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-                    sudo -n env TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                    "$sudo_bin" -n "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"
                 else
-                    sudo -n env TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                    "$sudo_bin" -n "$env_bin" TARGET_USER="$target_user" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"
                 fi
                 return $?
             fi
@@ -2732,9 +2793,9 @@ _doctor_run_manifest_check() {
             ;;
         current|*)
             if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-                TARGET_USER="$target_user" TARGET_HOME="$target_home" bash -o pipefail -c "$cmd"
+                "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" "$bash_bin" -o pipefail -c "$cmd"
             else
-                TARGET_USER="$target_user" bash -o pipefail -c "$cmd"
+                "$env_bin" TARGET_USER="$target_user" "$bash_bin" -o pipefail -c "$cmd"
             fi
             ;;
     esac
@@ -2944,9 +3005,18 @@ deep_check_optional_probe() {
     local summary=""
     local detail=""
     local last_timeout=false
+    local env_bin=""
+    local bash_bin=""
+
+    env_bin="$(_acfs_doctor_system_binary_path env 2>/dev/null || true)"
+    bash_bin="$(_acfs_doctor_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$env_bin" || -z "$bash_bin" ]]; then
+        check "$id" "$label" "warn" "env/bash unavailable" "$fix"
+        return 0
+    fi
 
     for cmd in "$@"; do
-        output=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$label via $cmd" env HOME="$runtime_home" PATH="$runtime_path" bash -o pipefail -c "$cmd")
+        output=$(run_with_timeout "$DEEP_CHECK_TIMEOUT" "$label via $cmd" "$env_bin" HOME="$runtime_home" PATH="$runtime_path" "$bash_bin" -o pipefail -c "$cmd")
         status=$?
 
         if ((status == 0)); then
@@ -3554,18 +3624,28 @@ check_network_dns() {
     for host in "${hosts[@]}"; do
         # Try multiple resolution methods (dig, host, getent)
         local resolved=false
-        if command -v dig &>/dev/null; then
-            if dig +short +time=5 +tries=1 "$host" 2>/dev/null | grep -qE '^[0-9]'; then
+        local dig_bin=""
+        local host_bin=""
+        local getent_bin=""
+        local timeout_bin=""
+        local grep_bin=""
+        dig_bin="$(_acfs_doctor_system_binary_path dig 2>/dev/null || true)"
+        host_bin="$(_acfs_doctor_system_binary_path host 2>/dev/null || true)"
+        getent_bin="$(_acfs_doctor_system_binary_path getent 2>/dev/null || true)"
+        timeout_bin="$(_acfs_doctor_system_binary_path timeout 2>/dev/null || true)"
+        grep_bin="$(_acfs_doctor_system_binary_path grep 2>/dev/null || true)"
+        if [[ -n "$dig_bin" && -n "$grep_bin" ]]; then
+            if "$dig_bin" +short +time=5 +tries=1 "$host" 2>/dev/null | "$grep_bin" -qE '^[0-9]'; then
                 resolved=true
             fi
         fi
-        if [[ "$resolved" == "false" ]] && command -v host &>/dev/null; then
-            if timeout 5 host "$host" &>/dev/null; then
+        if [[ "$resolved" == "false" && -n "$host_bin" && -n "$timeout_bin" ]]; then
+            if "$timeout_bin" 5 "$host_bin" "$host" &>/dev/null; then
                 resolved=true
             fi
         fi
-        if [[ "$resolved" == "false" ]] && command -v getent &>/dev/null; then
-            if timeout 5 getent hosts "$host" &>/dev/null; then
+        if [[ "$resolved" == "false" && -n "$getent_bin" && -n "$timeout_bin" ]]; then
+            if "$timeout_bin" 5 "$getent_bin" hosts "$host" &>/dev/null; then
                 resolved=true
             fi
         fi
@@ -3589,14 +3669,16 @@ check_network_dns() {
 # Related: bead bd-31ps.7.2
 # Tests HTTP(S) connectivity to GitHub (critical for installer downloads)
 check_network_github() {
-    if ! command -v curl &>/dev/null; then
+    local curl_bin=""
+    curl_bin="$(_acfs_doctor_system_binary_path curl 2>/dev/null || true)"
+    if [[ -z "$curl_bin" ]]; then
         check "deep.network.github" "GitHub connectivity" "warn" "curl not installed"
         return
     fi
 
     # Test basic HTTPS connectivity to GitHub
     local http_status
-    http_status=$(curl -sL --max-time 10 --connect-timeout 5 -o /dev/null -w "%{http_code}" "https://github.com" 2>/dev/null) || http_status="000"
+    http_status=$("$curl_bin" -sL --max-time 10 --connect-timeout 5 -o /dev/null -w "%{http_code}" "https://github.com" 2>/dev/null) || http_status="000"
 
     if [[ "$http_status" == "200" ]] || [[ "$http_status" == "301" ]] || [[ "$http_status" == "302" ]]; then
         check "deep.network.github" "GitHub connectivity" "pass" "github.com reachable (HTTP $http_status)"
@@ -3607,7 +3689,7 @@ check_network_github() {
     fi
 
     # Also test raw.githubusercontent.com (used for script downloads)
-    http_status=$(curl -sL --max-time 10 --connect-timeout 5 -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com" 2>/dev/null) || http_status="000"
+    http_status=$("$curl_bin" -sL --max-time 10 --connect-timeout 5 -o /dev/null -w "%{http_code}" "https://raw.githubusercontent.com" 2>/dev/null) || http_status="000"
 
     if [[ "$http_status" == "200" ]] || [[ "$http_status" == "400" ]]; then
         # Note: raw.githubusercontent.com returns 400 on bare request, which is expected
@@ -3623,7 +3705,9 @@ check_network_github() {
 # Related: bead bd-31ps.7.2
 # Tests connectivity to the configured APT mirror
 check_network_apt_mirror() {
-    if ! command -v curl &>/dev/null; then
+    local curl_bin=""
+    curl_bin="$(_acfs_doctor_system_binary_path curl 2>/dev/null || true)"
+    if [[ -z "$curl_bin" ]]; then
         return  # Already warned in github check
     fi
 
@@ -3643,7 +3727,7 @@ check_network_apt_mirror() {
 
     # Test mirror reachability
     local http_status
-    http_status=$(curl -sL --max-time 10 --connect-timeout 5 -o /dev/null -w "%{http_code}" "${mirror_url}/dists/" 2>/dev/null) || http_status="000"
+    http_status=$("$curl_bin" -sL --max-time 10 --connect-timeout 5 -o /dev/null -w "%{http_code}" "${mirror_url}/dists/" 2>/dev/null) || http_status="000"
 
     local mirror_host="${mirror_url#http*://}"
     mirror_host="${mirror_host%%/*}"
@@ -3696,14 +3780,16 @@ deep_check_notifications() {
     fi
 
     # Topic and enabled are set -- test server connectivity
-    if ! command -v curl &>/dev/null; then
+    local curl_bin=""
+    curl_bin="$(_acfs_doctor_system_binary_path curl 2>/dev/null || true)"
+    if [[ -z "$curl_bin" ]]; then
         check "deep.notifications.ntfy" "ntfy.sh notifications" "warn" "curl not available" "apt install curl"
         return
     fi
 
     # HEAD request against the server health endpoint (lightweight)
     local http_code
-    http_code=$(curl -sL --max-time 5 --connect-timeout 3 -o /dev/null -w "%{http_code}" "${server}/v1/health" 2>/dev/null) || http_code="000"
+    http_code=$("$curl_bin" -sL --max-time 5 --connect-timeout 3 -o /dev/null -w "%{http_code}" "${server}/v1/health" 2>/dev/null) || http_code="000"
 
     if [[ "$http_code" =~ ^2 ]]; then
         check "deep.notifications.ntfy" "ntfy.sh notifications" "pass" "enabled, server reachable (${server})"
@@ -4030,7 +4116,7 @@ main() {
             info_script="$(_acfs_doctor_find_lib_script "info.sh" 2>/dev/null || true)"
 
             if [[ -n "$info_script" ]]; then
-                exec bash "$info_script" "$@"
+                _acfs_doctor_exec_bash_script "$info_script" "$@"
             fi
 
             echo "Error: info.sh not found" >&2
@@ -4042,7 +4128,7 @@ main() {
             status_script="$(_acfs_doctor_find_lib_script "status.sh" 2>/dev/null || true)"
 
             if [[ -n "$status_script" ]]; then
-                exec bash "$status_script" "$@"
+                _acfs_doctor_exec_bash_script "$status_script" "$@"
             fi
 
             echo "Error: status.sh not found" >&2
@@ -4054,7 +4140,7 @@ main() {
             dashboard_script="$(_acfs_doctor_find_lib_script "dashboard.sh" 2>/dev/null || true)"
 
             if [[ -n "$dashboard_script" ]]; then
-                exec bash "$dashboard_script" "$@"
+                _acfs_doctor_exec_bash_script "$dashboard_script" "$@"
             fi
 
             echo "Error: dashboard.sh not found" >&2
@@ -4066,7 +4152,7 @@ main() {
             continue_script="$(_acfs_doctor_find_lib_script "continue.sh" 2>/dev/null || true)"
 
             if [[ -n "$continue_script" ]]; then
-                exec bash "$continue_script" "$@"
+                _acfs_doctor_exec_bash_script "$continue_script" "$@"
             fi
 
             echo "Error: continue.sh not found" >&2
@@ -4078,7 +4164,7 @@ main() {
             changelog_script="$(_acfs_doctor_find_lib_script "changelog.sh" 2>/dev/null || true)"
 
             if [[ -n "$changelog_script" ]]; then
-                exec bash "$changelog_script" "$@"
+                _acfs_doctor_exec_bash_script "$changelog_script" "$@"
             fi
 
             echo "Error: changelog.sh not found" >&2
@@ -4090,7 +4176,7 @@ main() {
             export_config_script="$(_acfs_doctor_find_lib_script "export-config.sh" 2>/dev/null || true)"
 
             if [[ -n "$export_config_script" ]]; then
-                exec bash "$export_config_script" "$@"
+                _acfs_doctor_exec_bash_script "$export_config_script" "$@"
             fi
 
             echo "Error: export-config.sh not found" >&2
@@ -4102,7 +4188,7 @@ main() {
             cheatsheet_script="$(_acfs_doctor_find_lib_script "cheatsheet.sh" 2>/dev/null || true)"
 
             if [[ -n "$cheatsheet_script" ]]; then
-                exec bash "$cheatsheet_script" "$@"
+                _acfs_doctor_exec_bash_script "$cheatsheet_script" "$@"
             fi
 
             echo "Error: cheatsheet.sh not found" >&2
@@ -4119,7 +4205,7 @@ main() {
             update_script="$(_acfs_doctor_find_lib_script "update.sh" 2>/dev/null || true)"
 
             if [[ -n "$update_script" ]]; then
-                exec bash "$update_script" "$@"
+                _acfs_doctor_exec_bash_script "$update_script" "$@"
             fi
 
             echo "Error: update.sh not found" >&2
@@ -4131,7 +4217,7 @@ main() {
             newproj_script="$(_acfs_doctor_find_lib_script "newproj.sh" 2>/dev/null || true)"
 
             if [[ -n "$newproj_script" ]]; then
-                exec bash "$newproj_script" "$@"
+                _acfs_doctor_exec_bash_script "$newproj_script" "$@"
             fi
 
             echo "Error: newproj.sh not found" >&2
@@ -4143,7 +4229,7 @@ main() {
             services_script="$(_acfs_doctor_find_scripts_script "services-setup.sh" 2>/dev/null || true)"
 
             if [[ -n "$services_script" ]]; then
-                exec bash "$services_script" "$@"
+                _acfs_doctor_exec_bash_script "$services_script" "$@"
             fi
 
             echo "Error: services-setup.sh not found" >&2
@@ -4155,7 +4241,7 @@ main() {
             support_script="$(_acfs_doctor_find_lib_script "support.sh" 2>/dev/null || true)"
 
             if [[ -n "$support_script" ]]; then
-                exec bash "$support_script" "$@"
+                _acfs_doctor_exec_bash_script "$support_script" "$@"
             fi
 
             echo "Error: support.sh not found" >&2

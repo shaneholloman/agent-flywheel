@@ -510,7 +510,7 @@ test_generated_target_home_fallbacks_are_dynamic() {
         harness_pass "install_stack.sh no longer hardcodes /home/ubuntu for TARGET_HOME fallback"
     fi
 
-    if grep -Fq 'getent passwd "${TARGET_USER:-ubuntu}"' "$filesystem_file"; then
+    if grep -Fq 'acfs_generated_getent_passwd_entry "${TARGET_USER:-ubuntu}"' "$filesystem_file"; then
         harness_pass "install_filesystem.sh resolves TARGET_HOME through getent when unset"
     else
         harness_fail "install_filesystem.sh does not resolve TARGET_HOME through getent when unset"

@@ -34,6 +34,8 @@ system_binary_path() {
     for candidate in \
         "/usr/bin/$name" \
         "/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/sbin/$name" \
         "/sbin/$name"
     do
@@ -145,7 +147,7 @@ read_state_string() {
 }
 
 is_valid_username() {
-    local username="$1"
+    local username="${1:-}"
     [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
 }
 
@@ -736,13 +738,17 @@ read_target_user_from_state_hint() {
 
 # Find acfs installation for a user
 find_acfs_bin() {
-    local user="$1"
+    local user="${1:-}"
     local user_home=""
     local current_user=""
     local target_home=""
 
+    is_valid_username "$user" || return 1
+
     target_home="$(sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$target_home" ]] && [[ "$(validated_target_user_for_dispatch "$user" "$target_home" 2>/dev/null || true)" == "$user" ]]         && find_acfs_bin_for_home "$target_home" >/dev/null 2>&1; then
+    if [[ -n "$target_home" ]] \
+        && [[ "$(validated_target_user_for_dispatch "$user" "$target_home" 2>/dev/null || true)" == "$user" ]] \
+        && find_acfs_bin_for_home "$target_home" >/dev/null 2>&1; then
         find_acfs_bin_for_home "$target_home"
         return 0
     fi
@@ -754,6 +760,12 @@ find_acfs_bin() {
             find_acfs_bin_for_home "$user_home"
             return 0
         fi
+    fi
+
+    user_home="$(resolve_home_for_user "$user" 2>/dev/null || true)"
+    if [[ -n "$user_home" ]] && find_acfs_bin_for_home "$user_home" >/dev/null 2>&1; then
+        find_acfs_bin_for_home "$user_home"
+        return 0
     fi
 
     return 1

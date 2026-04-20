@@ -27,7 +27,13 @@ services_setup_system_binary_path() {
 
     [[ -n "$name" ]] || return 1
 
-    for candidate in         "/usr/bin/$name"         "/bin/$name"         "/usr/local/bin/$name"         "/usr/local/sbin/$name"         "/usr/sbin/$name"         "/sbin/$name"; do
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"; do
         [[ -x "$candidate" ]] || continue
         printf '%s\n' "$candidate"
         return 0
@@ -375,73 +381,149 @@ declare -gA SERVICE_STATUS=()
 run_as_user() {
     local -a env_cmd=()
     local primary_bin_dir=""
+    local env_bin=""
+    local bash_bin=""
+    local sh_bin=""
+    local sudo_bin=""
+    local runuser_bin=""
+    local su_bin=""
+    local -a command_argv=()
 
     services_setup_validate_target_user "$TARGET_USER" || return 1
+
+    env_bin="$(services_setup_system_binary_path env 2>/dev/null || true)"
+    [[ -n "$env_bin" ]] || {
+        log_error "Unable to locate env for target-user service setup command"
+        return 1
+    }
+    bash_bin="$(services_setup_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || {
+        log_error "Unable to locate bash for target-user service setup command"
+        return 1
+    }
+    sh_bin="$(services_setup_system_binary_path sh 2>/dev/null || true)"
+    [[ -n "$sh_bin" ]] || {
+        log_error "Unable to locate sh for target-user service setup command"
+        return 1
+    }
 
     primary_bin_dir="$(services_setup_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" 2>/dev/null || true)"
     if [[ -z "$primary_bin_dir" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
         primary_bin_dir="$TARGET_HOME/.local/bin"
     fi
 
-    env_cmd=("env" "TARGET_USER=$TARGET_USER")
+    env_cmd=("$env_bin" "TARGET_USER=$TARGET_USER")
     [[ -n "${TARGET_HOME:-}" ]] && env_cmd+=("TARGET_HOME=$TARGET_HOME" "HOME=$TARGET_HOME")
     [[ -n "${ACFS_HOME:-}" ]] && env_cmd+=("ACFS_HOME=$ACFS_HOME")
     [[ -n "$primary_bin_dir" ]] && env_cmd+=("ACFS_BIN_DIR=$primary_bin_dir")
 
+    command_argv=("$@")
+    if [[ ${#command_argv[@]} -gt 0 ]]; then
+        case "${command_argv[0]}" in
+            env)
+                command_argv[0]="$env_bin"
+                local env_command_index=1
+                while [[ "$env_command_index" -lt "${#command_argv[@]}" ]]; do
+                    case "${command_argv[env_command_index]}" in
+                        *=*) ((env_command_index += 1)) ;;
+                        --) ((env_command_index += 1)); break ;;
+                        -*) break ;;
+                        *) break ;;
+                    esac
+                done
+                if [[ "$env_command_index" -lt "${#command_argv[@]}" ]]; then
+                    case "${command_argv[env_command_index]}" in
+                        env) command_argv[env_command_index]="$env_bin" ;;
+                        bash) command_argv[env_command_index]="$bash_bin" ;;
+                        sh) command_argv[env_command_index]="$sh_bin" ;;
+                    esac
+                fi
+                ;;
+            bash) command_argv[0]="$bash_bin" ;;
+            sh) command_argv[0]="$sh_bin" ;;
+        esac
+    fi
+
     if [[ "$(services_setup_resolve_current_user 2>/dev/null || true)" == "$TARGET_USER" ]]; then
-        "${env_cmd[@]}" "$@"
+        "${env_cmd[@]}" "${command_argv[@]}"
         return $?
     fi
 
-    if command -v sudo &>/dev/null; then
-        sudo -u "$TARGET_USER" -H "${env_cmd[@]}" "$@"
+    sudo_bin="$(services_setup_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -u "$TARGET_USER" -H "${env_cmd[@]}" "${command_argv[@]}"
         return $?
     fi
     
-    if command -v runuser &>/dev/null; then
-        runuser -u "$TARGET_USER" -- "${env_cmd[@]}" "$@"
+    runuser_bin="$(services_setup_system_binary_path runuser 2>/dev/null || true)"
+    if [[ -n "$runuser_bin" ]]; then
+        "$runuser_bin" -u "$TARGET_USER" -- "${env_cmd[@]}" "${command_argv[@]}"
         return $?
     fi
 
+    su_bin="$(services_setup_system_binary_path su 2>/dev/null || true)"
+    [[ -n "$su_bin" ]] || {
+        log_error "Unable to locate sudo, runuser, or su for target-user service setup command"
+        return 1
+    }
+
     local -a quoted_cmd=()
     local arg=""
-    for arg in "${env_cmd[@]}" "$@"; do
+    for arg in "${env_cmd[@]}" "${command_argv[@]}"; do
         quoted_cmd+=("$(printf '%q' "$arg")")
     done
-    su "$TARGET_USER" -c "${quoted_cmd[*]}"
+    "$su_bin" "$TARGET_USER" -c "${quoted_cmd[*]}"
 }
 
 # Run a shell string as target user (use for pipelines/redirections).
 run_as_user_shell() {
-    local cmd="$1"
+    local cmd="${1:-}"
     local -a env_cmd=()
     local primary_bin_dir=""
+    local env_bin=""
+    local bash_bin=""
+    local sudo_bin=""
+    local runuser_bin=""
+    local su_bin=""
 
     services_setup_validate_target_user "$TARGET_USER" || return 1
+
+    env_bin="$(services_setup_system_binary_path env 2>/dev/null || true)"
+    bash_bin="$(services_setup_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$env_bin" || -z "$bash_bin" ]]; then
+        log_error "Unable to locate env or bash for target-user service setup shell command"
+        return 1
+    fi
 
     primary_bin_dir="$(services_setup_validate_bin_dir_for_home "${ACFS_BIN_DIR:-}" "${TARGET_HOME:-}" 2>/dev/null || true)"
     if [[ -z "$primary_bin_dir" ]] && [[ -n "${TARGET_HOME:-}" ]]; then
         primary_bin_dir="$TARGET_HOME/.local/bin"
     fi
 
-    env_cmd=("env" "TARGET_USER=$TARGET_USER")
+    env_cmd=("$env_bin" "TARGET_USER=$TARGET_USER")
     [[ -n "${TARGET_HOME:-}" ]] && env_cmd+=("TARGET_HOME=$TARGET_HOME" "HOME=$TARGET_HOME")
     [[ -n "${ACFS_HOME:-}" ]] && env_cmd+=("ACFS_HOME=$ACFS_HOME")
     [[ -n "$primary_bin_dir" ]] && env_cmd+=("ACFS_BIN_DIR=$primary_bin_dir")
 
     if [[ "$(services_setup_resolve_current_user 2>/dev/null || true)" == "$TARGET_USER" ]]; then
-        "${env_cmd[@]}" bash -c "$cmd"
-    elif command -v sudo &>/dev/null; then
-        sudo -u "$TARGET_USER" -H "${env_cmd[@]}" bash -c "$cmd"
-    elif command -v runuser &>/dev/null; then
-        runuser -u "$TARGET_USER" -- "${env_cmd[@]}" bash -c "$cmd"
+        "${env_cmd[@]}" "$bash_bin" -c "$cmd"
+    elif sudo_bin="$(services_setup_system_binary_path sudo 2>/dev/null || true)" && [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -u "$TARGET_USER" -H "${env_cmd[@]}" "$bash_bin" -c "$cmd"
+    elif runuser_bin="$(services_setup_system_binary_path runuser 2>/dev/null || true)" && [[ -n "$runuser_bin" ]]; then
+        "$runuser_bin" -u "$TARGET_USER" -- "${env_cmd[@]}" "$bash_bin" -c "$cmd"
     else
+        su_bin="$(services_setup_system_binary_path su 2>/dev/null || true)"
+        [[ -n "$su_bin" ]] || {
+            log_error "Unable to locate sudo, runuser, or su for target-user service setup shell command"
+            return 1
+        }
+
         local -a quoted_cmd=()
         local arg=""
-        for arg in "${env_cmd[@]}" "bash" "-c" "$cmd"; do
+        for arg in "${env_cmd[@]}" "$bash_bin" "-c" "$cmd"; do
             quoted_cmd+=("$(printf '%q' "$arg")")
         done
-        su "$TARGET_USER" -c "${quoted_cmd[*]}"
+        "$su_bin" "$TARGET_USER" -c "${quoted_cmd[*]}"
     fi
 }
 
@@ -607,6 +689,7 @@ find_user_bin() {
         "$TARGET_HOME/.bun/bin/$name"
         "$TARGET_HOME/.atuin/bin/$name"
         "/usr/local/bin/$name"
+        "/usr/local/sbin/$name"
         "/usr/bin/$name"
         "/bin/$name"
         "/snap/bin/$name"
@@ -1486,15 +1569,29 @@ setup_postgres() {
     gum_box "PostgreSQL Status" "Checking PostgreSQL configuration..."
 
     # Check service status
-    if systemctl is-active --quiet postgresql 2>/dev/null; then
+    local systemctl_bin=""
+    systemctl_bin="$(services_setup_system_binary_path systemctl 2>/dev/null || true)"
+    if [[ -n "$systemctl_bin" ]] && "$systemctl_bin" is-active --quiet postgresql 2>/dev/null; then
         gum_success "PostgreSQL service is running"
     else
         gum_warn "PostgreSQL service is not running"
         if gum_confirm "Start PostgreSQL service?"; then
-            local sudo_cmd=""
-            [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
-            $sudo_cmd systemctl start postgresql
-            $sudo_cmd systemctl enable postgresql
+            local -a sudo_cmd=()
+            local sudo_bin=""
+            if [[ $EUID -ne 0 ]]; then
+                sudo_bin="$(services_setup_system_binary_path sudo 2>/dev/null || true)"
+                if [[ -z "$sudo_bin" ]]; then
+                    gum_error "sudo not found; cannot start PostgreSQL service"
+                    return 1
+                fi
+                sudo_cmd=("$sudo_bin")
+            fi
+            if [[ -z "$systemctl_bin" ]]; then
+                gum_error "systemctl not found; cannot start PostgreSQL service"
+                return 1
+            fi
+            "${sudo_cmd[@]}" "$systemctl_bin" start postgresql
+            "${sudo_cmd[@]}" "$systemctl_bin" enable postgresql
             gum_success "PostgreSQL service started and enabled"
         fi
     fi

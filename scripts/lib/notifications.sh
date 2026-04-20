@@ -14,9 +14,9 @@ set -euo pipefail
 # ============================================================
 # Constants
 # ============================================================
-# Prefer an explicit valid TARGET_HOME when present so copied entrypoints and
-# root-run installs manipulate the target user's notification config rather
-# than a caller HOME override or relative-home trap.
+# Resolve notification config against the intended runtime user. When
+# TARGET_USER is explicit, passwd/NSS owns the home directory and stale
+# TARGET_HOME/HOME values must not redirect config writes.
 notifications_sanitize_abs_nonroot_path() {
     local path_value="${1:-}"
 
@@ -152,12 +152,12 @@ notifications_resolve_current_home() {
 
 notifications_runtime_home() {
     local current_user=""
+    local explicit_target_home=""
     local passwd_entry=""
     local passwd_home=""
-    local target_home=""
     local target_user="${TARGET_USER:-}"
 
-    target_home="$(notifications_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
+    explicit_target_home="$(notifications_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
 
     if [[ -n "$target_user" ]]; then
         [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
@@ -182,8 +182,8 @@ notifications_runtime_home() {
         fi
     fi
 
-    if [[ -n "$target_home" ]]; then
-        printf '%s\n' "$target_home"
+    if [[ -n "$explicit_target_home" ]]; then
+        printf '%s\n' "$explicit_target_home"
         return 0
     fi
 
@@ -195,9 +195,9 @@ _ACFS_NOTIFICATIONS_RUNTIME_HOME="$(notifications_runtime_home 2>/dev/null || tr
 if [[ -n "$_ACFS_NOTIFICATIONS_RUNTIME_HOME" ]]; then
     ACFS_CONFIG_DIR="${_ACFS_NOTIFICATIONS_RUNTIME_HOME}/.config/acfs"
 else
-    ACFS_CONFIG_DIR="${HOME}/.config/acfs"
+    ACFS_CONFIG_DIR=""
 fi
-ACFS_CONFIG_FILE="${ACFS_CONFIG_DIR}/config.yaml"
+ACFS_CONFIG_FILE="${ACFS_CONFIG_DIR:+${ACFS_CONFIG_DIR}/config.yaml}"
 ACFS_NTFY_SERVER_DEFAULT="https://ntfy.sh"
 
 # ============================================================
@@ -221,6 +221,11 @@ _notif_config_read() {
 _notif_config_write() {
     local key="$1"
     local value="$2"
+
+    if [[ -z "$ACFS_CONFIG_DIR" || -z "$ACFS_CONFIG_FILE" ]]; then
+        echo "Error: Unable to resolve ACFS notification config directory." >&2
+        return 1
+    fi
 
     # Ensure config dir exists
     mkdir -p "$ACFS_CONFIG_DIR"
@@ -352,6 +357,12 @@ cmd_test() {
 
 cmd_status() {
     local enabled topic server priority
+
+    if [[ -z "$ACFS_CONFIG_FILE" ]]; then
+        echo "Notifications: unavailable"
+        echo "Config file:   unable to resolve runtime home"
+        return 1
+    fi
 
     if [[ ! -f "$ACFS_CONFIG_FILE" ]]; then
         echo "Notifications: not configured"
@@ -548,7 +559,7 @@ show_help() {
     echo "  test                Send a test notification"
     echo "  send TITLE [BODY] [PRIORITY]   Send a custom notification"
     echo ""
-    echo "Config: ${ACFS_CONFIG_FILE}"
+    echo "Config: ${ACFS_CONFIG_FILE:-<unresolved>}"
     echo ""
     echo "How it works:"
     echo "  1. Run 'acfs notifications enable'"

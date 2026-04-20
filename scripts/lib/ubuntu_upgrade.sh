@@ -143,12 +143,11 @@ ubuntu_lookup_passwd_home() {
 ubuntu_resolve_target_home() {
     local target_user="${1:-${TARGET_USER:-ubuntu}}"
     local current_user=""
+    local explicit_home=""
     local resolved_home=""
 
-    if [[ -n "${TARGET_HOME:-}" ]] && [[ "${TARGET_HOME}" == /* ]] && [[ "${TARGET_HOME}" != "/" ]]; then
-        printf '%s\n' "${TARGET_HOME%/}"
-        return 0
-    fi
+    [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
+    explicit_home="$(ubuntu_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
 
     if [[ "$target_user" == "root" ]]; then
         printf '/root\n'
@@ -163,7 +162,15 @@ ubuntu_resolve_target_home() {
 
     current_user="$(ubuntu_resolve_current_user 2>/dev/null || true)"
     if [[ "$current_user" == "$target_user" ]] && [[ -n "${HOME:-}" ]] && [[ "${HOME}" == /* ]] && [[ "${HOME}" != "/" ]]; then
-        printf '%s\n' "${HOME%/}"
+        resolved_home="$(ubuntu_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
+        if [[ -n "$resolved_home" ]] && { [[ -z "$explicit_home" ]] || [[ "$resolved_home" == "$explicit_home" ]]; }; then
+            printf '%s\n' "$resolved_home"
+            return 0
+        fi
+    fi
+
+    if [[ -n "$explicit_home" && "$current_user" == "$target_user" ]]; then
+        printf '%s\n' "$explicit_home"
         return 0
     fi
 

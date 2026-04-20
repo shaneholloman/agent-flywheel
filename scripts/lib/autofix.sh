@@ -181,8 +181,10 @@ autofix_resolve_current_home() {
     printf '%s\n' "$home_candidate"
 }
 autofix_runtime_home() {
+    local current_user=""
     local explicit_home=""
     local runtime_home=""
+    local sudo_user="${SUDO_USER:-}"
     local target_user="${TARGET_USER:-}"
 
     explicit_home="$(autofix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
@@ -190,30 +192,35 @@ autofix_runtime_home() {
         printf '/root\n'
         return 0
     fi
-    if [[ -n "$explicit_home" && -z "$target_user" && -z "${SUDO_USER:-}" ]]; then
-        printf '%s\n' "$explicit_home"
-        return 0
-    fi
 
-    if autofix_validate_target_user "$target_user"; then
+    if [[ -n "$target_user" ]]; then
+        autofix_validate_target_user "$target_user" || return 1
         runtime_home="$(autofix_home_for_user "$target_user" "$explicit_home" 2>/dev/null || true)"
         if [[ -n "$runtime_home" ]]; then
             printf '%s\n' "$runtime_home"
             return 0
         fi
+        current_user="$(autofix_resolve_current_user 2>/dev/null || true)"
+        if [[ -n "$explicit_home" && "$target_user" == "$current_user" ]]; then
+            printf '%s\n' "$explicit_home"
+            return 0
+        fi
+        return 1
     fi
 
-    if autofix_validate_target_user "${SUDO_USER:-}"; then
-        runtime_home="$(autofix_home_for_user "$SUDO_USER" "$explicit_home" 2>/dev/null || true)"
+    if [[ -n "$explicit_home" && -z "$sudo_user" ]]; then
+        printf '%s\n' "$explicit_home"
+        return 0
+    fi
+
+    if [[ -n "$sudo_user" ]]; then
+        autofix_validate_target_user "$sudo_user" || return 1
+        runtime_home="$(autofix_home_for_user "$sudo_user" "$explicit_home" 2>/dev/null || true)"
         if [[ -n "$runtime_home" ]]; then
             printf '%s\n' "$runtime_home"
             return 0
         fi
-    fi
-
-    if [[ -n "$explicit_home" ]]; then
-        printf '%s\n' "$explicit_home"
-        return 0
+        return 1
     fi
 
     autofix_resolve_current_home
@@ -1479,12 +1486,26 @@ undo_change() {
 
     # Execute undo
     local undo_exit_code=0
+    local bash_bin=""
+    bash_bin="$(autofix_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$bash_bin" ]]; then
+        log_error "Unable to locate bash for undo command"
+        return 1
+    fi
     if [[ "$requires_root" == "true" ]]; then
-        local sudo_cmd=""
-        [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd="sudo"
-        $sudo_cmd bash -c "$undo_cmd" || undo_exit_code=$?
+        local -a sudo_cmd=()
+        local sudo_bin=""
+        if [[ $EUID -ne 0 ]]; then
+            sudo_bin="$(autofix_system_binary_path sudo 2>/dev/null || true)"
+            if [[ -z "$sudo_bin" ]]; then
+                log_error "Undo command requires root but sudo is unavailable"
+                return 1
+            fi
+            sudo_cmd=("$sudo_bin")
+        fi
+        "${sudo_cmd[@]}" "$bash_bin" -c "$undo_cmd" || undo_exit_code=$?
     else
-        bash -c "$undo_cmd" || undo_exit_code=$?
+        "$bash_bin" -c "$undo_cmd" || undo_exit_code=$?
     fi
 
     if [[ $undo_exit_code -ne 0 ]]; then

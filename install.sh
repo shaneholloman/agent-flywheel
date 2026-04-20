@@ -81,9 +81,6 @@ ACFS_COMMIT_SHA_FULL=""  # Full SHA for pinning resume scripts (40 chars)
 # Early curl defaults: enforce HTTPS (including redirects) when supported.
 # This is used before security.sh is available (bootstrap / early library sourcing).
 ACFS_EARLY_CURL_ARGS=(--connect-timeout 30 --max-time 300 -fsSL)
-if command -v curl &>/dev/null && curl --help all 2>/dev/null | grep -q -- '--proto'; then
-    ACFS_EARLY_CURL_ARGS=(--proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
-fi
 # Note: ACFS_HOME is set after TARGET_HOME is determined
 ACFS_LOG_DIR="/var/log/acfs"
 # SCRIPT_DIR is empty when running via curl|bash (stdin; no file on disk)
@@ -109,6 +106,7 @@ acfs_early_system_binary_path() {
 
     for candidate in \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \
@@ -120,6 +118,22 @@ acfs_early_system_binary_path() {
 
     return 1
 }
+
+acfs_early_sudo_binary_path() {
+    if [[ -n "${SUDO:-}" && "$SUDO" == /* && -x "$SUDO" ]]; then
+        printf '%s\n' "$SUDO"
+        return 0
+    fi
+
+    acfs_early_system_binary_path sudo
+}
+
+_acfs_early_curl_bin="$(acfs_early_system_binary_path curl 2>/dev/null || true)"
+_acfs_early_grep_bin="$(acfs_early_system_binary_path grep 2>/dev/null || true)"
+if [[ -n "$_acfs_early_curl_bin" && -n "$_acfs_early_grep_bin" ]] && "$_acfs_early_curl_bin" --help all 2>/dev/null | "$_acfs_early_grep_bin" -q -- '--proto'; then
+    ACFS_EARLY_CURL_ARGS=(--proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
+fi
+unset _acfs_early_curl_bin _acfs_early_grep_bin
 
 acfs_early_resolve_current_user() {
     local current_user=""
@@ -252,7 +266,7 @@ NC='\033[0m' # No Color
 
 # Check if gum is available for enhanced UI
 HAS_GUM=false
-if command -v gum &>/dev/null; then
+if acfs_early_system_binary_path gum &>/dev/null; then
     HAS_GUM=true
 fi
 
@@ -267,7 +281,13 @@ export _ACFS_LOGGING_SH_LOADED=1
 # ============================================================
 type -t set_phase &>/dev/null || set_phase() { :; }
 type -t try_step &>/dev/null || try_step() { shift; "$@"; }
-type -t try_step_eval &>/dev/null || try_step_eval() { shift; bash -e -o pipefail -c "$1"; }
+type -t try_step_eval &>/dev/null || try_step_eval() {
+    local bash_bin=""
+    bash_bin="$(acfs_early_system_binary_path bash 2>/dev/null || true)"
+    [[ -n "$bash_bin" ]] || return 127
+    shift
+    "$bash_bin" -e -o pipefail -c "$1"
+}
 
 # ============================================================
 # Installer libraries are sourced later in main() via detect_environment(), after
@@ -307,13 +327,17 @@ _source_ubuntu_upgrade_lib() {
     fi
 
     # Download for curl|bash scenario
-    if command -v curl &>/dev/null; then
+    local curl_bin=""
+    curl_bin="$(acfs_early_system_binary_path curl 2>/dev/null || true)"
+    if [[ -n "$curl_bin" ]]; then
         local tmp_upgrade=""
-        if command -v mktemp &>/dev/null; then
-            tmp_upgrade="$(mktemp "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade.XXXXXX" 2>/dev/null)" || tmp_upgrade=""
+        local mktemp_bin=""
+        mktemp_bin="$(acfs_early_system_binary_path mktemp 2>/dev/null || true)"
+        if [[ -n "$mktemp_bin" ]]; then
+            tmp_upgrade="$("$mktemp_bin" "${TMPDIR:-/tmp}/acfs-ubuntu-upgrade.XXXXXX" 2>/dev/null)" || tmp_upgrade=""
         fi
         if [[ -n "$tmp_upgrade" ]]; then
-            if curl "${ACFS_EARLY_CURL_ARGS[@]}" "$ACFS_RAW/scripts/lib/ubuntu_upgrade.sh" -o "$tmp_upgrade" 2>/dev/null; then
+            if "$curl_bin" "${ACFS_EARLY_CURL_ARGS[@]}" "$ACFS_RAW/scripts/lib/ubuntu_upgrade.sh" -o "$tmp_upgrade" 2>/dev/null; then
                 source "$tmp_upgrade"
                 rm -f "$tmp_upgrade"
                 export ACFS_UBUNTU_UPGRADE_LOADED=1
@@ -348,7 +372,9 @@ fetch_commit_sha() {
     fi
 
     # Need curl
-    if ! command -v curl &>/dev/null; then
+    local curl_bin=""
+    curl_bin="$(acfs_early_system_binary_path curl 2>/dev/null || true)"
+    if [[ -z "$curl_bin" ]]; then
         ACFS_COMMIT_SHA="(curl not available)"
         return 0
     fi
@@ -357,15 +383,17 @@ fetch_commit_sha() {
     local api_url="https://api.github.com/repos/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/commits/${ACFS_REF}"
     local response
 
-    if response=$(curl -sf --max-time 5 "$api_url" 2>/dev/null); then
+    if response=$("$curl_bin" -sf --max-time 5 "$api_url" 2>/dev/null); then
         # Try to use python3 for robust JSON parsing if available
         local sha=""
         local commit_date=""
-        
-        if command -v python3 &>/dev/null; then
+
+        local python3_bin=""
+        python3_bin="$(acfs_early_system_binary_path python3 2>/dev/null || true)"
+        if [[ -n "$python3_bin" ]]; then
             # Python parsing - robust against JSON formatting changes
-            sha=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('sha', ''))" 2>/dev/null)
-            commit_date=$(echo "$response" | python3 -c "import sys, json; print(json.load(sys.stdin).get('commit', {}).get('author', {}).get('date', ''))" 2>/dev/null)
+            sha=$(echo "$response" | "$python3_bin" -c "import sys, json; print(json.load(sys.stdin).get('sha', ''))" 2>/dev/null)
+            commit_date=$(echo "$response" | "$python3_bin" -c "import sys, json; print(json.load(sys.stdin).get('commit', {}).get('author', {}).get('date', ''))" 2>/dev/null)
         else
             # Fallback: Extract SHA from JSON using grep/sed (works without jq/python)
             # Use grep -o to handle minified JSON (puts matches on new lines)
@@ -426,7 +454,7 @@ fetch_commit_sha() {
 # ============================================================
 install_gum_early() {
     # Already have gum? Great!
-    if command -v gum &>/dev/null; then
+    if acfs_early_system_binary_path gum &>/dev/null; then
         HAS_GUM=true
         return 0
     fi
@@ -452,27 +480,48 @@ install_gum_early() {
         return 0
     fi
 
+    local curl_bin=""
+    local gpg_bin=""
+    local apt_get_bin=""
+    local timeout_bin=""
+    local mkdir_bin=""
+    local tee_bin=""
+
     # Need curl to fetch gum - if curl isn't installed yet, skip early install
     # (gum will be installed later in install_cli_tools after ensure_base_deps)
-    if ! command -v curl &>/dev/null; then
+    curl_bin="$(acfs_early_system_binary_path curl 2>/dev/null || true)"
+    if [[ -z "$curl_bin" ]]; then
         return 0
     fi
 
     # Need gpg for apt key handling
-    if ! command -v gpg &>/dev/null; then
+    gpg_bin="$(acfs_early_system_binary_path gpg 2>/dev/null || true)"
+    if [[ -z "$gpg_bin" ]]; then
         return 0
     fi
 
     # Need apt-get for installation
-    if ! command -v apt-get &>/dev/null; then
+    apt_get_bin="$(acfs_early_system_binary_path apt-get 2>/dev/null || true)"
+    if [[ -z "$apt_get_bin" ]]; then
+        return 0
+    fi
+    timeout_bin="$(acfs_early_system_binary_path timeout 2>/dev/null || true)"
+    if [[ -z "$timeout_bin" ]]; then
+        return 0
+    fi
+    mkdir_bin="$(acfs_early_system_binary_path mkdir 2>/dev/null || true)"
+    tee_bin="$(acfs_early_system_binary_path tee 2>/dev/null || true)"
+    if [[ -z "$mkdir_bin" || -z "$tee_bin" ]]; then
         return 0
     fi
 
     # Need root/sudo for apt operations
-    local sudo_cmd=""
+    local -a sudo_cmd=()
+    local sudo_bin=""
     if [[ $EUID -ne 0 ]]; then
-        if command -v sudo &>/dev/null; then
-            sudo_cmd="sudo"
+        sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+        if [[ -n "$sudo_bin" ]]; then
+            sudo_cmd=("$sudo_bin")
         else
             # Can't install gum without sudo, fall back to plain output
             return 0
@@ -483,15 +532,15 @@ install_gum_early() {
 
     # Step 1: Fetch Charm GPG key (with timeout)
     echo -e "\033[0;90m      ↳ Fetching Charm repository key...\033[0m" >&2
-    $sudo_cmd mkdir -p /etc/apt/keyrings 2>/dev/null || true
-    if ! curl --connect-timeout 10 --max-time 30 -fsSL https://repo.charm.sh/apt/gpg.key 2>/dev/null | \
-        $sudo_cmd gpg --batch --yes --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null; then
+    "${sudo_cmd[@]}" "$mkdir_bin" -p /etc/apt/keyrings 2>/dev/null || true
+    if ! "$curl_bin" --connect-timeout 10 --max-time 30 -fsSL https://repo.charm.sh/apt/gpg.key 2>/dev/null | \
+        "${sudo_cmd[@]}" "$gpg_bin" --batch --yes --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null; then
         echo -e "\033[0;33m      ⚠ Could not fetch Charm key (skipping gum, will retry later)\033[0m" >&2
         return 0
     fi
 
     # Step 2: Add apt repository (using DEB822 format to avoid .migrate warnings on upgrade)
-    $sudo_cmd tee /etc/apt/sources.list.d/charm.sources > /dev/null 2>&1 << 'EOF'
+    "${sudo_cmd[@]}" "$tee_bin" /etc/apt/sources.list.d/charm.sources > /dev/null 2>&1 << 'EOF'
 Types: deb
 URIs: https://repo.charm.sh/apt/
 Suites: *
@@ -502,7 +551,7 @@ EOF
     # Step 3: Update apt (this can be slow on fresh systems)
     # Disable fancy progress to prevent terminal cursor issues
     echo -e "\033[0;90m      ↳ Updating package lists (may take 30-60s on fresh systems)...\033[0m" >&2
-    if ! DEBIAN_FRONTEND=noninteractive timeout 120 $sudo_cmd apt-get update -y \
+    if ! DEBIAN_FRONTEND=noninteractive "$timeout_bin" 120 "${sudo_cmd[@]}" "$apt_get_bin" update -y \
         -o Dpkg::Progress-Fancy="0" -o APT::Color="0" >/dev/null 2>&1; then
         # Reset terminal line position in case apt left cursor in bad state
         echo -e "\r\033[K\033[0;33m      ⚠ apt-get update slow/failed (skipping gum, will retry later)\033[0m" >&2
@@ -514,7 +563,7 @@ EOF
     # terminal cursor position issues when apt-get fails or times out
     echo -e "\033[0;90m      ↳ Installing gum package...\033[0m" >&2
     local apt_output
-    if apt_output=$(DEBIAN_FRONTEND=noninteractive timeout 60 $sudo_cmd apt-get install -y \
+    if apt_output=$(DEBIAN_FRONTEND=noninteractive "$timeout_bin" 60 "${sudo_cmd[@]}" "$apt_get_bin" install -y \
         -o Dpkg::Progress-Fancy="0" -o APT::Color="0" gum 2>&1); then
         HAS_GUM=true
         # Reset terminal line position and show success
@@ -836,9 +885,6 @@ acfs_summary_emit() {
         explicit_target_home="${TARGET_HOME%/}"
     fi
     resolved_target_home="$(acfs_home_for_user "${TARGET_USER:-ubuntu}" "$explicit_target_home" 2>/dev/null || true)"
-    if [[ -z "$resolved_target_home" ]]; then
-        resolved_target_home="$explicit_target_home"
-    fi
     resolved_target_home="${resolved_target_home%/}"
     if [[ -z "$resolved_target_home" ]] || [[ "$resolved_target_home" == "/" ]] || [[ "$resolved_target_home" != /* ]]; then
         return 1
@@ -1977,13 +2023,21 @@ run_preflight_checks() {
         preflight_script="./scripts/preflight.sh"
     else
         # Download preflight script for curl | bash scenario (if curl available)
-        if command -v curl &>/dev/null; then
+        local curl_bin=""
+        curl_bin="$(acfs_early_system_binary_path curl 2>/dev/null || true)"
+        if [[ -n "$curl_bin" ]]; then
             log_detail "Downloading preflight script..."
-            if command -v mktemp &>/dev/null; then
-                preflight_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-preflight.XXXXXX" 2>/dev/null)" || preflight_tmp=""
+            local mktemp_bin=""
+            mktemp_bin="$(acfs_early_system_binary_path mktemp 2>/dev/null || true)"
+            if [[ -n "$mktemp_bin" ]]; then
+                preflight_tmp="$("$mktemp_bin" "${TMPDIR:-/tmp}/acfs-preflight.XXXXXX" 2>/dev/null)" || preflight_tmp=""
             fi
             if [[ -n "$preflight_tmp" ]] && acfs_curl -o "$preflight_tmp" "$ACFS_RAW/scripts/preflight.sh" 2>/dev/null; then
-                chmod +x "$preflight_tmp"
+                local chmod_bin=""
+                chmod_bin="$(acfs_early_system_binary_path chmod 2>/dev/null || true)"
+                if [[ -n "$chmod_bin" ]]; then
+                    "$chmod_bin" +x "$preflight_tmp"
+                fi
                 preflight_script="$preflight_tmp"
             else
                 log_warn "Could not download preflight script - skipping checks"
@@ -1998,7 +2052,13 @@ run_preflight_checks() {
     # Run preflight checks and capture exit code correctly
     # (can't use "if ! cmd; then exit_code=$?" because $? would be 0 from the negation)
     local exit_code=0
-    bash "$preflight_script" || exit_code=$?
+    local bash_bin=""
+    bash_bin="$(acfs_early_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$bash_bin" ]]; then
+        log_warn "bash not available - skipping preflight checks"
+        return 0
+    fi
+    "$bash_bin" "$preflight_script" || exit_code=$?
 
     if [[ $exit_code -ne 0 ]]; then
         echo "" >&2
@@ -2025,12 +2085,22 @@ run_preflight_checks() {
 }
 
 ACFS_CURL_BASE_ARGS=(--connect-timeout 30 --max-time 300 -fsSL)
-if command -v curl &>/dev/null && curl --help all 2>/dev/null | grep -q -- '--proto'; then
+_acfs_early_curl_bin="$(acfs_early_system_binary_path curl 2>/dev/null || true)"
+_acfs_early_grep_bin="$(acfs_early_system_binary_path grep 2>/dev/null || true)"
+if [[ -n "$_acfs_early_curl_bin" && -n "$_acfs_early_grep_bin" ]] && "$_acfs_early_curl_bin" --help all 2>/dev/null | "$_acfs_early_grep_bin" -q -- '--proto'; then
     ACFS_CURL_BASE_ARGS=(--proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
 fi
+unset _acfs_early_curl_bin _acfs_early_grep_bin
 
 acfs_curl() {
-    curl "${ACFS_CURL_BASE_ARGS[@]}" "$@"
+    local curl_bin=""
+    curl_bin="$(acfs_early_system_binary_path curl 2>/dev/null || true)"
+    if [[ -z "$curl_bin" ]]; then
+        log_error "Unable to locate curl"
+        return 1
+    fi
+
+    "$curl_bin" "${ACFS_CURL_BASE_ARGS[@]}" "$@"
 }
 
 # Automatic retry for transient network errors (fast total budget).
@@ -2146,36 +2216,60 @@ bootstrap_repo_archive() {
     local archive_url="https://github.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/archive/${ref}.tar.gz?cb=${cache_buster}"
     local ref_safe="${ref//[^a-zA-Z0-9._-]/_}"
     local tmp_dir
+    local mktemp_bin=""
+    local chmod_bin=""
+    local tar_bin=""
+    local rm_bin=""
+    local find_bin=""
+    local bash_bin=""
+    local grep_bin=""
+    local head_bin=""
+    local cut_bin=""
+    local tr_bin=""
 
-    if ! command_exists tar; then
+    tar_bin="$(acfs_early_system_binary_path tar 2>/dev/null || true)"
+    if [[ -z "$tar_bin" ]]; then
         log_error "Bootstrap requires tar (install tar or run from a local checkout)"
+        return 1
+    fi
+    mktemp_bin="$(acfs_early_system_binary_path mktemp 2>/dev/null || true)"
+    chmod_bin="$(acfs_early_system_binary_path chmod 2>/dev/null || true)"
+    rm_bin="$(acfs_early_system_binary_path rm 2>/dev/null || true)"
+    find_bin="$(acfs_early_system_binary_path find 2>/dev/null || true)"
+    bash_bin="$(acfs_early_system_binary_path bash 2>/dev/null || true)"
+    grep_bin="$(acfs_early_system_binary_path grep 2>/dev/null || true)"
+    head_bin="$(acfs_early_system_binary_path head 2>/dev/null || true)"
+    cut_bin="$(acfs_early_system_binary_path cut 2>/dev/null || true)"
+    tr_bin="$(acfs_early_system_binary_path tr 2>/dev/null || true)"
+    if [[ -z "$mktemp_bin" || -z "$chmod_bin" || -z "$rm_bin" || -z "$find_bin" || -z "$bash_bin" || -z "$grep_bin" || -z "$head_bin" || -z "$cut_bin" || -z "$tr_bin" ]]; then
+        log_error "Bootstrap requires core system utilities (mktemp, chmod, rm, find, bash, grep, head, cut, tr)"
         return 1
     fi
 
     # mktemp portability: BSD mktemp requires Xs at end of template; tar doesn't need a .tar.gz suffix.
-    ACFS_TMP_ARCHIVE="$(mktemp "${TMPDIR:-/tmp}/acfs-archive-${ref_safe}.XXXXXX" 2>/dev/null)" || {
+    ACFS_TMP_ARCHIVE="$("$mktemp_bin" "${TMPDIR:-/tmp}/acfs-archive-${ref_safe}.XXXXXX" 2>/dev/null)" || {
         log_fatal "Failed to create temp file for archive"
     }
 
-    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-bootstrap-${ref_safe}.XXXXXX" 2>/dev/null)" || {
+    tmp_dir="$("$mktemp_bin" -d "${TMPDIR:-/tmp}/acfs-bootstrap-${ref_safe}.XXXXXX" 2>/dev/null)" || {
         log_fatal "Failed to create temp dir for extraction"
     }
     ACFS_BOOTSTRAP_DIR="$tmp_dir"
     # Make bootstrap dir world-readable so ubuntu user can access scripts
-    chmod 755 "$tmp_dir"
+    "$chmod_bin" 755 "$tmp_dir"
 
     log_step "Bootstrapping ACFS archive (${ref})"
     log_detail "Downloading ${archive_url}"
 
     if ! acfs_curl_with_retry "$archive_url" "$ACFS_TMP_ARCHIVE"; then
         log_error "Failed to download ACFS archive. Try again, or pin ACFS_REF to a tag/sha."
-        rm -f "$ACFS_TMP_ARCHIVE"
-        rm -rf "$tmp_dir"
+        "$rm_bin" -f "$ACFS_TMP_ARCHIVE"
+        "$rm_bin" -rf "$tmp_dir"
         return 1
     fi
 
     log_detail "Extracting runtime assets"
-    if ! tar -xzf "$ACFS_TMP_ARCHIVE" -C "$tmp_dir" --strip-components=1 \
+    if ! "$tar_bin" -xzf "$ACFS_TMP_ARCHIVE" -C "$tmp_dir" --strip-components=1 \
         --wildcards --wildcards-match-slash \
         "*/scripts/**" \
         "*/acfs/**" \
@@ -2183,10 +2277,10 @@ bootstrap_repo_archive() {
         "*/acfs.manifest.yaml" \
         "*/VERSION"; then
         log_error "Failed to extract ACFS bootstrap archive (tar error)"
-        rm -f "$ACFS_TMP_ARCHIVE"
+        "$rm_bin" -f "$ACFS_TMP_ARCHIVE"
         return 1
     fi
-    rm -f "$ACFS_TMP_ARCHIVE"
+    "$rm_bin" -f "$ACFS_TMP_ARCHIVE"
 
     if [[ ! -f "$tmp_dir/acfs.manifest.yaml" ]] || [[ ! -f "$tmp_dir/checksums.yaml" ]] || [[ ! -f "$tmp_dir/VERSION" ]]; then
         log_error "Bootstrap archive missing required manifest/checksums/VERSION files"
@@ -2201,12 +2295,12 @@ bootstrap_repo_archive() {
     log_detail "Validating extracted shell scripts (bash -n)"
     local shellcheck_failed=false
     while IFS= read -r -d '' script_file; do
-        if ! bash -n "$script_file" >/dev/null 2>&1; then
+        if ! "$bash_bin" -n "$script_file" >/dev/null 2>&1; then
             log_error "Syntax error in extracted script: $script_file"
             shellcheck_failed=true
             break
         fi
-    done < <(find "$tmp_dir" -type f -name "*.sh" -print0)
+    done < <("$find_bin" "$tmp_dir" -type f -name "*.sh" -print0)
 
     if [[ "$shellcheck_failed" == "true" ]]; then
         log_error "Bootstrap validation failed. Retry or pin ACFS_REF to a known-good tag/sha."
@@ -2215,7 +2309,7 @@ bootstrap_repo_archive() {
 
     local manifest_sha expected_sha
     manifest_sha="$(acfs_calculate_file_sha256 "$tmp_dir/acfs.manifest.yaml")" || return 1
-    expected_sha="$(grep -E '^ACFS_MANIFEST_SHA256=' "$tmp_dir/scripts/generated/manifest_index.sh" | head -n 1 | cut -d'=' -f2 | tr -d '"[:space:]\r' || true)"
+    expected_sha="$("$grep_bin" -E '^ACFS_MANIFEST_SHA256=' "$tmp_dir/scripts/generated/manifest_index.sh" | "$head_bin" -n 1 | "$cut_bin" -d'=' -f2 | "$tr_bin" -d '"[:space:]\r' || true)"
 
     if [[ -z "$expected_sha" ]]; then
         log_error "Bootstrap manifest index missing ACFS_MANIFEST_SHA256"
@@ -2293,6 +2387,28 @@ install_asset() {
         return 1
     fi
 
+    local -a sudo_cmd=()
+    local sudo_bin=""
+    if [[ $EUID -ne 0 ]]; then
+        sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+        if [[ -n "$sudo_bin" ]]; then
+            sudo_cmd=("$sudo_bin")
+        fi
+    fi
+
+    local mkdir_bin=""
+    local cp_bin=""
+    mkdir_bin="$(acfs_early_system_binary_path mkdir 2>/dev/null || true)"
+    if [[ -z "$mkdir_bin" ]]; then
+        log_error "install_asset: Unable to locate mkdir"
+        return 1
+    fi
+    cp_bin="$(acfs_early_system_binary_path cp 2>/dev/null || true)"
+    if [[ -z "$cp_bin" ]]; then
+        log_error "install_asset: Unable to locate cp"
+        return 1
+    fi
+
     # Security: Validate dest_path is under expected directories
     local allowed_prefixes=("$ACFS_HOME" "$TARGET_HOME" "/data" "/usr/local/bin")
     if [[ -n "${ACFS_BIN_DIR:-}" ]] && [[ "$ACFS_BIN_DIR" == /* ]] && [[ "$ACFS_BIN_DIR" != "/" ]]; then
@@ -2317,14 +2433,10 @@ install_asset() {
     local _ia_dest_dir
     _ia_dest_dir="$(dirname "$dest_path")"
     if [[ ! -d "$_ia_dest_dir" ]]; then
-        local _ia_sudo="${SUDO:-}"
-        if [[ -z "$_ia_sudo" ]] && [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null; then
-            _ia_sudo="sudo"
-        fi
         if [[ -w "$(dirname "$_ia_dest_dir" 2>/dev/null)" ]] || [[ $EUID -eq 0 ]]; then
-            mkdir -p "$_ia_dest_dir" 2>/dev/null || true
-        elif [[ -n "$_ia_sudo" ]]; then
-            $_ia_sudo mkdir -p "$_ia_dest_dir" 2>/dev/null || true
+            "$mkdir_bin" -p "$_ia_dest_dir" 2>/dev/null || true
+        elif [[ ${#sudo_cmd[@]} -gt 0 ]]; then
+            "${sudo_cmd[@]}" "$mkdir_bin" -p "$_ia_dest_dir" 2>/dev/null || true
         fi
     fi
 
@@ -2348,11 +2460,6 @@ install_asset() {
     local dest_dir
     dest_dir="$(dirname "$dest_path")"
 
-    local sudo_cmd="${SUDO:-}"
-    if [[ -z "$sudo_cmd" ]] && [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null; then
-        sudo_cmd="sudo"
-    fi
-
     local need_sudo=false
     if [[ -e "$dest_path" ]]; then
         [[ -w "$dest_path" ]] || need_sudo=true
@@ -2360,34 +2467,40 @@ install_asset() {
         [[ -w "$dest_dir" ]] || need_sudo=true
     fi
 
-    if [[ "$need_sudo" == "true" ]] && [[ -z "$sudo_cmd" ]]; then
+    if [[ "$need_sudo" == "true" ]] && [[ ${#sudo_cmd[@]} -eq 0 ]]; then
         log_error "install_asset: Destination not writable and sudo not available: $dest_path"
         return 1
     fi
 
     if [[ -n "${ACFS_BOOTSTRAP_DIR:-}" ]] && [[ -f "$ACFS_BOOTSTRAP_DIR/$rel_path" ]]; then
         if [[ "$need_sudo" == "true" ]]; then
-            if ! $sudo_cmd cp "$ACFS_BOOTSTRAP_DIR/$rel_path" "$dest_path"; then
+            if ! "${sudo_cmd[@]}" "$cp_bin" "$ACFS_BOOTSTRAP_DIR/$rel_path" "$dest_path"; then
                 log_error "install_asset: Failed to copy from bootstrap: $rel_path"
                 return 1
             fi
-        elif ! cp "$ACFS_BOOTSTRAP_DIR/$rel_path" "$dest_path"; then
+        elif ! "$cp_bin" "$ACFS_BOOTSTRAP_DIR/$rel_path" "$dest_path"; then
             log_error "install_asset: Failed to copy from bootstrap: $rel_path"
             return 1
         fi
     elif [[ -n "${SCRIPT_DIR:-}" ]] && [[ -f "$SCRIPT_DIR/$rel_path" ]]; then
         if [[ "$need_sudo" == "true" ]]; then
-            if ! $sudo_cmd cp "$SCRIPT_DIR/$rel_path" "$dest_path"; then
+            if ! "${sudo_cmd[@]}" "$cp_bin" "$SCRIPT_DIR/$rel_path" "$dest_path"; then
                 log_error "install_asset: Failed to copy from script dir: $rel_path"
                 return 1
             fi
-        elif ! cp "$SCRIPT_DIR/$rel_path" "$dest_path"; then
+        elif ! "$cp_bin" "$SCRIPT_DIR/$rel_path" "$dest_path"; then
             log_error "install_asset: Failed to copy from script dir: $rel_path"
             return 1
         fi
     else
         if [[ "$need_sudo" == "true" ]]; then
-            if ! $sudo_cmd curl "${ACFS_CURL_BASE_ARGS[@]}" -o "$dest_path" "$ACFS_RAW/$rel_path"; then
+            local curl_bin=""
+            curl_bin="$(acfs_early_system_binary_path curl 2>/dev/null || true)"
+            if [[ -z "$curl_bin" ]]; then
+                log_error "install_asset: Unable to locate curl"
+                return 1
+            fi
+            if ! "${sudo_cmd[@]}" "$curl_bin" "${ACFS_CURL_BASE_ARGS[@]}" -o "$dest_path" "$ACFS_RAW/$rel_path"; then
                 log_error "install_asset: Failed to download: $rel_path"
                 return 1
             fi
@@ -2421,9 +2534,26 @@ install_asset_from_path() {
     local dest_dir
     dest_dir="$(dirname "$dest_path")"
 
-    local sudo_cmd="${SUDO:-}"
-    if [[ -z "$sudo_cmd" ]] && [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null; then
-        sudo_cmd="sudo"
+    local -a sudo_cmd=()
+    local sudo_bin=""
+    if [[ $EUID -ne 0 ]]; then
+        sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+        if [[ -n "$sudo_bin" ]]; then
+            sudo_cmd=("$sudo_bin")
+        fi
+    fi
+
+    local mkdir_bin=""
+    local cp_bin=""
+    mkdir_bin="$(acfs_early_system_binary_path mkdir 2>/dev/null || true)"
+    if [[ -z "$mkdir_bin" ]]; then
+        log_error "install_asset_from_path: Unable to locate mkdir"
+        return 1
+    fi
+    cp_bin="$(acfs_early_system_binary_path cp 2>/dev/null || true)"
+    if [[ -z "$cp_bin" ]]; then
+        log_error "install_asset_from_path: Unable to locate cp"
+        return 1
     fi
 
     local need_sudo=false
@@ -2433,26 +2563,26 @@ install_asset_from_path() {
         [[ -w "$dest_dir" ]] || need_sudo=true
     fi
 
-    if [[ "$need_sudo" == "true" ]] && [[ -z "$sudo_cmd" ]]; then
+    if [[ "$need_sudo" == "true" ]] && [[ ${#sudo_cmd[@]} -eq 0 ]]; then
         log_error "install_asset_from_path: Destination not writable and sudo not available: $dest_path"
         return 1
     fi
 
     if [[ "$need_sudo" == "true" ]]; then
-        if ! $sudo_cmd mkdir -p "$dest_dir"; then
+        if ! "${sudo_cmd[@]}" "$mkdir_bin" -p "$dest_dir"; then
             log_error "install_asset_from_path: Failed to create destination directory: $dest_dir"
             return 1
         fi
-        if ! $sudo_cmd cp "$src_path" "$dest_path"; then
+        if ! "${sudo_cmd[@]}" "$cp_bin" "$src_path" "$dest_path"; then
             log_error "install_asset_from_path: Failed to copy $src_path to $dest_path"
             return 1
         fi
     else
-        if ! mkdir -p "$dest_dir"; then
+        if ! "$mkdir_bin" -p "$dest_dir"; then
             log_error "install_asset_from_path: Failed to create destination directory: $dest_dir"
             return 1
         fi
-        if ! cp "$src_path" "$dest_path"; then
+        if ! "$cp_bin" "$src_path" "$dest_path"; then
             log_error "install_asset_from_path: Failed to copy $src_path to $dest_path"
             return 1
         fi
@@ -2492,9 +2622,34 @@ install_checksums_yaml() {
     local dest_dir
     dest_dir="$(dirname "$dest_path")"
 
-    local sudo_cmd="${SUDO:-}"
-    if [[ -z "$sudo_cmd" ]] && [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null; then
-        sudo_cmd="sudo"
+    local -a sudo_cmd=()
+    local sudo_bin=""
+    if [[ $EUID -ne 0 ]]; then
+        sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+        if [[ -n "$sudo_bin" ]]; then
+            sudo_cmd=("$sudo_bin")
+        fi
+    fi
+
+    local mkdir_bin=""
+    local tee_bin=""
+    mkdir_bin="$(acfs_early_system_binary_path mkdir 2>/dev/null || true)"
+    if [[ -z "$mkdir_bin" ]]; then
+        log_error "install_checksums_yaml: Unable to locate mkdir"
+        return 1
+    fi
+    tee_bin="$(acfs_early_system_binary_path tee 2>/dev/null || true)"
+    if [[ -z "$tee_bin" ]]; then
+        log_error "install_checksums_yaml: Unable to locate tee"
+        return 1
+    fi
+
+    if [[ ! -d "$dest_dir" ]]; then
+        if [[ -w "$(dirname "$dest_dir" 2>/dev/null)" ]] || [[ $EUID -eq 0 ]]; then
+            "$mkdir_bin" -p "$dest_dir" 2>/dev/null || true
+        elif [[ ${#sudo_cmd[@]} -gt 0 ]]; then
+            "${sudo_cmd[@]}" "$mkdir_bin" -p "$dest_dir" 2>/dev/null || true
+        fi
     fi
 
     local need_sudo=false
@@ -2504,10 +2659,21 @@ install_checksums_yaml() {
         [[ -w "$dest_dir" ]] || need_sudo=true
     fi
 
+    if [[ "$need_sudo" == "true" ]] && [[ ${#sudo_cmd[@]} -eq 0 ]]; then
+        log_error "install_checksums_yaml: Destination not writable and sudo not available: $dest_path"
+        return 1
+    fi
+
     if [[ "$need_sudo" == "true" ]]; then
-        printf '%s' "$content" | $sudo_cmd tee "$dest_path" >/dev/null
+        if ! printf '%s' "$content" | "${sudo_cmd[@]}" "$tee_bin" "$dest_path" >/dev/null; then
+            log_error "install_checksums_yaml: Failed to write $dest_path"
+            return 1
+        fi
     else
-        printf '%s' "$content" > "$dest_path"
+        if ! printf '%s' "$content" > "$dest_path"; then
+            log_error "install_checksums_yaml: Failed to write $dest_path"
+            return 1
+        fi
     fi
 
     if [[ ! -f "$dest_path" ]]; then
@@ -2525,9 +2691,31 @@ run_as_target() {
     local passwd_home=""
     local primary_bin_dir=""
     local acfs_home_for_target=""
+    local env_bin=""
+    local bash_bin=""
+    local sh_bin=""
+    local sudo_bin=""
+    local runuser_bin=""
+    local su_bin=""
+    local -a command_argv=()
 
     if [[ -z "$user" ]] || [[ ! "$user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
         log_error "Invalid TARGET_USER '${user:-<empty>}' (expected: lowercase user name like 'ubuntu')"
+        return 1
+    fi
+    env_bin="$(acfs_early_system_binary_path env 2>/dev/null || true)"
+    if [[ -z "$env_bin" ]]; then
+        log_error "Unable to locate env for target-user command"
+        return 1
+    fi
+    bash_bin="$(acfs_early_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$bash_bin" ]]; then
+        log_error "Unable to locate bash for target-user command"
+        return 1
+    fi
+    sh_bin="$(acfs_early_system_binary_path sh 2>/dev/null || true)"
+    if [[ -z "$sh_bin" ]]; then
+        log_error "Unable to locate sh for target-user command"
         return 1
     fi
 
@@ -2546,14 +2734,6 @@ run_as_target() {
     if [[ "$explicit_user_home" == /* ]] && [[ "$explicit_user_home" != "/" ]]; then
         explicit_user_home_for_repair="${explicit_user_home%/}"
         [[ "$explicit_user_home_for_repair" != "/" ]] || explicit_user_home_for_repair=""
-    fi
-
-    if [[ -z "$user_home" && -n "$explicit_user_home" ]]; then
-        if [[ "$explicit_user_home" == "/" ]]; then
-            user_home="/"
-        else
-            user_home="${explicit_user_home%/}"
-        fi
     fi
 
     if [[ -z "$user_home" ]]; then
@@ -2622,11 +2802,38 @@ run_as_target() {
     if [[ -n "${ACFS_VERSION:-}" ]]; then env_args+=("ACFS_VERSION=$ACFS_VERSION"); fi
     if [[ -n "${ACFS_REF:-}" ]]; then env_args+=("ACFS_REF=$ACFS_REF"); fi
 
+    command_argv=("$@")
+    if [[ ${#command_argv[@]} -gt 0 ]]; then
+        case "${command_argv[0]}" in
+            env)
+                command_argv[0]="$env_bin"
+                local env_command_index=1
+                while [[ "$env_command_index" -lt "${#command_argv[@]}" ]]; do
+                    case "${command_argv[env_command_index]}" in
+                        *=*) ((env_command_index += 1)) ;;
+                        --) ((env_command_index += 1)); break ;;
+                        -*) break ;;
+                        *) break ;;
+                    esac
+                done
+                if [[ "$env_command_index" -lt "${#command_argv[@]}" ]]; then
+                    case "${command_argv[env_command_index]}" in
+                        env) command_argv[env_command_index]="$env_bin" ;;
+                        bash) command_argv[env_command_index]="$bash_bin" ;;
+                        sh) command_argv[env_command_index]="$sh_bin" ;;
+                    esac
+                fi
+                ;;
+            bash) command_argv[0]="$bash_bin" ;;
+            sh) command_argv[0]="$sh_bin" ;;
+        esac
+    fi
+
     # Already the target user
     current_user="$(acfs_early_resolve_current_user 2>/dev/null || true)"
     if [[ "${current_user:-}" == "$user" ]]; then
         cd "$user_home" 2>/dev/null || true
-        env "${env_args[@]}" "$@"
+        "$env_bin" "${env_args[@]}" "${command_argv[@]}"
         return $?
     fi
 
@@ -2641,18 +2848,26 @@ run_as_target() {
     # - First $@ expands inside sh -c to become positional params
     # - _ is $0 (script name placeholder)
     # - exec "$@" replaces sh with the target command, preserving stdin
-    if command_exists sudo; then
+    sudo_bin="$(acfs_early_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
         # shellcheck disable=SC2016  # $HOME/$@ expand inside sh -c
-        sudo -u "$user" env "${env_args[@]}" sh -c 'cd "$HOME" 2>/dev/null; exec "$@"' _ "$@"
+        "$sudo_bin" -u "$user" "$env_bin" "${env_args[@]}" "$sh_bin" -c 'cd "$HOME" 2>/dev/null; exec "$@"' _ "${command_argv[@]}"
         return $?
     fi
 
     # Fallbacks (root-only typically)
     # Note: Avoid -l flag to prevent sourcing profiles
-    if command_exists runuser; then
+    runuser_bin="$(acfs_early_system_binary_path runuser 2>/dev/null || true)"
+    if [[ -n "$runuser_bin" ]]; then
         # shellcheck disable=SC2016  # $HOME/$@ expand inside sh -c
-        runuser -u "$user" -- env "${env_args[@]}" sh -c 'cd "$HOME" 2>/dev/null; exec "$@"' _ "$@"
+        "$runuser_bin" -u "$user" -- "$env_bin" "${env_args[@]}" "$sh_bin" -c 'cd "$HOME" 2>/dev/null; exec "$@"' _ "${command_argv[@]}"
         return $?
+    fi
+
+    su_bin="$(acfs_early_system_binary_path su 2>/dev/null || true)"
+    if [[ -z "$su_bin" ]]; then
+        log_error "Unable to locate sudo, runuser, or su for target-user command"
+        return 1
     fi
 
     # su without - to avoid sourcing login shell profiles
@@ -2663,8 +2878,10 @@ run_as_target() {
     done
     env_assignments="${env_assignments# }"
     local user_home_q
+    local env_bin_q
     user_home_q=$(printf '%q' "$user_home")
-    su "$user" -c "cd $user_home_q 2>/dev/null; env $env_assignments $(printf '%q ' "$@")"
+    env_bin_q=$(printf '%q' "$env_bin")
+    "$su_bin" "$user" -c "cd $user_home_q 2>/dev/null; $env_bin_q $env_assignments $(printf '%q ' "${command_argv[@]}")"
 }
 
 # ============================================================
@@ -2740,10 +2957,16 @@ acfs_fetch_url_content() {
 # Uses the raw content header to get the file directly without base64 encoding.
 acfs_fetch_fresh_checksums_via_api() {
     local api_url="https://api.github.com/repos/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/contents/checksums.yaml?ref=${ACFS_CHECKSUMS_REF}"
+    local curl_bin=""
 
     # Use application/vnd.github.raw to get raw file content directly (no base64)
     local content
-    content="$(curl --connect-timeout 30 --max-time 300 -fsSL \
+    curl_bin="$(acfs_early_system_binary_path curl 2>/dev/null || true)"
+    if [[ -z "$curl_bin" ]]; then
+        log_detail "curl unavailable for GitHub API request"
+        return 1
+    fi
+    content="$("$curl_bin" --connect-timeout 30 --max-time 300 -fsSL \
         -H "Accept: application/vnd.github.raw" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         "$api_url" 2>/dev/null)" || {
@@ -3021,8 +3244,10 @@ acfs_run_verified_upstream_script_as_target() {
 
 ensure_root() {
     if [[ $EUID -ne 0 ]]; then
-        if command_exists sudo; then
-            SUDO="sudo"
+        local sudo_bin=""
+        sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+        if [[ -n "$sudo_bin" ]]; then
+            SUDO="$sudo_bin"
         elif [[ "$DRY_RUN" == "true" ]]; then
             # Dry-run should be able to print actions even on systems without sudo.
             SUDO="sudo"
@@ -3042,6 +3267,10 @@ ensure_root() {
 disable_needrestart_apt_hook() {
     local apt_hook="/usr/lib/needrestart/apt-pinvoke"
     local nr_conf_dir="/etc/needrestart/conf.d"
+    local chmod_bin=""
+    local mkdir_bin=""
+    local tee_bin=""
+    local -a sudo_cmd=()
 
     if [[ "$DRY_RUN" == "true" ]]; then
         if [[ -f "$apt_hook" ]]; then
@@ -3050,15 +3279,29 @@ disable_needrestart_apt_hook() {
         return 0
     fi
 
+    chmod_bin="$(acfs_early_system_binary_path chmod 2>/dev/null || true)"
+    mkdir_bin="$(acfs_early_system_binary_path mkdir 2>/dev/null || true)"
+    tee_bin="$(acfs_early_system_binary_path tee 2>/dev/null || true)"
+    if [[ -z "$chmod_bin" || -z "$mkdir_bin" || -z "$tee_bin" ]]; then
+        log_warn "Skipping needrestart apt hook hardening: required coreutils unavailable"
+        return 0
+    fi
+    if [[ $EUID -ne 0 ]]; then
+        local sudo_bin=""
+        sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+        [[ -n "$sudo_bin" ]] || return 0
+        sudo_cmd=("$sudo_bin")
+    fi
+
     # Method 1: Disable the apt hook executable (prevents it from running)
     if [[ -f "$apt_hook" && -x "$apt_hook" ]]; then
         log_detail "Disabling needrestart apt hook to prevent installation hangs"
-        $SUDO chmod -x "$apt_hook" 2>/dev/null || true
+        "${sudo_cmd[@]}" "$chmod_bin" -x "$apt_hook" 2>/dev/null || true
     fi
 
     # Method 2: Configure needrestart to auto-restart services without prompting
-    if [[ -d "$nr_conf_dir" ]] || $SUDO mkdir -p "$nr_conf_dir" 2>/dev/null; then
-        echo '$nrconf{restart} = '\''a'\'';' | $SUDO tee "$nr_conf_dir/50-acfs-noninteractive.conf" >/dev/null 2>&1 || true
+    if [[ -d "$nr_conf_dir" ]] || "${sudo_cmd[@]}" "$mkdir_bin" -p "$nr_conf_dir" 2>/dev/null; then
+        echo '$nrconf{restart} = '\''a'\'';' | "${sudo_cmd[@]}" "$tee_bin" "$nr_conf_dir/50-acfs-noninteractive.conf" >/dev/null 2>&1 || true
     fi
 }
 
@@ -3196,10 +3439,11 @@ acfs_home_for_user() {
 init_target_paths() {
     validate_target_user
 
-    # Resolve the target user's actual home directory through NSS/getent first;
-    # inherited TARGET_HOME is only a fallback for unusual systems where the
-    # target user cannot be resolved yet.
+    # Resolve the target user's actual home directory through NSS/getent first.
+    # Inherited TARGET_HOME is a hint only; if it cannot be validated against
+    # passwd/root/current-HOME, fail closed instead of operating in a stale home.
     local explicit_target_home_raw="${TARGET_HOME:-}"
+    local current_user=""
     local explicit_target_home=""
     local resolved_target_home=""
     if [[ "$explicit_target_home_raw" == /* ]] && [[ "$explicit_target_home_raw" != "/" ]]; then
@@ -3209,12 +3453,15 @@ init_target_paths() {
     resolved_target_home="$(acfs_home_for_user "$TARGET_USER" "$explicit_target_home" 2>/dev/null || true)"
     if [[ -n "$resolved_target_home" ]]; then
         TARGET_HOME="$resolved_target_home"
-    elif [[ -n "${TARGET_HOME:-}" ]]; then
-        if [[ "$TARGET_HOME" == "/" ]]; then
-            TARGET_HOME="/"
+    elif [[ -n "$explicit_target_home" ]]; then
+        current_user="$(acfs_early_resolve_current_user 2>/dev/null || true)"
+        if [[ -n "$current_user" && "$TARGET_USER" == "$current_user" ]]; then
+            TARGET_HOME="$explicit_target_home"
         else
-            TARGET_HOME="${TARGET_HOME%/}"
+            TARGET_HOME=""
         fi
+    else
+        TARGET_HOME=""
     fi
 
     if [[ -z "$TARGET_HOME" ]]; then
@@ -3424,12 +3671,20 @@ run_ubuntu_upgrade_phase() {
     fi
 
     # CRITICAL: Ensure jq is installed for state tracking (state.sh depends on it).
-    if ! command -v jq &>/dev/null; then
+    if ! acfs_early_system_binary_path jq &>/dev/null; then
         log_detail "Installing jq for upgrade state tracking..."
-        if [[ $EUID -eq 0 ]]; then
-            apt-get update -qq && apt-get install -y jq >/dev/null 2>&1 || true
-        elif command -v sudo &>/dev/null; then
-            sudo apt-get update -qq && sudo apt-get install -y jq >/dev/null 2>&1 || true
+        local apt_get_bin=""
+        apt_get_bin="$(acfs_early_system_binary_path apt-get 2>/dev/null || true)"
+        if [[ -z "$apt_get_bin" ]]; then
+            log_warn "apt-get not found; cannot install jq for upgrade state tracking"
+        elif [[ $EUID -eq 0 ]]; then
+            "$apt_get_bin" update -qq && "$apt_get_bin" install -y jq >/dev/null 2>&1 || true
+        else
+            local sudo_bin=""
+            sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+            if [[ -n "$sudo_bin" ]]; then
+                "$sudo_bin" "$apt_get_bin" update -qq && "$sudo_bin" "$apt_get_bin" install -y jq >/dev/null 2>&1 || true
+            fi
         fi
     fi
 
@@ -3594,10 +3849,20 @@ run_ubuntu_upgrade_phase() {
 
             # Initialize state file early for tracking
             # Try without sudo first, fall back to sudo for system directories
-            if ! mkdir -p "${ACFS_RESUME_DIR:-/var/lib/acfs}" 2>/dev/null; then
-                if [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null; then
-                    sudo mkdir -p "${ACFS_RESUME_DIR:-/var/lib/acfs}"
-                    sudo chown "$(id -u):$(id -g)" "${ACFS_RESUME_DIR:-/var/lib/acfs}" 2>/dev/null || true
+            local mkdir_bin=""
+            mkdir_bin="$(acfs_early_system_binary_path mkdir 2>/dev/null || true)"
+            if [[ -n "$mkdir_bin" ]] && ! "$mkdir_bin" -p "${ACFS_RESUME_DIR:-/var/lib/acfs}" 2>/dev/null; then
+                local sudo_bin=""
+                local chown_bin=""
+                local id_bin=""
+                sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+                chown_bin="$(acfs_early_system_binary_path chown 2>/dev/null || true)"
+                id_bin="$(acfs_early_system_binary_path id 2>/dev/null || true)"
+                if [[ $EUID -ne 0 && -n "$sudo_bin" ]]; then
+                    "$sudo_bin" "$mkdir_bin" -p "${ACFS_RESUME_DIR:-/var/lib/acfs}"
+                    if [[ -n "$chown_bin" && -n "$id_bin" ]]; then
+                        "$sudo_bin" "$chown_bin" "$("$id_bin" -u):$("$id_bin" -g)" "${ACFS_RESUME_DIR:-/var/lib/acfs}" 2>/dev/null || true
+                    fi
                 fi
             fi
             if type -t state_ensure_valid &>/dev/null; then
@@ -3747,6 +4012,8 @@ restore_previous_acfs_state_file() {
 ensure_base_deps() {
     set_phase "base_deps" "Base Dependencies" 1
     log_step "0/9" "Checking base dependencies..."
+    local apt_get_bin=""
+    local -a sudo_cmd=()
 
     if acfs_use_generated_category "base"; then
         log_detail "Using generated installers for base (phase 1)"
@@ -3765,11 +4032,26 @@ ensure_base_deps() {
         return 0
     fi
 
+    apt_get_bin="$(acfs_early_system_binary_path apt-get 2>/dev/null || true)"
+    if [[ -z "$apt_get_bin" ]]; then
+        log_error "apt-get not found; cannot install base dependencies"
+        return 1
+    fi
+    if [[ $EUID -ne 0 ]]; then
+        local sudo_bin=""
+        sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+        if [[ -z "$sudo_bin" ]]; then
+            log_error "sudo not found; cannot install base dependencies"
+            return 1
+        fi
+        sudo_cmd=("$sudo_bin")
+    fi
+
     log_detail "Updating apt package index"
-    try_step "Updating apt package index" $SUDO apt-get update -y || return 1
+    try_step "Updating apt package index" "${sudo_cmd[@]}" "$apt_get_bin" update -y || return 1
 
     log_detail "Installing base packages"
-    try_step "Installing base packages" $SUDO apt-get install -y curl git ca-certificates unzip tar xz-utils jq build-essential sudo gnupg libssl-dev pkg-config || return 1
+    try_step "Installing base packages" "${sudo_cmd[@]}" "$apt_get_bin" install -y curl git ca-certificates unzip tar xz-utils jq build-essential sudo gnupg libssl-dev pkg-config || return 1
 }
 
 # ============================================================
@@ -4122,6 +4404,12 @@ profile_path_has_fragment() {
     ' "$file" 2>/dev/null
 }
 
+profile_path_sed_literal() {
+    # This is used in sed's default BRE mode with | as the delimiter.
+    # Do not escape literal parentheses: \(...\) is a BRE capture group.
+    printf '%s' "$1" | sed 's/[][\\.^$*|]/\\&/g'
+}
+
 acfs_zshrc_is_managed_loader() {
     local file="${1:-}"
 
@@ -4251,7 +4539,7 @@ EOF
         } > "$user_profile"
         $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_profile"
     elif grep -Fxq "$legacy_profile_path_line" "$user_profile" 2>/dev/null; then
-        sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" "$user_profile"
+        sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_profile"
     elif ! profile_path_has_fragment "$user_profile" '.local/bin' || \
          ! profile_path_has_fragment "$user_profile" '.atuin/bin'; then
         # Append to existing .profile
@@ -4274,7 +4562,7 @@ EOF
         } > "$user_zprofile"
         $SUDO chown "$TARGET_USER:$TARGET_USER" "$user_zprofile"
     elif grep -Fxq "$legacy_profile_path_line" "$user_zprofile" 2>/dev/null; then
-        sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" "$user_zprofile"
+        sed -i "s|^$(profile_path_sed_literal "$legacy_profile_path_line")$|$profile_path_line|" "$user_zprofile"
     elif ! profile_path_has_fragment "$user_zprofile" '.local/bin' || \
          ! profile_path_has_fragment "$user_zprofile" '.atuin/bin'; then
         {
@@ -4471,8 +4759,10 @@ install_cli_tools() {
                     arm64) lg_sha256="26a435f47b691325c086dad2f84daa6556df5af8efc52b6ed624fa657605c976" ;;
                 esac
                 local lg_tmp=""
-                if command -v mktemp &>/dev/null; then
-                    lg_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-lazygit.XXXXXX" 2>/dev/null)" || lg_tmp=""
+                local mktemp_bin=""
+                mktemp_bin="$(acfs_early_system_binary_path mktemp 2>/dev/null || true)"
+                if [[ -n "$mktemp_bin" ]]; then
+                    lg_tmp="$("$mktemp_bin" "${TMPDIR:-/tmp}/acfs-lazygit.XXXXXX" 2>/dev/null)" || lg_tmp=""
                 fi
                 if [[ -n "$lg_tmp" ]]; then
                     if acfs_download_file_and_verify_sha256 "$lg_url" "$lg_tmp" "$lg_sha256" "lazygit ${lg_ver} (${arch})"; then
@@ -4510,8 +4800,10 @@ install_cli_tools() {
                 arm64) ld_sha256="ae7bed0309289396d396b8502b2d78d153a4f8ce8add042f655332241e7eac31" ;;
             esac
             local ld_tmp=""
-            if command -v mktemp &>/dev/null; then
-                ld_tmp="$(mktemp "${TMPDIR:-/tmp}/acfs-lazydocker.XXXXXX" 2>/dev/null)" || ld_tmp=""
+            local mktemp_bin=""
+            mktemp_bin="$(acfs_early_system_binary_path mktemp 2>/dev/null || true)"
+            if [[ -n "$mktemp_bin" ]]; then
+                ld_tmp="$("$mktemp_bin" "${TMPDIR:-/tmp}/acfs-lazydocker.XXXXXX" 2>/dev/null)" || ld_tmp=""
             fi
             if [[ -n "$ld_tmp" ]]; then
                 if acfs_download_file_and_verify_sha256 "$ld_url" "$ld_tmp" "$ld_sha256" "lazydocker ${ld_ver} (${arch})"; then
@@ -4999,16 +5291,29 @@ install_cloud_db_legacy_db() {
                 fi
 
                 # Best-effort role + db for target user
-                if command_exists runuser; then
-                    $SUDO runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$TARGET_USER'" | grep -q 1 || \
-                        $SUDO runuser -u postgres -- createuser -s "$TARGET_USER" 2>/dev/null || true
-                    $SUDO runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname='$TARGET_USER'" | grep -q 1 || \
-                        $SUDO runuser -u postgres -- createdb "$TARGET_USER" 2>/dev/null || true
-                elif command_exists sudo; then
-                    sudo -u postgres -H psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$TARGET_USER'" | grep -q 1 || \
-                        sudo -u postgres -H createuser -s "$TARGET_USER" 2>/dev/null || true
-                    sudo -u postgres -H psql -tAc "SELECT 1 FROM pg_database WHERE datname='$TARGET_USER'" | grep -q 1 || \
-                        sudo -u postgres -H createdb "$TARGET_USER" 2>/dev/null || true
+                local runuser_bin=""
+                local postgres_sudo_bin=""
+                local psql_bin=""
+                local createuser_bin=""
+                local createdb_bin=""
+                local grep_bin=""
+                local -a postgres_runner=()
+                runuser_bin="$(acfs_early_system_binary_path runuser 2>/dev/null || true)"
+                postgres_sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+                psql_bin="$(acfs_early_system_binary_path psql 2>/dev/null || true)"
+                createuser_bin="$(acfs_early_system_binary_path createuser 2>/dev/null || true)"
+                createdb_bin="$(acfs_early_system_binary_path createdb 2>/dev/null || true)"
+                grep_bin="$(acfs_early_system_binary_path grep 2>/dev/null || true)"
+                if [[ $EUID -eq 0 && -n "$runuser_bin" ]]; then
+                    postgres_runner=("$runuser_bin" -u postgres --)
+                elif [[ -n "$postgres_sudo_bin" ]]; then
+                    postgres_runner=("$postgres_sudo_bin" -u postgres -H)
+                fi
+                if [[ ${#postgres_runner[@]} -gt 0 && -n "$psql_bin" && -n "$createuser_bin" && -n "$createdb_bin" && -n "$grep_bin" ]]; then
+                    "${postgres_runner[@]}" "$psql_bin" -tAc "SELECT 1 FROM pg_roles WHERE rolname='$TARGET_USER'" | "$grep_bin" -q 1 || \
+                        "${postgres_runner[@]}" "$createuser_bin" -s "$TARGET_USER" 2>/dev/null || true
+                    "${postgres_runner[@]}" "$psql_bin" -tAc "SELECT 1 FROM pg_database WHERE datname='$TARGET_USER'" | "$grep_bin" -q 1 || \
+                        "${postgres_runner[@]}" "$createdb_bin" "$TARGET_USER" 2>/dev/null || true
                 fi
             else
                 log_warn "PostgreSQL: installation failed (optional)"
@@ -5079,10 +5384,12 @@ install_supabase_cli_release() {
     local tmp_dir=""
     local tmp_tgz=""
     local tmp_checksums=""
-    if command -v mktemp &>/dev/null; then
-        tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-supabase.XXXXXX" 2>/dev/null)" || tmp_dir=""
-        tmp_tgz="$(mktemp "${TMPDIR:-/tmp}/acfs-supabase.tgz.XXXXXX" 2>/dev/null)" || tmp_tgz=""
-        tmp_checksums="$(mktemp "${TMPDIR:-/tmp}/acfs-supabase.sha.XXXXXX" 2>/dev/null)" || tmp_checksums=""
+    local mktemp_bin=""
+    mktemp_bin="$(acfs_early_system_binary_path mktemp 2>/dev/null || true)"
+    if [[ -n "$mktemp_bin" ]]; then
+        tmp_dir="$("$mktemp_bin" -d "${TMPDIR:-/tmp}/acfs-supabase.XXXXXX" 2>/dev/null)" || tmp_dir=""
+        tmp_tgz="$("$mktemp_bin" "${TMPDIR:-/tmp}/acfs-supabase.tgz.XXXXXX" 2>/dev/null)" || tmp_tgz=""
+        tmp_checksums="$("$mktemp_bin" "${TMPDIR:-/tmp}/acfs-supabase.sha.XXXXXX" 2>/dev/null)" || tmp_checksums=""
     fi
 
     if [[ -z "$tmp_dir" ]] || [[ -z "$tmp_tgz" ]] || [[ -z "$tmp_checksums" ]]; then
@@ -5336,6 +5643,7 @@ binary_path() {
         "$TARGET_HOME/.atuin/bin/$name" \
         "$TARGET_HOME/go/bin/$name" \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/snap/bin/$name"; do
@@ -7015,17 +7323,29 @@ main() {
     # jq and curl may be missing. Install them before anything else so that
     # later phases (state management, JSON parsing, gum install) don't fail.
     # Also covers the case where sudo is available but $SUDO isn't set yet.
-    if [[ $EUID -eq 0 ]] || [[ -n "${SUDO:-}" ]] || command -v sudo &>/dev/null; then
+    if [[ $EUID -eq 0 ]] || [[ -n "${SUDO:-}" ]] || acfs_early_sudo_binary_path &>/dev/null; then
         local _need_early_apt=false
-        command -v curl &>/dev/null || _need_early_apt=true
-        command -v jq &>/dev/null   || _need_early_apt=true
-        command -v git &>/dev/null   || _need_early_apt=true
+        acfs_early_system_binary_path curl &>/dev/null || _need_early_apt=true
+        acfs_early_system_binary_path jq &>/dev/null   || _need_early_apt=true
+        acfs_early_system_binary_path git &>/dev/null   || _need_early_apt=true
         if [[ "$_need_early_apt" == "true" ]]; then
             echo -e "${YELLOW}Installing minimal bootstrap dependencies (curl, jq, git)...${NC}" >&2
-            local _sudo_cmd="${SUDO:-}"
-            [[ -z "$_sudo_cmd" ]] && [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && _sudo_cmd="sudo"
-            ${_sudo_cmd} apt-get update -qq 2>/dev/null || true
-            ${_sudo_cmd} apt-get install -y -qq curl jq git 2>/dev/null || true
+            local -a _sudo_cmd=()
+            local apt_get_bin=""
+            apt_get_bin="$(acfs_early_system_binary_path apt-get 2>/dev/null || true)"
+            if [[ -z "$apt_get_bin" ]]; then
+                log_warn "apt-get not found; cannot install bootstrap dependencies"
+            else
+                if [[ $EUID -ne 0 ]]; then
+                    local sudo_bin=""
+                    sudo_bin="$(acfs_early_sudo_binary_path 2>/dev/null || true)"
+                    [[ -n "$sudo_bin" ]] && _sudo_cmd=("$sudo_bin")
+                fi
+                if [[ $EUID -eq 0 || ${#_sudo_cmd[@]} -gt 0 ]]; then
+                    "${_sudo_cmd[@]}" "$apt_get_bin" update -qq 2>/dev/null || true
+                    "${_sudo_cmd[@]}" "$apt_get_bin" install -y -qq curl jq git 2>/dev/null || true
+                fi
+            fi
         fi
     fi
 

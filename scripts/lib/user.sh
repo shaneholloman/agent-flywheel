@@ -206,13 +206,16 @@ if [[ -n "$_ACFS_USER_EXPLICIT_TARGET_HOME" ]] && [[ "$_ACFS_USER_EXPLICIT_TARGE
 else
     _ACFS_USER_EXPLICIT_TARGET_HOME=""
 fi
+_ACFS_USER_CURRENT_USER="$(user_resolve_current_user 2>/dev/null || true)"
 _ACFS_USER_RESOLVED_TARGET_HOME="$(user_home_for_user "$TARGET_USER" "$_ACFS_USER_EXPLICIT_TARGET_HOME" 2>/dev/null || true)"
 if [[ -n "$_ACFS_USER_RESOLVED_TARGET_HOME" ]]; then
     TARGET_HOME="$_ACFS_USER_RESOLVED_TARGET_HOME"
-elif [[ -n "${TARGET_HOME:-}" ]]; then
-    TARGET_HOME="${TARGET_HOME%/}"
+elif [[ -n "$_ACFS_USER_EXPLICIT_TARGET_HOME" ]] && [[ "$TARGET_USER" == "$_ACFS_USER_CURRENT_USER" ]]; then
+    TARGET_HOME="$_ACFS_USER_EXPLICIT_TARGET_HOME"
+else
+    TARGET_HOME=""
 fi
-unset _ACFS_USER_EXPLICIT_TARGET_HOME _ACFS_USER_RESOLVED_TARGET_HOME
+unset _ACFS_USER_EXPLICIT_TARGET_HOME _ACFS_USER_CURRENT_USER _ACFS_USER_RESOLVED_TARGET_HOME
 
 # Generate a random password robustly
 _generate_random_password() {

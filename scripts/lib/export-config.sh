@@ -667,16 +667,16 @@ home_for_user() {
 resolve_explicit_target_home() {
     local target_home=""
 
-    target_home="$_EXPORT_EXPLICIT_TARGET_HOME"
-    if [[ -n "$target_home" ]]; then
-        printf '%s\n' "${target_home%/}"
-        return 0
-    fi
-
     if [[ -n "$_EXPORT_EXPLICIT_TARGET_USER_RAW" ]]; then
         export_is_valid_username "$_EXPORT_EXPLICIT_TARGET_USER_RAW" || return 1
         target_home="$(export_existing_abs_home "$(home_for_user "$_EXPORT_EXPLICIT_TARGET_USER_RAW" 2>/dev/null || true)" 2>/dev/null || true)"
         [[ -n "$target_home" ]] || return 1
+        printf '%s\n' "${target_home%/}"
+        return 0
+    fi
+
+    target_home="$_EXPORT_EXPLICIT_TARGET_HOME"
+    if [[ -n "$target_home" ]]; then
         printf '%s\n' "${target_home%/}"
         return 0
     fi

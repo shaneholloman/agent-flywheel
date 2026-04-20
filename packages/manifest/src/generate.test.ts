@@ -420,37 +420,33 @@ describe('Generated filesystem script hardening', () => {
     );
   });
 
-  test('prefers trusted passwd home over inherited TARGET_HOME', () => {
+  test('prefers trusted passwd home and rejects inherited TARGET_HOME fallback', () => {
     const trustedHomeIndex = filesystemContent.indexOf(
       'target_home="$(acfs_generated_passwd_home_from_entry "$_acfs_passwd_entry" 2>/dev/null || true)"'
     );
-    const inheritedHomeIndex = filesystemContent.indexOf('target_home="$explicit_target_home"');
 
     expect(filesystemContent).toContain('target_home=""');
     expect(filesystemContent).toContain('explicit_target_home="${TARGET_HOME:-}"');
-    expect(filesystemContent).toContain('if [[ -z "$target_home" && -n "$explicit_target_home" ]]; then');
+    expect(filesystemContent).not.toContain('if [[ -z "$target_home" && -n "$explicit_target_home" ]]; then');
+    expect(filesystemContent).not.toContain('target_home="$explicit_target_home"');
     expect(filesystemContent).not.toContain('target_home="${TARGET_HOME:-}"\nif [[ -z "$target_home" ]]; then');
     expect(filesystemContent).not.toContain('target_home="${TARGET_HOME%/}"');
     expect(trustedHomeIndex).toBeGreaterThanOrEqual(0);
-    expect(inheritedHomeIndex).toBeGreaterThanOrEqual(0);
-    expect(trustedHomeIndex).toBeLessThan(inheritedHomeIndex);
   });
 
-  test('direct generated installers repair TARGET_HOME before inherited fallback', () => {
+  test('direct generated installers repair TARGET_HOME without inherited fallback', () => {
     const resolvedHomeIndex = filesystemContent.indexOf(
       '_ACFS_RESOLVED_TARGET_HOME="$(_acfs_resolve_target_home "${TARGET_USER}" "$_ACFS_EXPLICIT_TARGET_HOME" || true)"'
     );
-    const inheritedHomeIndex = filesystemContent.indexOf('TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"');
 
     expect(filesystemContent).toContain('_ACFS_EXPLICIT_TARGET_HOME="${TARGET_HOME:-}"');
     expect(filesystemContent).toContain('_ACFS_RESOLVED_TARGET_HOME=""');
     expect(filesystemContent).toContain('if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then');
     expect(filesystemContent).toContain('TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"');
-    expect(filesystemContent).toContain('elif [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then');
+    expect(filesystemContent).not.toContain('elif [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then');
+    expect(filesystemContent).not.toContain('TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"');
     expect(filesystemContent).not.toContain('TARGET_HOME="${TARGET_HOME%/}"');
     expect(resolvedHomeIndex).toBeGreaterThanOrEqual(0);
-    expect(inheritedHomeIndex).toBeGreaterThanOrEqual(0);
-    expect(resolvedHomeIndex).toBeLessThan(inheritedHomeIndex);
   });
 
   test('does not recursively chown /data (avoid over-broad ownership changes)', () => {
@@ -540,34 +536,32 @@ describe('doctor_checks.sh content', () => {
     );
   });
 
-  test('run_manifest_check_command repairs target_home before inherited fallback', () => {
+  test('run_manifest_check_command repairs target_home without inherited fallback', () => {
     const resolvedHomeIndex = doctorContent.indexOf(
       'resolved_target_home="$(_acfs_resolve_target_home "$target_user" "$explicit_target_home" || true)"'
     );
-    const inheritedHomeIndex = doctorContent.indexOf('target_home="$explicit_target_home"');
 
     expect(doctorContent).toContain('local explicit_target_home=""');
     expect(doctorContent).toContain('local resolved_target_home=""');
     expect(doctorContent).toContain('explicit_target_home="$target_home"');
     expect(doctorContent).toContain('if [[ -n "$resolved_target_home" ]]; then');
     expect(doctorContent).toContain('target_home="${resolved_target_home%/}"');
-    expect(doctorContent).toContain('elif [[ -n "$explicit_target_home" ]]; then');
+    expect(doctorContent).not.toContain('elif [[ -n "$explicit_target_home" ]]; then');
+    expect(doctorContent).not.toContain('target_home="$explicit_target_home"');
     expect(doctorContent).not.toContain('target_home="${target_home%/}"');
     expect(doctorContent).not.toContain('if [[ -z "$target_home" ]]; then\n        if declare -f _acfs_resolve_target_home');
     expect(resolvedHomeIndex).toBeGreaterThanOrEqual(0);
-    expect(inheritedHomeIndex).toBeGreaterThanOrEqual(0);
-    expect(resolvedHomeIndex).toBeLessThan(inheritedHomeIndex);
   });
 
   test('target_user doctor checks receive TARGET_USER and TARGET_HOME env', () => {
     expect(doctorContent).toContain(
-      'env TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"'
+      '"$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"'
     );
   });
 
   test('root doctor checks still run when TARGET_HOME is unresolved', () => {
     expect(doctorContent).toContain(
-      'sudo -n env TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"'
+      '"$sudo_bin" -n "$env_bin" TARGET_USER="$target_user" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"'
     );
     expect(doctorContent).not.toContain(
       'root)\n            if [[ -z "$target_home" ]] || [[ "$target_home" != /* ]] || [[ "$target_home" == "/" ]]; then'

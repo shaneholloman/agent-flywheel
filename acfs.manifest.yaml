@@ -118,9 +118,6 @@ modules:
             fi
             unset _acfs_passwd_entry
           fi
-          if [[ -z "$target_home" && -n "$explicit_target_home" ]]; then
-            target_home="$explicit_target_home"
-          fi
           unset explicit_target_home
           if [[ -z "$target_home" ]]; then
             echo "ERROR: Unable to resolve TARGET_HOME for '${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly" >&2
@@ -164,9 +161,6 @@ modules:
               unset current_user current_home
             fi
             unset _acfs_passwd_entry
-          fi
-          if [[ -z "$target_home" && -n "$explicit_target_home" ]]; then
-            target_home="$explicit_target_home"
           fi
           unset explicit_target_home
           if [[ -z "$target_home" ]]; then
@@ -312,7 +306,7 @@ modules:
           echo '# User binary paths' >> ~/.profile
           echo "$profile_path_line" >> ~/.profile
         elif grep -Fxq "$legacy_profile_path_line" ~/.profile; then
-          sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" ~/.profile
+          sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[][\\.^$*|]/\\&/g')$|$profile_path_line|" ~/.profile
         elif ! profile_path_has_fragment ~/.profile '.local/bin' || ! profile_path_has_fragment ~/.profile '.atuin/bin'; then
           echo '' >> ~/.profile
           echo '# Added by ACFS - user binary paths' >> ~/.profile
@@ -340,7 +334,7 @@ modules:
           echo '# User binary paths' >> ~/.zprofile
           echo "$profile_path_line" >> ~/.zprofile
         elif grep -Fxq "$legacy_profile_path_line" ~/.zprofile; then
-          sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')$|$profile_path_line|" ~/.zprofile
+          sed -i "s|^$(printf '%s' "$legacy_profile_path_line" | sed 's/[][\\.^$*|]/\\&/g')$|$profile_path_line|" ~/.zprofile
         elif ! profile_path_has_fragment ~/.zprofile '.local/bin' || ! profile_path_has_fragment ~/.zprofile '.atuin/bin'; then
           echo '' >> ~/.zprofile
           echo '# Added by ACFS - user binary paths' >> ~/.zprofile

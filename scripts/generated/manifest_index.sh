@@ -6,7 +6,7 @@
 # ============================================================
 # Data-only manifest index. Safe to source.
 
-ACFS_MANIFEST_SHA256="2bf6552ab81638bbf354cc3092e26d3da97d6b9e70b91d264fa527201d61a866"
+ACFS_MANIFEST_SHA256="e2bc44f150c5b641b091e9369cac9e4cab637f0284c2764e215e6a005233369b"
 
 ACFS_MODULES_IN_ORDER=(
   "base.system"

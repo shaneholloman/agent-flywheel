@@ -108,12 +108,26 @@ _update_early_runtime_home() {
         return 0
     fi
 
-    if [[ -n "$target_user" && "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]]; then
+    if [[ -n "$target_user" ]]; then
+        [[ "$target_user" =~ ^[a-z_][a-z0-9._-]*$ ]] || return 1
         runtime_home="$(_update_early_passwd_home_for_user "$target_user" 2>/dev/null || true)"
         if [[ -n "$runtime_home" ]]; then
             printf '%s\n' "$runtime_home"
             return 0
         fi
+
+        if [[ "$target_user" == "$current_user" ]]; then
+            if [[ -n "$env_home" ]] && { [[ -z "$explicit_home" ]] || [[ "$env_home" == "$explicit_home" ]]; }; then
+                printf '%s\n' "$env_home"
+                return 0
+            fi
+            if [[ -n "$explicit_home" ]]; then
+                printf '%s\n' "$explicit_home"
+                return 0
+            fi
+        fi
+
+        return 1
     fi
 
     if [[ -n "$explicit_home" && "$explicit_home" != "$env_home" ]]; then
@@ -1518,6 +1532,8 @@ update_system_binary_path() {
     for candidate in \
         "/usr/bin/$name" \
         "/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/sbin/$name" \
         "/sbin/$name"
     do
@@ -1678,7 +1694,7 @@ update_target_home() {
         fi
     fi
 
-    if [[ -n "$explicit_home" ]]; then
+    if [[ -n "$explicit_home" && "$target_user" == "$current_user" ]]; then
         printf '%s\n' "$explicit_home"
         return 0
     fi
@@ -1818,26 +1834,39 @@ update_run_in_target_context() {
     [[ -n "$sanitized_acfs_home" ]] && env_args+=("ACFS_HOME=$sanitized_acfs_home")
     [[ -n "$bash_env_assignment" ]] && env_args+=("$bash_env_assignment")
 
+    local env_bin=""
+    local sh_bin=""
+    env_bin="$(update_system_binary_path env 2>/dev/null || true)"
+    sh_bin="$(update_system_binary_path sh 2>/dev/null || true)"
+    if [[ -z "$env_bin" || -z "$sh_bin" ]]; then
+        echo "Cannot build target-user command environment (env/sh unavailable)" >&2
+        return 1
+    fi
+
     if [[ "$current_user" == "$target_user" ]]; then
         if [[ -d "$target_home" ]]; then
             (
                 cd "$target_home" || exit 1
-                env "${env_args[@]}" "$@"
+                "$env_bin" "${env_args[@]}" "$@"
             )
             return $?
         fi
 
-        env "${env_args[@]}" "$@"
+        "$env_bin" "${env_args[@]}" "$@"
         return $?
     fi
 
-    if command -v sudo &>/dev/null; then
-        sudo -n -u "$target_user" env "${env_args[@]}" sh -c 'cd "$HOME" || exit 1; exec "$@"' _ "$@"
+    local sudo_bin=""
+    sudo_bin="$(update_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -n -u "$target_user" "$env_bin" "${env_args[@]}" "$sh_bin" -c 'cd "$HOME" || exit 1; exec "$@"' _ "$@"
         return $?
     fi
 
-    if command -v runuser &>/dev/null; then
-        runuser -u "$target_user" -- env "${env_args[@]}" sh -c 'cd "$HOME" || exit 1; exec "$@"' _ "$@"
+    local runuser_bin=""
+    runuser_bin="$(update_system_binary_path runuser 2>/dev/null || true)"
+    if [[ -n "$runuser_bin" ]]; then
+        "$runuser_bin" -u "$target_user" -- "$env_bin" "${env_args[@]}" "$sh_bin" -c 'cd "$HOME" || exit 1; exec "$@"' _ "$@"
         return $?
     fi
 
@@ -2171,6 +2200,12 @@ _update_profile_path_has_fragment() {
     ' "$file" 2>/dev/null
 }
 
+_update_sed_literal() {
+    # This is used in sed's default BRE mode with | as the delimiter.
+    # Do not escape literal parentheses: \(...\) is a BRE capture group.
+    printf '%s' "$1" | sed 's/[][\\.^$*|]/\\&/g'
+}
+
 sync_acfs_profile_paths() {
     local runtime_home=""
     runtime_home="$(update_runtime_shell_home 2>/dev/null || true)"
@@ -2203,7 +2238,7 @@ sync_acfs_profile_paths() {
             return 0
         fi
 
-        escaped_legacy_path_line="$(printf '%s\n' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')"
+        escaped_legacy_path_line="$(_update_sed_literal "$legacy_path_line")"
         sed -i "s|^$escaped_legacy_path_line$|$current_path_line|" "$user_profile"
         log_item "ok" "acfs.profile" "updated login PATH to include ~/.atuin/bin"
         log_to_file "Updated ACFS-managed PATH line in $user_profile"
@@ -2261,7 +2296,7 @@ sync_acfs_zprofile_paths() {
             return 0
         fi
 
-        escaped_legacy_path_line="$(printf '%s\n' "$legacy_path_line" | sed 's/[.[\\*^$()+?{|]/\\&/g')"
+        escaped_legacy_path_line="$(_update_sed_literal "$legacy_path_line")"
         sed -i "s|^$escaped_legacy_path_line$|$current_path_line|" "$user_zprofile"
         log_item "ok" "acfs.zprofile" "updated login PATH to include ~/.atuin/bin"
         log_to_file "Updated ACFS-managed PATH line in $user_zprofile"
@@ -2409,8 +2444,10 @@ sync_acfs_global_wrapper() {
         return 0
     fi
 
-    if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-        sudo -n "${install_cmd[@]}"
+    local sudo_bin=""
+    sudo_bin="$(update_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]] && "$sudo_bin" -n true >/dev/null 2>&1; then
+        "$sudo_bin" -n "${install_cmd[@]}"
         log_to_file "Synced scripts/acfs-global -> $deployed_file"
         return 0
     fi
@@ -3168,17 +3205,21 @@ update_apt() {
 apt_lock_is_held() {
     local lockfile="$1"
 
-    command -v fuser &>/dev/null || return 1
+    local fuser_bin=""
+    fuser_bin="$(update_system_binary_path fuser 2>/dev/null || true)"
+    [[ -n "$fuser_bin" ]] || return 1
     [[ -f "$lockfile" ]] || return 1
 
     # Try as current user first (works when lockfile is readable).
-    if fuser "$lockfile" &>/dev/null; then
+    if "$fuser_bin" "$lockfile" &>/dev/null; then
         return 0
     fi
 
     # Fallback to non-interactive sudo to avoid hanging in safe mode / CI.
-    if command -v sudo &>/dev/null; then
-        sudo -n fuser "$lockfile" &>/dev/null && return 0
+    local sudo_bin=""
+    sudo_bin="$(update_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        "$sudo_bin" -n "$fuser_bin" "$lockfile" &>/dev/null && return 0
     fi
 
     return 1
@@ -3188,17 +3229,21 @@ apt_lock_holder_details() {
     local lockfile="$1"
     local details=""
 
-    command -v fuser &>/dev/null || return 1
+    local fuser_bin=""
+    fuser_bin="$(update_system_binary_path fuser 2>/dev/null || true)"
+    [[ -n "$fuser_bin" ]] || return 1
     [[ -f "$lockfile" ]] || return 1
 
-    details=$(fuser -v "$lockfile" 2>&1 || true)
+    details=$("$fuser_bin" -v "$lockfile" 2>&1 || true)
     if [[ -n "$details" ]]; then
         printf '%s\n' "$details"
         return 0
     fi
 
-    if command -v sudo &>/dev/null; then
-        details=$(sudo -n fuser -v "$lockfile" 2>/dev/null || true)
+    local sudo_bin=""
+    sudo_bin="$(update_system_binary_path sudo 2>/dev/null || true)"
+    if [[ -n "$sudo_bin" ]]; then
+        details=$("$sudo_bin" -n "$fuser_bin" -v "$lockfile" 2>/dev/null || true)
         if [[ -n "$details" ]]; then
             printf '%s\n' "$details"
             return 0
@@ -4104,11 +4149,11 @@ update_stack() {
 
                 if update_run_in_target_context "" bash "$tmp_install" --dest "$target_home/mcp_agent_mail" --yes; then
                     if update_source_stack_lib; then
-                        TARGET_USER="$target_user" TARGET_HOME="$target_home" _stack_repair_agent_mail_cli_symlink >/dev/null 2>&1 || true
+                        ACFS_STACK_TRUST_TARGET_HOME=true TARGET_USER="$target_user" TARGET_HOME="$target_home" _stack_repair_agent_mail_cli_symlink >/dev/null 2>&1 || true
                     fi
                     if update_source_stack_lib && \
-                       TARGET_USER="$target_user" TARGET_HOME="$target_home" _stack_configure_agent_mail_service && \
-                       TARGET_USER="$target_user" TARGET_HOME="$target_home" _stack_wait_for_agent_mail_health; then
+                       ACFS_STACK_TRUST_TARGET_HOME=true TARGET_USER="$target_user" TARGET_HOME="$target_home" _stack_configure_agent_mail_service && \
+                       ACFS_STACK_TRUST_TARGET_HOME=true TARGET_USER="$target_user" TARGET_HOME="$target_home" _stack_wait_for_agent_mail_health; then
                         if [[ "$QUIET" != "true" ]] && [[ "$VERBOSE" != "true" ]]; then
                             printf "\033[1A\033[2K  ${GREEN}[ok]${NC} %s\n" "MCP Agent Mail"
                         elif [[ "$QUIET" != "true" ]]; then

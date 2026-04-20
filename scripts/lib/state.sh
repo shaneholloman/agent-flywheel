@@ -363,22 +363,41 @@ state_get_file() {
 # Returns: 0 on success, 1 on failure
 state_init() {
     local state_file
-    state_file="$(state_get_file)"
+    state_file="$(state_get_file 2>/dev/null || true)"
+    if [[ -z "$state_file" ]]; then
+        declare -f log_error &>/dev/null && log_error "state_init: unable to resolve state file path"
+        return 1
+    fi
 
     local state_dir
     state_dir="$(dirname "$state_file")"
     local resolved_target_home=""
-    resolved_target_home="$(state_resolve_target_home)"
+    resolved_target_home="$(state_resolve_target_home 2>/dev/null || true)"
+    if [[ -z "$resolved_target_home" ]]; then
+        declare -f log_error &>/dev/null && log_error "state_init: unable to resolve target home"
+        return 1
+    fi
 
     # Ensure directory exists
     if [[ ! -d "$state_dir" ]]; then
         # Try without sudo first (works for user directories like ~/.acfs)
         # Fall back to sudo for system directories like /var/lib/acfs
-        if ! mkdir -p "$state_dir" 2>/dev/null; then
-            if [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null; then
-                sudo mkdir -p "$state_dir" || return 1
+        local mkdir_bin=""
+        mkdir_bin="$(state_system_binary_path mkdir 2>/dev/null || true)"
+        [[ -n "$mkdir_bin" ]] || return 1
+        if ! "$mkdir_bin" -p "$state_dir" 2>/dev/null; then
+            local sudo_bin=""
+            sudo_bin="$(state_system_binary_path sudo 2>/dev/null || true)"
+            if [[ $EUID -ne 0 && -n "$sudo_bin" ]]; then
+                "$sudo_bin" "$mkdir_bin" -p "$state_dir" || return 1
                 # Fix ownership so current user can write to it
-                sudo chown "$(id -u):$(id -g)" "$state_dir" 2>/dev/null || true
+                local chown_bin=""
+                local id_bin=""
+                chown_bin="$(state_system_binary_path chown 2>/dev/null || true)"
+                id_bin="$(state_system_binary_path id 2>/dev/null || true)"
+                if [[ -n "$chown_bin" && -n "$id_bin" ]]; then
+                    "$sudo_bin" "$chown_bin" "$("$id_bin" -u):$("$id_bin" -g)" "$state_dir" 2>/dev/null || true
+                fi
             else
                 return 1
             fi
@@ -389,18 +408,24 @@ state_init() {
         # This is critical for `acfs doctor` to work after a failed install.
         if [[ $EUID -eq 0 ]] && [[ -n "${TARGET_USER:-}" ]] && [[ "$TARGET_USER" != "root" ]]; then
             local target_home=""
-            target_home="$(state_resolve_target_home)"
+            target_home="$(state_resolve_target_home 2>/dev/null || true)"
             if [[ -n "$target_home" ]] && [[ "$target_home" != "/" ]] && [[ "$target_home" == /* ]] && [[ "$state_dir" == "$target_home/"* ]]; then
                 local target_group=""
-                if command -v id &>/dev/null; then
-                    target_group="$(id -gn "$TARGET_USER" 2>/dev/null || true)"
+                local id_bin=""
+                id_bin="$(state_system_binary_path id 2>/dev/null || true)"
+                if [[ -n "$id_bin" ]]; then
+                    target_group="$("$id_bin" -gn "$TARGET_USER" 2>/dev/null || true)"
                 fi
-                if [[ -n "$target_group" ]]; then
-                    chown "$TARGET_USER:$target_group" "$state_dir" 2>/dev/null \
-                        || chown "$TARGET_USER:$TARGET_USER" "$state_dir" 2>/dev/null \
-                        || true
-                else
-                    chown "$TARGET_USER" "$state_dir" 2>/dev/null || true
+                local chown_bin=""
+                chown_bin="$(state_system_binary_path chown 2>/dev/null || true)"
+                if [[ -n "$chown_bin" ]]; then
+                    if [[ -n "$target_group" ]]; then
+                        "$chown_bin" "$TARGET_USER:$target_group" "$state_dir" 2>/dev/null \
+                            || "$chown_bin" "$TARGET_USER:$TARGET_USER" "$state_dir" 2>/dev/null \
+                            || true
+                    else
+                        "$chown_bin" "$TARGET_USER" "$state_dir" 2>/dev/null || true
+                    fi
                 fi
             fi
         fi
@@ -538,7 +563,7 @@ state_write_atomic() {
         # is owned by the target user so they can access the state file later.
         if [[ $EUID -eq 0 ]] && [[ -n "${TARGET_USER:-}" ]] && [[ "$TARGET_USER" != "root" ]]; then
             local target_home=""
-            target_home="$(state_resolve_target_home)"
+            target_home="$(state_resolve_target_home 2>/dev/null || true)"
             if [[ -n "$target_home" ]] && [[ "$target_home" != "/" ]] && [[ "$target_home" == /* ]] && [[ "$target_dir" == "$target_home/"* ]]; then
                 local dir_target_group=""
                 if command -v id &>/dev/null; then
@@ -610,7 +635,7 @@ state_write_atomic() {
     # never for system state under /var/lib/acfs.
     if [[ $EUID -eq 0 ]] && [[ -n "${TARGET_USER:-}" ]] && [[ "$TARGET_USER" != "root" ]]; then
         local target_home=""
-        target_home="$(state_resolve_target_home)"
+        target_home="$(state_resolve_target_home 2>/dev/null || true)"
         if [[ -n "$target_home" ]] && [[ "$target_home" != "/" ]] && [[ "$target_home" == /* ]] && [[ "$temp_file" == "$target_home/"* ]]; then
             local target_group=""
             if command -v id &>/dev/null; then
@@ -2401,14 +2426,24 @@ state_handle_invalid() {
 # Usage: state_backup_and_remove
 state_backup_and_remove() {
     local state_file
-    state_file="$(state_get_file)"
+    state_file="$(state_get_file 2>/dev/null || true)"
+    if [[ -z "$state_file" ]]; then
+        declare -f log_error &>/dev/null && log_error "state_backup_and_remove: unable to resolve state file path"
+        return 1
+    fi
 
     if [[ -f "$state_file" ]]; then
         local expected_user_state=""
         if [[ -n "${ACFS_HOME:-}" ]]; then
             expected_user_state="${ACFS_HOME}/state.json"
         else
-            expected_user_state="$(state_resolve_target_home)/.acfs/state.json"
+            local expected_target_home=""
+            expected_target_home="$(state_resolve_target_home 2>/dev/null || true)"
+            if [[ -z "$expected_target_home" ]]; then
+                declare -f log_error &>/dev/null && log_error "state_backup_and_remove: unable to resolve target home"
+                return 1
+            fi
+            expected_user_state="${expected_target_home}/.acfs/state.json"
         fi
         local expected_system_state="/var/lib/acfs/state.json"
 

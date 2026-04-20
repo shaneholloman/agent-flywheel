@@ -31,10 +31,8 @@ autofix_existing_runtime_home() {
         return 0
     fi
 
-    runtime_home="$(autofix_sanitize_abs_nonroot_path "${TARGET_HOME:-}" 2>/dev/null || true)"
-    if [[ -n "$runtime_home" ]]; then
-        printf '%s\n' "$runtime_home"
-        return 0
+    if [[ -n "${TARGET_USER:-}${TARGET_HOME:-}${SUDO_USER:-}" ]]; then
+        return 1
     fi
 
     runtime_home="$(autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null || true)"
@@ -146,7 +144,9 @@ autofix_existing_shell_config_files_json() {
 }
 
 autofix_existing_sed_literal() {
-    printf '%s' "$1" | sed 's/[.[\*^$()+?{|]/\\&/g'
+    # This is used in sed's default BRE mode with | as the delimiter.
+    # Do not escape literal parentheses: \(...\) is a BRE capture group.
+    printf '%s' "$1" | sed 's/[][\\.^$*|]/\\&/g'
 }
 
 autofix_existing_shell_config_has_path_fragment() {
@@ -561,7 +561,7 @@ get_installed_version() {
         version_output=$(acfs --version 2>/dev/null | head -1)
         if [[ -n "$version_output" ]]; then
             # Extract version number (e.g., "ACFS v0.4.0" -> "0.4.0")
-            version=$(echo "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            version="$(printf '%s\n' "$version_output" | { grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true; } | head -1)"
             if [[ -n "$version" ]]; then
                 printf '%s\n' "$version"
                 return 0
@@ -579,7 +579,7 @@ get_installed_version() {
     # Method 3: Check installed marker file for version info
     runtime_home="$(autofix_existing_runtime_home 2>/dev/null || true)"
     if [[ -n "$runtime_home" ]] && [[ -f "$runtime_home/.acfs_installed" ]]; then
-        version=$(grep -oE 'version=[0-9]+\.[0-9]+\.[0-9]+' "$runtime_home/.acfs_installed" 2>/dev/null | cut -d= -f2)
+        version="$({ grep -oE 'version=[0-9]+\.[0-9]+\.[0-9]+' "$runtime_home/.acfs_installed" 2>/dev/null || true; } | cut -d= -f2)"
         if [[ -n "$version" ]]; then
             printf '%s\n' "$version"
             return 0

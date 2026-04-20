@@ -37,6 +37,7 @@ acfs_generated_system_binary_path() {
 
     for candidate in \
         "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \
@@ -188,8 +189,6 @@ if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
     fi
     if [[ -n "$_ACFS_RESOLVED_TARGET_HOME" ]]; then
         TARGET_HOME="${_ACFS_RESOLVED_TARGET_HOME%/}"
-    elif [[ -n "$_ACFS_EXPLICIT_TARGET_HOME" ]]; then
-        TARGET_HOME="$_ACFS_EXPLICIT_TARGET_HOME"
     fi
     unset _ACFS_EXPLICIT_TARGET_HOME _ACFS_RESOLVED_TARGET_HOME
 
@@ -264,7 +263,7 @@ declare -a MANIFEST_CHECKS=(
     "users.ubuntu.2	Ensure target user + passwordless sudo + ssh keys	[[ \"\${MODE:-vibe}\" != \"vibe\" ]] || runuser -u \"\${TARGET_USER:-ubuntu}\" -- sudo -n true	required	root"
     "base.filesystem.1	Create workspace and ACFS directories	test -d /data/projects	required	root"
     "base.filesystem.2	Create workspace and ACFS directories	test -f /data/projects/AGENTS.md	required	root"
-    "base.filesystem.3	Create workspace and ACFS directories	target_home=\"\"\\nexplicit_target_home=\"\${TARGET_HOME:-}\"\\nif [[ -n \"\$explicit_target_home\" ]]; then\\n  explicit_target_home=\"\${explicit_target_home%/}\"\\nfi\\nif [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then\\n  target_home=\"/root\"\\nelse\\n  _acfs_passwd_entry=\"\$(acfs_generated_getent_passwd_entry \"\${TARGET_USER:-ubuntu}\" 2>/dev/null || true)\"\\n  if [[ -n \"\$_acfs_passwd_entry\" ]]; then\\n    target_home=\"\$(acfs_generated_passwd_home_from_entry \"\$_acfs_passwd_entry\" 2>/dev/null || true)\"\\n  else\\n    current_user=\"\$(acfs_generated_resolve_current_user 2>/dev/null || true)\"\\n    current_home=\"\${HOME:-}\"\\n    if [[ -n \"\$current_home\" ]]; then\\n      current_home=\"\${current_home%/}\"\\n    fi\\n    if [[ -n \"\$current_user\" ]] && [[ \"\$current_user\" == \"\${TARGET_USER:-ubuntu}\" ]] && [[ -n \"\$current_home\" ]] && [[ \"\$current_home\" == /* ]] && [[ \"\$current_home\" != \"/\" ]] && { [[ -z \"\$explicit_target_home\" ]] || [[ \"\$current_home\" == \"\$explicit_target_home\" ]]; }; then\\n      target_home=\"\$current_home\"\\n    fi\\n    unset current_user current_home\\n  fi\\n  unset _acfs_passwd_entry\\nfi\\nif [[ -z \"\$target_home\" && -n \"\$explicit_target_home\" ]]; then\\n  target_home=\"\$explicit_target_home\"\\nfi\\nunset explicit_target_home\\nif [[ -z \"\$target_home\" ]]; then\\n  echo \"ERROR: Unable to resolve TARGET_HOME for '\${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly\" >&2\\n  exit 1\\nfi\\nif [[ -z \"\$target_home\" || \"\$target_home\" == \"/\" || \"\$target_home\" != /* ]]; then\\n  echo \"ERROR: Invalid TARGET_HOME: '\${target_home:-<empty>}'\" >&2\\n  exit 1\\nfi\\ntest -d \"\$target_home/.acfs\"	required	root"
+    "base.filesystem.3	Create workspace and ACFS directories	target_home=\"\"\\nexplicit_target_home=\"\${TARGET_HOME:-}\"\\nif [[ -n \"\$explicit_target_home\" ]]; then\\n  explicit_target_home=\"\${explicit_target_home%/}\"\\nfi\\nif [[ \"\${TARGET_USER:-ubuntu}\" == \"root\" ]]; then\\n  target_home=\"/root\"\\nelse\\n  _acfs_passwd_entry=\"\$(acfs_generated_getent_passwd_entry \"\${TARGET_USER:-ubuntu}\" 2>/dev/null || true)\"\\n  if [[ -n \"\$_acfs_passwd_entry\" ]]; then\\n    target_home=\"\$(acfs_generated_passwd_home_from_entry \"\$_acfs_passwd_entry\" 2>/dev/null || true)\"\\n  else\\n    current_user=\"\$(acfs_generated_resolve_current_user 2>/dev/null || true)\"\\n    current_home=\"\${HOME:-}\"\\n    if [[ -n \"\$current_home\" ]]; then\\n      current_home=\"\${current_home%/}\"\\n    fi\\n    if [[ -n \"\$current_user\" ]] && [[ \"\$current_user\" == \"\${TARGET_USER:-ubuntu}\" ]] && [[ -n \"\$current_home\" ]] && [[ \"\$current_home\" == /* ]] && [[ \"\$current_home\" != \"/\" ]] && { [[ -z \"\$explicit_target_home\" ]] || [[ \"\$current_home\" == \"\$explicit_target_home\" ]]; }; then\\n      target_home=\"\$current_home\"\\n    fi\\n    unset current_user current_home\\n  fi\\n  unset _acfs_passwd_entry\\nfi\\nunset explicit_target_home\\nif [[ -z \"\$target_home\" ]]; then\\n  echo \"ERROR: Unable to resolve TARGET_HOME for '\${TARGET_USER:-ubuntu}'; export TARGET_HOME explicitly\" >&2\\n  exit 1\\nfi\\nif [[ -z \"\$target_home\" || \"\$target_home\" == \"/\" || \"\$target_home\" != /* ]]; then\\n  echo \"ERROR: Invalid TARGET_HOME: '\${target_home:-<empty>}'\" >&2\\n  exit 1\\nfi\\ntest -d \"\$target_home/.acfs\"	required	root"
     "shell.zsh	Zsh shell package	zsh --version	required	root"
     "shell.omz.1	Oh My Zsh + Powerlevel10k + plugins + ACFS config	test -d ~/.oh-my-zsh	required	target_user"
     "shell.omz.2	Oh My Zsh + Powerlevel10k + plugins + ACFS config	test -f ~/.acfs/zsh/acfs.zshrc	required	target_user"
@@ -407,8 +406,6 @@ run_manifest_check_command() {
     fi
     if [[ -n "$resolved_target_home" ]]; then
         target_home="${resolved_target_home%/}"
-    elif [[ -n "$explicit_target_home" ]]; then
-        target_home="$explicit_target_home"
     fi
 
     if [[ "$cmd" == *"acfs_generated_"* ]]; then
@@ -419,6 +416,14 @@ run_manifest_check_command() {
             return 1
         fi
         cmd="${helper_prelude}"$'\n'"${cmd}"
+    fi
+
+    local env_bin=""
+    local bash_bin=""
+    env_bin="$(acfs_generated_system_binary_path env 2>/dev/null || true)"
+    bash_bin="$(acfs_generated_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$env_bin" || -z "$bash_bin" ]]; then
+        return 1
     fi
 
     case "$run_as" in
@@ -464,15 +469,19 @@ run_manifest_check_command() {
             target_path="$target_path_prefix${PATH:+:$PATH}"
             current_user="$(acfs_generated_resolve_current_user 2>/dev/null || true)"
             if [[ "${current_user:-}" == "$target_user" ]]; then
-                TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
+                "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"
                 return $?
             fi
-            if [[ $EUID -eq 0 ]] && command -v runuser >/dev/null 2>&1; then
-                runuser -u "$target_user" -- env TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
+            local runuser_bin=""
+            runuser_bin="$(acfs_generated_system_binary_path runuser 2>/dev/null || true)"
+            if [[ $EUID -eq 0 && -n "$runuser_bin" ]]; then
+                "$runuser_bin" -u "$target_user" -- "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"
                 return $?
             fi
-            if command -v sudo >/dev/null 2>&1; then
-                sudo -n -u "$target_user" env TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" bash -o pipefail -c "$cmd"
+            local sudo_bin=""
+            sudo_bin="$(acfs_generated_system_binary_path sudo 2>/dev/null || true)"
+            if [[ -n "$sudo_bin" ]]; then
+                "$sudo_bin" -n -u "$target_user" "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" HOME="$target_home" PATH="$target_path" "$bash_bin" -o pipefail -c "$cmd"
                 return $?
             fi
             return 1
@@ -480,17 +489,19 @@ run_manifest_check_command() {
         root)
             if [[ $EUID -eq 0 ]]; then
                 if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-                    TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                    "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"
                 else
-                    TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                    "$env_bin" TARGET_USER="$target_user" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"
                 fi
                 return $?
             fi
-            if command -v sudo >/dev/null 2>&1; then
+            local sudo_bin=""
+            sudo_bin="$(acfs_generated_system_binary_path sudo 2>/dev/null || true)"
+            if [[ -n "$sudo_bin" ]]; then
                 if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-                    sudo -n env TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                    "$sudo_bin" -n "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"
                 else
-                    sudo -n env TARGET_USER="$target_user" PATH="$system_path_prefix" bash -o pipefail -c "$cmd"
+                    "$sudo_bin" -n "$env_bin" TARGET_USER="$target_user" PATH="$system_path_prefix" "$bash_bin" -o pipefail -c "$cmd"
                 fi
                 return $?
             fi
@@ -498,9 +509,9 @@ run_manifest_check_command() {
             ;;
         current|*)
             if [[ -n "$target_home" ]] && [[ "$target_home" == /* ]] && [[ "$target_home" != "/" ]]; then
-                TARGET_USER="$target_user" TARGET_HOME="$target_home" bash -o pipefail -c "$cmd"
+                "$env_bin" TARGET_USER="$target_user" TARGET_HOME="$target_home" "$bash_bin" -o pipefail -c "$cmd"
             else
-                TARGET_USER="$target_user" bash -o pipefail -c "$cmd"
+                "$env_bin" TARGET_USER="$target_user" "$bash_bin" -o pipefail -c "$cmd"
             fi
             ;;
     esac
