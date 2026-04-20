@@ -7667,6 +7667,7 @@ test_acfs_system_binary_resolvers_cover_usr_local() {
 install|$REPO_ROOT/install.sh
 preflight|$REPO_ROOT/scripts/preflight.sh
 services-setup|$REPO_ROOT/scripts/services-setup.sh
+install-workflow|$REPO_ROOT/scripts/install-acfs-workflow.sh
 acfs-update|$REPO_ROOT/scripts/acfs-update
 acfs-global|$REPO_ROOT/scripts/acfs-global
 onboard|$REPO_ROOT/packages/onboard/onboard.sh
@@ -7677,13 +7678,17 @@ agents-lib|$REPO_ROOT/scripts/lib/agents.sh
 languages-lib|$REPO_ROOT/scripts/lib/languages.sh
 cloud-db-lib|$REPO_ROOT/scripts/lib/cloud_db.sh
 stack-lib|$REPO_ROOT/scripts/lib/stack.sh
+autofix-lib|$REPO_ROOT/scripts/lib/autofix.sh
 changelog-lib|$REPO_ROOT/scripts/lib/changelog.sh
 cheatsheet-lib|$REPO_ROOT/scripts/lib/cheatsheet.sh
 continue-lib|$REPO_ROOT/scripts/lib/continue.sh
 dashboard-lib|$REPO_ROOT/scripts/lib/dashboard.sh
+doctor-lib|$REPO_ROOT/scripts/lib/doctor.sh
+doctor-fix-lib|$REPO_ROOT/scripts/lib/doctor_fix.sh
 export-config-lib|$REPO_ROOT/scripts/lib/export-config.sh
 github-api-lib|$REPO_ROOT/scripts/lib/github_api.sh
 info-lib|$REPO_ROOT/scripts/lib/info.sh
+nightly-update-lib|$REPO_ROOT/scripts/lib/nightly_update.sh
 notifications-lib|$REPO_ROOT/scripts/lib/notifications.sh
 notify-lib|$REPO_ROOT/scripts/lib/notify.sh
 os-detect-lib|$REPO_ROOT/scripts/lib/os_detect.sh
@@ -7693,6 +7698,8 @@ status-lib|$REPO_ROOT/scripts/lib/status.sh
 support-lib|$REPO_ROOT/scripts/lib/support.sh
 user-lib|$REPO_ROOT/scripts/lib/user.sh
 webhook-lib|$REPO_ROOT/scripts/lib/webhook.sh
+ubuntu-upgrade-lib|$REPO_ROOT/scripts/lib/ubuntu_upgrade.sh
+zsh-lib|$REPO_ROOT/scripts/lib/zsh.sh
 generated-install-all|$REPO_ROOT/scripts/generated/install_all.sh
 generated-doctor-checks|$REPO_ROOT/scripts/generated/doctor_checks.sh
 EOF

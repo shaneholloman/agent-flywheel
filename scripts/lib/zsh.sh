@@ -59,7 +59,14 @@ zsh_system_binary_path() {
 
     [[ -n "$name" ]] || return 1
 
-    for candidate in         "/usr/bin/$name"         "/bin/$name"         "/usr/local/bin/$name"         "/usr/local/sbin/$name"         "/usr/sbin/$name"         "/sbin/$name"; do
+    for candidate in \
+        "/usr/bin/$name" \
+        "/bin/$name" \
+        "/usr/local/bin/$name" \
+        "/usr/local/sbin/$name" \
+        "/usr/sbin/$name" \
+        "/sbin/$name"
+    do
         [[ -x "$candidate" ]] || continue
         printf '%s\n' "$candidate"
         return 0
