@@ -1717,63 +1717,87 @@ handle_existing_installation() {
     local state
     state=$(detect_installation_state)
 
-    # Non-interactive modes
+    # `abort` short-circuits before any backups, so it does not need a session.
+    if [[ "$mode" == "abort" ]]; then
+        log_info "Aborting installation per request."
+        return 1
+    fi
+
+    # Both upgrade and clean paths call create_backup/record_change, which
+    # require an active autofix session. When this function is invoked from
+    # handle_autofix dispatch or the CLI entry points, no session has been
+    # started yet — acquire one here and release it on exit.
+    local session_owned=false
+    if ! autofix_ensure_session session_owned; then
+        log_error "[EXISTING] Failed to start autofix session for existing-installation handling"
+        return 1
+    fi
+
+    local result=1
     case "$mode" in
         upgrade)
-            upgrade_existing_installation "$current_version" "$new_version"
-            return $?
+            if upgrade_existing_installation "$current_version" "$new_version"; then
+                result=0
+            fi
             ;;
         clean)
-            clean_reinstall
-            return $?
+            if clean_reinstall; then
+                result=0
+            fi
             ;;
-        abort)
-            log_info "Aborting installation per request."
-            return 1
+        *)
+            # Interactive mode - show info and prompt
+            log_warn "════════════════════════════════════════════════════════════"
+            log_warn "  Existing ACFS installation detected!"
+            log_warn "════════════════════════════════════════════════════════════"
+            log_warn ""
+            log_warn "  Current version: $current_version"
+            log_warn "  New version:     $new_version"
+            log_warn "  State:           $state"
+            log_warn ""
+            log_warn "  Found markers:"
+            # shellcheck disable=SC2086
+            for marker in $markers; do
+                log_warn "    - $marker"
+            done
+            log_warn ""
+
+            echo ""
+            echo "How would you like to proceed?"
+            echo ""
+            echo "  1) Upgrade (Recommended) - Keep config, update binaries"
+            echo "  2) Clean reinstall - Backup and start fresh"
+            echo "  3) Abort - Exit without changes"
+            echo ""
+
+            local choice
+            read -rp "Enter choice [1-3]: " choice < /dev/tty
+
+            case "$choice" in
+                1)
+                    if upgrade_existing_installation "$current_version" "$new_version"; then
+                        result=0
+                    fi
+                    ;;
+                2)
+                    if clean_reinstall; then
+                        result=0
+                    fi
+                    ;;
+                3|*)
+                    log_info "Aborting installation."
+                    result=1
+                    ;;
+            esac
             ;;
     esac
 
-    # Interactive mode - show info and prompt
-    log_warn "════════════════════════════════════════════════════════════"
-    log_warn "  Existing ACFS installation detected!"
-    log_warn "════════════════════════════════════════════════════════════"
-    log_warn ""
-    log_warn "  Current version: $current_version"
-    log_warn "  New version:     $new_version"
-    log_warn "  State:           $state"
-    log_warn ""
-    log_warn "  Found markers:"
-    # shellcheck disable=SC2086
-    for marker in $markers; do
-        log_warn "    - $marker"
-    done
-    log_warn ""
+    if ! autofix_finalize_managed_session "$session_owned"; then
+        log_error "[EXISTING] Failed to finalize autofix session"
+        return 1
+    fi
 
-    echo ""
-    echo "How would you like to proceed?"
-    echo ""
-    echo "  1) Upgrade (Recommended) - Keep config, update binaries"
-    echo "  2) Clean reinstall - Backup and start fresh"
-    echo "  3) Abort - Exit without changes"
-    echo ""
-
-    local choice
-    read -rp "Enter choice [1-3]: " choice < /dev/tty
-
-    case "$choice" in
-        1)
-            upgrade_existing_installation "$current_version" "$new_version"
-            return $?
-            ;;
-        2)
-            clean_reinstall
-            return $?
-            ;;
-        3|*)
-            log_info "Aborting installation."
-            return 1
-            ;;
-    esac
+    return "$result"
 }
 
 # Non-interactive upgrade check (for CI/automated runs)
@@ -1792,8 +1816,20 @@ autofix_existing_should_proceed() {
     # If force mode, always proceed with upgrade
     if [[ "$force" == "true" ]]; then
         log_info "[AUTO] Force mode - proceeding with upgrade"
-        upgrade_existing_installation "$current_version" "$new_version"
-        return $?
+        local session_owned=false
+        if ! autofix_ensure_session session_owned; then
+            log_error "[AUTO] Failed to start autofix session for force-mode upgrade"
+            return 1
+        fi
+        local upgrade_result=1
+        if upgrade_existing_installation "$current_version" "$new_version"; then
+            upgrade_result=0
+        fi
+        if ! autofix_finalize_managed_session "$session_owned"; then
+            log_error "[AUTO] Failed to finalize autofix session after force-mode upgrade"
+            return 1
+        fi
+        return "$upgrade_result"
     fi
 
     # Compare versions

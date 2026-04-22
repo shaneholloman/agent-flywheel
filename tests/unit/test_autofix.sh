@@ -1979,6 +1979,117 @@ test_cleanup_old_backups_preserves_active_referenced_backups() {
 }
 
 # ============================================================
+# Regression tests for handle_existing_installation session management
+# (ACFS #264 — https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup/issues/264)
+# ============================================================
+
+_acfs_264_setup_installation() {
+    local target_home="$1"
+    local installed_version="${2:-0.6.0}"
+    mkdir -p "$target_home/.acfs"
+    printf '%s\n' "$installed_version" > "$target_home/.acfs/version"
+}
+
+test_handle_existing_installation_manages_session_for_upgrade() {
+    setup_test_env
+    local target_home="/tmp/test_acfs264_upgrade_$$"
+    rm -rf "$target_home"
+    _acfs_264_setup_installation "$target_home" "0.6.0"
+
+    local output
+    output=$(HOME="$target_home" TARGET_HOME="$target_home" \
+        ACFS_STATE_DIR="$ACFS_STATE_DIR" \
+        ACFS_CHANGES_FILE="$ACFS_CHANGES_FILE" \
+        ACFS_UNDOS_FILE="$ACFS_UNDOS_FILE" \
+        ACFS_BACKUPS_DIR="$ACFS_BACKUPS_DIR" \
+        ACFS_LOCK_FILE="$ACFS_LOCK_FILE" \
+        ACFS_INTEGRITY_FILE="$ACFS_INTEGRITY_FILE" \
+        bash -c '
+            set -u
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            source "$2"
+            update_path_entries() { return 0; }
+            export -f update_path_entries
+            if autofix_session_active; then
+                echo "precondition-fail: session already active"
+                exit 2
+            fi
+            if ! handle_existing_installation "0.7.0" "upgrade" >/dev/null 2>&1; then
+                echo "upgrade-failed"
+                exit 3
+            fi
+            if autofix_session_active; then
+                echo "session-leaked"
+                exit 4
+            fi
+            echo "ok"
+        ' _ "$REPO_ROOT/scripts/lib/autofix.sh" "$REPO_ROOT/scripts/lib/autofix_existing.sh" 2>&1)
+
+    local status=$?
+    rm -rf "$target_home"
+    cleanup_test_env
+
+    if [[ $status -eq 0 && "$output" == *"ok"* ]]; then
+        return 0
+    fi
+    echo "  output: $output"
+    echo "  status: $status"
+    return 1
+}
+
+test_handle_existing_installation_preserves_outer_session() {
+    setup_test_env
+    local target_home="/tmp/test_acfs264_nested_$$"
+    rm -rf "$target_home"
+    _acfs_264_setup_installation "$target_home" "0.6.0"
+
+    local output
+    output=$(HOME="$target_home" TARGET_HOME="$target_home" \
+        ACFS_STATE_DIR="$ACFS_STATE_DIR" \
+        ACFS_CHANGES_FILE="$ACFS_CHANGES_FILE" \
+        ACFS_UNDOS_FILE="$ACFS_UNDOS_FILE" \
+        ACFS_BACKUPS_DIR="$ACFS_BACKUPS_DIR" \
+        ACFS_LOCK_FILE="$ACFS_LOCK_FILE" \
+        ACFS_INTEGRITY_FILE="$ACFS_INTEGRITY_FILE" \
+        bash -c '
+            set -u
+            unset _ACFS_AUTOFIX_SOURCED _ACFS_AUTOFIX_EXISTING_SOURCED
+            source "$1"
+            source "$2"
+            update_path_entries() { return 0; }
+            export -f update_path_entries
+            if ! start_autofix_session >/dev/null 2>&1; then
+                echo "outer-start-failed"
+                exit 2
+            fi
+            outer_sid="$ACFS_SESSION_ID"
+            handle_existing_installation "0.7.0" "upgrade" >/dev/null 2>&1 || true
+            if ! autofix_session_active; then
+                echo "outer-session-lost"
+                exit 3
+            fi
+            if [[ "$ACFS_SESSION_ID" != "$outer_sid" ]]; then
+                echo "session-id-changed"
+                exit 4
+            fi
+            end_autofix_session >/dev/null 2>&1 || true
+            echo "ok"
+        ' _ "$REPO_ROOT/scripts/lib/autofix.sh" "$REPO_ROOT/scripts/lib/autofix_existing.sh" 2>&1)
+
+    local status=$?
+    rm -rf "$target_home"
+    cleanup_test_env
+
+    if [[ $status -eq 0 && "$output" == *"ok"* ]]; then
+        return 0
+    fi
+    echo "  output: $output"
+    echo "  status: $status"
+    return 1
+}
+
+# ============================================================
 # Main Test Runner
 # ============================================================
 
@@ -2037,6 +2148,8 @@ main() {
     run_test test_update_integrity_file
     run_test test_cleanup_old_backups_removes_directory_entries
     run_test test_cleanup_old_backups_preserves_active_referenced_backups
+    run_test test_handle_existing_installation_manages_session_for_upgrade
+    run_test test_handle_existing_installation_preserves_outer_session
 
     echo ""
     echo "============================================================"
