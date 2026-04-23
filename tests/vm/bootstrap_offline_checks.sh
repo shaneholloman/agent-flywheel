@@ -133,7 +133,7 @@ run_bootstrap() {
   if [[ "$expect_failure" == "true" ]]; then
     set +e
     local output
-    output="$(ACFS_TEST_ARCHIVE="$archive_path" PATH="$stub_dir:$PATH" bash -lc "cat '$REPO_ROOT/install.sh' | bash -s -- --list-modules" 2>&1)"
+    output="$(ACFS_TEST_MODE=1 ACFS_TEST_ARCHIVE="$archive_path" PATH="$stub_dir:$PATH" bash -lc "cat '$REPO_ROOT/install.sh' | bash -s -- --list-modules" 2>&1)"
     local status=$?
     set -e
 
@@ -155,7 +155,7 @@ run_bootstrap() {
 
   set +e
   local output
-  output="$(ACFS_TEST_ARCHIVE="$archive_path" PATH="$stub_dir:$PATH" bash -lc "cat '$REPO_ROOT/install.sh' | bash -s -- --list-modules" 2>&1)"
+  output="$(ACFS_TEST_MODE=1 ACFS_TEST_ARCHIVE="$archive_path" PATH="$stub_dir:$PATH" bash -lc "cat '$REPO_ROOT/install.sh' | bash -s -- --list-modules" 2>&1)"
   local status=$?
   set -e
 

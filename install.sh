@@ -2260,13 +2260,42 @@ bootstrap_repo_archive() {
     "$chmod_bin" 755 "$tmp_dir"
 
     log_step "Bootstrapping ACFS archive (${ref})"
-    log_detail "Downloading ${archive_url}"
 
-    if ! acfs_curl_with_retry "$archive_url" "$ACFS_TMP_ARCHIVE"; then
-        log_error "Failed to download ACFS archive. Try again, or pin ACFS_REF to a tag/sha."
-        "$rm_bin" -f "$ACFS_TMP_ARCHIVE"
-        "$rm_bin" -rf "$tmp_dir"
-        return 1
+    # Test-mode hook: offline bootstrap checks cannot use PATH-based curl
+    # stubs because acfs_curl resolves curl via absolute paths only (intentional
+    # hardening, commit 958e2ee2). The hook lets tests point the bootstrap at
+    # a locally-staged archive and skip the network entirely. Gated on an
+    # explicit ACFS_TEST_MODE=1 so accidentally setting ACFS_TEST_ARCHIVE in
+    # production cannot bypass the network path.
+    if [[ "${ACFS_TEST_MODE:-}" == "1" && -n "${ACFS_TEST_ARCHIVE:-}" ]]; then
+        local cp_bin
+        cp_bin="$(acfs_early_system_binary_path cp 2>/dev/null || true)"
+        if [[ -z "$cp_bin" ]]; then
+            log_error "Test-mode bootstrap requires cp"
+            "$rm_bin" -rf "$tmp_dir"
+            return 1
+        fi
+        if [[ ! -f "$ACFS_TEST_ARCHIVE" ]]; then
+            log_error "ACFS_TEST_MODE=1 but ACFS_TEST_ARCHIVE is not a regular file: $ACFS_TEST_ARCHIVE"
+            "$rm_bin" -f "$ACFS_TMP_ARCHIVE"
+            "$rm_bin" -rf "$tmp_dir"
+            return 1
+        fi
+        log_detail "Test mode: using local archive $ACFS_TEST_ARCHIVE"
+        if ! "$cp_bin" "$ACFS_TEST_ARCHIVE" "$ACFS_TMP_ARCHIVE"; then
+            log_error "Failed to stage local archive for bootstrap"
+            "$rm_bin" -f "$ACFS_TMP_ARCHIVE"
+            "$rm_bin" -rf "$tmp_dir"
+            return 1
+        fi
+    else
+        log_detail "Downloading ${archive_url}"
+        if ! acfs_curl_with_retry "$archive_url" "$ACFS_TMP_ARCHIVE"; then
+            log_error "Failed to download ACFS archive. Try again, or pin ACFS_REF to a tag/sha."
+            "$rm_bin" -f "$ACFS_TMP_ARCHIVE"
+            "$rm_bin" -rf "$tmp_dir"
+            return 1
+        fi
     fi
 
     log_detail "Extracting runtime assets"
