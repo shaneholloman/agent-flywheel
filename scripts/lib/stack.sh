@@ -1036,6 +1036,53 @@ normalize_http_path() {
     esac
 }
 
+systemd_unit_reject_line_breaks() {
+    local value="${1:-}"
+    [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]]
+}
+
+systemd_unit_path_escape() {
+    local value="${1:-}"
+    local tab=$'\t'
+
+    systemd_unit_reject_line_breaks "$value" || return 1
+    value="${value//\\/\\\\}"
+    value="${value//%/%%}"
+    value="${value// /\\s}"
+    value="${value//$tab/\\t}"
+    printf '%s\n' "$value"
+}
+
+systemd_unit_quote() {
+    local value="${1:-}"
+    local escape_dollar="${2:-false}"
+
+    systemd_unit_reject_line_breaks "$value" || return 1
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//%/%%}"
+    if [[ "$escape_dollar" == "true" ]]; then
+        value="${value//\$/\$\$}"
+    fi
+    printf '"%s"\n' "$value"
+}
+
+systemd_unit_exec_arg() {
+    systemd_unit_quote "${1:-}" true
+}
+
+systemd_unit_exec_command() {
+    systemd_unit_quote "${1:-}" false
+}
+
+systemd_unit_env_assignment() {
+    local name="${1:-}"
+    local value="${2:-}"
+
+    [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+    systemd_unit_quote "${name}=${value}" false
+}
+
 sqlite_user_table_count() {
     local db_path="$1"
     [[ -f "$db_path" ]] || {
@@ -1176,8 +1223,16 @@ fi
 mkdir -p "$storage_root" "$unit_dir"
 env_file_line=""
 if [[ -n "$env_file" ]]; then
-    env_file_line="EnvironmentFile=-$env_file"
+    env_file_unit="$(systemd_unit_path_escape "$env_file")" || exit 1
+    env_file_line="EnvironmentFile=-$env_file_unit"
 fi
+storage_root_unit="$(systemd_unit_path_escape "$storage_root")" || exit 1
+rust_log_env="$(systemd_unit_env_assignment RUST_LOG info)" || exit 1
+storage_root_env="$(systemd_unit_env_assignment STORAGE_ROOT "$storage_root")" || exit 1
+database_url_env="$(systemd_unit_env_assignment DATABASE_URL "$db_url")" || exit 1
+http_allow_env="$(systemd_unit_env_assignment HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED true)" || exit 1
+am_bin_exec="$(systemd_unit_exec_command "$am_bin")" || exit 1
+am_mcp_path_exec="$(systemd_unit_exec_arg "$am_mcp_path")" || exit 1
 cat > "$unit_file" <<UNIT_EOF
 [Unit]
 Description=MCP Agent Mail Server
@@ -1185,14 +1240,14 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=$storage_root
+WorkingDirectory=$storage_root_unit
 ${env_file_line}
-Environment=RUST_LOG=info
-Environment=STORAGE_ROOT=$storage_root
-Environment=DATABASE_URL=$db_url
-Environment=HTTP_ALLOW_LOCALHOST_UNAUTHENTICATED=true
-ExecStartPre=$am_bin migrate
-ExecStart=$am_bin serve-http --no-tui --host 127.0.0.1 --port 8765 --path $am_mcp_path
+Environment=$rust_log_env
+Environment=$storage_root_env
+Environment=$database_url_env
+Environment=$http_allow_env
+ExecStartPre=${am_bin_exec} migrate
+ExecStart=${am_bin_exec} serve-http --no-tui --host 127.0.0.1 --port 8765 --path ${am_mcp_path_exec}
 Restart=always
 RestartSec=5
 LimitNOFILE=65536

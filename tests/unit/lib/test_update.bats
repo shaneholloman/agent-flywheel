@@ -7559,6 +7559,37 @@ SECURITY
     assert_failure
 }
 
+@test "stack Agent Mail unit escapes dynamic systemd values" {
+    local stack_lib="$PROJECT_ROOT/scripts/lib/stack.sh"
+
+    run grep -F 'systemd_unit_path_escape() {' "$stack_lib"
+    assert_success
+
+    run grep -F 'value="${value//%/%%}"' "$stack_lib"
+    assert_success
+
+    run grep -F 'value="${value//\$/\$\$}"' "$stack_lib"
+    assert_success
+
+    run grep -Fx 'WorkingDirectory=$storage_root' "$stack_lib"
+    assert_failure
+
+    run grep -Fx 'WorkingDirectory=$storage_root_unit' "$stack_lib"
+    assert_success
+
+    run grep -Fx 'Environment=STORAGE_ROOT=$storage_root' "$stack_lib"
+    assert_failure
+
+    run grep -Fx 'Environment=$storage_root_env' "$stack_lib"
+    assert_success
+
+    run grep -F 'ExecStart=$am_bin serve-http' "$stack_lib"
+    assert_failure
+
+    run grep -F 'ExecStart=${am_bin_exec} serve-http' "$stack_lib"
+    assert_success
+}
+
 @test "update verified installer env assignment values are argv-safe data" {
     declare -gA KNOWN_INSTALLERS=([test_tool]="https://example.test/install.sh")
 

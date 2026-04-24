@@ -2604,13 +2604,13 @@ EOF
         return 1
     fi
 
-    if ! grep -Fq "ExecStart=$TARGET_HOME/mcp_agent_mail/am serve-http" "$TARGET_HOME/.config/systemd/user/agent-mail.service"; then
+    if ! grep -Fq "ExecStart=\"$TARGET_HOME/mcp_agent_mail/am\" serve-http" "$TARGET_HOME/.config/systemd/user/agent-mail.service"; then
         echo "  Agent Mail unit did not use the target install binary"
         cleanup_test_env
         return 1
     fi
 
-    if ! grep -Fq 'Environment=HTTP_PATH=/mcp/' "$TARGET_HOME/.config/systemd/user/agent-mail.service"; then
+    if ! grep -Fq 'Environment="HTTP_PATH=/mcp/"' "$TARGET_HOME/.config/systemd/user/agent-mail.service"; then
         echo "  Agent Mail unit did not use the Rust /mcp/ endpoint"
         cleanup_test_env
         return 1
@@ -2618,6 +2618,71 @@ EOF
 
     if [[ -f "$HOME/global-am-used" ]]; then
         echo "  agent_mail_fix_write_unit should not invoke the current-shell am"
+        cleanup_test_env
+        return 1
+    fi
+
+    cleanup_test_env
+    return 0
+}
+
+test_agent_mail_fix_write_unit_escapes_systemd_values() {
+    setup_test_env
+
+    export TARGET_HOME="$ACFS_STATE_DIR/target home 100% \$cash"
+    mkdir -p "$TARGET_HOME/mcp_agent_mail"
+
+    cat > "$TARGET_HOME/mcp_agent_mail/am" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+    echo "am 1.0.0"
+    exit 0
+fi
+exit 0
+EOF
+    chmod +x "$TARGET_HOME/mcp_agent_mail/am"
+
+    if ! agent_mail_fix_write_unit; then
+        echo "  agent_mail_fix_write_unit should succeed for systemd-special paths"
+        cleanup_test_env
+        return 1
+    fi
+
+    local unit_file="$TARGET_HOME/.config/systemd/user/agent-mail.service"
+    local storage_root="$TARGET_HOME/.mcp_agent_mail_git_mailbox_repo"
+    local db_url="sqlite+aiosqlite:///${storage_root}/storage.sqlite3"
+    local expected_working_dir=""
+    local expected_storage_env=""
+    local expected_db_env=""
+    local expected_am_bin=""
+    local expected_mcp_path=""
+
+    expected_working_dir="$(doctor_fix_systemd_unit_path_escape "$storage_root")"
+    expected_storage_env="$(doctor_fix_systemd_unit_env_assignment STORAGE_ROOT "$storage_root")"
+    expected_db_env="$(doctor_fix_systemd_unit_env_assignment DATABASE_URL "$db_url")"
+    expected_am_bin="$(doctor_fix_systemd_unit_exec_command "$TARGET_HOME/mcp_agent_mail/am")"
+    expected_mcp_path="$(doctor_fix_systemd_unit_exec_arg "/mcp/")"
+
+    if ! grep -Fxq "WorkingDirectory=$expected_working_dir" "$unit_file"; then
+        echo "  Agent Mail unit did not escape WorkingDirectory for systemd"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -Fxq "Environment=$expected_storage_env" "$unit_file"; then
+        echo "  Agent Mail unit did not quote STORAGE_ROOT for systemd"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -Fxq "Environment=$expected_db_env" "$unit_file"; then
+        echo "  Agent Mail unit did not quote DATABASE_URL for systemd"
+        cleanup_test_env
+        return 1
+    fi
+
+    if ! grep -Fxq "ExecStart=${expected_am_bin} serve-http --host 127.0.0.1 --port 8765 --path ${expected_mcp_path} --no-auth --no-tui" "$unit_file"; then
+        echo "  Agent Mail unit did not quote ExecStart arguments for systemd"
         cleanup_test_env
         return 1
     fi
@@ -3287,6 +3352,7 @@ main() {
     run_test test_dcg_hook_already_installed_detects_hook_wiring
     run_test test_agent_mail_fix_stop_fallback_cleans_up_matching_pid
     run_test test_agent_mail_fix_write_unit_prefers_target_install_over_current_shell_am
+    run_test test_agent_mail_fix_write_unit_escapes_systemd_values
     run_test test_fix_mcp_agent_mail_repairs_missing_symlink_without_using_current_shell_am
     run_test test_fix_mcp_agent_mail_uses_target_home_for_systemctl_env
     run_test test_fix_mcp_agent_mail_dry_run_reports_symlink_and_repair

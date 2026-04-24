@@ -21,6 +21,53 @@ doctor_fix_sanitize_abs_nonroot_path() {
     printf '%s\n' "$path_value"
 }
 
+doctor_fix_systemd_unit_reject_line_breaks() {
+    local value="${1:-}"
+    [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]]
+}
+
+doctor_fix_systemd_unit_path_escape() {
+    local value="${1:-}"
+    local tab=$'\t'
+
+    doctor_fix_systemd_unit_reject_line_breaks "$value" || return 1
+    value="${value//\\/\\\\}"
+    value="${value//%/%%}"
+    value="${value// /\\s}"
+    value="${value//$tab/\\t}"
+    printf '%s\n' "$value"
+}
+
+doctor_fix_systemd_unit_quote() {
+    local value="${1:-}"
+    local escape_dollar="${2:-false}"
+
+    doctor_fix_systemd_unit_reject_line_breaks "$value" || return 1
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//%/%%}"
+    if [[ "$escape_dollar" == "true" ]]; then
+        value="${value//\$/\$\$}"
+    fi
+    printf '"%s"\n' "$value"
+}
+
+doctor_fix_systemd_unit_exec_arg() {
+    doctor_fix_systemd_unit_quote "${1:-}" true
+}
+
+doctor_fix_systemd_unit_exec_command() {
+    doctor_fix_systemd_unit_quote "${1:-}" false
+}
+
+doctor_fix_systemd_unit_env_assignment() {
+    local name="${1:-}"
+    local value="${2:-}"
+
+    [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+    doctor_fix_systemd_unit_quote "${name}=${value}" false
+}
+
 doctor_fix_is_valid_username() {
     local username="${1:-}"
     [[ "$username" =~ ^[a-z_][a-z0-9._-]*$ ]]
@@ -1711,6 +1758,13 @@ agent_mail_fix_write_unit() {
     local unit_file="$unit_dir/agent-mail.service"
     local am_bin=""
     local db_url=""
+    local storage_root_unit=""
+    local rust_log_env=""
+    local storage_root_env=""
+    local database_url_env=""
+    local http_path_env=""
+    local am_bin_exec=""
+    local am_mcp_path_exec=""
 
     am_bin="$(doctor_fix_agent_mail_bin 2>/dev/null || true)"
     [[ -n "$am_bin" ]] || return 1
@@ -1722,6 +1776,13 @@ agent_mail_fix_write_unit() {
     [[ -n "$am_mcp_path" ]] || return 1
 
     mkdir -p "$storage_root" "$unit_dir" || return 1
+    storage_root_unit="$(doctor_fix_systemd_unit_path_escape "$storage_root")" || return 1
+    rust_log_env="$(doctor_fix_systemd_unit_env_assignment RUST_LOG info)" || return 1
+    storage_root_env="$(doctor_fix_systemd_unit_env_assignment STORAGE_ROOT "$storage_root")" || return 1
+database_url_env="$(doctor_fix_systemd_unit_env_assignment DATABASE_URL "$db_url")" || return 1
+http_path_env="$(doctor_fix_systemd_unit_env_assignment HTTP_PATH "$am_mcp_path")" || return 1
+am_bin_exec="$(doctor_fix_systemd_unit_exec_command "$am_bin")" || return 1
+am_mcp_path_exec="$(doctor_fix_systemd_unit_exec_arg "$am_mcp_path")" || return 1
     cat > "$unit_file" <<UNIT_EOF
 [Unit]
 Description=MCP Agent Mail Server
@@ -1729,12 +1790,12 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=$storage_root
-Environment=RUST_LOG=info
-Environment=STORAGE_ROOT=$storage_root
-Environment=DATABASE_URL=$db_url
-Environment=HTTP_PATH=$am_mcp_path
-ExecStart=$am_bin serve-http --host 127.0.0.1 --port 8765 --path $am_mcp_path --no-auth --no-tui
+WorkingDirectory=$storage_root_unit
+Environment=$rust_log_env
+Environment=$storage_root_env
+Environment=$database_url_env
+Environment=$http_path_env
+ExecStart=${am_bin_exec} serve-http --host 127.0.0.1 --port 8765 --path ${am_mcp_path_exec} --no-auth --no-tui
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
