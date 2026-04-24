@@ -7530,8 +7530,33 @@ EOF
     assert_success
     assert_output --partial "TEST_ENV=ok\\;touch\\ /tmp/acfs-pwned"
     refute_output --partial "TEST_ENV=ok;touch /tmp/acfs-pwned"
-    assert_output --partial "source /tmp/acfs\\ stack\\'s\\ dir/security.sh"
+    assert_output --partial "set -o pipefail; source /tmp/acfs\\ stack\\'s\\ dir/security.sh"
     assert_output --partial "bash -s -- --flag"
+}
+
+@test "stack verified installer command fails when checksum verifier fails" {
+    local stack_lib="$PROJECT_ROOT/scripts/lib/stack.sh"
+    local security_dir="$BATS_TEST_TMPDIR/stack-security"
+
+    # shellcheck disable=SC1090
+    eval "$(sed -n '/^_stack_run_verified_installer_with_env()/,/^}$/p' "$stack_lib")"
+
+    mkdir -p "$security_dir"
+    cat > "$security_dir/security.sh" <<'SECURITY'
+verify_checksum() {
+    return 1
+}
+SECURITY
+
+    declare -gA KNOWN_INSTALLERS=([test_tool]="https://example.test/install.sh")
+    _stack_require_security() { return 0; }
+    get_checksum() { printf '%s\n' "abc123"; }
+    log_warn() { printf '%s\n' "$*" >&2; }
+    _stack_run_as_user() { bash -c "$1"; }
+    STACK_SCRIPT_DIR="$security_dir"
+
+    run _stack_run_verified_installer_with_env "test_tool" "" "--flag"
+    assert_failure
 }
 
 @test "update verified installer env assignment values are argv-safe data" {
