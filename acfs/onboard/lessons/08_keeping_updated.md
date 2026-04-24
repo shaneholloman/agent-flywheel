@@ -126,8 +126,10 @@ tail -f ~/.acfs/logs/updates/$(ls -1t ~/.acfs/logs/updates | head -1)
 If you see "apt is locked by another process":
 
 ```bash
-# Wait for other apt operations to finish, or:
-sudo rm /var/lib/dpkg/lock-frontend
+# See which process is holding the lock
+sudo fuser -v /var/lib/dpkg/lock-frontend || true
+
+# Wait for other apt operations to finish, then repair interrupted packages
 sudo dpkg --configure -a
 ```
 

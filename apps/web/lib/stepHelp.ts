@@ -140,7 +140,7 @@ export const STEP_HELP: Partial<Record<number, StepHelp>> = {
       {
         symptom: "APT is locked by another process",
         solution:
-          "Another update is running. Wait a few minutes, or run: sudo kill $(cat /var/lib/dpkg/lock-frontend 2>/dev/null) then try again.",
+          "Another update is running. Wait a few minutes, check the holder with 'sudo fuser -v /var/lib/dpkg/lock-frontend || true', then reboot and retry if it remains stuck.",
       },
       {
         symptom: "Cannot reach github.com",

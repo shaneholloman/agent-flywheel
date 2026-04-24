@@ -40,8 +40,8 @@ const TROUBLESHOOTING = [
     title: "APT is locked by another process",
     fixes: [
       "Wait 1-2 minutes (auto updates often finish quickly)",
-      "If it keeps failing: sudo killall apt apt-get",
-      "Optional: sudo systemctl stop unattended-upgrades",
+      "If it keeps failing, reboot the VPS, reconnect, and rerun preflight",
+      "Optional diagnostic: sudo fuser -v /var/lib/dpkg/lock-frontend || true",
     ],
   },
   {

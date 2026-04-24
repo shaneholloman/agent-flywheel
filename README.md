@@ -3695,9 +3695,13 @@ To debug:
    # Then re-run installer
    ```
 
-2. **Kill stuck process** (if waiting doesn't help):
+2. **Inspect and recover if waiting doesn't help**:
    ```bash
-   sudo killall apt apt-get dpkg
+   sudo fuser -v /var/lib/dpkg/lock-frontend || true
+   sudo systemctl status unattended-upgrades --no-pager || true
+
+   # If it still looks stuck after several minutes, reboot the VPS,
+   # reconnect, then repair interrupted package configuration:
    sudo dpkg --configure -a
    sudo apt-get update
    ```

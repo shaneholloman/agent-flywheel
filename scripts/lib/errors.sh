@@ -41,7 +41,7 @@ declare -gA ERROR_PATTERNS=(
 
     ['Unmet dependencies']="Package dependencies cannot be satisfied. Try:\n  sudo apt-get install -f\n  sudo apt-get update && sudo apt-get upgrade"
 
-    ['Hash Sum mismatch']="APT reported a hash mismatch. Try:\n  sudo rm -rf /var/lib/apt/lists/*\n  sudo apt-get clean\n  sudo apt-get update\nIf it persists, reboot and retry."
+    ['Hash Sum mismatch']="APT reported a hash mismatch. Try:\n  sudo apt-get clean\n  sudo apt-get update\nIf it persists, wait a few minutes and retry. If the same mirror keeps failing, reboot or switch Ubuntu mirrors before retrying."
 
     # Permission issues
     ['Permission denied']="Permission issue. Ensure you're running with appropriate privileges:\n  1. Run with sudo: sudo bash install.sh\n  2. Or run as root user\n  3. Check file permissions: ls -la"

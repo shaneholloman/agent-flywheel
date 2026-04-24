@@ -821,7 +821,7 @@ check_apt_lock() {
         fi
 
         if [[ "$lock_held" == "true" ]]; then
-            fail "APT is locked by another process" "Wait for other apt operations or run: sudo killall apt apt-get"
+            fail "APT is locked by another process" "Wait for other apt operations to finish, then rerun preflight. If it stays locked, reboot and retry."
             return
         fi
     fi
