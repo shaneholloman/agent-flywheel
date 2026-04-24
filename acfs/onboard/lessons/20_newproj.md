@@ -155,8 +155,8 @@ acfs newproj test-project -i
 ls -la /data/projects/test-project
 cat /data/projects/test-project/AGENTS.md
 
-# Clean up when done
-rm -rf /data/projects/test-project
+# Archive it when done, instead of deleting it
+mv /data/projects/test-project /data/projects/test-project.archived.$(date +%Y%m%d_%H%M%S)
 ```
 
 ---
