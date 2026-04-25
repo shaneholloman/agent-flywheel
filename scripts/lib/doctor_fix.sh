@@ -1081,7 +1081,7 @@ fix_plugin_clone() {
     # Guard: Oh-my-zsh must be installed
     if [[ ! -d "$runtime_home/.oh-my-zsh" ]]; then
         doctor_fix_log WARN "Oh-my-zsh not installed, cannot install plugins"
-        FIXES_MANUAL+=("fix.plugin.clone|Install Oh-my-zsh first|curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash")
+        FIXES_MANUAL+=("fix.plugin.clone|Install Oh-my-zsh first|curl -fsSL https://install.ohmyz.sh/ | bash")
         FIX_MANUAL=$((FIX_MANUAL + 1))
         return 1
     fi

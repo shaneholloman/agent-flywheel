@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-04-23T01:06:44+00:00
+# checksums.yaml - Auto-generated 2026-04-24T22:55:58-04:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -99,7 +99,7 @@ installers:
     sha256: "abdb525ee9f5b48b34d8ed9fc67c6013fb0f659712e401ecd88ab989b3af8f53"
 
   ohmyzsh:
-    url: "https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
+    url: "https://install.ohmyz.sh/"
     sha256: "21043aec5b791ce4835479dc33ba2f92155946aeafd54604a8c83522627cc803"
 
   opencode:

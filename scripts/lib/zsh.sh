@@ -28,7 +28,7 @@ fi
 ZSH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Oh My Zsh installation URL
-OMZ_INSTALL_URL="https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
+OMZ_INSTALL_URL="https://install.ohmyz.sh/"
 
 # Powerlevel10k repository
 P10K_REPO="https://github.com/romkatv/powerlevel10k.git"

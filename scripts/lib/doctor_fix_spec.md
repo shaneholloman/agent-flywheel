@@ -308,7 +308,7 @@ Fixes that require confirmation (--prompt):
 Manual fixes (not auto-applied):
   [shell.ohmyzsh]
     Status: FAIL
-    Suggestion: curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash
+    Suggestion: curl -fsSL https://install.ohmyz.sh/ | bash
 
 Summary: 3 auto-fixes, 1 prompted, 2 manual
 ```

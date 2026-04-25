@@ -1446,7 +1446,7 @@ Would apply the following fixes:
 Fixes that require manual action:
   [shell.ohmyzsh]
     Status: FAIL
-    Suggestion: curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh | bash
+    Suggestion: curl -fsSL https://install.ohmyz.sh/ | bash
 
 Summary: 2 auto-fixes, 0 prompted, 1 manual
 ```

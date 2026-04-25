@@ -608,7 +608,7 @@ const SCENARIOS: Scenario[] = [
       "$ acfs-update --stack",
       "[apt] Fetching package lists...",
       "[apt] 3 packages upgraded",
-      "[shell] Pulling oh-my-zsh master... done",
+      "[shell] Pulling oh-my-zsh latest... done",
       "[shell] Pulling p10k... done",
       "[shell] Pulling zsh-plugins... done",
       "[agents] claude update --channel latest",
