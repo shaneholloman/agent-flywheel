@@ -543,6 +543,78 @@ test_workspace_checks_are_not_required_health_failures() {
     fi
 }
 
+test_base_filesystem_3_verify_runs_in_subprocess_without_helpers() {
+    harness_section "Test: base.filesystem.3 verify works in bare bash -c (issue acfs#268)"
+
+    local checks_file="$REPO_ROOT/scripts/generated/doctor_checks.sh"
+    if [[ ! -f "$checks_file" ]]; then
+        harness_fail "doctor_checks.sh not found at $checks_file"
+        return
+    fi
+
+    # Extract the encoded command for base.filesystem.3 from the
+    # MANIFEST_CHECKS array. Each entry is tab-separated:
+    # <id>\t<desc>\t<cmd>\t<required|optional>\t<root|target_user>
+    local entry=""
+    entry="$(awk -v RS='"' '/^base\.filesystem\.3\t/{print; exit}' "$checks_file" 2>/dev/null || true)"
+    if [[ -z "$entry" ]]; then
+        harness_fail "could not extract base.filesystem.3 entry from $checks_file"
+        return
+    fi
+
+    # Strip leading "base.filesystem.3\t<desc>\t" and trailing
+    # "\trequired\troot" to isolate the command body, then decode
+    # the embedded \\n \" \$ etc. via printf %b — same way the
+    # doctor decodes manifest commands.
+    local rest="${entry#base.filesystem.3$'\t'}"  # strip id
+    rest="${rest#*$'\t'}"                          # strip desc
+    local encoded_cmd="${rest%$'\t'required$'\t'root}"
+    local cmd=""
+    cmd="$(printf '%b' "$encoded_cmd")"
+
+    # Run the command via `bash -o pipefail -c`, exactly as
+    # _doctor_run_manifest_check does for run_as=root, but in a
+    # MINIMAL environment that does NOT include any acfs_generated_*
+    # shell function. The whole point of the regression is that the
+    # doctor's subprocess does not export those functions, so the
+    # verify must work without them.
+    local temp_root=""
+    temp_root="$(mktemp -d)"
+    mkdir -p "$temp_root/.acfs"
+
+    local output=""
+    output="$(env -i \
+        PATH="/usr/local/bin:/usr/bin:/bin" \
+        TARGET_USER="$(id -un)" \
+        TARGET_HOME="$temp_root" \
+        bash -o pipefail -c "$cmd" 2>&1)"
+    local rc=$?
+
+    if [[ $rc -eq 0 ]]; then
+        harness_pass "base.filesystem.3 passes when TARGET_HOME is set in env"
+    else
+        harness_fail "base.filesystem.3 fails when TARGET_HOME is set in env (rc=$rc)" "$output"
+    fi
+
+    # Same again, but WITHOUT TARGET_HOME — exercise the getent
+    # passwd fallback for callers that don't pre-resolve.
+    output="$(env -i \
+        PATH="/usr/local/bin:/usr/bin:/bin" \
+        TARGET_USER="$(id -un)" \
+        USER="$(id -un)" \
+        HOME="$temp_root" \
+        bash -o pipefail -c "$cmd" 2>&1)"
+    rc=$?
+
+    if [[ $rc -eq 0 ]]; then
+        harness_pass "base.filesystem.3 falls back to getent / HOME when TARGET_HOME is unset"
+    else
+        harness_fail "base.filesystem.3 fallback path failed (rc=$rc)" "$output"
+    fi
+
+    rm -rf "$temp_root"
+}
+
 test_generated_target_home_fallbacks_are_dynamic() {
     harness_section "Test: Generated target-home fallbacks are dynamic"
 
@@ -721,6 +793,7 @@ main() {
     test_root_checks_preserve_target_context
     test_generated_manifest_checks_use_hardened_target_path
     test_generated_run_manifest_check_command_handles_unresolved_target_home_by_context
+    test_base_filesystem_3_verify_runs_in_subprocess_without_helpers
     test_workspace_checks_are_not_required_health_failures
     test_generated_target_home_fallbacks_are_dynamic
     test_meta_skill_arm64_linux_guidance
