@@ -123,6 +123,23 @@ apps/web/test-results/
 research_screenshots/
 /apps/web/scripts/research/legacy-*.mjs
 
+# Obsolete placeholders in directories that now contain real files
+/apps/web/app/.gitkeep
+/apps/web/components/.gitkeep
+/apps/web/lib/.gitkeep
+/packages/manifest/.gitkeep
+/packages/onboard/.gitkeep
+/scripts/providers/.gitkeep
+/scripts/sync/.gitkeep
+/tests/vm/.gitkeep
+
+# Unused default Next.js starter assets
+/apps/web/public/file.svg
+/apps/web/public/globe.svg
+/apps/web/public/next.svg
+/apps/web/public/vercel.svg
+/apps/web/public/window.svg
+
 # Unreferenced archived/generated artifacts from prior agent sessions
 /docs/archive/original-complete-guide-page.tsx
 /docs/newproj_tui.cast
