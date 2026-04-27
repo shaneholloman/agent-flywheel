@@ -508,7 +508,11 @@ read_yes_no() {
     local result=""
 
     if [[ "$GUM_AVAILABLE" == "true" && "$TERM_HAS_COLOR" == "true" ]]; then
-        if gum confirm "$prompt" < /dev/tty > /dev/tty 2>/dev/null; then
+        local gum_default=false
+        [[ "$default" == "y" ]] && gum_default=true
+
+        # gum confirm renders its live prompt on stderr, just like gum input/choose.
+        if gum confirm --default="$gum_default" "$prompt" < /dev/tty > /dev/tty 2>/dev/tty; then
             result="y"
         else
             result="n"
