@@ -1417,6 +1417,63 @@ EOF
     cleanup_mock_env
 }
 
+test_webhook_payload_rejects_non_ip_public_ip_response() {
+    if ! command -v jq >/dev/null 2>&1; then
+        harness_warn "jq not available — skipping webhook payload IP sanitization test"
+        return 0
+    fi
+
+    setup_mock_env
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$TEST_HOME" ACFS_WEBHOOK_URL="https://example.com/hook" \
+        bash -c '
+            log_warn() { :; }
+            log_detail() { :; }
+            curl() { printf "%s\n" "<html>temporarily unavailable</html>"; }
+            unset _ACFS_WEBHOOK_SH_LOADED
+            source "$1"
+            webhook_format_payload success "" | jq -r ".ip"
+        ' _ "$WEBHOOK_SH" 2>&1)
+
+    if [[ "$output" == "unknown" ]]; then
+        harness_pass "webhook payload rejects non-IP public IP response"
+    else
+        harness_fail "webhook payload rejects non-IP public IP response" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
+test_webhook_public_ip_accepts_valid_ips_only() {
+    setup_mock_env
+
+    local output=""
+    output=$(cd "$TEST_HOME" && HOME="$TEST_HOME" \
+        bash -c '
+            log_warn() { :; }
+            log_detail() { :; }
+            unset _ACFS_WEBHOOK_SH_LOADED
+            source "$1"
+            curl() { printf "%s\n" "203.0.113.9"; }
+            printf "ipv4=%s\n" "$(webhook_public_ip)"
+            curl() { printf "%s\n" "2001:db8::1"; }
+            printf "ipv6=%s\n" "$(webhook_public_ip)"
+            curl() { printf "%s\n" "bad:feed"; }
+            printf "hex_words=%s\n" "$(webhook_public_ip)"
+        ' _ "$WEBHOOK_SH" 2>&1)
+
+    if [[ "$output" == *"ipv4=203.0.113.9"* ]] \
+        && [[ "$output" == *"ipv6=2001:db8::1"* ]] \
+        && [[ "$output" == *"hex_words=unknown"* ]]; then
+        harness_pass "webhook public IP accepts valid IPs only"
+    else
+        harness_fail "webhook public IP accepts valid IPs only" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_notifications_cli_uses_target_home_when_home_is_relative() {
     setup_mock_env
 
@@ -10990,6 +11047,8 @@ main() {
     harness_section "Notification Helpers"
     test_notify_uses_target_home_for_config_and_state_when_home_is_relative || true
     test_webhook_reads_config_from_target_home_when_home_is_relative || true
+    test_webhook_payload_rejects_non_ip_public_ip_response || true
+    test_webhook_public_ip_accepts_valid_ips_only || true
     test_notifications_cli_uses_target_home_when_home_is_relative || true
 
     harness_section "Autofix"

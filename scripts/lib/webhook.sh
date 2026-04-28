@@ -201,6 +201,91 @@ webhook_runtime_home() {
 
 _ACFS_WEBHOOK_RUNTIME_HOME="$(webhook_runtime_home 2>/dev/null || true)"
 
+webhook_is_hex16_group() {
+    [[ "${1:-}" =~ ^[0-9A-Fa-f]{1,4}$ ]]
+}
+
+webhook_is_ipv6_literal() {
+    local ip="${1:-}"
+    local group=""
+    local group_count=0
+    local left=""
+    local right=""
+    local -a groups=()
+
+    [[ "$ip" == *:* ]] || return 1
+    [[ "$ip" != *:::* ]] || return 1
+
+    if [[ "$ip" == *::* ]]; then
+        [[ "$ip" != *::*::* ]] || return 1
+
+        left="${ip%%::*}"
+        right="${ip#*::}"
+
+        if [[ -n "$left" ]]; then
+            IFS=: read -r -a groups <<< "$left"
+            for group in "${groups[@]}"; do
+                webhook_is_hex16_group "$group" || return 1
+                group_count=$((group_count + 1))
+            done
+        fi
+
+        if [[ -n "$right" ]]; then
+            IFS=: read -r -a groups <<< "$right"
+            for group in "${groups[@]}"; do
+                webhook_is_hex16_group "$group" || return 1
+                group_count=$((group_count + 1))
+            done
+        fi
+
+        (( group_count <= 7 ))
+        return
+    fi
+
+    IFS=: read -r -a groups <<< "$ip"
+    [[ ${#groups[@]} -eq 8 ]] || return 1
+    for group in "${groups[@]}"; do
+        webhook_is_hex16_group "$group" || return 1
+    done
+}
+
+webhook_public_ip() {
+    local ip=""
+
+    ip=$(curl -fsS --max-time 2 https://ifconfig.me/ip 2>/dev/null || true)
+    ip="${ip//$'\r'/}"
+    ip="${ip//$'\n'/}"
+    ip="${ip//[[:space:]]/}"
+
+    case "$ip" in
+        *[!0-9A-Fa-f:.]*|""|*.*.*.*.*|*:*.*)
+            printf 'unknown\n'
+            return 0
+            ;;
+    esac
+
+    if [[ "$ip" == *.* ]]; then
+        local octets=()
+        local octet
+        IFS=. read -r -a octets <<< "$ip"
+        if [[ ${#octets[@]} -ne 4 ]]; then
+            printf 'unknown\n'
+            return 0
+        fi
+        for octet in "${octets[@]}"; do
+            if [[ ! "$octet" =~ ^[0-9]+$ ]] || (( 10#$octet > 255 )); then
+                printf 'unknown\n'
+                return 0
+            fi
+        done
+    elif ! webhook_is_ipv6_literal "$ip"; then
+        printf 'unknown\n'
+        return 0
+    fi
+
+    printf '%s\n' "$ip"
+}
+
 # ============================================================
 # Webhook URL Validation
 # ============================================================
@@ -286,8 +371,7 @@ webhook_format_payload() {
     # Read summary data
     local hostname ip duration_seconds tools_installed acfs_version timestamp
     hostname=$(hostname 2>/dev/null || echo "unknown")
-    # Use an explicit HTTPS endpoint that returns only the IP body.
-    ip=$(curl -s --max-time 2 https://ifconfig.me/ip 2>/dev/null || echo "unknown")
+    ip=$(webhook_public_ip)
 
     if [[ -f "$summary_file" ]] && command -v jq &>/dev/null; then
         duration_seconds=$(jq -r '.total_seconds // 0' "$summary_file" 2>/dev/null) || duration_seconds=0
