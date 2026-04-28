@@ -1014,6 +1014,7 @@ main() {
   local original_home="${HOME:-}"
   local original_home_candidate=""
   local current_home_from_valid_env=false
+  local system_state_target_unresolved=false
   local -a state_candidates=()
   local bash_bin=""
   local env_bin=""
@@ -1049,6 +1050,7 @@ main() {
     fi
   fi
   if [[ -z "$system_state_home" && -f "${ACFS_SYSTEM_STATE_FILE:-}" && "$current_home_from_valid_env" != true ]]; then
+    system_state_target_unresolved=true
     current_home=""
     if [[ -n "$original_home_candidate" ]]; then
       HOME="$original_home_candidate"
@@ -1068,7 +1070,9 @@ main() {
 
   repo_update_script="$(find_repo_local_update_script || true)"
   wrapper_home="$(find_wrapper_installed_home || true)"
-  target_user="$(detect_target_user || true)"
+  if [[ "$system_state_target_unresolved" != true ]]; then
+    target_user="$(detect_target_user || true)"
+  fi
   if [[ -n "$repo_update_script" ]]; then
     update_script="$repo_update_script"
   elif [[ -n "$wrapper_home" ]]; then
@@ -1106,14 +1110,14 @@ main() {
     fi
   fi
 
-  if [[ -z "$update_script" ]] && [[ -n "$current_home" ]]; then
+  if [[ -z "$update_script" && "$system_state_target_unresolved" != true ]] && [[ -n "$current_home" ]]; then
     if [[ -z "${TARGET_HOME:-}" ]] || state_file_matches_target_home "$current_home/.acfs/state.json" "${TARGET_HOME}"; then
       candidate_script="$(find_update_script_for_state_file "$current_home/.acfs/state.json" 2>/dev/null || true)"
       [[ -n "$candidate_script" ]] && update_script="$candidate_script"
     fi
   fi
 
-  if [[ -z "$update_script" ]] && [[ -n "$target_user" ]]; then
+  if [[ -z "$update_script" && "$system_state_target_unresolved" != true ]] && [[ -n "$target_user" ]]; then
     update_script="$(find_update_script_for_user "$target_user" || true)"
   fi
 
