@@ -1024,7 +1024,7 @@ generate_resume_hint() {
     # Prefer curl|bash one-liner for curl invocations; local script for local runs
     if [[ -z "${SCRIPT_DIR:-}" ]]; then
         # curl|bash invocation - use one-liner format
-        cmd="curl -sSL"
+        cmd="curl -fsSL"
         if [[ -n "${ACFS_COMMIT_SHA_FULL:-}" ]]; then
             # Pin to exact commit SHA for reproducibility
             install_url="https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_COMMIT_SHA_FULL}/install.sh"
@@ -1106,7 +1106,7 @@ print_resume_hint() {
             printf -v local_install '%q' "$local_install"
             resume_cmd="bash $local_install --resume --yes"
         else
-            resume_cmd="curl -sSL https://acfs.sh | bash -s -- --resume --yes"
+            resume_cmd="curl -fsSL https://acfs.sh | bash -s -- --resume --yes"
         fi
     fi
 
@@ -7388,7 +7388,10 @@ main() {
             exit 1
         fi
         local _acfs_lock_dir="${ACFS_HOME:-${_acfs_lock_home}/.acfs}"
-        mkdir -p "$_acfs_lock_dir" 2>/dev/null || true
+        if ! mkdir -p "$_acfs_lock_dir" 2>/dev/null; then
+            log_error "Unable to create ACFS install lock directory: $_acfs_lock_dir"
+            exit 1
+        fi
         local _acfs_lock_file="$_acfs_lock_dir/.install.lock"
         # NOTE: On bash 5.3+, `exec N>file` under set -e exits the script
         # before `if` can catch the failure. We test in a subshell first,
@@ -7404,11 +7407,12 @@ main() {
         if [[ -n "$_acfs_lock_fd" ]]; then
             if ! flock -n "$_acfs_lock_fd"; then
                 log_error "Another ACFS installer is already running."
-                log_error "If you are sure no other installer is running, remove: $_acfs_lock_file"
+                log_error "Wait for it to finish, then retry. Lock file: $_acfs_lock_file"
                 exit 1
             fi
         else
-            log_warn "Could not acquire install lock (continuing anyway)"
+            log_error "Unable to open ACFS install lock file: $_acfs_lock_file"
+            exit 1
         fi
     fi
 

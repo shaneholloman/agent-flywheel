@@ -170,6 +170,11 @@ test_basic_curl_invocation() {
         return 1
     fi
 
+    if [[ "$result" != curl\ -fsSL* ]]; then
+        log "  Expected curl resume hint to fail closed with -f, got: $result"
+        return 1
+    fi
+
     if [[ "$result" != *"--resume"* ]]; then
         log "  Expected --resume in output, got: $result"
         return 1
@@ -600,6 +605,30 @@ test_print_resume_hint_fallback_uses_absolute_local_path() {
     return 0
 }
 
+test_print_resume_hint_fallback_uses_fail_closed_curl() {
+    setup_test_env
+    ACFS_STATE_FILE="$(mktemp)"
+    printf '{}\n' > "$ACFS_STATE_FILE"
+    STATE_SET_RESUME_HINT_CALLS=0
+    STATE_SET_RESUME_HINT_VALUE=""
+
+    generate_resume_hint() { return 1; }
+    print_resume_hint "languages" "install_rust"
+
+    if [[ "$STATE_SET_RESUME_HINT_VALUE" != "curl -fsSL https://acfs.sh | bash -s -- --resume --yes" ]]; then
+        log "  Expected fail-closed curl fallback resume hint, got: $STATE_SET_RESUME_HINT_VALUE"
+        rm -f "$ACFS_STATE_FILE"
+        unset -f generate_resume_hint
+        eval "$(extract_resume_hint_function)"
+        return 1
+    fi
+
+    rm -f "$ACFS_STATE_FILE"
+    unset -f generate_resume_hint
+    eval "$(extract_resume_hint_function)"
+    return 0
+}
+
 # Test: --dry-run forces auto-fix preview mode instead of mutating mode
 test_dry_run_forces_autofix_preview() {
     setup_test_env
@@ -680,6 +709,7 @@ main() {
     run_test test_empty_ref_shorthand
     run_test test_print_resume_hint_uses_state_helper
     run_test test_print_resume_hint_fallback_uses_absolute_local_path
+    run_test test_print_resume_hint_fallback_uses_fail_closed_curl
     run_test test_dry_run_forces_autofix_preview
     run_test test_print_mode_forces_autofix_preview
     run_test test_read_only_mode_preserves_no_autofix
