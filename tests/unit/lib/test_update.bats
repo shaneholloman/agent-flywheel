@@ -4248,35 +4248,35 @@ EOF_DASHBOARD_TRAP
     assert_success
     run grep -F 'wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"' "$cli_tools"
     assert_success
-    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"' "$cli_tools"
+    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; cd \"\$HOME\" || exit 1; $cmd"' "$cli_tools"
     assert_success
 
     run grep -F '_agent_validate_target_user "$target_user" || return 1' "$agents"
     assert_success
     run grep -F 'wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"' "$agents"
     assert_success
-    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"' "$agents"
+    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; cd \"\$HOME\" || exit 1; $cmd"' "$agents"
     assert_success
 
     run grep -F '_lang_validate_target_user "$target_user" || return 1' "$languages"
     assert_success
     run grep -F 'wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"' "$languages"
     assert_success
-    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"' "$languages"
+    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; cd \"\$HOME\" || exit 1; $cmd"' "$languages"
     assert_success
 
     run grep -F '_cloud_validate_target_user "$target_user" || return 1' "$cloud_db"
     assert_success
     run grep -F 'wrapped_cmd="export TARGET_USER=$target_user_q TARGET_HOME=$target_home_q HOME=$target_home_q;"' "$cloud_db"
     assert_success
-    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; $cmd"' "$cloud_db"
+    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:\$PATH; set -o pipefail; cd \"\$HOME\" || exit 1; $cmd"' "$cloud_db"
     assert_success
 
     run grep -F '_stack_validate_target_user "$target_user" || return 1' "$stack"
     assert_success
     run grep -F 'printf -v target_path_prefix_q' "$stack"
     assert_success
-    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:$system_path_prefix:\$PATH; set -o pipefail; $cmd"' "$stack"
+    run grep -F 'wrapped_cmd+=" export PATH=$target_path_prefix_q:$system_path_prefix:\$PATH; set -o pipefail; cd \"\$HOME\" || exit 1; $cmd"' "$stack"
     assert_success
 }
 
