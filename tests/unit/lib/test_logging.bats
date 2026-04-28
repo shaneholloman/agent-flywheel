@@ -83,3 +83,31 @@ teardown() {
     assert_output --partial "Test Log Entry"
     assert_output --partial "[" # timestamp
 }
+
+@test "logging: acfs_log_close ignores caller-owned fd 3 when logging was not initialized" {
+    local probe="$BATS_TEST_TMPDIR/fd3-probe.txt"
+    local err="$BATS_TEST_TMPDIR/close.err"
+    local unwritable_log="$BATS_TEST_TMPDIR/unwritable-install.log"
+    local script="$PROJECT_ROOT/scripts/lib/logging.sh"
+
+    printf 'existing\n' > "$unwritable_log"
+    chmod 400 "$unwritable_log"
+
+    run bash -c '
+        source "$1"
+        exec 3>"$2"
+        ACFS_LOG_FILE="$3"
+        ACFS_LOG_INITIALIZED=false
+        acfs_log_close 2>"$4"
+        printf "fd3-still-open\n" >&3
+    ' _ "$script" "$probe" "$unwritable_log" "$err"
+
+    assert_success
+    assert_output ""
+    run cat "$probe"
+    assert_success
+    assert_output "fd3-still-open"
+    run cat "$err"
+    assert_success
+    assert_output ""
+}

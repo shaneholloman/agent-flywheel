@@ -16,11 +16,16 @@
 if ! declare -f acfs_log_init >/dev/null 2>&1; then
     acfs_log_init() {
         local log_dir="${1:-${ACFS_HOME:+${ACFS_HOME}/logs}}"
+        local saved_stderr_fd=""
 
         # Fallback if ACFS_HOME not set or empty
         if [[ -z "$log_dir" ]]; then
             log_dir="${ACFS_LOG_DIR:-/var/log/acfs}"
         fi
+
+        ACFS_LOG_INITIALIZED=false
+        ACFS_LOG_STDERR_CAPTURED=false
+        ACFS_LOG_ORIGINAL_STDERR_FD=""
 
         # Create log directory
         mkdir -p "$log_dir" 2>/dev/null || return 1
@@ -37,6 +42,7 @@ if ! declare -f acfs_log_init >/dev/null 2>&1; then
             printf 'Home: %s\n' "${TARGET_HOME:-unknown}"
             printf '========================\n\n'
         } > "$ACFS_LOG_FILE" 2>/dev/null || return 1
+        ACFS_LOG_INITIALIZED=true
 
         # Fix ownership so target user can read logs
         if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
@@ -55,16 +61,27 @@ if ! declare -f acfs_log_init >/dev/null 2>&1; then
             # On bash 5.3+, bare `exec` under set -e can exit the script
             # before `if` catches the failure, so we test in a subshell.
             if (exec 3>&1; echo test > >(cat >/dev/null)) 2>/dev/null; then
-                exec 3>&2 || true
+                # Save original stderr first. Use an ACFS-owned dynamic fd instead
+                # of fd 3, because BATS and other callers may already own fd 3.
+                if exec {saved_stderr_fd}>&2; then
+                    ACFS_LOG_ORIGINAL_STDERR_FD="$saved_stderr_fd"
+                fi
                 # shellcheck disable=SC2261
                 # Use set +e locally to prevent exec from exiting under bash 5.3+
-                if (set +e; exec 2> >(tee -a "$ACFS_LOG_FILE" >&3)) 2>/dev/null; then
-                    exec 2> >(tee -a "$ACFS_LOG_FILE" >&3) && tee_logging_ok=true
+                if [[ -n "$saved_stderr_fd" ]] && (set +e; exec 2> >(tee -a "$ACFS_LOG_FILE" >&"$saved_stderr_fd")) 2>/dev/null; then
+                    if exec 2> >(tee -a "$ACFS_LOG_FILE" >&"$saved_stderr_fd"); then
+                        tee_logging_ok=true
+                        ACFS_LOG_STDERR_CAPTURED=true
+                    fi
                 fi
             fi
         fi
 
         if [[ "$tee_logging_ok" != "true" ]]; then
+            if [[ -n "${ACFS_LOG_ORIGINAL_STDERR_FD:-}" ]]; then
+                exec {ACFS_LOG_ORIGINAL_STDERR_FD}>&- 2>/dev/null || true
+                ACFS_LOG_ORIGINAL_STDERR_FD=""
+            fi
             # Fallback: rely on explicit logging calls instead of automatic tee
             ACFS_LOG_FALLBACK=true
             export ACFS_LOG_FALLBACK
@@ -76,12 +93,16 @@ fi
 # Strips ANSI color codes from the log for clean text output.
 if ! declare -f acfs_log_close >/dev/null 2>&1; then
     acfs_log_close() {
-        # Restore original stderr if fd 3 is open
-        if { true >&3; } 2>/dev/null; then
-            exec 2>&3 3>&-
+        # Restore only an fd that acfs_log_init opened. Callers and test harnesses
+        # often use fd 3 themselves; inheriting it must not make us redirect/close it.
+        if [[ "${ACFS_LOG_STDERR_CAPTURED:-false}" == "true" && -n "${ACFS_LOG_ORIGINAL_STDERR_FD:-}" ]]; then
+            exec 2>&"${ACFS_LOG_ORIGINAL_STDERR_FD}" || true
+            exec {ACFS_LOG_ORIGINAL_STDERR_FD}>&- 2>/dev/null || true
+            ACFS_LOG_ORIGINAL_STDERR_FD=""
+            ACFS_LOG_STDERR_CAPTURED=false
         fi
 
-        if [[ -n "${ACFS_LOG_FILE:-}" ]] && [[ -f "$ACFS_LOG_FILE" ]]; then
+        if [[ "${ACFS_LOG_INITIALIZED:-false}" == "true" && -n "${ACFS_LOG_FILE:-}" && -f "$ACFS_LOG_FILE" ]]; then
             # Strip ANSI escape codes for clean log
             # Use -i.bak for portability (works on both GNU sed and BSD sed)
             sed -i.bak $'s/\033\[[0-9;]*m//g' "$ACFS_LOG_FILE" 2>/dev/null && rm -f "${ACFS_LOG_FILE}.bak" || true
@@ -98,6 +119,7 @@ if ! declare -f acfs_log_close >/dev/null 2>&1; then
                 chown "${TARGET_USER}:${TARGET_USER}" "$ACFS_LOG_FILE" 2>/dev/null || true
             fi
         fi
+        ACFS_LOG_INITIALIZED=false
     }
 fi
 

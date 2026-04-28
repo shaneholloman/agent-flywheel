@@ -779,11 +779,16 @@ log_section() {
 # After calling, all stderr output is captured to ACFS_LOG_FILE.
 acfs_log_init() {
     local log_dir="${1:-${ACFS_HOME:+${ACFS_HOME}/logs}}"
+    local saved_stderr_fd=""
 
     # Fallback if ACFS_HOME not set or empty
     if [[ -z "$log_dir" ]]; then
         log_dir="${ACFS_LOG_DIR:-/var/log/acfs}"
     fi
+
+    ACFS_LOG_INITIALIZED=false
+    ACFS_LOG_STDERR_CAPTURED=false
+    ACFS_LOG_ORIGINAL_STDERR_FD=""
 
     # Create log directory
     mkdir -p "$log_dir" 2>/dev/null || return 1
@@ -802,6 +807,7 @@ acfs_log_init() {
         printf 'Bash: %s\n' "${BASH_VERSION:-unknown}"
         printf '========================\n\n'
     } > "$ACFS_LOG_FILE" 2>/dev/null || return 1
+    ACFS_LOG_INITIALIZED=true
 
     # Fix ownership so target user can read logs
     if [[ -n "${TARGET_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
@@ -823,18 +829,28 @@ acfs_log_init() {
         # shellcheck disable=SC2261
         if (exec 3>&1; echo test > >(cat >/dev/null)) 2>/dev/null; then
             # Process substitution works - set up tee logging
-            # Save original stderr first
-            exec 3>&2 || true
-            # Now redirect stderr to tee (which sends to both log and original stderr)
-            # shellcheck disable=SC2261
-            # Use subshell test first to prevent exec from exiting under bash 5.3+
-            if (set +e; exec 2> >(tee -a "$ACFS_LOG_FILE" >&3)) 2>/dev/null; then
-                exec 2> >(tee -a "$ACFS_LOG_FILE" >&3) && tee_logging_ok=true
+            # Save original stderr first. Use an ACFS-owned dynamic fd instead
+            # of fd 3, because BATS and other callers may already own fd 3.
+            if exec {saved_stderr_fd}>&2; then
+                ACFS_LOG_ORIGINAL_STDERR_FD="$saved_stderr_fd"
+                # Now redirect stderr to tee (which sends to both log and original stderr)
+                # shellcheck disable=SC2261
+                # Use subshell test first to prevent exec from exiting under bash 5.3+
+                if (set +e; exec 2> >(tee -a "$ACFS_LOG_FILE" >&"$saved_stderr_fd")) 2>/dev/null; then
+                    if exec 2> >(tee -a "$ACFS_LOG_FILE" >&"$saved_stderr_fd"); then
+                        tee_logging_ok=true
+                        ACFS_LOG_STDERR_CAPTURED=true
+                    fi
+                fi
             fi
         fi
     fi
 
     if [[ "$tee_logging_ok" != "true" ]]; then
+        if [[ -n "${ACFS_LOG_ORIGINAL_STDERR_FD:-}" ]]; then
+            exec {ACFS_LOG_ORIGINAL_STDERR_FD}>&- 2>/dev/null || true
+            ACFS_LOG_ORIGINAL_STDERR_FD=""
+        fi
         # Fallback: redirect stderr to both terminal (via original fd) and log file
         # This is less elegant but works on all bash versions
         echo "Note: Tee logging unavailable on this system, using fallback" >&2 || true
@@ -850,12 +866,16 @@ acfs_log_init() {
 # Close log file capture and restore stderr.
 # Strips ANSI color codes from the log for clean text output.
 acfs_log_close() {
-    # Restore original stderr if fd 3 is open
-    if { true >&3; } 2>/dev/null; then
-        exec 2>&3 3>&-
+    # Restore only an fd that acfs_log_init opened. Callers and test harnesses
+    # often use fd 3 themselves; inheriting it must not make us redirect/close it.
+    if [[ "${ACFS_LOG_STDERR_CAPTURED:-false}" == "true" && -n "${ACFS_LOG_ORIGINAL_STDERR_FD:-}" ]]; then
+        exec 2>&"${ACFS_LOG_ORIGINAL_STDERR_FD}" || true
+        exec {ACFS_LOG_ORIGINAL_STDERR_FD}>&- 2>/dev/null || true
+        ACFS_LOG_ORIGINAL_STDERR_FD=""
+        ACFS_LOG_STDERR_CAPTURED=false
     fi
 
-    if [[ -n "${ACFS_LOG_FILE:-}" ]] && [[ -f "$ACFS_LOG_FILE" ]]; then
+    if [[ "${ACFS_LOG_INITIALIZED:-false}" == "true" && -n "${ACFS_LOG_FILE:-}" && -f "$ACFS_LOG_FILE" ]]; then
         # Strip ANSI escape codes for clean log
         sed -i $'s/\033\[[0-9;]*m//g' "$ACFS_LOG_FILE" 2>/dev/null || true
 
@@ -871,6 +891,7 @@ acfs_log_close() {
             chown "${TARGET_USER}:${TARGET_USER}" "$ACFS_LOG_FILE" 2>/dev/null || true
         fi
     fi
+    ACFS_LOG_INITIALIZED=false
 }
 
 # ============================================================
