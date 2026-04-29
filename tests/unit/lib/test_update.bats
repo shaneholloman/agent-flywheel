@@ -75,6 +75,30 @@ EOF
     assert_output "rust_proxy 0.1.0"
 }
 
+@test "get_version: detects ntm via version subcommand" {
+    mkdir -p "$HOME/.local/bin"
+    cat > "$HOME/.local/bin/ntm" <<'EOF'
+#!/bin/bash
+case "${1:-}" in
+  version)
+    echo "ntm version 1.14.0"
+    ;;
+  --version)
+    echo "Error: unknown flag: --version" >&2
+    exit 1
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+EOF
+    chmod +x "$HOME/.local/bin/ntm"
+
+    run get_version "ntm"
+    assert_success
+    assert_output "ntm version 1.14.0"
+}
+
 @test "get_version: prefers target runtime binaries when HOME differs" {
     local current_home
     local target_home
