@@ -4546,14 +4546,22 @@ update_stack() {
     if update_binary_exists aadc || [[ "$FORCE_MODE" == "true" ]]; then
         capture_version_before "aadc"
         run_cmd "AADC" update_run_cargo_git_source_install https://github.com/Dicklesworthstone/aadc.git aadc
-        capture_version_after "aadc"
+        if capture_version_after "aadc"; then
+            [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[aadc]}" "${VERSION_AFTER[aadc]}"
+        else
+            log_to_file "AADC already up to date: ${VERSION_AFTER[aadc]:-${VERSION_BEFORE[aadc]:-unknown}}"
+        fi
     fi
 
     # Rust Proxy (rust_proxy) - update when installed, or install with --force
     if update_binary_exists rust_proxy || [[ "$FORCE_MODE" == "true" ]]; then
         capture_version_before "rust_proxy"
         run_cmd "Rust Proxy" update_run_cargo_git_source_install https://github.com/Dicklesworthstone/rust_proxy.git rust_proxy
-        capture_version_after "rust_proxy"
+        if capture_version_after "rust_proxy"; then
+            [[ "$QUIET" != "true" ]] && printf "       ${DIM}%s → %s${NC}\n" "${VERSION_BEFORE[rust_proxy]}" "${VERSION_AFTER[rust_proxy]}"
+        else
+            log_to_file "Rust Proxy already up to date: ${VERSION_AFTER[rust_proxy]:-${VERSION_BEFORE[rust_proxy]:-unknown}}"
+        fi
     fi
 
     # Agent Settings Backup (asb) - update when installed, or install with --force

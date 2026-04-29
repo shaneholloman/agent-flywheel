@@ -569,6 +569,20 @@ else
 fi
 
 # ============================================================
+section "Test 3j: source-build version capture is set -e safe"
+# ============================================================
+source_build_capture_hits=$(
+    sed -n '/# ASCII Art Diagram Corrector/,/# Agent Settings Backup/p' "$UPDATE_SH" \
+        | grep -E '^[[:space:]]*capture_version_after "(aadc|rust_proxy)"' \
+        || true
+)
+if [[ -z "$source_build_capture_hits" ]]; then
+    pass "source-build update branches guard capture_version_after non-change returns"
+else
+    fail "source-build update branches still call capture_version_after bare: $source_build_capture_hits"
+fi
+
+# ============================================================
 section "Test 4: Function instrumentation (mock)"
 # ============================================================
 # Source update.sh, override update_run_verified_installer with a mock,
