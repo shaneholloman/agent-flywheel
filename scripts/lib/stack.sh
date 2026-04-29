@@ -586,13 +586,14 @@ _stack_repair_agent_mail_cli_symlink() {
     local repaired=0
     for dir in "${bin_dirs[@]}"; do
         [[ -n "$dir" ]] || continue
+        [[ "$dir/am" == "$am_src" ]] && continue
         local dir_q=""
         local am_src_q=""
         local am_dest_q=""
         printf -v dir_q '%q' "$dir"
         printf -v am_src_q '%q' "$am_src"
         printf -v am_dest_q '%q' "$dir/am"
-        _stack_run_as_user "mkdir -p $dir_q 2>/dev/null || true; if [[ -w $dir_q || ! -e $am_dest_q ]]; then ln -sf $am_src_q $am_dest_q; fi" || repaired=1
+        _stack_run_as_user "mkdir -p $dir_q && ln -sfn $am_src_q $am_dest_q && [[ -x $am_dest_q ]]" || repaired=1
     done
 
     return "$repaired"
@@ -606,7 +607,7 @@ _stack_agent_mail_liveness() {
 _stack_agent_mail_readiness() {
     local readiness_body=""
     readiness_body="$(_stack_curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null)" || return 1
-    printf '%s\n' "$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'
+    printf '%s\n' "$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"([[:space:]]*[,}])'
 }
 
 # Run a command as target user
@@ -926,7 +927,7 @@ if ! curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>
 fi
 
 readiness_body="\$(curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null)" || exit 1
-printf '%s\n' "\$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' || exit 1
+printf '%s\n' "\$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"([[:space:]]*[,}])' || exit 1
 
 runtime_dir="/run/user/\$(id -u)"
 if [[ -d "\$runtime_dir" ]]; then
@@ -1291,7 +1292,7 @@ launch_agent_mail_fallback() {
     if {
         _stack_curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
         _stack_curl -fsS --max-time 5 http://127.0.0.1:8765/healthz >/dev/null 2>&1;
-    } && _stack_curl -fsS --max-time 5 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; then
+    } && _stack_curl -fsS --max-time 5 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"([[:space:]]*[,}])'; then
         return 0
     fi
 

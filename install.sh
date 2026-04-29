@@ -6231,7 +6231,7 @@ UNIT_EOF
                         local am_waited=0
                         local am_max_wait=30
                         until curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
-                              curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; do
+                              curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"([[:space:]]*[,}])'; do
                             if [[ "$am_waited" -ge "$am_max_wait" ]]; then
                                 log_error "MCP Agent Mail service did not become ready on http://127.0.0.1:8765 after ${am_max_wait}s"
                                 break
@@ -6240,7 +6240,7 @@ UNIT_EOF
                             am_waited=$((am_waited + 2))
                         done
                         if curl -fsS --max-time 10 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 && \
-                           curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'; then
+                           curl -fsS --max-time 10 http://127.0.0.1:8765/health 2>/dev/null | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"([[:space:]]*[,}])'; then
                             log_success "MCP Agent Mail service running on http://127.0.0.1:8765"
                             am_service_ready=true
                         else
