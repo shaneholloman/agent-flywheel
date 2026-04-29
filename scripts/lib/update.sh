@@ -2920,6 +2920,24 @@ update_run_verified_installer() {
     update_run_verified_installer_with_env "$tool" "" "$@"
 }
 
+update_run_pcr_installer_and_verify() {
+    local hook_script="${1:-}"
+
+    if [[ -z "$hook_script" ]]; then
+        echo "PCR hook path is required" >&2
+        return 1
+    fi
+
+    update_run_verified_installer pcr --yes || return $?
+
+    if [[ ! -x "$hook_script" ]]; then
+        echo "PCR installer completed but hook is missing or not executable: $hook_script" >&2
+        return 1
+    fi
+
+    update_run_verified_installer pcr --doctor --json
+}
+
 # ============================================================
 # Update Functions
 # ============================================================
@@ -4583,7 +4601,7 @@ update_stack() {
         log_item "skip" "PCR" "Claude Code not installed"
     elif [[ -z "$pcr_hook_script" ]]; then
         log_item "fail" "PCR" "unable to resolve target hook path"
-    elif [[ -x "$pcr_hook_script" || "$FORCE_MODE" == "true" ]]; then
+    elif [[ -e "$pcr_hook_script" || "$FORCE_MODE" == "true" ]]; then
         local pcr_mtime_before=""
         local pcr_mtime_after=""
         pcr_mtime_before="$(get_file_mtime "$pcr_hook_script" 2>/dev/null || true)"
@@ -4593,7 +4611,7 @@ update_stack() {
             log_to_file "PCR hook mtime before: missing ($pcr_hook_script)"
         fi
 
-        run_cmd "PCR" update_run_verified_installer pcr --update
+        run_cmd "PCR" update_run_pcr_installer_and_verify "$pcr_hook_script"
 
         pcr_mtime_after="$(get_file_mtime "$pcr_hook_script" 2>/dev/null || true)"
         if [[ -n "$pcr_mtime_after" ]]; then

@@ -7764,6 +7764,47 @@ SECURITY
     assert_output --partial "Invalid inline env assignment"
 }
 
+@test "update PCR installer uses install repair path and verifies doctor state" {
+    local hook_script="$HOME/.local/bin/claude-post-compact-reminder"
+    local call_log="$HOME/pcr-calls.log"
+
+    update_run_verified_installer() {
+        printf '%s\n' "$*" >> "$call_log"
+        if [[ "$1" == "pcr" && "$2" == "--yes" ]]; then
+            mkdir -p "$(dirname "$hook_script")"
+            printf '#!/usr/bin/env bash\nexit 0\n' > "$hook_script"
+            chmod +x "$hook_script"
+            return 0
+        fi
+        if [[ "$1" == "pcr" && "$2" == "--doctor" && "$3" == "--json" ]]; then
+            [[ -x "$hook_script" ]]
+            return $?
+        fi
+        return 1
+    }
+
+    run update_run_pcr_installer_and_verify "$hook_script"
+    assert_success
+
+    run cat "$call_log"
+    assert_success
+    assert_output --partial "pcr --yes"
+    assert_output --partial "pcr --doctor --json"
+    refute_output --partial "pcr --update"
+}
+
+@test "update PCR installer fails if the hook is still missing after install" {
+    local hook_script="$HOME/.local/bin/claude-post-compact-reminder"
+
+    update_run_verified_installer() {
+        return 0
+    }
+
+    run update_run_pcr_installer_and_verify "$hook_script"
+    assert_failure
+    assert_output --partial "PCR installer completed but hook is missing or not executable"
+}
+
 @test "update cargo git source installer delegates through target context" {
     update_run_in_target_context() {
         printf 'env=%s\n' "$1"
