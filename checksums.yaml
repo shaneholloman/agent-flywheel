@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-04-29T16:22:01-04:00
+# checksums.yaml - Auto-generated 2026-04-29T18:25:16-04:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -136,7 +136,7 @@ installers:
 
   sbh:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/storage_ballast_helper/main/scripts/install.sh"
-    sha256: "8a4ddb9fb722504071cda6023c5344ddfdc4337de96e9f69c5cd5406a87deb06"
+    sha256: "7335e7979ad0e721528dbfc92b9ddad34713f64c20859a4b63eb526302f2b337"
 
   slb:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/simultaneous_launch_button/main/scripts/install.sh"
