@@ -7825,6 +7825,22 @@ SECURITY
     assert_success
 }
 
+@test "stack Agent Mail service accepts a healthy existing runtime" {
+    local stack_lib="$PROJECT_ROOT/scripts/lib/stack.sh"
+
+    run grep -F 'agent_mail_endpoint_ready() {' "$stack_lib"
+    assert_success
+
+    run grep -F 'if agent_mail_endpoint_ready && ! systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1; then' "$stack_lib"
+    assert_success
+
+    run grep -F 'systemctl --user reset-failed agent-mail.service >/dev/null 2>&1 || true' "$stack_lib"
+    assert_success
+
+    run grep -F 'healthy existing runtime detected; skipping managed service restart' "$stack_lib"
+    assert_success
+}
+
 @test "update verified installer env assignment values are argv-safe data" {
     declare -gA KNOWN_INSTALLERS=([test_tool]="https://example.test/install.sh")
 

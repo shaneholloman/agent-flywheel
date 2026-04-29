@@ -1376,7 +1376,28 @@ launch_agent_mail_fallback() {
     echo $! > "$fallback_pid_file"
 }
 
+agent_mail_endpoint_ready() {
+    local readiness_body=""
+
+    if ! {
+        curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness >/dev/null 2>&1 || \
+        curl -fsS --max-time 5 http://127.0.0.1:8765/healthz >/dev/null 2>&1;
+    }; then
+        return 1
+    fi
+
+    readiness_body="$(curl -fsS --max-time 5 http://127.0.0.1:8765/health 2>/dev/null)" || return 1
+    printf '%s\n' "$readiness_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"([[:space:]]*[,}])'
+}
+
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    if agent_mail_endpoint_ready && ! systemctl --user is-active --quiet agent-mail.service >/dev/null 2>&1; then
+        systemctl --user stop agent-mail.service >/dev/null 2>&1 || true
+        systemctl --user reset-failed agent-mail.service >/dev/null 2>&1 || true
+        echo "Agent Mail: healthy existing runtime detected; skipping managed service restart" >&2
+        exit 0
+    fi
+
     stop_agent_mail_fallback
     systemctl --user daemon-reload >/dev/null 2>&1 || true
     if ! systemctl --user enable --now agent-mail.service >/dev/null 2>&1; then
