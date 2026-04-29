@@ -7810,6 +7810,7 @@ SECURITY
         printf 'env=%s\n' "$1"
         printf 'cmd=%s\n' "$2"
         printf 'mode=%s\n' "$3"
+        printf 'script=%s\n' "$4"
         printf 'sentinel=%s\n' "$5"
         printf 'repo=%s\n' "$6"
         printf 'binary=%s\n' "$7"
@@ -7820,6 +7821,9 @@ SECURITY
     assert_output --partial "env="
     assert_output --partial "cmd=bash"
     assert_output --partial "mode=-c"
+    assert_output --partial "ACFS_UPDATE_TMPDIR"
+    assert_output --partial "/data/tmp"
+    assert_output --partial 'mktemp -d "$candidate/acfs_cargo_build.XXXXXX"'
     assert_output --partial "sentinel=_"
     assert_output --partial "repo=https://example.test/tool.git"
     assert_output --partial "binary=tool-bin"

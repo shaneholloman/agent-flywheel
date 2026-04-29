@@ -2818,7 +2818,39 @@ update_run_cargo_git_source_install() {
     build_cmd="$(cat <<'EOF'
 set -euo pipefail
 mkdir -p "$HOME/.cargo/bin"
-ACFS_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acfs_cargo_build.XXXXXX")"
+make_acfs_cargo_tmp_dir() {
+    local candidate=""
+    local tmp_dir=""
+    local tmpdir_value="${TMPDIR:-}"
+    local non_default_tmpdir=""
+    local -a candidates=()
+
+    if [[ -n "$tmpdir_value" && "${tmpdir_value%/}" != "/tmp" ]]; then
+        non_default_tmpdir="${tmpdir_value%/}"
+    fi
+
+    [[ -n "${ACFS_UPDATE_TMPDIR:-}" ]] && candidates+=("${ACFS_UPDATE_TMPDIR%/}")
+    [[ -n "$non_default_tmpdir" ]] && candidates+=("$non_default_tmpdir")
+    candidates+=("/data/tmp" "$HOME/.cache/acfs/tmp")
+    [[ -n "$tmpdir_value" ]] && candidates+=("${tmpdir_value%/}")
+    candidates+=("/tmp")
+
+    for candidate in "${candidates[@]}"; do
+        [[ -n "$candidate" ]] || continue
+        [[ "$candidate" != "/" ]] || continue
+        mkdir -p "$candidate" 2>/dev/null || continue
+        [[ -d "$candidate" && -w "$candidate" ]] || continue
+        tmp_dir="$(mktemp -d "$candidate/acfs_cargo_build.XXXXXX" 2>/dev/null)" || continue
+        printf '%s\n' "$tmp_dir"
+        return 0
+    done
+
+    return 1
+}
+ACFS_TMP_DIR="$(make_acfs_cargo_tmp_dir)" || {
+    echo "No writable temporary directory available for cargo source build" >&2
+    exit 1
+}
 trap '[ -n "$ACFS_TMP_DIR" ] && rm -rf "$ACFS_TMP_DIR"' EXIT
 git clone --depth 1 "$1" "$ACFS_TMP_DIR/src"
 cd "$ACFS_TMP_DIR/src"
