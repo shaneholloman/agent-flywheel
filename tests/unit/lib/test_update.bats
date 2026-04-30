@@ -850,7 +850,7 @@ EOF
     run grep -F 'run_cmd_bun_with_retry "Vercel CLI" "$bun_bin" install -g --trust vercel@latest' "$update"
     assert_failure
 
-    run grep -F 'run_cmd_with_retry_status "Meta Skill" update_run_verified_installer ms --easy-mode' "$update"
+    run grep -F 'run_cmd_with_retry_status "Meta Skill" update_run_verified_installer ms --easy-mode || true' "$update"
     assert_success
 
     run grep -F 'run_cmd "Meta Skill" update_run_verified_installer ms --easy-mode' "$update"
@@ -885,6 +885,58 @@ EOF
 
     run grep -F 'command -v "$binary_name"' "$update"
     assert_failure
+}
+
+@test "update_stack continues after Meta Skill retry exhaustion" {
+    QUIET=true
+    VERBOSE=false
+    DRY_RUN=false
+    UPDATE_STACK=true
+    ABORT_ON_FAILURE=false
+    ACFS_UPDATE_RETRY_MAX_ATTEMPTS=1
+    UPDATE_LOG_FILE="$HOME/update.log"
+    SUCCESS_COUNT=0
+    FAIL_COUNT=0
+    SKIP_COUNT=0
+
+    declare -gA KNOWN_INSTALLERS=([mcp_agent_mail]="https://example.test/install-am.sh")
+
+    update_require_security() { return 0; }
+    get_checksum() { printf '%s\n' "abc123"; }
+    verify_checksum() {
+        printf '%s\n' '#!/usr/bin/env bash'
+        printf '%s\n' 'exit 0'
+    }
+    update_target_user() { id -un; }
+    update_target_home() { printf '%s\n' "$HOME"; }
+    update_run_logged_passthrough() { return 0; }
+    update_source_stack_lib() { return 1; }
+    capture_version_before() { :; }
+    capture_version_after() { return 1; }
+    update_binary_exists() { return 1; }
+    update_run_verified_installer() {
+        case "${1:-}" in
+            ms)
+                printf '%s\n' "download failed: rate limit exceeded" >&2
+                return 7
+                ;;
+            apr)
+                : > "$HOME/apr-ran"
+                return 0
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    }
+    update_run_verified_installer_with_env() { return 0; }
+    update_run_slb_source_install() { return 0; }
+    update_run_fsfs_installer() { return 0; }
+
+    run update_stack
+    assert_success
+    assert_output --partial "[fail] Meta Skill"
+    [[ -f "$HOME/apr-ran" ]]
 }
 
 @test "apt_lock_is_held: uses plain fuser when accessible" {

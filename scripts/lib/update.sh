@@ -4624,7 +4624,7 @@ update_stack() {
     fi
 
     # Meta Skill (ms) - always install/update (installer is idempotent)
-    run_cmd_with_retry_status "Meta Skill" update_run_verified_installer ms --easy-mode
+    run_cmd_with_retry_status "Meta Skill" update_run_verified_installer ms --easy-mode || true
 
     # APR (Automated Plan Reviser Pro) - always install/update
     run_cmd "APR" update_run_verified_installer apr --easy-mode
