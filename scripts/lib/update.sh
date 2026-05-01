@@ -1485,8 +1485,16 @@ update_retry_max_attempts() {
 update_retry_sleep_seconds() {
     local attempt="${1:-1}"
 
+    if [[ -z "$attempt" || ! "$attempt" =~ ^[0-9]+$ || "$attempt" =~ ^0+$ ]]; then
+        attempt=1
+    fi
+
     if [[ -n "${ACFS_UPDATE_RETRY_SLEEP_SECONDS:-}" ]]; then
-        printf '%s\n' "$ACFS_UPDATE_RETRY_SLEEP_SECONDS"
+        if [[ "$ACFS_UPDATE_RETRY_SLEEP_SECONDS" =~ ^[0-9]+$ ]]; then
+            printf '%s\n' "$ACFS_UPDATE_RETRY_SLEEP_SECONDS"
+        else
+            printf '%s\n' "$((attempt * 2))"
+        fi
         return 0
     fi
 

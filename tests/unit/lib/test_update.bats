@@ -9198,6 +9198,63 @@ EOF
     assert_output "2"
 }
 
+@test "update_retry_sleep_seconds: defaults malformed values and preserves zero override" {
+    unset ACFS_UPDATE_RETRY_SLEEP_SECONDS
+    run update_retry_sleep_seconds 3
+    assert_success
+    assert_output "6"
+
+    export ACFS_UPDATE_RETRY_SLEEP_SECONDS=bogus
+    run update_retry_sleep_seconds 3
+    assert_success
+    assert_output "6"
+
+    export ACFS_UPDATE_RETRY_SLEEP_SECONDS=-1
+    run update_retry_sleep_seconds 3
+    assert_success
+    assert_output "6"
+
+    export ACFS_UPDATE_RETRY_SLEEP_SECONDS=0
+    run update_retry_sleep_seconds 3
+    assert_success
+    assert_output "0"
+}
+
+@test "update_run_command_capture_with_retry: malformed retry sleep still retries transient failure" {
+    init_stub_dir
+    export PATH="$STUB_DIR:$PATH"
+    export ACFS_UPDATE_RETRY_MAX_ATTEMPTS=2
+    export ACFS_UPDATE_RETRY_SLEEP_SECONDS=bogus
+    UPDATE_LOG_FILE="$HOME/update.log"
+
+    cat > "$STUB_DIR/transient-capture" <<'EOF'
+#!/usr/bin/env bash
+attempts_file="$HOME/transient-capture-attempts"
+attempts=0
+if [[ -f "$attempts_file" ]]; then
+  attempts="$(cat "$attempts_file")"
+fi
+attempts=$((attempts + 1))
+printf '%s\n' "$attempts" > "$attempts_file"
+if [[ "$attempts" -eq 1 ]]; then
+  echo "download failed: rate limit exceeded" >&2
+  exit 7
+fi
+exit 0
+EOF
+    chmod +x "$STUB_DIR/transient-capture"
+
+    sleep() {
+        printf '%s\n' "$1" > "$HOME/capture-sleep"
+    }
+
+    run update_run_command_capture_with_retry "captured command" transient-capture
+
+    assert_success
+    [[ "$(cat "$HOME/transient-capture-attempts")" == "2" ]]
+    [[ "$(cat "$HOME/capture-sleep")" == "2" ]]
+}
+
 @test "update_run_command_capture_with_retry: zero retry max still runs once and fails" {
     init_stub_dir
     export PATH="$STUB_DIR:$PATH"
