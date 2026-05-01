@@ -470,7 +470,7 @@ _smoke_current_home_state_file() {
 
     if [[ "${_SMOKE_ORIGINAL_HOME_WAS_SET:-false}" == true ]]; then
         original_home="$(_smoke_sanitize_abs_nonroot_path "$_SMOKE_ORIGINAL_HOME" 2>/dev/null || true)"
-        [[ -z "$original_home" || "$original_home" == "$current_home" ]] || return 1
+        [[ -n "$original_home" && "$original_home" == "$current_home" ]] || return 1
     fi
 
     if [[ -z "$current_user" ]]; then

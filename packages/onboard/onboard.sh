@@ -418,7 +418,7 @@ onboard_current_home_acfs_candidate() {
 
     if [[ "${_ONBOARD_ORIGINAL_HOME_WAS_SET:-false}" == true ]]; then
         original_home="$(onboard_sanitize_abs_nonroot_path "$_ONBOARD_ORIGINAL_HOME" 2>/dev/null || true)"
-        [[ -z "$original_home" || "$original_home" == "$current_home" ]] || return 1
+        [[ -n "$original_home" && "$original_home" == "$current_home" ]] || return 1
     fi
 
     current_user="$(onboard_resolve_current_user 2>/dev/null || true)"
@@ -505,12 +505,6 @@ onboard_resolve_acfs_home() {
         fi
     fi
 
-    if onboard_candidate_has_acfs_data "$_ONBOARD_EXPLICIT_ACFS_HOME"; then
-        _ONBOARD_ACFS_HOME_SOURCE="explicit_acfs_home"
-        printf '%s\n' "$_ONBOARD_EXPLICIT_ACFS_HOME"
-        return 0
-    fi
-
     candidate="$(onboard_current_home_acfs_candidate 2>/dev/null || true)"
     if [[ -n "$candidate" ]]; then
         _ONBOARD_ACFS_HOME_SOURCE="current_home"
@@ -537,6 +531,12 @@ onboard_resolve_acfs_home() {
             printf '%s\n' "$candidate"
             return 0
         fi
+    fi
+
+    if onboard_candidate_has_acfs_data "$_ONBOARD_EXPLICIT_ACFS_HOME"; then
+        _ONBOARD_ACFS_HOME_SOURCE="explicit_acfs_home"
+        printf '%s\n' "$_ONBOARD_EXPLICIT_ACFS_HOME"
+        return 0
     fi
 
     explicit_target_home="$(onboard_resolve_explicit_runtime_home 2>/dev/null || true)"

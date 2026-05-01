@@ -416,7 +416,7 @@ dashboard_current_home_acfs_candidate() {
 
     if [[ "${_DASHBOARD_ORIGINAL_HOME_WAS_SET:-false}" == true ]]; then
         original_home="$(dashboard_sanitize_abs_nonroot_path "$_DASHBOARD_ORIGINAL_HOME" 2>/dev/null || true)"
-        [[ -z "$original_home" || "$original_home" == "$current_home" ]] || return 1
+        [[ -n "$original_home" && "$original_home" == "$current_home" ]] || return 1
     fi
 
     current_user="$(dashboard_resolve_current_user 2>/dev/null || true)"
@@ -468,13 +468,6 @@ dashboard_resolve_acfs_home() {
         fi
     fi
 
-    if [[ -n "$_DASHBOARD_EXPLICIT_ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$_DASHBOARD_EXPLICIT_ACFS_HOME"; then
-        _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_EXPLICIT_ACFS_HOME"
-        _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
-        printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
     candidate="$(dashboard_current_home_acfs_candidate 2>/dev/null || true)"
     if [[ -n "$candidate" ]]; then
         _DASHBOARD_RESOLVED_ACFS_HOME="$candidate"
@@ -504,6 +497,13 @@ dashboard_resolve_acfs_home() {
                 return 0
             fi
         fi
+    fi
+
+    if [[ -n "$_DASHBOARD_EXPLICIT_ACFS_HOME" ]] && dashboard_candidate_has_acfs_data "$_DASHBOARD_EXPLICIT_ACFS_HOME"; then
+        _DASHBOARD_RESOLVED_ACFS_HOME="$_DASHBOARD_EXPLICIT_ACFS_HOME"
+        _DASHBOARD_RESOLVED_ACFS_HOME_SOURCE="explicit_acfs_home"
+        printf '%s\n' "$_DASHBOARD_RESOLVED_ACFS_HOME"
+        return 0
     fi
 
     if [[ -n "$_DASHBOARD_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_DASHBOARD_EXPLICIT_TARGET_USER_RAW" ]]; then

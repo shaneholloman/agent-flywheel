@@ -399,7 +399,7 @@ info_current_home_acfs_candidate() {
 
     if [[ "${_INFO_ORIGINAL_HOME_WAS_SET:-false}" == true ]]; then
         original_home="$(info_sanitize_abs_nonroot_path "$_INFO_ORIGINAL_HOME" 2>/dev/null || true)"
-        [[ -z "$original_home" || "$original_home" == "$current_home" ]] || return 1
+        [[ -n "$original_home" && "$original_home" == "$current_home" ]] || return 1
     fi
 
     current_user="$(info_resolve_current_user 2>/dev/null || true)"
@@ -769,12 +769,6 @@ info_get_data_home() {
         fi
     fi
 
-    if [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_EXPLICIT_ACFS_HOME"; then
-        _INFO_RESOLVED_ACFS_HOME="$_INFO_EXPLICIT_ACFS_HOME"
-        echo "$_INFO_RESOLVED_ACFS_HOME"
-        return 0
-    fi
-
     candidate="$(info_current_home_acfs_candidate 2>/dev/null || true)"
     if [[ -n "$candidate" ]]; then
         _INFO_RESOLVED_ACFS_HOME="$candidate"
@@ -803,6 +797,12 @@ info_get_data_home() {
                 return 0
             fi
         fi
+    fi
+
+    if [[ -n "$_INFO_EXPLICIT_ACFS_HOME" ]] && info_candidate_has_acfs_data "$_INFO_EXPLICIT_ACFS_HOME"; then
+        _INFO_RESOLVED_ACFS_HOME="$_INFO_EXPLICIT_ACFS_HOME"
+        echo "$_INFO_RESOLVED_ACFS_HOME"
+        return 0
     fi
 
     if [[ -n "$_INFO_EXPLICIT_TARGET_HOME_RAW" ]] || [[ -n "$_INFO_EXPLICIT_TARGET_USER_RAW" ]]; then
