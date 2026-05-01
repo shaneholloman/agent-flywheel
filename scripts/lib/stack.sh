@@ -396,10 +396,6 @@ _stack_target_home() {
         printf '%s\n' "$explicit_home"
         return 0
     fi
-    if [[ -n "$explicit_home" && "$target_user" == "$current_user" ]]; then
-        printf '%s\n' "$explicit_home"
-        return 0
-    fi
 
     if [[ -n "$explicit_home" && -n "$explicit_bin_dir" && -z "${TARGET_USER:-}" && "$explicit_home" != "$initial_env_home" ]]; then
         printf '%s\n' "$explicit_home"

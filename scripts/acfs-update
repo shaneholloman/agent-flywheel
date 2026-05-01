@@ -716,6 +716,7 @@ resolve_live_system_state_home() {
 
   candidate_home="$(resolve_target_home_from_state_hint "${ACFS_SYSTEM_STATE_FILE:-}" 2>/dev/null || true)"
   [[ -n "$candidate_home" ]] || return 1
+  find_update_script_for_home "$candidate_home" >/dev/null 2>&1 || return 1
 
   printf '%s\n' "$candidate_home"
 }

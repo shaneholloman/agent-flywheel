@@ -249,10 +249,6 @@ _agent_target_home() {
         printf '/root\n'
         return 0
     fi
-    if [[ -n "$explicit_home" && "$target_user" == "$current_user" ]]; then
-        printf '%s\n' "$explicit_home"
-        return 0
-    fi
 
     passwd_entry="$(_agent_getent_passwd_entry "$target_user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then

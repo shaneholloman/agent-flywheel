@@ -241,11 +241,6 @@ resolve_home_dir() {
     expected_home="$(services_setup_sanitize_abs_nonroot_path "$expected_home" 2>/dev/null || true)"
 
     current_user="$(services_setup_resolve_current_user 2>/dev/null || true)"
-    if [[ "$current_user" == "$user" ]] && [[ -n "$expected_home" ]]; then
-        printf '%s' "$expected_home"
-        return 0
-    fi
-
     passwd_entry="$(services_setup_getent_passwd_entry "$user" 2>/dev/null || true)"
     if [[ -n "$passwd_entry" ]]; then
         home="$(services_setup_passwd_home_from_entry "$passwd_entry" 2>/dev/null || true)"
