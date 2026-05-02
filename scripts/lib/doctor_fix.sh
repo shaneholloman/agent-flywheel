@@ -657,22 +657,57 @@ doctor_fix_build_remove_binary_rollback() {
 doctor_fix_run_rollback_command() {
     local rollback_command="$1"
     local requires_root="${2:-false}"
+    local bash_bin=""
+    local env_bin=""
+    local sudo_bin=""
+    local rollback_path="/usr/sbin:/usr/bin:/sbin:/bin"
+    local -a rollback_env_args=()
     local -a sudo_cmd=()
 
     [[ -n "$rollback_command" ]] || return 1
 
+    bash_bin="$(doctor_fix_system_binary_path bash 2>/dev/null || true)"
+    if [[ -z "$bash_bin" ]]; then
+        doctor_fix_log ERROR "Rollback requires system bash but bash is unavailable"
+        return 1
+    fi
+
+    env_bin="$(doctor_fix_system_binary_path env 2>/dev/null || true)"
+    if [[ -z "$env_bin" ]]; then
+        doctor_fix_log ERROR "Rollback requires system env but env is unavailable"
+        return 1
+    fi
+
     if [[ "$requires_root" == "true" ]]; then
-        [[ $EUID -ne 0 ]] && command -v sudo &>/dev/null && sudo_cmd=(sudo -n)
+        if [[ $EUID -ne 0 ]]; then
+            sudo_bin="$(doctor_fix_system_binary_path sudo 2>/dev/null || true)"
+            [[ -n "$sudo_bin" ]] && sudo_cmd=("$sudo_bin" -n)
+        fi
         if [[ $EUID -ne 0 && ${#sudo_cmd[@]} -eq 0 ]]; then
             doctor_fix_log ERROR "Rollback requires root but sudo is unavailable"
             return 1
         fi
     fi
 
+    rollback_env_args=(
+        -u BASH_ENV
+        -u ENV
+        -u SHELLOPTS
+        -u BASHOPTS
+        -u CDPATH
+        -u GLOBIGNORE
+        PATH="$rollback_path"
+        "$bash_bin"
+        --noprofile
+        --norc
+        -p
+        -c "$rollback_command"
+    )
+
     if [[ ${#sudo_cmd[@]} -gt 0 ]]; then
-        "${sudo_cmd[@]}" bash -c "$rollback_command"
+        "${sudo_cmd[@]}" "$env_bin" "${rollback_env_args[@]}"
     else
-        bash -c "$rollback_command"
+        "$env_bin" "${rollback_env_args[@]}"
     fi
 }
 

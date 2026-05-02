@@ -320,6 +320,8 @@ const INTERNAL_SCRIPTS_TO_CHECKSUM = [
   'scripts/lib/agents.sh',
   'scripts/lib/update.sh',
   'scripts/lib/doctor.sh',
+  'scripts/lib/doctor_fix.sh',
+  'scripts/lib/autofix.sh',
   'scripts/lib/install_helpers.sh',
   'scripts/lib/logging.sh',
   'scripts/lib/state.sh',

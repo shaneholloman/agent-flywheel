@@ -515,26 +515,33 @@ EOF
     return 1
 }
 
-test_doctor_fix_run_rollback_command_requires_root_fails_without_sudo() {
+test_doctor_fix_run_rollback_command_uses_system_bash_and_clean_path() {
     local temp_dir=""
     local temp_bin=""
-    local bash_bin=""
     local marker=""
+    local poison_marker=""
     local old_path=""
     local status=0
-
-    if [[ $EUID -eq 0 ]]; then
-        return 0
-    fi
 
     temp_dir="$(mktemp -d)"
     temp_bin="$temp_dir/bin"
     marker="$temp_dir/rollback-ran"
+    poison_marker="$temp_dir/poison-ran"
     mkdir -p "$temp_bin"
 
-    bash_bin="$(command -v bash 2>/dev/null || true)"
-    [[ -n "$bash_bin" ]] || return 1
-    ln -s "$bash_bin" "$temp_bin/bash"
+    cat > "$temp_bin/bash" <<EOF
+#!/bin/sh
+: > "$poison_marker"
+exit 99
+EOF
+    chmod +x "$temp_bin/bash"
+
+    cat > "$temp_bin/dirname" <<EOF
+#!/bin/sh
+: > "$poison_marker"
+exit 99
+EOF
+    chmod +x "$temp_bin/dirname"
 
     doctor_fix_log() {
         :
@@ -542,9 +549,61 @@ test_doctor_fix_run_rollback_command_requires_root_fails_without_sudo() {
 
     old_path="$PATH"
     PATH="$temp_bin"
-    doctor_fix_run_rollback_command "printf ran > '$marker'" true >/dev/null 2>&1
+    doctor_fix_run_rollback_command "dirname /tmp/example > '$marker'" false >/dev/null 2>&1
     status=$?
     PATH="$old_path"
+
+    if [[ $status -ne 0 ]]; then
+        echo "  Expected rollback to run with resolved system bash and sanitized PATH"
+        return 1
+    fi
+    if [[ -e "$poison_marker" ]]; then
+        echo "  Rollback used PATH-controlled bash or rollback utility"
+        return 1
+    fi
+    if [[ "$(cat "$marker" 2>/dev/null)" != "/tmp" ]]; then
+        echo "  Rollback command did not run through the expected system utilities"
+        return 1
+    fi
+
+    return 0
+}
+
+test_doctor_fix_run_rollback_command_requires_root_fails_without_sudo() {
+    local temp_dir=""
+    local original_resolver=""
+    local resolved_bash_bin=""
+    local resolved_env_bin=""
+    local marker=""
+    local status=0
+
+    if [[ $EUID -eq 0 ]]; then
+        return 0
+    fi
+
+    original_resolver="$(declare -f doctor_fix_system_binary_path)"
+    resolved_bash_bin="$(doctor_fix_system_binary_path bash 2>/dev/null || true)"
+    resolved_env_bin="$(doctor_fix_system_binary_path env 2>/dev/null || true)"
+    [[ -n "$resolved_bash_bin" && -n "$resolved_env_bin" ]] || return 1
+    temp_dir="$(mktemp -d)"
+    marker="$temp_dir/rollback-ran"
+
+    doctor_fix_log() {
+        :
+    }
+
+    doctor_fix_system_binary_path() {
+        case "${1:-}" in
+            bash) printf '%s\n' "$resolved_bash_bin" ;;
+            env) printf '%s\n' "$resolved_env_bin" ;;
+            sudo) return 1 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    doctor_fix_run_rollback_command "printf ran > '$marker'" true >/dev/null 2>&1
+    status=$?
+    eval "$original_resolver"
 
     if [[ $status -eq 0 ]]; then
         echo "  Expected root-required rollback to fail without sudo"
@@ -561,11 +620,13 @@ test_doctor_fix_run_rollback_command_requires_root_fails_without_sudo() {
 test_doctor_fix_run_rollback_command_uses_noninteractive_sudo() {
     local temp_dir=""
     local temp_bin=""
-    local bash_bin=""
+    local original_resolver=""
+    local resolved_bash_bin=""
+    local resolved_env_bin=""
     local marker=""
     local sudo_log=""
     local sudo_args=""
-    local old_path=""
+    local expected_prefix=""
     local status=0
 
     if [[ $EUID -eq 0 ]]; then
@@ -578,13 +639,15 @@ test_doctor_fix_run_rollback_command_uses_noninteractive_sudo() {
     sudo_log="$temp_dir/sudo-args"
     mkdir -p "$temp_bin"
 
-    bash_bin="$(command -v bash 2>/dev/null || true)"
-    [[ -n "$bash_bin" ]] || return 1
-    ln -s "$bash_bin" "$temp_bin/bash"
+    original_resolver="$(declare -f doctor_fix_system_binary_path)"
+    resolved_bash_bin="$(doctor_fix_system_binary_path bash 2>/dev/null || true)"
+    resolved_env_bin="$(doctor_fix_system_binary_path env 2>/dev/null || true)"
+    [[ -n "$resolved_bash_bin" && -n "$resolved_env_bin" ]] || return 1
+
     cat > "$temp_bin/sudo" <<'EOF'
-#!/usr/bin/env bash
+#!/bin/sh
 printf '%s\n' "$*" > "$ACFS_FAKE_SUDO_LOG"
-if [[ "${1:-}" != "-n" ]]; then
+if [ "${1:-}" != "-n" ]; then
     exit 42
 fi
 shift
@@ -596,13 +659,20 @@ EOF
         :
     }
 
-    old_path="$PATH"
-    PATH="$temp_bin"
+    doctor_fix_system_binary_path() {
+        case "${1:-}" in
+            bash) printf '%s\n' "$resolved_bash_bin" ;;
+            env) printf '%s\n' "$resolved_env_bin" ;;
+            sudo) printf '%s\n' "$temp_bin/sudo" ;;
+            *) return 1 ;;
+        esac
+    }
+
     export ACFS_FAKE_SUDO_LOG="$sudo_log"
     doctor_fix_run_rollback_command "printf ran > '$marker'" true >/dev/null 2>&1
     status=$?
     unset ACFS_FAKE_SUDO_LOG
-    PATH="$old_path"
+    eval "$original_resolver"
 
     if [[ $status -ne 0 ]]; then
         echo "  Expected root-required rollback to run through noninteractive sudo"
@@ -613,8 +683,13 @@ EOF
         return 1
     fi
     sudo_args="$(<"$sudo_log")"
-    if [[ "$sudo_args" != -n\ bash\ -c\ * ]]; then
-        echo "  Expected sudo to be invoked with -n, got: $sudo_args"
+    expected_prefix="-n $resolved_env_bin"
+    expected_prefix+=" -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS"
+    expected_prefix+=" -u CDPATH -u GLOBIGNORE"
+    expected_prefix+=" PATH=/usr/sbin:/usr/bin:/sbin:/bin"
+    expected_prefix+=" $resolved_bash_bin --noprofile --norc -p -c "
+    if [[ "$sudo_args" != "$expected_prefix"* ]]; then
+        echo "  Expected sudo to use sanitized noninteractive rollback, got: $sudo_args"
         return 1
     fi
 
@@ -3460,6 +3535,7 @@ main() {
     run_test test_doctor_fix_runtime_home_fails_closed_for_unresolved_target_with_stale_target_home
     run_test test_doctor_fix_runtime_bin_dir_ignores_other_user_bin_dir
     run_test test_doctor_fix_binary_path_ignores_other_user_bin_dir
+    run_test test_doctor_fix_run_rollback_command_uses_system_bash_and_clean_path
     run_test test_doctor_fix_run_rollback_command_requires_root_fails_without_sudo
     run_test test_doctor_fix_run_rollback_command_uses_noninteractive_sudo
     run_test test_doctor_fix_files_json_escapes_special_paths
@@ -3570,4 +3646,6 @@ main() {
     exit 0
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

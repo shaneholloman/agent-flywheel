@@ -12,6 +12,8 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/lib/agents.sh]="bfb2921ed0a6ebc838de56aabc27d0e504d310dc21beeb4af135aed3ae79d890"
   [scripts/lib/update.sh]="372d78941187a60624b32c41786f88460136e55e67255fbf463d4e11d3cf1bd9"
   [scripts/lib/doctor.sh]="89cbdcf2c6b5a88404857a8885508f686c9aeba04e69a95b4e99475ba9148f42"
+  [scripts/lib/doctor_fix.sh]="9498491e531a874743aa3481a0acb3b089845e5a367649ccef0f8f1301603278"
+  [scripts/lib/autofix.sh]="ae7cc5e0b3af3f170d647945d3daee9a341c9276c270fe06895ab9aaf26ba805"
   [scripts/lib/install_helpers.sh]="63f49b3c3cb915c224084811d2623358a4f506507971623cbd36e8778ada3195"
   [scripts/lib/logging.sh]="c0e719928a7e355806fb20c01b488df7e661f7eaa4a061aba6d1d4b059180cb5"
   [scripts/lib/state.sh]="c2889f4f10aa9a32fe50f64ca68555e522164be5864944e567f540859f83f1c2"
@@ -25,5 +27,5 @@ declare -gA ACFS_INTERNAL_CHECKSUMS=(
   [scripts/acfs-update]="5baa8fbcf203aed9d9bc3de030a0ab9f8a391811e33f473459885033b097449f"
 )
 
-ACFS_INTERNAL_CHECKSUMS_COUNT=15
+ACFS_INTERNAL_CHECKSUMS_COUNT=17
 ACFS_INTERNAL_CHECKSUMS_GENERATED="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
