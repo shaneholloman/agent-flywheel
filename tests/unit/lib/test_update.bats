@@ -1224,6 +1224,50 @@ EOF
     assert_output --partial "-n $STUB_DIR/fuser $lockfile"
 }
 
+@test "wait_for_apt_lock: uses trusted fuser resolver instead of caller PATH" {
+    init_stub_dir
+    local empty_path="$HOME/empty-path"
+    local log_file="$HOME/update.log"
+    local old_path="$PATH"
+    mkdir -p "$empty_path"
+    : > "$log_file"
+
+    QUIET=true
+    DIM=""
+    NC=""
+
+    update_system_binary_path() {
+        case "${1:-}" in
+            fuser) printf '%s\n' "$STUB_DIR/fuser" ;;
+            *) return 1 ;;
+        esac
+    }
+
+    apt_lock_is_held() {
+        return 1
+    }
+
+    apt_lock_holder_details() {
+        return 1
+    }
+
+    log_to_file() {
+        printf '%s\n' "$*" >> "$log_file"
+    }
+
+    log_item() {
+        :
+    }
+
+    PATH="$empty_path"
+    run wait_for_apt_lock 1
+    PATH="$old_path"
+
+    assert_success
+    run grep -F "fuser not available" "$log_file"
+    assert_failure
+}
+
 @test "fix_apt_issues: fails when interrupted dpkg repair fails" {
     init_stub_dir
     export PATH="$STUB_DIR:$PATH"

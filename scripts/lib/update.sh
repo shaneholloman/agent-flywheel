@@ -3923,8 +3923,10 @@ wait_for_apt_lock() {
     local max_wait=${1:-120}  # Default 120 seconds (2 minutes)
     local interval=5
     local waited=0
+    local fuser_bin=""
 
-    if ! command -v fuser &>/dev/null; then
+    fuser_bin="$(update_system_binary_path fuser 2>/dev/null || true)"
+    if [[ -z "$fuser_bin" ]]; then
         log_to_file "fuser not available (psmisc not installed), skipping apt lock detection"
         return 0
     fi
