@@ -582,6 +582,22 @@ EOF
     assert_output "$target_home/.local/bin/$tool_name"
 }
 
+@test "update_curl: ignores shell function curl" {
+    local curl_marker="${BATS_TEST_TMPDIR}/update-curl-poison.marker"
+
+    curl() {
+        : > "$curl_marker"
+        return 42
+    }
+
+    run update_curl "https://127.0.0.1:9/"
+
+    assert_failure
+    [[ "$status" -ne 42 ]]
+    [[ "$status" -ne 127 ]]
+    [[ ! -e "$curl_marker" ]]
+}
+
 @test "update_binary_path: ignores relative ACFS_BIN_DIR shim when target bin exists" {
     local current_home
     local target_home
@@ -8589,7 +8605,7 @@ SECURITY
 @test "update fsfs artifact contract falls back when latest checksum is not ready" {
     unset ACFS_FSFS_VERSION
     log_to_file() { :; }
-    curl() {
+    update_curl() {
         case "$*" in
             *"releases?per_page=10"*)
                 printf '%s\n' \
@@ -8623,7 +8639,7 @@ SECURITY
 
 @test "update fsfs version resolver falls back to release redirect" {
     unset ACFS_FSFS_VERSION
-    curl() {
+    update_curl() {
         case "$*" in
             *api.github.com*) return 22 ;;
             *releases/latest*) printf '%s\n' "https://github.com/Dicklesworthstone/frankensearch/releases/tag/v1.2.5" ;;

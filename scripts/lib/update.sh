@@ -1786,6 +1786,24 @@ update_system_binary_path() {
     return 1
 }
 
+update_curl() {
+    local curl_bin=""
+    local curl_help=""
+    local -a curl_args=(--connect-timeout 30 --max-time 60 -fsSL)
+
+    curl_bin="$(update_system_binary_path curl 2>/dev/null || true)"
+    if [[ -z "$curl_bin" ]]; then
+        echo "curl not found in trusted system paths" >&2
+        return 127
+    fi
+
+    if curl_help="$("$curl_bin" --help all 2>/dev/null)" && [[ "$curl_help" == *"--proto"* ]]; then
+        curl_args=(--proto '=https' --proto-redir '=https' "${curl_args[@]}")
+    fi
+
+    "$curl_bin" "${curl_args[@]}" "$@"
+}
+
 update_current_user() {
     local current_user=""
     local id_bin=""
@@ -2927,7 +2945,7 @@ update_resolve_fsfs_latest_version() {
     local latest_url="https://api.github.com/repos/Dicklesworthstone/frankensearch/releases/latest"
     local redirect_url="https://github.com/Dicklesworthstone/frankensearch/releases/latest"
     local tag=""
-    tag="$(curl -fsSL --connect-timeout 30 --max-time 60 -H "Accept: application/vnd.github.v3+json" "$latest_url" 2>/dev/null \
+    tag="$(update_curl -H "Accept: application/vnd.github.v3+json" "$latest_url" 2>/dev/null \
         | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
         | head -n 1 || true)"
 
@@ -2936,7 +2954,7 @@ update_resolve_fsfs_latest_version() {
         return 0
     fi
 
-    tag="$(curl -fsSL --connect-timeout 30 --max-time 60 -o /dev/null -w '%{url_effective}' "$redirect_url" 2>/dev/null \
+    tag="$(update_curl -o /dev/null -w '%{url_effective}' "$redirect_url" 2>/dev/null \
         | sed -E 's|.*/tag/||' || true)"
 
     update_is_valid_fsfs_version "$tag" || return 1
@@ -2947,7 +2965,7 @@ update_fetch_fsfs_artifact_checksum() {
     local checksum_url="$1"
     local checksum=""
 
-    checksum="$(curl -fsSL --connect-timeout 30 --max-time 60 "$checksum_url" 2>/dev/null \
+    checksum="$(update_curl "$checksum_url" 2>/dev/null \
         | awk 'NR == 1 { print $1 }' || true)"
     [[ "$checksum" =~ ^[0-9A-Fa-f]{64}$ ]] || return 1
     printf '%s\n' "${checksum,,}"
@@ -2977,13 +2995,13 @@ update_resolve_fsfs_artifact_contract() {
                 *) candidates+=("$candidate") ;;
             esac
         done < <(
-            curl -fsSL --connect-timeout 30 --max-time 60 \
+            update_curl \
                 -H "Accept: application/vnd.github.v3+json" \
                 "https://api.github.com/repos/Dicklesworthstone/frankensearch/releases?per_page=10" 2>/dev/null \
                 | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true
         )
 
-        candidate="$(curl -fsSL --connect-timeout 30 --max-time 60 -o /dev/null -w '%{url_effective}' \
+        candidate="$(update_curl -o /dev/null -w '%{url_effective}' \
             "https://github.com/Dicklesworthstone/frankensearch/releases/latest" 2>/dev/null \
             | sed -E 's|.*/tag/||' || true)"
         if update_is_valid_fsfs_version "$candidate"; then
