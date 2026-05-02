@@ -224,6 +224,26 @@ stub_acfs_curl_response() {
     [[ ! -e "$marker" ]]
 }
 
+@test "acfs_curl: refreshes stale cached curl path" {
+    local security_lib="$PROJECT_ROOT/scripts/lib/security.sh"
+
+    run bash -c '
+        set -euo pipefail
+        security_lib="$1"
+        source "$security_lib"
+        ACFS_CURL_BIN="/tmp/acfs-missing-curl"
+        set +e
+        acfs_curl "https://127.0.0.1:9/" >/dev/null 2>&1
+        status=$?
+        set -e
+        [[ "$status" -ne 127 ]]
+        [[ "$ACFS_CURL_BIN" = /* ]]
+        [[ -x "$ACFS_CURL_BIN" ]]
+    ' _ "$security_lib"
+
+    assert_success
+}
+
 @test "calculate_file_sha256: ignores shell function sha256sum" {
     local security_lib="$PROJECT_ROOT/scripts/lib/security.sh"
     local probe_file="${BATS_TEST_TMPDIR:-/tmp}/acfs-sha-poison-probe"

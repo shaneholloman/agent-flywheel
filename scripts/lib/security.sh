@@ -112,18 +112,29 @@ _acfs_is_interactive() {
 }
 
 # curl defaults: enforce HTTPS (including redirects) when supported
-ACFS_CURL_BIN="$(acfs_security_curl_binary_path 2>/dev/null || true)"
-ACFS_CURL_BASE_ARGS=(--connect-timeout 30 --max-time 300 -fsSL)
-ACFS_CURL_HELP=""
-if [[ -n "$ACFS_CURL_BIN" ]] && ACFS_CURL_HELP="$("$ACFS_CURL_BIN" --help all 2>/dev/null)" && [[ "$ACFS_CURL_HELP" == *"--proto"* ]]; then
-    ACFS_CURL_BASE_ARGS=(--proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
-fi
-unset ACFS_CURL_HELP
+ACFS_CURL_BIN=""
+ACFS_CURL_BASE_ARGS=()
+
+acfs_security_configure_curl() {
+    local curl_help=""
+
+    ACFS_CURL_BIN="$(acfs_security_curl_binary_path 2>/dev/null || true)"
+    ACFS_CURL_BASE_ARGS=(--connect-timeout 30 --max-time 300 -fsSL)
+
+    if [[ -n "$ACFS_CURL_BIN" ]] && curl_help="$("$ACFS_CURL_BIN" --help all 2>/dev/null)" && [[ "$curl_help" == *"--proto"* ]]; then
+        ACFS_CURL_BASE_ARGS=(--proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 -fsSL)
+    fi
+}
+
+acfs_security_configure_curl
 
 acfs_curl() {
     if [[ -z "$ACFS_CURL_BIN" || ! -x "$ACFS_CURL_BIN" ]]; then
-        log_error "No trusted curl binary available"
-        return 127
+        acfs_security_configure_curl
+        if [[ -z "$ACFS_CURL_BIN" || ! -x "$ACFS_CURL_BIN" ]]; then
+            log_error "No trusted curl binary available"
+            return 127
+        fi
     fi
 
     "$ACFS_CURL_BIN" "${ACFS_CURL_BASE_ARGS[@]}" "$@"
