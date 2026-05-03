@@ -88,6 +88,15 @@ _status_system_binary_path() {
     return 1
 }
 
+_status_system_curl() {
+    local curl_bin=""
+
+    curl_bin="$(_status_system_binary_path curl 2>/dev/null || true)"
+    [[ -n "$curl_bin" ]] || return 127
+
+    "$curl_bin" "$@"
+}
+
 _status_resolve_current_user() {
     local current_user=""
     local id_bin=""
@@ -1200,7 +1209,7 @@ status_main() {
     if [[ "$_STATUS_CHECK_UPDATES" == "true" ]]; then
         if [[ -n "$_ACFS_HOME" ]] && [[ -f "$_ACFS_HOME/VERSION" ]]; then
             _local_version=$(cat "$_ACFS_HOME/VERSION" 2>/dev/null) || _local_version=""
-            _remote_version=$(timeout 5 curl -fsSL \
+            _remote_version=$(_status_system_curl -fsSL --connect-timeout 2 --max-time 5 \
                 "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/VERSION" \
                 2>/dev/null) || _remote_version=""
             if [[ -n "$_remote_version" ]] && [[ -n "$_local_version" ]] \
