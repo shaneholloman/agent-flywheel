@@ -63,6 +63,15 @@ _smoke_system_binary_path() {
     return 1
 }
 
+_smoke_system_curl() {
+    local curl_bin=""
+
+    curl_bin="$(_smoke_system_binary_path curl 2>/dev/null || true)"
+    [[ -n "$curl_bin" ]] || return 127
+
+    "$curl_bin" "$@"
+}
+
 _smoke_getent_passwd_entry() {
     local user="${1-}"
     local getent_bin=""
@@ -1139,7 +1148,7 @@ _check_onboard() {
 
 # Check: Agent Mail can respond
 _check_agent_mail() {
-    if curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness &>/dev/null; then
+    if _smoke_system_curl -fsS --max-time 5 http://127.0.0.1:8765/health/liveness &>/dev/null; then
         _smoke_info "Agent Mail: running"
     else
         _smoke_warn "Agent Mail: not running" "re-run ACFS update/install to rewrite agent-mail.service, then run 'systemctl --user enable --now agent-mail.service'"

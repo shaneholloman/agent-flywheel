@@ -8498,6 +8498,19 @@ EOF
     assert_failure
 }
 
+@test "smoke Agent Mail health check uses system curl helper" {
+    local smoke_lib="$PROJECT_ROOT/scripts/lib/smoke_test.sh"
+
+    run grep -F '_smoke_system_curl() {' "$smoke_lib"
+    assert_success
+
+    run grep -F '_smoke_system_binary_path curl' "$smoke_lib"
+    assert_success
+
+    run rg -n '(^|[[:space:]])curl -fsS --max-time 5 http://127\.0\.0\.1:8765/health' "$smoke_lib"
+    assert_failure
+}
+
 @test "stack verified installer command quotes inline env assignment values" {
     local stack_lib="$PROJECT_ROOT/scripts/lib/stack.sh"
 
