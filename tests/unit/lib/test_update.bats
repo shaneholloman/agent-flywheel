@@ -598,6 +598,24 @@ EOF
     [[ ! -e "$curl_marker" ]]
 }
 
+@test "update_sha256_file: ignores shell function sha256sum" {
+    local probe_file="${BATS_TEST_TMPDIR}/update-sha-probe"
+    local expected
+
+    printf '%s' "real-content" > "$probe_file"
+    expected="$(update_sha256_file "$probe_file")"
+
+    sha256sum() {
+        printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff  %s\n' "$1"
+    }
+
+    run update_sha256_file "$probe_file"
+
+    assert_success
+    assert_output "$expected"
+    refute_output "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}
+
 @test "refresh_checksums: uses trusted update_curl helper" {
     local update="$PROJECT_ROOT/scripts/lib/update.sh"
 
@@ -605,6 +623,31 @@ EOF
     assert_success
 
     run grep -F 'curl "${_refresh_curl_args[@]}" -o "$tmp_checksums" "$CHECKSUMS_URL"' "$update"
+    assert_failure
+}
+
+@test "self-update hash comparisons use trusted update_sha256_file helper" {
+    local update="$PROJECT_ROOT/scripts/lib/update.sh"
+
+    run grep -F 'repo_sec_hash=$(update_sha256_file "$repo_security" 2>/dev/null) || true' "$update"
+    assert_success
+
+    run grep -F 'installed_sec_hash=$(update_sha256_file "$installed_security" 2>/dev/null) || true' "$update"
+    assert_success
+
+    run grep -F 'old_hash=$(update_sha256_file "$update_script" 2>/dev/null) || true' "$update"
+    assert_success
+
+    run grep -F 'new_hash=$(update_sha256_file "$update_script" 2>/dev/null) || true' "$update"
+    assert_success
+
+    run grep -F 'sha256sum "$update_script"' "$update"
+    assert_failure
+
+    run grep -F 'sha256sum "$repo_security"' "$update"
+    assert_failure
+
+    run grep -F 'sha256sum "$installed_security"' "$update"
     assert_failure
 }
 

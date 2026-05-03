@@ -1804,6 +1804,27 @@ update_curl() {
     "$curl_bin" "${curl_args[@]}" "$@"
 }
 
+update_sha256_file() {
+    local filepath="${1:-}"
+    local sha_bin=""
+    local output=""
+    local hash=""
+
+    [[ -r "$filepath" ]] || return 1
+
+    if sha_bin="$(update_system_binary_path sha256sum 2>/dev/null)"; then
+        output="$("$sha_bin" "$filepath")" || return 1
+    elif sha_bin="$(update_system_binary_path shasum 2>/dev/null)"; then
+        output="$("$sha_bin" -a 256 "$filepath")" || return 1
+    else
+        return 1
+    fi
+
+    read -r hash _ <<< "$output"
+    [[ -n "$hash" ]] || return 1
+    printf '%s\n' "$hash"
+}
+
 update_current_user() {
     local current_user=""
     local id_bin=""
@@ -3325,8 +3346,8 @@ update_refresh_installed_security() {
     [[ -n "$repo_security" ]] || return 0
 
     local repo_sec_hash installed_sec_hash
-    repo_sec_hash=$(sha256sum "$repo_security" 2>/dev/null | cut -d' ' -f1) || true
-    installed_sec_hash=$(sha256sum "$installed_security" 2>/dev/null | cut -d' ' -f1) || true
+    repo_sec_hash=$(update_sha256_file "$repo_security" 2>/dev/null) || true
+    installed_sec_hash=$(update_sha256_file "$installed_security" 2>/dev/null) || true
     if [[ -n "$repo_sec_hash" ]] && [[ "$repo_sec_hash" != "$installed_sec_hash" ]]; then
         cp "$repo_security" "$installed_security"
         log_to_file "Refreshed installed security.sh from $repo_security (was stale)"
@@ -3673,7 +3694,7 @@ update_acfs_self() {
     local update_script="$SCRIPT_DIR/update.sh"
     local old_hash=""
     if [[ -f "$update_script" ]]; then
-        old_hash=$(sha256sum "$update_script" 2>/dev/null | cut -d' ' -f1) || true
+        old_hash=$(update_sha256_file "$update_script" 2>/dev/null) || true
     fi
 
     # Fetch latest from origin
@@ -3770,7 +3791,7 @@ update_acfs_self() {
     # Check if update.sh itself changed - if so, re-exec
     local new_hash=""
     if [[ -f "$update_script" ]]; then
-        new_hash=$(sha256sum "$update_script" 2>/dev/null | cut -d' ' -f1) || true
+        new_hash=$(update_sha256_file "$update_script" 2>/dev/null) || true
     fi
 
     if [[ -n "$old_hash" ]] && [[ -n "$new_hash" ]] && [[ "$old_hash" != "$new_hash" ]]; then
