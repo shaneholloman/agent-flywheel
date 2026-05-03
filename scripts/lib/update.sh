@@ -2809,6 +2809,67 @@ update_resolve_checksums_file() {
     return 1
 }
 
+update_sync_known_installer_urls_from_checksums() {
+    local file="${1:-${CHECKSUMS_FILE:-}}"
+    local current_tool=""
+    local in_installers=false
+    local installers_indent=0
+    local tool_indent=""
+    local line=""
+
+    [[ -n "$file" && -r "$file" ]] || return 0
+    declare -p KNOWN_INSTALLERS >/dev/null 2>&1 || return 0
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line//[[:space:]]/}" ]] && continue
+
+        local indent="${line%%[^ ]*}"
+        local indent_len="${#indent}"
+
+        if [[ "$in_installers" == "false" ]]; then
+            if [[ "$line" =~ ^[[:space:]]*installers:[[:space:]]*$ ]]; then
+                in_installers=true
+                installers_indent="$indent_len"
+                tool_indent=""
+                current_tool=""
+            fi
+            continue
+        fi
+
+        if (( indent_len <= installers_indent )); then
+            in_installers=false
+            tool_indent=""
+            current_tool=""
+            continue
+        fi
+
+        if [[ "$line" =~ ^[[:space:]]*([[:alnum:]_-]+):[[:space:]]*$ ]]; then
+            if [[ -z "$tool_indent" ]]; then
+                tool_indent="$indent_len"
+            fi
+
+            if (( indent_len == tool_indent )); then
+                current_tool="${BASH_REMATCH[1]}"
+                continue
+            fi
+        fi
+
+        if [[ -n "$current_tool" ]] && [[ "$line" =~ url:[[:space:]]*\"(https://[^\"]+)\" ]]; then
+            local refreshed_url="${BASH_REMATCH[1]}"
+            local previous_url="${KNOWN_INSTALLERS[$current_tool]:-}"
+            if [[ "$previous_url" != "$refreshed_url" ]]; then
+                KNOWN_INSTALLERS["$current_tool"]="$refreshed_url"
+                log_to_file "Updated verified installer URL for $current_tool from checksums.yaml"
+            fi
+        fi
+    done < "$file"
+
+    return 0
+}
+
 # Refresh checksums.yaml from GitHub before verifying installers
 # This ensures we always have the latest checksums without requiring
 # a full ACFS re-install.
@@ -2933,6 +2994,7 @@ update_require_security() {
     # shellcheck disable=SC1090,SC1091  # runtime-resolved absolute path source
     source "$security_script"
     load_checksums || return 1
+    update_sync_known_installer_urls_from_checksums "${CHECKSUMS_FILE:-}"
 
     UPDATE_SECURITY_READY=true
     return 0

@@ -4542,7 +4542,7 @@ MIT License (with OpenAI/Anthropic Rider). See [LICENSE](LICENSE) for details.
 - **Related Projects:**
   - [ntm](https://github.com/Dicklesworthstone/ntm) - Named Tmux Manager
   - [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) - Task management TUI
-  - [mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail) - Agent coordination
+  - [mcp_agent_mail_rust](https://github.com/Dicklesworthstone/mcp_agent_mail_rust) - Agent coordination
   - [cass](https://github.com/Dicklesworthstone/coding_agent_session_search) - Agent session search
   - [dcg](https://github.com/Dicklesworthstone/destructive_command_guard) - Destructive Command Guard
   - [ru](https://github.com/Dicklesworthstone/repo_updater) - Repo Updater

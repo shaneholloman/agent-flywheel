@@ -7635,7 +7635,7 @@ main() {
         echo "  - uv: https://astral.sh/uv"
         echo "  - Claude Code (native): https://claude.ai/install.sh"
         echo "  - NTM: https://github.com/Dicklesworthstone/ntm"
-        echo "  - MCP Agent Mail: https://github.com/Dicklesworthstone/mcp_agent_mail"
+        echo "  - MCP Agent Mail: https://github.com/Dicklesworthstone/mcp_agent_mail_rust"
         echo "  - UBS: https://github.com/Dicklesworthstone/ultimate_bug_scanner"
         echo "  - Beads Viewer: https://github.com/Dicklesworthstone/beads_viewer"
         echo "  - CASS: https://github.com/Dicklesworthstone/coding_agent_session_search"

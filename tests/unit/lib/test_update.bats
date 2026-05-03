@@ -1516,6 +1516,83 @@ EOF
     [[ -f "$marker_file" ]]
 }
 
+@test "update_require_security: reconciles stale installer URLs from checksums.yaml" {
+    local runtime_home
+    local rust_url
+    local python_url
+    local expected_sha
+    runtime_home="$(create_temp_dir)"
+    rust_url="https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/main/install.sh"
+    python_url="https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail/main/install.sh"
+    expected_sha="2222222222222222222222222222222222222222222222222222222222222222"
+
+    mkdir -p "$runtime_home/.local/bin" "$runtime_home/.acfs"
+
+    cat > "$runtime_home/.local/bin/security.sh" <<EOF
+#!/usr/bin/env bash
+declare -gA KNOWN_INSTALLERS=([mcp_agent_mail]="$python_url")
+declare -gA LOADED_CHECKSUMS=()
+
+load_checksums() {
+    local file="\${CHECKSUMS_FILE:-}"
+    local line=""
+    LOADED_CHECKSUMS=()
+
+    [[ -r "\$file" ]] || return 1
+    while IFS= read -r line || [[ -n "\$line" ]]; do
+        if [[ "\$line" == *sha256:* ]]; then
+            local sha="\${line#*sha256:}"
+            sha="\${sha//\\"/}"
+            sha="\${sha//[[:space:]]/}"
+            LOADED_CHECKSUMS[mcp_agent_mail]="\${sha,,}"
+            return 0
+        fi
+    done < "\$file"
+
+    return 1
+}
+
+get_checksum() {
+    printf '%s\\n' "\${LOADED_CHECKSUMS[\$1]:-}"
+}
+EOF
+    chmod +x "$runtime_home/.local/bin/security.sh"
+
+    cat > "$runtime_home/.acfs/checksums.yaml" <<EOF
+installers:
+  mcp_agent_mail:
+    url: "$rust_url"
+    sha256: "$expected_sha"
+EOF
+
+    export HOME="$runtime_home"
+    export TARGET_USER="acfstestuser"
+    export TARGET_HOME="$runtime_home"
+    export TEST_UPDATE_TARGET_HOME="$runtime_home"
+    export ACFS_BIN_DIR="$runtime_home/.local/bin"
+    export ACFS_HOME="$runtime_home/.acfs"
+    export UPDATE_LOG_FILE="$runtime_home/update.log"
+    unset ACFS_REPO_ROOT
+    UPDATE_SECURITY_READY=false
+
+    refresh_checksums() {
+        return 0
+    }
+
+    update_getent_passwd_entry() {
+        if [[ "${1:-}" == "acfstestuser" ]]; then
+            printf 'acfstestuser:x:1000:1000::%s:/bin/bash\n' "$TEST_UPDATE_TARGET_HOME"
+            return 0
+        fi
+        return 1
+    }
+
+    update_require_security
+
+    [[ "${KNOWN_INSTALLERS[mcp_agent_mail]}" == "$rust_url" ]]
+    [[ "$(get_checksum mcp_agent_mail)" == "$expected_sha" ]]
+}
+
 @test "update_require_security: does not probe bogus repo path when ACFS_REPO_ROOT is unset" {
     export ACFS_BIN_DIR="$HOME/missing-bin"
     export ACFS_HOME="$HOME/missing-home"
