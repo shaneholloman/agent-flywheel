@@ -1,4 +1,4 @@
-# checksums.yaml - Auto-generated 2026-05-02T03:36:52+00:00
+# checksums.yaml - Auto-generated 2026-05-03T21:48:42-04:00
 # Run: ./scripts/lib/security.sh --update-checksums
 
 installers:
@@ -76,11 +76,11 @@ installers:
 
   jfp:
     url: "https://jeffreysprompts.com/install-cli.sh"
-    sha256: "7d6129655eb40e9ca86c94dcc40d86c6582b80e42e1de9b4ae879b6f85101f7b"
+    sha256: "6b82c8d88ad7de4524679cd08406117177f3643b34028b611447fb9c69f4fc4e"
 
   mcp_agent_mail:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/main/install.sh"
-    sha256: "3f0774bd0ea265077fb5acc10b6d38166d44f485aa4aa152192b275c337ab976"
+    sha256: "daef5c37e061174bdbba87cea4fcc39ef4045f00090d154911b43c5d87d0ea6a"
 
   mdwb:
     url: "https://raw.githubusercontent.com/Dicklesworthstone/markdown_web_browser/main/install.sh"
