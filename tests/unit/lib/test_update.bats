@@ -7138,6 +7138,89 @@ EOF
     assert_success
 }
 
+@test "self-update syncs deployed scripts when repo is already current" {
+    local temp_root
+    local seed_repo
+    local origin_repo
+    local work_repo
+    local deployed_home
+    local log_file
+
+    temp_root="$(create_temp_dir)"
+    seed_repo="$temp_root/seed"
+    origin_repo="$temp_root/origin.git"
+    work_repo="$temp_root/work"
+    deployed_home="$temp_root/deployed-acfs"
+    log_file="$temp_root/update.log"
+
+    mkdir -p "$seed_repo/scripts/lib" "$deployed_home/scripts/lib"
+    git -C "$seed_repo" init -b main >/dev/null
+    git -C "$seed_repo" config user.email test@example.invalid
+    git -C "$seed_repo" config user.name "ACFS Test"
+    printf "fresh-stack-lib\n" > "$seed_repo/scripts/lib/stack.sh"
+    git -C "$seed_repo" add scripts/lib/stack.sh
+    git -C "$seed_repo" commit -m base >/dev/null
+
+    git clone --bare "$seed_repo" "$origin_repo" >/dev/null 2>&1
+    git clone "$origin_repo" "$work_repo" >/dev/null 2>&1
+
+    ACFS_REPO_ROOT="$work_repo"
+    ACFS_HOME="$deployed_home"
+    UPDATE_LOG_FILE="$log_file"
+    UPDATE_SELF=true
+    ACFS_SELF_UPDATE_DONE=false
+    DRY_RUN=false
+    BOOTSTRAP_SELF_UPDATE=false
+    ACFS_VERSION_DISPLAY="vtest"
+    NO_COLOR=1
+    RED="" GREEN="" YELLOW="" CYAN="" BOLD="" DIM="" NC=""
+
+    is_expected_acfs_origin_url() { return 0; }
+    update_runtime_acfs_home() { printf '%s\n' "$deployed_home"; }
+    update_refresh_installed_security() { :; }
+    log_item() { printf "%s|%s|%s\n" "$1" "$2" "${3:-}"; }
+
+    run update_acfs_self
+    assert_success
+    assert_output --partial "ok|ACFS vtest|already up to date"
+    run cat "$deployed_home/scripts/lib/stack.sh"
+    assert_success
+    assert_output "fresh-stack-lib"
+    run grep -F "Synced scripts/lib/stack.sh -> $deployed_home/scripts/lib/stack.sh" "$log_file"
+    assert_success
+}
+
+@test "self-update done sentinel does not sync from unexpected origin" {
+    local temp_root
+    local repo_root
+    local deployed_home
+
+    temp_root="$(create_temp_dir)"
+    repo_root="$temp_root/repo"
+    deployed_home="$temp_root/deployed-acfs"
+
+    mkdir -p "$repo_root/scripts/lib" "$deployed_home/scripts/lib"
+    git -C "$repo_root" init -b main >/dev/null
+    git -C "$repo_root" remote add origin "https://example.invalid/not-acfs.git"
+    printf "untrusted-stack-lib\n" > "$repo_root/scripts/lib/stack.sh"
+
+    ACFS_REPO_ROOT="$repo_root"
+    ACFS_HOME="$deployed_home"
+    UPDATE_SELF=true
+    ACFS_SELF_UPDATE_DONE=true
+    DRY_RUN=false
+    NO_COLOR=1
+    RED="" GREEN="" YELLOW="" CYAN="" BOLD="" DIM="" NC=""
+
+    update_runtime_acfs_home() { printf '%s\n' "$deployed_home"; }
+    log_item() { printf "%s|%s|%s\n" "$1" "$2" "${3:-}"; }
+
+    run update_acfs_self
+    assert_success
+    assert_output --partial "info|ACFS self-update|already completed"
+    [[ ! -f "$deployed_home/scripts/lib/stack.sh" ]]
+}
+
 @test "update_source_stack_lib skips stale stack candidates missing Agent Mail helpers" {
     local stale_lib="$BATS_TEST_TMPDIR/stale-lib"
     local runtime_acfs="$BATS_TEST_TMPDIR/runtime-acfs"

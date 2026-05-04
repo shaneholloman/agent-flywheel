@@ -3623,6 +3623,13 @@ update_acfs_self() {
     # Skip if already done (prevents infinite re-exec loops)
     if [[ "$ACFS_SELF_UPDATE_DONE" == "true" ]]; then
         log_item "info" "ACFS self-update" "already completed"
+        if [[ -d "$ACFS_REPO_ROOT/.git" ]]; then
+            local done_origin_url=""
+            done_origin_url=$(git -C "$ACFS_REPO_ROOT" remote get-url origin 2>/dev/null || true)
+            if is_expected_acfs_origin_url "$done_origin_url"; then
+                sync_acfs_deployed
+            fi
+        fi
         return 0
     fi
 
@@ -3819,6 +3826,7 @@ update_acfs_self() {
     if [[ "$local_head" == "$remote_head" ]]; then
         log_item "ok" "ACFS $ACFS_VERSION_DISPLAY" "already up to date"
         update_refresh_installed_security
+        sync_acfs_deployed
         return 0
     fi
 
