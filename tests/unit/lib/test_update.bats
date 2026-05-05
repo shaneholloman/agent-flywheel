@@ -7117,6 +7117,7 @@ EOF
         'install_asset "scripts/lib/stack.sh" "$ACFS_HOME/scripts/lib/stack.sh"'
         'install_asset "scripts/lib/contract.sh" "$ACFS_HOME/scripts/lib/contract.sh"'
         'install_asset "scripts/lib/security.sh" "$ACFS_HOME/scripts/lib/security.sh"'
+        'install_asset "scripts/lib/github_api.sh" "$ACFS_HOME/scripts/lib/github_api.sh"'
         'install_asset "scripts/lib/tools.sh" "$ACFS_HOME/scripts/lib/tools.sh"'
         'install_asset "scripts/lib/autofix.sh" "$ACFS_HOME/scripts/lib/autofix.sh"'
         'install_asset "scripts/lib/doctor_fix.sh" "$ACFS_HOME/scripts/lib/doctor_fix.sh"'
@@ -7158,6 +7159,7 @@ EOF
         '"scripts/lib/stack.sh:scripts/lib/stack.sh"'
         '"scripts/lib/contract.sh:scripts/lib/contract.sh"'
         '"scripts/lib/security.sh:scripts/lib/security.sh"'
+        '"scripts/lib/github_api.sh:scripts/lib/github_api.sh"'
         '"scripts/lib/tools.sh:scripts/lib/tools.sh"'
         '"scripts/lib/autofix.sh:scripts/lib/autofix.sh"'
         '"scripts/lib/doctor_fix.sh:scripts/lib/doctor_fix.sh"'
@@ -7249,6 +7251,7 @@ EOF
     printf "gum-runtime\n" > "$repo_root/scripts/lib/gum_ui.sh"
     printf "progress-runtime\n" > "$repo_root/scripts/lib/progress.sh"
     printf "install-helpers-runtime\n" > "$repo_root/scripts/lib/install_helpers.sh"
+    printf "github-api-runtime\n" > "$repo_root/scripts/lib/github_api.sh"
     printf "tools-runtime\n" > "$repo_root/scripts/lib/tools.sh"
     printf "notify-runtime\n" > "$repo_root/scripts/lib/notify.sh"
     printf "newproj-runtime\n" > "$repo_root/scripts/lib/newproj.sh"
@@ -7282,6 +7285,9 @@ EOF
     run cat "$deployed_home/scripts/lib/install_helpers.sh"
     assert_success
     assert_output "install-helpers-runtime"
+    run cat "$deployed_home/scripts/lib/github_api.sh"
+    assert_success
+    assert_output "github-api-runtime"
     run cat "$deployed_home/scripts/lib/tools.sh"
     assert_success
     assert_output "tools-runtime"
@@ -7306,6 +7312,7 @@ EOF
     [[ -x "$deployed_home/scripts/generated/install_stack.sh" ]]
     [[ -x "$deployed_home/scripts/lib/output.sh" ]]
     [[ -x "$deployed_home/scripts/lib/install_helpers.sh" ]]
+    [[ -x "$deployed_home/scripts/lib/github_api.sh" ]]
     [[ -x "$deployed_home/scripts/lib/newproj_screens/screen_welcome.sh" ]]
 
     run grep -F "Synced acfs/onboard/lessons/00_welcome.md -> $deployed_home/onboard/lessons/00_welcome.md" "$log_file"

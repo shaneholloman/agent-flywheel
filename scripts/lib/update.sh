@@ -2767,6 +2767,7 @@ sync_acfs_deployed() {
         "scripts/lib/nightly_update.sh:scripts/lib/nightly_update.sh"
         "scripts/lib/nightly_update.sh:scripts/nightly-update.sh"
         "scripts/lib/security.sh:scripts/lib/security.sh"
+        "scripts/lib/github_api.sh:scripts/lib/github_api.sh"
         "scripts/lib/tools.sh:scripts/lib/tools.sh"
         "scripts/lib/autofix.sh:scripts/lib/autofix.sh"
         "scripts/lib/doctor_fix.sh:scripts/lib/doctor_fix.sh"

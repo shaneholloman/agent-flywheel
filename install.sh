@@ -6743,6 +6743,7 @@ finalize() {
     try_step "Installing stack.sh" install_asset "scripts/lib/stack.sh" "$ACFS_HOME/scripts/lib/stack.sh" || return 1
     try_step "Installing contract.sh" install_asset "scripts/lib/contract.sh" "$ACFS_HOME/scripts/lib/contract.sh" || return 1
     try_step "Installing security.sh" install_asset "scripts/lib/security.sh" "$ACFS_HOME/scripts/lib/security.sh" || return 1
+    try_step "Installing github_api.sh" install_asset "scripts/lib/github_api.sh" "$ACFS_HOME/scripts/lib/github_api.sh" || return 1
     try_step "Installing tools.sh" install_asset "scripts/lib/tools.sh" "$ACFS_HOME/scripts/lib/tools.sh" || return 1
     try_step "Installing autofix.sh" install_asset "scripts/lib/autofix.sh" "$ACFS_HOME/scripts/lib/autofix.sh" || return 1
     try_step "Installing doctor_fix.sh" install_asset "scripts/lib/doctor_fix.sh" "$ACFS_HOME/scripts/lib/doctor_fix.sh" || return 1
