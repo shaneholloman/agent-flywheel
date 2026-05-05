@@ -622,7 +622,7 @@ EOF
     run grep -F "if update_curl \\" "$update"
     assert_success
 
-    run grep -F 'elif update_curl --connect-timeout 5 --max-time 30 -o "$tmp_checksums" "$raw_url" 2>/dev/null; then' "$update"
+    run grep -F 'if [[ "$fetched_valid" != "true" ]] && update_curl --connect-timeout 5 --max-time 30 -o "$tmp_checksums" "$raw_url" 2>/dev/null; then' "$update"
     assert_success
 
     run grep -F 'curl "${_refresh_curl_args[@]}" -o "$tmp_checksums"' "$update"
@@ -630,6 +630,73 @@ EOF
 
     run grep -F 'CHECKSUMS_URL=' "$update"
     assert_failure
+}
+
+@test "refresh_checksums: ignores PATH-poisoned coreutils before security load" {
+    local runtime_home
+    local calls_file
+    local checksums_file
+    runtime_home="$(create_temp_dir)"
+    calls_file="$BATS_TEST_TMPDIR/refresh-poisoned-coreutils-calls.log"
+    checksums_file="$runtime_home/.acfs/checksums.yaml"
+
+    mkdir -p "$runtime_home/.acfs"
+    export HOME="$runtime_home"
+    export TARGET_HOME="$runtime_home"
+    unset TARGET_USER
+    export ACFS_HOME="$runtime_home/.acfs"
+    export ACFS_CHECKSUMS_REF="main"
+
+    update_curl() {
+        local output_file=""
+        local url="${*: -1}"
+        local i=1
+
+        while [[ $i -le $# ]]; do
+            if [[ "${!i}" == "-o" ]]; then
+                local next=$((i + 1))
+                output_file="${!next}"
+                break
+            fi
+            ((i += 1))
+        done
+
+        printf '%s\n' "$url" >> "$calls_file"
+        case "$url" in
+            https://api.github.com/repos/*/contents/checksums.yaml?ref=main)
+                cat > "$output_file" <<'EOF'
+installers:
+  mcp_agent_mail:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
+    sha256: "4444444444444444444444444444444444444444444444444444444444444444"
+EOF
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    }
+
+    date() { printf '%s\n' "poisoned-date"; return 90; }
+    mkdir() { printf '%s\n' "poisoned-mkdir" >&2; return 91; }
+    dirname() { printf '%s\n' "poisoned-dirname" >&2; return 92; }
+    mktemp() { printf '%s\n' "poisoned-mktemp" >&2; return 93; }
+    grep() { printf '%s\n' "poisoned-grep" >&2; return 94; }
+    mv() { printf '%s\n' "poisoned-mv" >&2; return 95; }
+    chmod() { printf '%s\n' "poisoned-chmod" >&2; return 96; }
+    rm() { printf '%s\n' "poisoned-rm" >&2; return 97; }
+
+    run refresh_checksums true
+    unset -f date mkdir dirname mktemp grep mv chmod rm
+
+    assert_success
+
+    run grep -F 'api.github.com/repos/Dicklesworthstone/agentic_coding_flywheel_setup/contents/checksums.yaml?ref=main' "$calls_file"
+    assert_success
+
+    run grep -F '4444444444444444444444444444444444444444444444444444444444444444' "$checksums_file"
+    assert_success
 }
 
 @test "refresh_checksums: prefers GitHub API over raw CDN" {
@@ -753,6 +820,69 @@ EOF
     assert_success
 
     run grep -F '3333333333333333333333333333333333333333333333333333333333333333' "$checksums_file"
+    assert_success
+}
+
+@test "refresh_checksums: falls back to raw CDN when GitHub API content is invalid" {
+    local runtime_home
+    local calls_file
+    local checksums_file
+    runtime_home="$(create_temp_dir)"
+    calls_file="$BATS_TEST_TMPDIR/refresh-invalid-api-calls.log"
+    checksums_file="$runtime_home/.acfs/checksums.yaml"
+
+    mkdir -p "$runtime_home/.acfs"
+    export HOME="$runtime_home"
+    export TARGET_HOME="$runtime_home"
+    unset TARGET_USER
+    export ACFS_HOME="$runtime_home/.acfs"
+    export ACFS_CHECKSUMS_REF="main"
+
+    update_curl() {
+        local output_file=""
+        local url="${*: -1}"
+        local i=1
+
+        while [[ $i -le $# ]]; do
+            if [[ "${!i}" == "-o" ]]; then
+                local next=$((i + 1))
+                output_file="${!next}"
+                break
+            fi
+            ((i += 1))
+        done
+
+        printf '%s\n' "$url" >> "$calls_file"
+        case "$url" in
+            https://api.github.com/repos/*/contents/checksums.yaml?ref=main)
+                printf '%s\n' '{"message":"not raw yaml"}' > "$output_file"
+                return 0
+                ;;
+            https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/checksums.yaml?cb=*)
+                cat > "$output_file" <<'EOF'
+installers:
+  mcp_agent_mail:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
+    sha256: "5555555555555555555555555555555555555555555555555555555555555555"
+EOF
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    }
+
+    run refresh_checksums true
+    assert_success
+
+    run grep -F 'api.github.com/repos/Dicklesworthstone/agentic_coding_flywheel_setup/contents/checksums.yaml?ref=main' "$calls_file"
+    assert_success
+
+    run grep -E 'raw.githubusercontent.com/.*/main/checksums.yaml\?cb=[0-9]+' "$calls_file"
+    assert_success
+
+    run grep -F '5555555555555555555555555555555555555555555555555555555555555555' "$checksums_file"
     assert_success
 }
 

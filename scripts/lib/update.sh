@@ -3038,9 +3038,39 @@ refresh_checksums() {
     local quiet="${1:-false}"
     local checksums_local=""
     local checksums_ref="${ACFS_CHECKSUMS_REF:-main}"
+    local date_bin=""
+    local mkdir_bin=""
+    local mktemp_bin=""
+    local grep_bin=""
+    local mv_bin=""
+    local chmod_bin=""
+    local rm_bin=""
+    local cache_buster=""
     local api_url="https://api.github.com/repos/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/contents/checksums.yaml?ref=${checksums_ref}"
-    local raw_url="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/${checksums_ref}/checksums.yaml?cb=$(date +%s)"
+    local raw_url=""
     local fetched_source=""
+    local fetched_valid=false
+
+    date_bin="$(update_system_binary_path date 2>/dev/null || true)"
+    mkdir_bin="$(update_system_binary_path mkdir 2>/dev/null || true)"
+    mktemp_bin="$(update_system_binary_path mktemp 2>/dev/null || true)"
+    grep_bin="$(update_system_binary_path grep 2>/dev/null || true)"
+    mv_bin="$(update_system_binary_path mv 2>/dev/null || true)"
+    chmod_bin="$(update_system_binary_path chmod 2>/dev/null || true)"
+    rm_bin="$(update_system_binary_path rm 2>/dev/null || true)"
+
+    if [[ -z "$mkdir_bin" || -z "$mktemp_bin" || -z "$grep_bin" || -z "$mv_bin" || -z "$chmod_bin" ]]; then
+        [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "trusted system tools unavailable, using cached"
+        log_to_file "Checksums refresh failed: trusted system tools unavailable"
+        return 1
+    fi
+
+    if [[ -n "$date_bin" ]]; then
+        cache_buster="$("$date_bin" +%s 2>/dev/null || printf '0')"
+    else
+        cache_buster="0"
+    fi
+    raw_url="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/${checksums_ref}/checksums.yaml?cb=${cache_buster}"
 
     checksums_local="$(update_runtime_acfs_home 2>/dev/null || true)"
     if [[ -z "$checksums_local" ]]; then
@@ -3050,11 +3080,15 @@ refresh_checksums() {
     checksums_local="$checksums_local/checksums.yaml"
 
     # Create directory if needed
-    mkdir -p "$(dirname "$checksums_local")"
+    if ! "$mkdir_bin" -p "${checksums_local%/*}"; then
+        [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "failed to prepare cache directory, using cached"
+        log_to_file "Checksums refresh failed: mkdir failed"
+        return 1
+    fi
 
     # Download with timeout and retry
     local tmp_checksums
-    tmp_checksums=$(mktemp "${TMPDIR:-/tmp}/acfs-checksums.XXXXXX" 2>/dev/null || true)
+    tmp_checksums=$("$mktemp_bin" "${TMPDIR:-/tmp}/acfs-checksums.XXXXXX" 2>/dev/null || true)
     if [[ -z "$tmp_checksums" ]]; then
         [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "failed to create temp file, using cached"
         log_to_file "Checksums refresh failed: mktemp failed"
@@ -3068,35 +3102,41 @@ refresh_checksums() {
         -H "X-GitHub-Api-Version: 2022-11-28" \
         -o "$tmp_checksums" \
         "$api_url" 2>/dev/null; then
-        fetched_source="$api_url"
-    elif update_curl --connect-timeout 5 --max-time 30 -o "$tmp_checksums" "$raw_url" 2>/dev/null; then
-        fetched_source="$raw_url"
+        if "$grep_bin" -q "^installers:" "$tmp_checksums" 2>/dev/null; then
+            fetched_source="$api_url"
+            fetched_valid=true
+        else
+            log_to_file "Checksums refresh API content was invalid; trying raw fallback"
+        fi
     else
-        rm -f "$tmp_checksums"
-        [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "network error, using cached"
-        log_to_file "Checksums refresh failed: network error"
+        log_to_file "Checksums refresh API fetch failed; trying raw fallback"
+    fi
+
+    if [[ "$fetched_valid" != "true" ]] && update_curl --connect-timeout 5 --max-time 30 -o "$tmp_checksums" "$raw_url" 2>/dev/null; then
+        fetched_source="$raw_url"
+        if "$grep_bin" -q "^installers:" "$tmp_checksums" 2>/dev/null; then
+            fetched_valid=true
+        fi
+    fi
+
+    if [[ "$fetched_valid" != "true" ]]; then
+        [[ -n "$rm_bin" ]] && "$rm_bin" -f "$tmp_checksums" 2>/dev/null || true
+        [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "invalid or unavailable remote checksums, using cached"
+        log_to_file "Checksums refresh failed: invalid or unavailable remote checksums"
         return 1
     fi
 
-    # Validate it looks like a checksums file.
-    if grep -q "^installers:" "$tmp_checksums" 2>/dev/null; then
-        if mv "$tmp_checksums" "$checksums_local" 2>/dev/null; then
-            chmod 644 "$checksums_local" 2>/dev/null || true  # Ensure readable permissions
-            if [[ "$quiet" != "true" ]]; then
-                log_item "ok" "checksums refresh" "synced from GitHub"
-            fi
-            log_to_file "Refreshed checksums.yaml from $fetched_source"
-            return 0
-        else
-            rm -f "$tmp_checksums"
-            [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "failed to install, using cached"
-            log_to_file "Checksums refresh failed: mv failed"
-            return 1
+    if "$mv_bin" "$tmp_checksums" "$checksums_local" 2>/dev/null; then
+        "$chmod_bin" 644 "$checksums_local" 2>/dev/null || true  # Ensure readable permissions
+        if [[ "$quiet" != "true" ]]; then
+            log_item "ok" "checksums refresh" "synced from GitHub"
         fi
+        log_to_file "Refreshed checksums.yaml from $fetched_source"
+        return 0
     else
-        rm -f "$tmp_checksums"
-        [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "invalid format, using cached"
-        log_to_file "Checksums refresh failed: invalid format"
+        [[ -n "$rm_bin" ]] && "$rm_bin" -f "$tmp_checksums" 2>/dev/null || true
+        [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "failed to install, using cached"
+        log_to_file "Checksums refresh failed: mv failed"
         return 1
     fi
 }
