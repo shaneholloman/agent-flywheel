@@ -9697,6 +9697,67 @@ EOF
     assert_failure
 }
 
+@test "stack hook parsers use trusted jq resolver" {
+    local stack_lib="$PROJECT_ROOT/scripts/lib/stack.sh"
+    local services_setup="$PROJECT_ROOT/scripts/services-setup.sh"
+    local generated_stack="$PROJECT_ROOT/scripts/generated/install_stack.sh"
+    local settings_file
+    local fake_bin
+    local marker
+    local system_jq=""
+    local candidate
+
+    for candidate in /usr/bin/jq /bin/jq /usr/local/bin/jq /usr/local/sbin/jq /usr/sbin/jq /sbin/jq; do
+        if [[ -x "$candidate" ]]; then
+            system_jq="$candidate"
+            break
+        fi
+    done
+    [[ -n "$system_jq" ]] || skip "system jq required for hook parser trust test"
+
+    run grep -F 'command -v jq >/dev/null 2>&1 || return 1' "$stack_lib" "$services_setup" "$generated_stack"
+    assert_failure
+    run grep -F 'jq -e --arg pattern' "$stack_lib" "$services_setup" "$generated_stack"
+    assert_failure
+
+    settings_file="$BATS_TEST_TMPDIR/claude-settings.json"
+    fake_bin="$BATS_TEST_TMPDIR/fake-jq-bin"
+    marker="$BATS_TEST_TMPDIR/fake-jq-used"
+    mkdir -p "$fake_bin"
+    cat > "$fake_bin/jq" <<EOF
+#!/usr/bin/env bash
+: > "$marker"
+exit 0
+EOF
+    chmod +x "$fake_bin/jq"
+    cat > "$settings_file" <<'EOF'
+{
+  "notes": "dcg appears only in non-hook text",
+  "hooks": {
+    "PreToolUse": []
+  }
+}
+EOF
+
+    run env PATH="$fake_bin:/usr/bin:/bin" bash -s -- "$stack_lib" "$services_setup" "$settings_file" "$marker" <<'EOF_HOOK_PARSERS_TRUSTED_JQ'
+stack_lib="$1"
+services_setup="$2"
+settings_file="$3"
+marker="$4"
+pattern='(^|[[:space:]/])dcg([[:space:]]|$)'
+
+# shellcheck source=/dev/null
+source "$stack_lib"
+# shellcheck source=/dev/null
+source "$services_setup"
+set -euo pipefail
+! _stack_claude_settings_has_command_hook "$settings_file" "$pattern"
+! claude_settings_has_command_hook "$settings_file" "$pattern"
+[[ ! -e "$marker" ]]
+EOF_HOOK_PARSERS_TRUSTED_JQ
+    assert_success
+}
+
 @test "legacy stack RCH installer keeps daemon and fleet setup active" {
     run grep -F '_stack_run_installer "$tool" --easy-mode' "$PROJECT_ROOT/scripts/lib/stack.sh"
     assert_success

@@ -1724,12 +1724,16 @@ INSTALL_STACK_DCG
 claude_settings_has_command_hook() {
   local settings_file="${1:-}"
   local command_pattern="${2:-}"
+  local jq_bin=""
 
   [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
   [[ -f "$settings_file" ]] || return 1
-  command -v jq >/dev/null 2>&1 || return 1
+  for jq_bin in /usr/bin/jq /bin/jq /usr/local/bin/jq /usr/local/sbin/jq /usr/sbin/jq /sbin/jq; do
+    [[ -x "$jq_bin" ]] && break
+  done
+  [[ -x "$jq_bin" ]] || return 1
 
-  jq -e --arg pattern "$command_pattern" '
+  "$jq_bin" -e --arg pattern "$command_pattern" '
     def command_hook_matches:
       type == "object"
       and ((.type? // "command") == "command")
@@ -2833,12 +2837,16 @@ INSTALL_STACK_PCR_PRE_INSTALL_CHECK
 claude_settings_has_command_hook() {
   local settings_file="${1:-}"
   local command_pattern="${2:-}"
+  local jq_bin=""
 
   [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
   [[ -f "$settings_file" ]] || return 1
-  command -v jq >/dev/null 2>&1 || return 1
+  for jq_bin in /usr/bin/jq /bin/jq /usr/local/bin/jq /usr/local/sbin/jq /usr/sbin/jq /sbin/jq; do
+    [[ -x "$jq_bin" ]] && break
+  done
+  [[ -x "$jq_bin" ]] || return 1
 
-  jq -e --arg pattern "$command_pattern" '
+  "$jq_bin" -e --arg pattern "$command_pattern" '
     def command_hook_matches:
       type == "object"
       and ((.type? // "command") == "command")

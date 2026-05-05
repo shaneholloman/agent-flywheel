@@ -674,16 +674,18 @@ json_file_has_usable_jq_value() {
     local path="${1:-}"
     local jq_expr="${2:-}"
     local candidate=""
+    local jq_bin=""
 
     [[ -s "$path" ]] || return 1
     [[ -n "$jq_expr" ]] || return 1
-    command -v jq >/dev/null 2>&1 || return 1
+    jq_bin="$(services_setup_system_binary_path jq 2>/dev/null || true)"
+    [[ -n "$jq_bin" ]] || return 1
 
     while IFS= read -r candidate; do
         if services_setup_has_usable_secret "$candidate"; then
             return 0
         fi
-    done < <(jq -r "$jq_expr" "$path" 2>/dev/null || true)
+    done < <("$jq_bin" -r "$jq_expr" "$path" 2>/dev/null || true)
 
     return 1
 }
@@ -722,12 +724,14 @@ file_has_usable_secret() {
 claude_settings_has_command_hook() {
     local settings_file="${1:-}"
     local command_pattern="${2:-}"
+    local jq_bin=""
 
     [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
     [[ -f "$settings_file" ]] || return 1
-    command -v jq >/dev/null 2>&1 || return 1
+    jq_bin="$(services_setup_system_binary_path jq 2>/dev/null || true)"
+    [[ -n "$jq_bin" ]] || return 1
 
-    jq -e --arg pattern "$command_pattern" '
+    "$jq_bin" -e --arg pattern "$command_pattern" '
       def command_hook_matches:
         type == "object"
         and ((.type? // "command") == "command")
@@ -881,13 +885,15 @@ select_dcg_packs() {
 
 remove_dcg_hook_from_settings() {
     local settings_file="$1"
+    local jq_bin=""
 
     if [[ -L "$settings_file" ]]; then
         gum_warn "Skipping DCG hook cleanup (symlink): $settings_file"
         return 1
     fi
 
-    if ! command -v jq &>/dev/null; then
+    jq_bin="$(services_setup_system_binary_path jq 2>/dev/null || true)"
+    if [[ -z "$jq_bin" ]]; then
         gum_warn "jq not available; cannot remove DCG hook automatically"
         gum_detail "Remove the dcg hook entry from: $settings_file"
         return 1
@@ -925,7 +931,7 @@ end
 JQ
 )"
 
-    if run_as_user jq "$jq_program" "$settings_file" 2>/dev/null | run_as_user tee "$tmp" >/dev/null; then
+    if run_as_user "$jq_bin" "$jq_program" "$settings_file" 2>/dev/null | run_as_user tee "$tmp" >/dev/null; then
         run_as_user mv -- "$tmp" "$settings_file" 2>/dev/null || {
             run_as_user rm -f -- "$tmp" 2>/dev/null || true
             gum_warn "Could not update $settings_file (mv failed)"
@@ -999,7 +1005,7 @@ check_claude_status() {
     if json_file_has_usable_jq_value \
         "$TARGET_HOME/.claude/.credentials.json" \
         '.claudeAiOauth.accessToken // empty | strings' || \
-       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.claude/.credentials.json" "accessToken"; }; then
+       { ! services_setup_system_binary_path jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.claude/.credentials.json" "accessToken"; }; then
         SERVICE_STATUS[claude]="configured"
     else
         SERVICE_STATUS[claude]="installed"
@@ -1018,7 +1024,7 @@ check_codex_status() {
     if json_file_has_usable_jq_value \
         "$TARGET_HOME/.codex/auth.json" \
         '[.tokens.access_token, .access_token, .accessToken, .OPENAI_API_KEY] | .[]? | strings' || \
-       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.codex/auth.json" "access_token" "accessToken" "OPENAI_API_KEY"; }; then
+       { ! services_setup_system_binary_path jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.codex/auth.json" "access_token" "accessToken" "OPENAI_API_KEY"; }; then
         SERVICE_STATUS[codex]="configured"
     else
         SERVICE_STATUS[codex]="installed"
@@ -1038,11 +1044,11 @@ check_gemini_status() {
     if json_file_has_usable_jq_value \
         "$TARGET_HOME/.gemini/google_accounts.json" \
         '.active // empty | strings' || \
-       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.gemini/google_accounts.json" "active"; } || \
+       { ! services_setup_system_binary_path jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.gemini/google_accounts.json" "active"; } || \
        json_file_has_usable_jq_value \
         "$TARGET_HOME/.gemini/oauth_creds.json" \
         '[.access_token, .refresh_token] | .[]? | strings' || \
-       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.gemini/oauth_creds.json" "access_token" "refresh_token"; }; then
+       { ! services_setup_system_binary_path jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.gemini/oauth_creds.json" "access_token" "refresh_token"; }; then
         SERVICE_STATUS[gemini]="configured"
     else
         SERVICE_STATUS[gemini]="installed"
@@ -1062,8 +1068,8 @@ check_vercel_status() {
     if services_setup_has_usable_secret "${VERCEL_TOKEN:-}" || \
        json_file_has_usable_jq_value "$TARGET_HOME/.config/vercel/auth.json" '.token // empty | strings' || \
        json_file_has_usable_jq_value "$TARGET_HOME/.vercel/auth.json" '.token // empty | strings' || \
-       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.config/vercel/auth.json" "token"; } || \
-       { ! command -v jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.vercel/auth.json" "token"; }; then
+       { ! services_setup_system_binary_path jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.config/vercel/auth.json" "token"; } || \
+       { ! services_setup_system_binary_path jq >/dev/null 2>&1 && json_file_has_usable_string_key "$TARGET_HOME/.vercel/auth.json" "token"; }; then
         SERVICE_STATUS[vercel]="configured"
     else
         SERVICE_STATUS[vercel]="installed"

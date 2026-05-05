@@ -216,12 +216,14 @@ _stack_target_has_command() {
 _stack_claude_settings_has_command_hook() {
     local settings_file="${1:-}"
     local command_pattern="${2:-}"
+    local jq_bin=""
 
     [[ -n "$settings_file" && -n "$command_pattern" ]] || return 1
     [[ -f "$settings_file" ]] || return 1
-    command -v jq >/dev/null 2>&1 || return 1
+    jq_bin="$(_stack_system_binary_path jq 2>/dev/null || true)"
+    [[ -n "$jq_bin" ]] || return 1
 
-    jq -e --arg pattern "$command_pattern" '
+    "$jq_bin" -e --arg pattern "$command_pattern" '
       def command_hook_matches:
         type == "object"
         and ((.type? // "command") == "command")
