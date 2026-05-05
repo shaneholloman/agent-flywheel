@@ -5185,6 +5185,31 @@ EOF_DASHBOARD_SERVE
     assert_success
 }
 
+@test "top-level system binary resolvers reject pathlike names" {
+    local label
+    local script
+    local func
+
+    while IFS='|' read -r label script func; do
+        run bash -s -- "$script" "$func" <<'EOF_TOP_LEVEL_RESOLVERS_REJECT_PATHS'
+script="$1"
+func="$2"
+eval "$(sed -n "/^${func}()/,/^}$/p" "$script")"
+set -euo pipefail
+! "$func" "."
+! "$func" ".."
+! "$func" "../bin/sh"
+! "$func" "/bin/sh"
+! "$func" "sh name"
+EOF_TOP_LEVEL_RESOLVERS_REJECT_PATHS
+        assert_success "$label resolver accepted a pathlike name"
+    done <<EOF
+preflight|$PROJECT_ROOT/scripts/preflight.sh|preflight_system_binary_path
+services-setup|$PROJECT_ROOT/scripts/services-setup.sh|services_setup_system_binary_path
+install-workflow|$PROJECT_ROOT/scripts/install-acfs-workflow.sh|workflow_system_binary_path
+EOF
+}
+
 @test "dashboard serve uses trusted resolver for subprocesses" {
     local dashboard="$PROJECT_ROOT/scripts/lib/dashboard.sh"
 
