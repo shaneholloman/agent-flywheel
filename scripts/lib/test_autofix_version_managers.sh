@@ -18,6 +18,18 @@ source "$SCRIPT_DIR/autofix_version_managers.sh"
 TESTS_PASSED=0
 TESTS_FAILED=0
 
+install_test_runtime_home_override() {
+    # These standalone tests isolate each case by assigning HOME to a scratch
+    # directory. The production runtime resolver intentionally prefers the real
+    # passwd home when TARGET_HOME is unset, so override that final fallback here
+    # to keep the harness from inspecting the developer's installed ACFS home.
+    autofix_resolve_current_home() {
+        autofix_sanitize_abs_nonroot_path "${HOME:-}" 2>/dev/null
+    }
+}
+
+install_test_runtime_home_override
+
 setup_autofix_state_dir() {
     local state_dir="$1"
     unset -f record_change 2>/dev/null || true
@@ -25,6 +37,7 @@ setup_autofix_state_dir() {
     unset _ACFS_AUTOFIX_VERSION_MANAGERS_SH_LOADED
     # shellcheck source=autofix_version_managers.sh
     source "$SCRIPT_DIR/autofix_version_managers.sh"
+    install_test_runtime_home_override
 
     export ACFS_STATE_DIR="$state_dir"
     export ACFS_CHANGES_FILE="$ACFS_STATE_DIR/changes.jsonl"
@@ -861,6 +874,8 @@ EOF
 # ============================================================
 
 main() {
+    unset TARGET_HOME TARGET_USER SUDO_USER
+
     echo "============================================="
     echo "Running autofix_version_managers.sh unit tests"
     echo "============================================="
