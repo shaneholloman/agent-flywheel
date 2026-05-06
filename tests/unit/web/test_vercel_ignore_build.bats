@@ -52,6 +52,21 @@ commit_fixture_change() {
     )
 }
 
+commit_many_unrelated_fixture_changes() {
+    local repo="$1"
+    local index
+
+    (
+        cd "$repo" || exit 1
+        mkdir -p docs/many
+        for index in $(seq 1 200); do
+            printf 'doc %s\n' "$index" > "docs/many/file-${index}.md"
+        done
+        git add docs/many
+        git commit -q -m "change many docs"
+    )
+}
+
 run_ignore_script_for_head_range() {
     local repo="$1"
     local cwd="$2"
@@ -88,6 +103,16 @@ run_ignore_script_for_head_range() {
 @test "vercel ignore build skips unrelated documentation changes" {
     repo=$(init_vercel_fixture_repo)
     commit_fixture_change "$repo" "docs/notes.md" "updated notes"
+
+    run run_ignore_script_for_head_range "$repo" "apps/web"
+
+    assert_success
+    assert_output --partial "No web app changes detected"
+}
+
+@test "vercel ignore build keeps skip exit with many unrelated changes" {
+    repo=$(init_vercel_fixture_repo)
+    commit_many_unrelated_fixture_changes "$repo"
 
     run run_ignore_script_for_head_range "$repo" "apps/web"
 

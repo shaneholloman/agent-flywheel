@@ -78,7 +78,7 @@ echo "   → Skipping build to save Vercel credits"
 echo ""
 echo "   Changed files:"
 if [[ -n "$CHANGED_FILES" ]]; then
-  echo "$CHANGED_FILES" | head -20
+  printf '%s\n' "$CHANGED_FILES" | awk 'NR <= 20'
 else
   echo "   (none)"
 fi
