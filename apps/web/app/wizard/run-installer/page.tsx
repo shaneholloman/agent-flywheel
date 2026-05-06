@@ -198,15 +198,18 @@ export default function RunInstallerPage() {
           <p>
             Your terminal prompt should look like{" "}
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">root@vps:~#</code>
-            {" "}(from Step 6) or{" "}
+            {" "}(the default after Step 6) or{" "}
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ubuntu@vps:~$</code>.
-            Both work — the installer detects your user automatically.
+            The installer auto-detects which user it&apos;s running as.
           </p>
           <p className="text-sm text-muted-foreground">
-            <strong>Trouble running as root?</strong> A few VPS images ship with non-standard root
-            shells that interact badly with the installer. If the command below fails immediately
-            or behaves unexpectedly, jump to{" "}
-            <strong>Step 10 (Reconnect as Ubuntu)</strong> first, then come back here and re-run.
+            <strong>Trouble running as root?</strong> A few VPS images don&apos;t play well with the
+            installer under the root shell. If the command below fails immediately or exits without
+            output, try opening a fresh SSH session as a non-root user with sudo (most VPS providers
+            pre-create one named{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ubuntu</code> or{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">admin</code>) using
+            your provider&apos;s password, then re-run the command from there.
           </p>
         </div>
       </AlertCard>
