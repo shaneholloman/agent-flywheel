@@ -223,6 +223,30 @@ test_state_lock_tracks_current_state_file() {
   assert_eq "${second_state}.lock" "$second_lock" "state lock retargets after ACFS_STATE_FILE changes"
 }
 
+test_state_write_atomic_does_not_sync_by_default() {
+  local state_file sync_calls content
+  state_file="$(new_state_file no-sync)"
+  mkdir -p "$(dirname "$state_file")"
+  content='{"ok":true}'
+  sync_calls=0
+
+  sync() {
+    sync_calls=$((sync_calls + 1))
+    return 99
+  }
+
+  export ACFS_STATE_DURABLE_SYNC=false
+  if ! state_write_atomic "$state_file" "$content"; then
+    unset -f sync
+    fail "state_write_atomic succeeds when sync is unavailable by default"
+    return
+  fi
+  unset -f sync
+
+  assert_eq 0 "$sync_calls" "state_write_atomic does not call sync by default"
+  assert_eq "$content" "$(tr -d '\n' < "$state_file")" "state_write_atomic writes expected content"
+}
+
 test_version_mismatch() {
   local state_file
   state_file="$(new_state_file version)"
@@ -253,6 +277,7 @@ main() {
   test_force_reinstall_without_completed_phases
   test_interrupt_phase
   test_state_lock_tracks_current_state_file
+  test_state_write_atomic_does_not_sync_by_default
   test_version_mismatch
 
   echo ""

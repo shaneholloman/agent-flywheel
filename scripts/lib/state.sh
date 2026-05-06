@@ -537,10 +537,7 @@ EOF
         return 1
     fi
 
-    # Optional: sync the directory entry to ensure the rename is durable
-    if command -v sync &>/dev/null; then
-        sync "$state_dir" 2>/dev/null || true
-    fi
+    state_sync_path_if_enabled "$state_dir"
 
     return 0
 }
@@ -549,11 +546,13 @@ EOF
 #
 # This implements the atomic write pattern to prevent corruption:
 #   1. Write to a temp file in the same directory
-#   2. Sync to disk (flush filesystem buffers)
-#   3. Rename temp file to target (atomic on POSIX filesystems)
+#   2. Rename temp file to target (atomic on POSIX filesystems)
 #
 # If the system crashes or SSH disconnects mid-write, the state file
 # remains valid because the rename either completes fully or not at all.
+# Forced durability sync is intentionally opt-in: external sync/fsync can block
+# indefinitely on container overlays or distressed disks, while a stale checkpoint
+# is safer than a hung installer.
 #
 # Usage: state_write_atomic <file_path> <content>
 #
@@ -647,12 +646,7 @@ state_write_atomic() {
         return 1
     fi
 
-    # Sync temp file to disk before rename for durability
-    # This ensures data reaches the physical disk, not just OS buffers
-    if command -v sync &>/dev/null; then
-        # Try to sync just this file (Linux-specific), fall back to global sync
-        sync "$temp_file" 2>/dev/null || sync 2>/dev/null || true
-    fi
+    state_sync_path_if_enabled "$temp_file"
 
     # Set appropriate permissions before moving (state may include failure context; keep it owner-only).
     chmod 600 "$temp_file" 2>/dev/null || true
@@ -699,12 +693,47 @@ state_write_atomic() {
         return 1
     fi
 
-    # Optional: sync the directory entry to ensure the rename is durable
-    if command -v sync &>/dev/null; then
-        sync "$target_dir" 2>/dev/null || true
-    fi
+    state_sync_path_if_enabled "$target_dir"
 
     return 0
+}
+
+state_durable_sync_enabled() {
+    case "${ACFS_STATE_DURABLE_SYNC:-false}" in
+        true|TRUE|1|yes|YES)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+state_sync_path_if_enabled() {
+    local path="${1:-}"
+    [[ -n "$path" ]] || return 0
+    state_durable_sync_enabled || return 0
+
+    command -v python3 &>/dev/null || return 0
+    python3 - "$path" <<'PY' 2>/dev/null || true
+import os
+import sys
+
+path = sys.argv[1]
+flags = os.O_RDONLY
+if os.path.isdir(path) and hasattr(os, "O_DIRECTORY"):
+    flags |= os.O_DIRECTORY
+
+try:
+    fd = os.open(path, flags)
+except OSError:
+    sys.exit(0)
+
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
 }
 
 # ============================================================
