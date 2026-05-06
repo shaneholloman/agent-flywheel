@@ -27,6 +27,30 @@ teardown() {
     common_teardown
 }
 
+write_update_refresh_checksums_fixture() {
+    local output_file="$1"
+    local mcp_sha="$2"
+    local tool=""
+    local tool_sha=""
+    local index=1
+
+    printf 'installers:\n' > "$output_file"
+    while IFS= read -r tool; do
+        if [[ "$tool" == "mcp_agent_mail" ]]; then
+            tool_sha="$mcp_sha"
+            printf '  %s:\n' "$tool" >> "$output_file"
+            printf '    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"\n' >> "$output_file"
+            printf '    sha256: "%s"\n' "$tool_sha" >> "$output_file"
+        else
+            printf -v tool_sha '%064d' "$index"
+            printf '  %s:\n' "$tool" >> "$output_file"
+            printf '    url: "https://example.com/%s/install.sh"\n' "$tool" >> "$output_file"
+            printf '    sha256: "%s"\n' "$tool_sha" >> "$output_file"
+        fi
+        index=$((index + 1))
+    done < <(update_required_checksum_tools)
+}
+
 @test "get_version: detects bun" {
     mkdir -p "$HOME/.bun/bin"
     # Create stub script at location
@@ -664,12 +688,7 @@ EOF
         printf '%s\n' "$url" >> "$calls_file"
         case "$url" in
             https://api.github.com/repos/*/contents/checksums.yaml?ref=main)
-                cat > "$output_file" <<'EOF'
-installers:
-  mcp_agent_mail:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
-    sha256: "4444444444444444444444444444444444444444444444444444444444444444"
-EOF
+                write_update_refresh_checksums_fixture "$output_file" "4444444444444444444444444444444444444444444444444444444444444444"
                 return 0
                 ;;
             *)
@@ -731,12 +750,7 @@ EOF
         printf '%s\n' "$url" >> "$calls_file"
         case "$url" in
             https://api.github.com/repos/*/contents/checksums.yaml?ref=main)
-                cat > "$output_file" <<'EOF'
-installers:
-  mcp_agent_mail:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
-    sha256: "2222222222222222222222222222222222222222222222222222222222222222"
-EOF
+                write_update_refresh_checksums_fixture "$output_file" "2222222222222222222222222222222222222222222222222222222222222222"
                 return 0
                 ;;
             https://raw.githubusercontent.com/*)
@@ -796,12 +810,7 @@ EOF
                 return 22
                 ;;
             https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/feature/ref/checksums.yaml?cb=*)
-                cat > "$output_file" <<'EOF'
-installers:
-  mcp_agent_mail:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
-    sha256: "3333333333333333333333333333333333333333333333333333333333333333"
-EOF
+                write_update_refresh_checksums_fixture "$output_file" "3333333333333333333333333333333333333333333333333333333333333333"
                 return 0
                 ;;
             *)
@@ -859,12 +868,7 @@ EOF
                 return 0
                 ;;
             https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/checksums.yaml?cb=*)
-                cat > "$output_file" <<'EOF'
-installers:
-  mcp_agent_mail:
-    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
-    sha256: "5555555555555555555555555555555555555555555555555555555555555555"
-EOF
+                write_update_refresh_checksums_fixture "$output_file" "5555555555555555555555555555555555555555555555555555555555555555"
                 return 0
                 ;;
             *)
@@ -884,6 +888,74 @@ EOF
 
     run grep -F '5555555555555555555555555555555555555555555555555555555555555555' "$checksums_file"
     assert_success
+}
+
+@test "refresh_checksums: refuses to replace cache with malformed installer metadata" {
+    local runtime_home
+    local calls_file
+    local checksums_file
+    runtime_home="$(create_temp_dir)"
+    calls_file="$BATS_TEST_TMPDIR/refresh-malformed-calls.log"
+    checksums_file="$runtime_home/.acfs/checksums.yaml"
+
+    mkdir -p "$runtime_home/.acfs"
+    printf '%s\n' "cached-good-checksums" > "$checksums_file"
+    export HOME="$runtime_home"
+    export TARGET_HOME="$runtime_home"
+    unset TARGET_USER
+    export ACFS_HOME="$runtime_home/.acfs"
+    export ACFS_CHECKSUMS_REF="main"
+
+    update_curl() {
+        local output_file=""
+        local url="${*: -1}"
+        local i=1
+
+        while [[ $i -le $# ]]; do
+            if [[ "${!i}" == "-o" ]]; then
+                local next=$((i + 1))
+                output_file="${!next}"
+                break
+            fi
+            ((i += 1))
+        done
+
+        printf '%s\n' "$url" >> "$calls_file"
+        case "$url" in
+            https://api.github.com/repos/*/contents/checksums.yaml?ref=main)
+                cat > "$output_file" <<'EOF'
+installers:
+  mcp_agent_mail:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
+    sha256: "not-a-sha"
+EOF
+                return 0
+                ;;
+            https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/checksums.yaml?cb=*)
+                cat > "$output_file" <<'EOF'
+installers:
+  mcp_agent_mail:
+    url: "https://raw.githubusercontent.com/Dicklesworthstone/mcp_agent_mail_rust/refs/heads/main/install.sh"
+    sha256: "also-not-a-sha"
+EOF
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    }
+
+    run refresh_checksums true
+    assert_failure
+
+    run grep -F 'api.github.com/repos/Dicklesworthstone/agentic_coding_flywheel_setup/contents/checksums.yaml?ref=main' "$calls_file"
+    assert_success
+
+    run grep -E 'raw.githubusercontent.com/.*/main/checksums.yaml\?cb=[0-9]+' "$calls_file"
+    assert_success
+
+    assert_equal "$(cat "$checksums_file")" "cached-good-checksums"
 }
 
 @test "self-update hash comparisons use trusted update_sha256_file helper" {

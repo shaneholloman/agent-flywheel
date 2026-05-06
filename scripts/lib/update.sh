@@ -3031,6 +3031,104 @@ update_sync_known_installer_urls_from_checksums() {
     return 0
 }
 
+update_required_checksum_tools() {
+    printf '%s\n' \
+        atuin bun bv caam cass claude cm dcg gemini_patch mcp_agent_mail ntm ohmyzsh ru rust slb ubs uv zoxide
+}
+
+update_checksums_file_has_required_metadata() {
+    local file="$1"
+    local current_tool=""
+    local in_installers=false
+    local installers_indent=0
+    local tool_indent=""
+    local line=""
+    local -A parsed_urls=()
+    local -A parsed_sha256=()
+
+    [[ -r "$file" ]] || return 1
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line//[[:space:]]/}" ]] && continue
+
+        local indent="${line%%[^ ]*}"
+        local indent_len="${#indent}"
+
+        if [[ "$in_installers" == "false" ]]; then
+            if [[ "$line" =~ ^[[:space:]]*installers:[[:space:]]*$ ]]; then
+                in_installers=true
+                installers_indent="$indent_len"
+                tool_indent=""
+                current_tool=""
+            fi
+            continue
+        fi
+
+        if (( indent_len <= installers_indent )); then
+            in_installers=false
+            tool_indent=""
+            current_tool=""
+            continue
+        fi
+
+        if [[ "$line" =~ ^[[:space:]]*([[:alnum:]_-]+):[[:space:]]*$ ]]; then
+            if [[ -z "$tool_indent" ]]; then
+                tool_indent="$indent_len"
+            fi
+
+            if (( indent_len == tool_indent )); then
+                current_tool="${BASH_REMATCH[1]}"
+                continue
+            fi
+        fi
+
+        [[ -n "$current_tool" ]] || continue
+
+        if [[ "$line" =~ ^[[:space:]]*url:[[:space:]]*(.*)$ ]]; then
+            local refreshed_url="${BASH_REMATCH[1]}"
+            refreshed_url="${refreshed_url%%#*}"
+            refreshed_url="${refreshed_url%"${refreshed_url##*[![:space:]]}"}"
+            refreshed_url="${refreshed_url#"${refreshed_url%%[![:space:]]*}"}"
+            refreshed_url="${refreshed_url%\"}"
+            refreshed_url="${refreshed_url#\"}"
+            refreshed_url="${refreshed_url%\'}"
+            refreshed_url="${refreshed_url#\'}"
+
+            if [[ "$refreshed_url" =~ ^https://[^[:space:]]+$ ]]; then
+                parsed_urls["$current_tool"]="$refreshed_url"
+            fi
+            continue
+        fi
+
+        if [[ "$line" =~ ^[[:space:]]*sha256:[[:space:]]*(.*)$ ]]; then
+            local refreshed_sha="${BASH_REMATCH[1]}"
+            refreshed_sha="${refreshed_sha%%#*}"
+            refreshed_sha="${refreshed_sha%"${refreshed_sha##*[![:space:]]}"}"
+            refreshed_sha="${refreshed_sha#"${refreshed_sha%%[![:space:]]*}"}"
+            refreshed_sha="${refreshed_sha%\"}"
+            refreshed_sha="${refreshed_sha#\"}"
+            refreshed_sha="${refreshed_sha%\'}"
+            refreshed_sha="${refreshed_sha#\'}"
+
+            if [[ "$refreshed_sha" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+                parsed_sha256["$current_tool"]="${refreshed_sha,,}"
+            fi
+        fi
+    done < "$file"
+
+    local tool
+    while IFS= read -r tool; do
+        if [[ -z "${parsed_urls[$tool]:-}" ]] || [[ -z "${parsed_sha256[$tool]:-}" ]]; then
+            return 1
+        fi
+    done < <(update_required_checksum_tools)
+
+    return 0
+}
+
 # Refresh checksums.yaml from GitHub before verifying installers
 # This ensures we always have the latest checksums without requiring
 # a full ACFS re-install.
@@ -3041,7 +3139,6 @@ refresh_checksums() {
     local date_bin=""
     local mkdir_bin=""
     local mktemp_bin=""
-    local grep_bin=""
     local mv_bin=""
     local chmod_bin=""
     local rm_bin=""
@@ -3054,12 +3151,11 @@ refresh_checksums() {
     date_bin="$(update_system_binary_path date 2>/dev/null || true)"
     mkdir_bin="$(update_system_binary_path mkdir 2>/dev/null || true)"
     mktemp_bin="$(update_system_binary_path mktemp 2>/dev/null || true)"
-    grep_bin="$(update_system_binary_path grep 2>/dev/null || true)"
     mv_bin="$(update_system_binary_path mv 2>/dev/null || true)"
     chmod_bin="$(update_system_binary_path chmod 2>/dev/null || true)"
     rm_bin="$(update_system_binary_path rm 2>/dev/null || true)"
 
-    if [[ -z "$mkdir_bin" || -z "$mktemp_bin" || -z "$grep_bin" || -z "$mv_bin" || -z "$chmod_bin" ]]; then
+    if [[ -z "$mkdir_bin" || -z "$mktemp_bin" || -z "$mv_bin" || -z "$chmod_bin" ]]; then
         [[ "$quiet" != "true" ]] && log_item "warn" "checksums refresh" "trusted system tools unavailable, using cached"
         log_to_file "Checksums refresh failed: trusted system tools unavailable"
         return 1
@@ -3102,7 +3198,7 @@ refresh_checksums() {
         -H "X-GitHub-Api-Version: 2022-11-28" \
         -o "$tmp_checksums" \
         "$api_url" 2>/dev/null; then
-        if "$grep_bin" -q "^installers:" "$tmp_checksums" 2>/dev/null; then
+        if update_checksums_file_has_required_metadata "$tmp_checksums"; then
             fetched_source="$api_url"
             fetched_valid=true
         else
@@ -3114,7 +3210,7 @@ refresh_checksums() {
 
     if [[ "$fetched_valid" != "true" ]] && update_curl --connect-timeout 5 --max-time 30 -o "$tmp_checksums" "$raw_url" 2>/dev/null; then
         fetched_source="$raw_url"
-        if "$grep_bin" -q "^installers:" "$tmp_checksums" 2>/dev/null; then
+        if update_checksums_file_has_required_metadata "$tmp_checksums"; then
             fetched_valid=true
         fi
     fi
