@@ -199,16 +199,16 @@ export default function RunInstallerPage() {
             Your terminal prompt should look like{" "}
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">root@vps:~#</code>
             {" "}(the default after Step 6) or{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ubuntu@vps:~$</code>.
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{effectiveSSHUsername}@vps:~$</code>.
             The installer auto-detects which user it&apos;s running as.
           </p>
           <p className="text-sm text-muted-foreground">
             <strong>Trouble running as root?</strong> A few VPS images don&apos;t play well with the
             installer under the root shell. If the command below fails immediately or exits without
             output, switch to the{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">ubuntu</code>{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{effectiveSSHUsername}</code>{" "}
             user from your current root session with{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">su - ubuntu</code>{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">su - {effectiveSSHUsername}</code>{" "}
             (no password needed — root can switch to any user) and re-run the command from there.
           </p>
         </div>
