@@ -8,9 +8,12 @@
 # This script reduces Vercel credit consumption by skipping builds
 # when only non-web files change (e.g., installer scripts, bash libs).
 
-set -e
+set -euo pipefail
 
 echo "🔍 Checking if web app files changed..."
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT" || exit 1
 
 # Get the commit range (VERCEL_GIT_PREVIOUS_SHA may be empty on first deploy)
 PREV_SHA="${VERCEL_GIT_PREVIOUS_SHA:-HEAD~1}"
@@ -30,20 +33,33 @@ if [[ -z "$CHANGED_FILES" ]]; then
   fi
 fi
 
-# Paths that should trigger a rebuild
-# Note: paths are relative to repo root, not apps/web
+# Paths that should trigger a rebuild. The script always evaluates paths from
+# the repository root because Vercel may run ignore commands from apps/web.
 TRIGGER_PATHS=(
     "apps/web/"
     "package.json"
     "bun.lock"
+    "vercel.json"
+    ".vercelignore"
 )
+
+path_matches_trigger() {
+  local changed_file="$1"
+  local trigger="$2"
+
+  if [[ "$trigger" == */ ]]; then
+    [[ "$changed_file" == "$trigger"* ]]
+  else
+    [[ "$changed_file" == "$trigger" ]]
+  fi
+}
 
 # Check if any trigger paths have changes
 matched_trigger=""
 if [[ -n "$CHANGED_FILES" ]]; then
   while IFS= read -r changed_file; do
     for trigger in "${TRIGGER_PATHS[@]}"; do
-      if [[ "$changed_file" == "$trigger"* ]]; then
+      if path_matches_trigger "$changed_file" "$trigger"; then
         matched_trigger="$trigger"
         break 2
       fi
@@ -55,16 +71,6 @@ if [[ -n "$matched_trigger" ]]; then
   echo "✅ Changes detected in: $matched_trigger"
   echo "   → Proceeding with build"
   exit 1  # Build
-fi
-
-# Also check if this is a production branch (always build production)
-if [[ "$VERCEL_GIT_COMMIT_REF" == "main" || "$VERCEL_GIT_COMMIT_REF" == "production" ]]; then
-    # For main/production, check if we should still skip
-    # Only skip if truly no web changes
-    if echo "$CHANGED_FILES" | grep -q "^apps/web/"; then
-        echo "✅ Web app changes on $VERCEL_GIT_COMMIT_REF branch"
-        exit 1  # Build
-    fi
 fi
 
 echo "⏭️  No web app changes detected"
