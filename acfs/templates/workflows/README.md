@@ -6,6 +6,8 @@ Ready-to-use GitHub Actions workflow templates for ACFS-owned tool repositories.
 
 | Template | Use Case |
 |----------|----------|
+| `notify-acfs-workflow.yml` | Full repository-dispatch workflow with checksum comparison and dry-run support |
+| `validate-acfs-workflow.yml` | Validation workflow for checking a tool repo's ACFS integration |
 | `notify-acfs-root.yml` | Repos with `install.sh` at repository root |
 | `notify-acfs-scripts.yml` | Repos with `install.sh` in `scripts/` directory |
 

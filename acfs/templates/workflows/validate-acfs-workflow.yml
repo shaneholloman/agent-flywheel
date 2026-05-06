@@ -83,7 +83,7 @@ jobs:
         run: |
           if [[ ! -f ".github/workflows/notify-acfs.yml" ]]; then
             echo "::warning::notify-acfs.yml workflow not found"
-            echo "Copy templates/notify-acfs-workflow.yml to .github/workflows/notify-acfs.yml"
+            echo "Copy acfs/templates/workflows/notify-acfs-workflow.yml to .github/workflows/notify-acfs.yml"
           else
             echo "notify-acfs.yml workflow is present"
           fi
