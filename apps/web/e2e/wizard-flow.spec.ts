@@ -1051,6 +1051,7 @@ test.describe("Step 12: Status Check Page", () => {
     const optionalLoginChecks = page.getByLabel("Optional: I logged in to this tool");
 
     await expect(page.getByText(/only the doctor checkbox is required/i)).toBeVisible();
+    await expect(page.getByText(/optional notes for the tools/i)).toBeVisible();
     await expect(optionalLoginChecks.first()).toBeVisible();
     await expect(optionalLoginChecks.first()).not.toBeChecked();
     await expect(continueButton).toBeDisabled();

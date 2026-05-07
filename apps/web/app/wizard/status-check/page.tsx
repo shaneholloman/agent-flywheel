@@ -610,7 +610,8 @@ export default function StatusCheckPage() {
 
               <GuideStep number={3} title="Return to terminal">
                 Once you&apos;ve logged in, the terminal will confirm the connection.
-                Check the box next to each command as you complete it.
+                If you authenticate optional tools now, use their checkboxes as notes.
+                They do not block the final step.
               </GuideStep>
             </div>
           </GuideSection>
