@@ -2410,7 +2410,7 @@ schedule: "0 8 * * 0" # weekly QEMU/KVM factory canary when ACFS_FACTORY_RUNNER 
 workflow_dispatch:
   inputs:
     backend: qemu|real-host
-    runner: ubuntu-latest
+    runner: "" # optional override; blank uses ACFS_FACTORY_RUNNER or ubuntu-latest
     ref: main
     mode: vibe
     expect_ubuntu: "25.10"

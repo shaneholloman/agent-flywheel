@@ -52,9 +52,9 @@ on:
         default: "14400"
         required: true
       runner:
-        description: "Runner label for this workflow. QEMU needs /dev/kvm; use a KVM-capable larger or self-hosted runner."
-        default: "ubuntu-latest"
-        required: true
+        description: "Optional runner label override. Leave blank to use ACFS_FACTORY_RUNNER or ubuntu-latest."
+        default: ""
+        required: false
   repository_dispatch:
     types:
       - acfs-factory-host-ready
@@ -106,8 +106,8 @@ on:
         required: false
         type: string
       runner:
-        description: "Runner label. QEMU needs /dev/kvm; real-host can use ubuntu-latest."
-        default: "ubuntu-latest"
+        description: "Optional runner label override. Leave blank to use ACFS_FACTORY_RUNNER or ubuntu-latest."
+        default: ""
         required: false
         type: string
     secrets:

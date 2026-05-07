@@ -5613,6 +5613,10 @@ EOF
     assert_success
     run grep -F 'ACFS_FACTORY_RUNNER' "$workflow"
     assert_success
+    run grep -F "default: \"\"" "$workflow"
+    assert_success
+    run grep -F 'Leave blank to use ACFS_FACTORY_RUNNER or ubuntu-latest.' "$workflow"
+    assert_success
     run grep -F 'QEMU backend requires /dev/kvm' "$workflow"
     assert_success
     run grep -A1 -F 'ACFS_FACTORY_SSH_TARGET:' "$workflow"
