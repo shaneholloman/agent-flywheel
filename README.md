@@ -2428,7 +2428,7 @@ Reusable workflow callers may use the QEMU backend without passing SSH secrets. 
 
 If `backend=real-host` is requested without those SSH credentials, the workflow fails during configuration resolution. It must never report a green canary when no disposable host was tested.
 
-Workflow artifact directories and uploads include only the current GitHub run id and attempt. That keeps repeated scheduled/manual runs from reusing or uploading old QEMU overlay disks on KVM-capable self-hosted runners with persistent workspaces.
+Workflow artifact directories and uploads include only the current GitHub run id and attempt. That keeps repeated scheduled/manual runs from reusing or uploading old QEMU overlay disks on KVM-capable self-hosted runners with persistent workspaces. The QEMU backend writes its generated private SSH key outside the repository checkout, so upload-artifact and future Git commits never package guest login credentials.
 
 The target host must be freshly provisioned. By default the harness fails if the `ubuntu` user already exists before install, because the real beginner path must prove ACFS creates that user automatically. The harness also requires `acfs doctor --json` to report zero failures and zero warnings, then separately verifies Agent Mail liveness/systemd service state and the ACFS nightly user timer.
 
@@ -2452,7 +2452,7 @@ For provider-specific real VPS sentinels, use an external provisioning job to cr
 
 ### Local QEMU Factory E2E (`test_factory_install_qemu.sh`)
 
-Runs the same factory-host harness inside a real local VM instead of a Docker container. The wrapper downloads and verifies the official Ubuntu cloud image, boots it with QEMU/KVM and cloud-init, exposes root SSH on a local forwarded port, then delegates to `tests/vm/test_factory_install_ubuntu.sh`.
+Runs the same factory-host harness inside a real local VM instead of a Docker container. The wrapper downloads and verifies the official Ubuntu cloud image, boots it with QEMU/KVM and cloud-init, exposes root SSH on a local forwarded port, then delegates to `tests/vm/test_factory_install_ubuntu.sh`. Generated private SSH keys are kept outside the repository checkout; use `--key-dir` with a path under `/tmp` or another non-repo directory when you need a specific local key location for debugging.
 
 ```bash
 sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client

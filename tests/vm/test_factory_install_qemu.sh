@@ -28,6 +28,7 @@ IMAGE_URL="${ACFS_QEMU_IMAGE_URL:-}"
 IMAGE_SHA256SUMS_URL="${ACFS_QEMU_IMAGE_SHA256SUMS_URL:-}"
 CACHE_DIR="${ACFS_QEMU_CACHE_DIR:-$REPO_ROOT/tests/artifacts/qemu-cache}"
 ARTIFACTS_DIR="${ACFS_QEMU_ARTIFACTS_DIR:-}"
+KEY_DIR="${ACFS_QEMU_KEY_DIR:-}"
 INSTALL_URL="${ACFS_FACTORY_INSTALL_URL:-}"
 ALLOW_INSTALL_REBOOT="${ACFS_QEMU_ALLOW_INSTALL_REBOOT:-false}"
 LEAVE_RUNNING=false
@@ -49,7 +50,8 @@ Options:
   --image-url <url>            Override Ubuntu cloud image URL.
   --image-sha256sums-url <url> Override SHA256SUMS URL for the cloud image.
   --cache-dir <path>           Cloud image cache dir (default: tests/artifacts/qemu-cache).
-  --artifacts-dir <path>       Artifact directory for VM disk, serial log, keys, factory logs.
+  --artifacts-dir <path>       Artifact directory for VM disk, serial log, and factory logs.
+  --key-dir <path>             Directory for generated private SSH key; must be outside this repo.
   --ssh-port <port>            Host TCP port forwarded to guest SSH (default: random free port).
   --memory <mb>                VM memory in MiB (default: 8192).
   --cpus <count>               VM vCPU count (default: 4).
@@ -68,8 +70,10 @@ Ubuntu example:
   sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils openssh-client
 
 Notes:
-  - This preserves artifacts by default: disk overlay, seed image, SSH keys,
-    serial log, and delegated factory harness logs remain under tests/artifacts.
+  - This preserves artifacts by default: disk overlay, seed image, serial log,
+    and delegated factory harness logs remain under tests/artifacts.
+  - The generated private SSH key is intentionally kept outside this repository
+    so CI uploads and future commits never include guest login credentials.
   - It stops the QEMU process by default to avoid leaking local resources. Use
     --leave-running when debugging a failed VM interactively.
 EOF
@@ -111,6 +115,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --artifacts-dir)
             ARTIFACTS_DIR="${2:-}"
+            shift 2
+            ;;
+        --key-dir)
+            KEY_DIR="${2:-}"
             shift 2
             ;;
         --ssh-port)
@@ -205,10 +213,6 @@ if [[ -z "$IMAGE_SHA256SUMS_URL" ]]; then
     IMAGE_SHA256SUMS_URL="${IMAGE_URL%/*}/SHA256SUMS"
 fi
 
-if [[ -z "$ARTIFACTS_DIR" ]]; then
-    ARTIFACTS_DIR="$REPO_ROOT/tests/artifacts/qemu-factory-${UBUNTU_VERSION}-${TIMESTAMP}"
-fi
-
 require_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
         echo "ERROR: required command not found: $1" >&2
@@ -216,12 +220,50 @@ require_cmd() {
     fi
 }
 
+require_cmd mktemp
+require_cmd python3
+
+if [[ -z "$ARTIFACTS_DIR" ]]; then
+    ARTIFACTS_DIR="$REPO_ROOT/tests/artifacts/qemu-factory-${UBUNTU_VERSION}-${TIMESTAMP}"
+fi
+
+if [[ -z "$KEY_DIR" ]]; then
+    if [[ -n "${RUNNER_TEMP:-}" ]]; then
+        KEY_DIR="$RUNNER_TEMP/acfs-qemu-keys-${TIMESTAMP}"
+    else
+        KEY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acfs-qemu-keys-${TIMESTAMP}.XXXXXX")"
+    fi
+fi
+
+path_is_within() {
+    python3 - "$1" "$2" <<'PY'
+import pathlib
+import sys
+
+child = pathlib.Path(sys.argv[1]).resolve()
+parent = pathlib.Path(sys.argv[2]).resolve()
+try:
+    child.relative_to(parent)
+except ValueError:
+    sys.exit(1)
+PY
+}
+
+if path_is_within "$KEY_DIR" "$REPO_ROOT"; then
+    echo "ERROR: --key-dir must be outside the repository so private SSH keys are not committed or uploaded as artifacts" >&2
+    exit 1
+fi
+
+if path_is_within "$KEY_DIR" "$ARTIFACTS_DIR"; then
+    echo "ERROR: --key-dir must be outside --artifacts-dir so private SSH keys are not uploaded as artifacts" >&2
+    exit 1
+fi
+
 require_cmd basename
 require_cmd cloud-localds
 require_cmd curl
 require_cmd date
 require_cmd mkdir
-require_cmd python3
 require_cmd qemu-img
 require_cmd qemu-system-x86_64
 require_cmd sha256sum
@@ -239,7 +281,8 @@ if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
     exit 1
 fi
 
-mkdir -p "$CACHE_DIR" "$ARTIFACTS_DIR"
+mkdir -p "$CACHE_DIR" "$ARTIFACTS_DIR" "$KEY_DIR"
+chmod 700 "$KEY_DIR"
 
 image_name="$(basename "$IMAGE_URL")"
 base_image="$CACHE_DIR/$image_name"
@@ -248,7 +291,7 @@ disk_path="$ARTIFACTS_DIR/acfs-factory.qcow2"
 seed_iso="$ARTIFACTS_DIR/seed.iso"
 user_data="$ARTIFACTS_DIR/user-data.yml"
 meta_data="$ARTIFACTS_DIR/meta-data.yml"
-ssh_key="$ARTIFACTS_DIR/root_ssh_key"
+ssh_key="$KEY_DIR/root_ssh_key"
 known_hosts="$ARTIFACTS_DIR/known_hosts"
 serial_log="$ARTIFACTS_DIR/serial.log"
 qemu_log="$ARTIFACTS_DIR/qemu.log"
@@ -259,6 +302,7 @@ echo "[qemu-factory] Image: $IMAGE_URL" >&2
 echo "[qemu-factory] Ref: $REF" >&2
 echo "[qemu-factory] Mode: $MODE" >&2
 echo "[qemu-factory] Artifacts: $ARTIFACTS_DIR" >&2
+echo "[qemu-factory] Private SSH key directory: $KEY_DIR (not uploaded)" >&2
 
 download_cloud_image() {
     if [[ ! -f "$base_image" ]]; then

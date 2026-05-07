@@ -5645,6 +5645,29 @@ EOF
     assert_output --partial 'if-no-files-found: warn'
 }
 
+@test "qemu factory keeps generated SSH private key outside uploaded artifacts" {
+    local qemu_script="$PROJECT_ROOT/tests/vm/test_factory_install_qemu.sh"
+
+    run grep -F 'KEY_DIR="${ACFS_QEMU_KEY_DIR:-}"' "$qemu_script"
+    assert_success
+    run grep -F 'ssh_key="$KEY_DIR/root_ssh_key"' "$qemu_script"
+    assert_success
+    run grep -F 'path_is_within "$KEY_DIR" "$ARTIFACTS_DIR"' "$qemu_script"
+    assert_success
+    run grep -F 'path_is_within "$KEY_DIR" "$REPO_ROOT"' "$qemu_script"
+    assert_success
+    run grep -F 'private SSH keys are not committed or uploaded as artifacts' "$qemu_script"
+    assert_success
+    run grep -F 'private SSH keys are not uploaded as artifacts' "$qemu_script"
+    assert_success
+    run grep -F 'ssh_key="$ARTIFACTS_DIR/root_ssh_key"' "$qemu_script"
+    assert_failure
+
+    run bash "$qemu_script" --key-dir "$PROJECT_ROOT/tests/artifacts/private-keys"
+    assert_failure
+    assert_output --partial "private SSH keys are not committed or uploaded as artifacts"
+}
+
 @test "remaining direct system binary resolvers reject pathlike names" {
     local label
     local script
