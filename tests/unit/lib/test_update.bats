@@ -5600,6 +5600,19 @@ install-workflow|$PROJECT_ROOT/scripts/install-acfs-workflow.sh|workflow_system_
 EOF
 }
 
+@test "factory workflow repository_dispatch ssh_target enables disposable real-host runs" {
+    local workflow="$PROJECT_ROOT/.github/workflows/installer-factory-e2e.yml"
+
+    run grep -F 'DISPATCH_SSH_TARGET:' "$workflow"
+    assert_success
+    run grep -F 'github.event.client_payload.ssh_target' "$workflow"
+    assert_success
+    run grep -F 'effective_ssh_target=' "$workflow"
+    assert_success
+    run grep -F 'effective_ssh_target:-' "$workflow"
+    assert_success
+}
+
 @test "remaining direct system binary resolvers reject pathlike names" {
     local label
     local script

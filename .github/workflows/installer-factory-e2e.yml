@@ -128,10 +128,12 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_BACKEND: ${{ inputs.backend || '' }}
           DISPATCH_BACKEND: ${{ github.event.client_payload.backend || '' }}
+          DISPATCH_SSH_TARGET: ${{ github.event.client_payload.ssh_target || '' }}
           SSH_TARGET: ${{ secrets.ACFS_FACTORY_SSH_TARGET }}
           SSH_PRIVATE_KEY: ${{ secrets.ACFS_FACTORY_SSH_PRIVATE_KEY }}
         run: |
           backend="${INPUT_BACKEND:-}"
+          effective_ssh_target="${DISPATCH_SSH_TARGET:-${SSH_TARGET:-}}"
           if [[ -z "$backend" && -n "${DISPATCH_BACKEND:-}" ]]; then
             backend="$DISPATCH_BACKEND"
           fi
@@ -152,9 +154,9 @@ jobs:
 
           echo "backend=$backend" >> "$GITHUB_OUTPUT"
 
-          if [[ "$backend" == "real-host" && ( -z "${SSH_TARGET:-}" || -z "${SSH_PRIVATE_KEY:-}" ) ]]; then
+          if [[ "$backend" == "real-host" && ( -z "${effective_ssh_target:-}" || -z "${SSH_PRIVATE_KEY:-}" ) ]]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping real-host factory E2E because ACFS_FACTORY_SSH_TARGET or ACFS_FACTORY_SSH_PRIVATE_KEY is not configured."
+            echo "::notice::Skipping real-host factory E2E because neither client_payload.ssh_target nor ACFS_FACTORY_SSH_TARGET is configured, or ACFS_FACTORY_SSH_PRIVATE_KEY is missing."
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
