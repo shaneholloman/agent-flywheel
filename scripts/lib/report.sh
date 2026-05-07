@@ -136,6 +136,92 @@ draw_box_gum() {
 # Failure Report Functions
 # ============================================================
 
+report_build_resume_command() {
+    local failed_phase="${1:-}"
+    local failed_step="${2:-}"
+    local resume_cmd=""
+
+    if type -t generate_resume_hint &>/dev/null; then
+        resume_cmd="$(generate_resume_hint "$failed_phase" "$failed_step" 2>/dev/null || true)"
+        if [[ -n "$resume_cmd" ]]; then
+            printf '%s\n' "$resume_cmd"
+            return 0
+        fi
+    fi
+
+    local install_url=""
+    local install_url_q=""
+    local curl_cmd="curl -fsSL"
+    local local_install=""
+    local resume_arg=""
+    local resume_arg_q=""
+    local resume_ref=""
+    local resume_ref_pinned_from_commit=false
+    local -a resume_args=(--resume)
+
+    if command -v curl &>/dev/null && curl --help all 2>/dev/null | grep -q -- '--proto'; then
+        curl_cmd="curl --proto '=https' --proto-redir '=https' -fsSL"
+    fi
+
+    if [[ "${MODE:-vibe}" != "vibe" ]]; then
+        resume_args+=(--mode "$MODE")
+    fi
+    if [[ "${YES_MODE:-false}" == "true" ]]; then
+        resume_args+=(--yes)
+    fi
+    if [[ "${STRICT_MODE:-false}" == "true" ]]; then
+        resume_args+=(--strict)
+    fi
+    [[ "${SKIP_POSTGRES:-false}" == "true" ]] && resume_args+=(--skip-postgres)
+    [[ "${SKIP_VAULT:-false}" == "true" ]] && resume_args+=(--skip-vault)
+    [[ "${SKIP_CLOUD:-false}" == "true" ]] && resume_args+=(--skip-cloud)
+    [[ "${SKIP_PREFLIGHT:-false}" == "true" ]] && resume_args+=(--skip-preflight)
+    [[ "${SKIP_UBUNTU_UPGRADE:-false}" == "true" ]] && resume_args+=(--skip-ubuntu-upgrade)
+
+    if [[ -n "${ACFS_COMMIT_SHA_FULL:-}" ]]; then
+        resume_ref="$ACFS_COMMIT_SHA_FULL"
+        resume_ref_pinned_from_commit=true
+    elif [[ -n "${ACFS_REF_INPUT:-}" && "${ACFS_REF_INPUT}" != "main" ]]; then
+        resume_ref="$ACFS_REF_INPUT"
+    elif [[ -n "${ACFS_REF:-}" && "${ACFS_REF}" != "main" ]]; then
+        resume_ref="$ACFS_REF"
+    fi
+    if [[ -n "$resume_ref" ]]; then
+        resume_args+=(--ref "$resume_ref")
+    fi
+
+    if [[ "${ACFS_CHECKSUMS_REF_EXPLICIT:-false}" == "true" && -n "${ACFS_CHECKSUMS_REF:-}" ]]; then
+        resume_args+=(--checksums-ref "$ACFS_CHECKSUMS_REF")
+    elif [[ "$resume_ref_pinned_from_commit" == "true" && -n "${ACFS_CHECKSUMS_REF:-}" && "$ACFS_CHECKSUMS_REF" != "main" ]]; then
+        resume_args+=(--checksums-ref "$ACFS_CHECKSUMS_REF")
+    fi
+
+    if [[ -n "${SCRIPT_DIR:-}" ]]; then
+        local_install="${SCRIPT_DIR%/}/install.sh"
+        printf -v local_install '%q' "$local_install"
+        resume_cmd="bash $local_install"
+    else
+        if [[ -n "${ACFS_COMMIT_SHA_FULL:-}" ]]; then
+            install_url="https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_COMMIT_SHA_FULL}/install.sh"
+        elif [[ -n "${ACFS_REF_INPUT:-}" && "${ACFS_REF_INPUT}" != "main" ]]; then
+            install_url="https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF_INPUT}/install.sh"
+        elif [[ -n "${ACFS_RAW:-}" ]]; then
+            install_url="${ACFS_RAW%/}/install.sh"
+        else
+            install_url="https://acfs.sh"
+        fi
+        printf -v install_url_q '%q' "$install_url"
+        resume_cmd="${curl_cmd} ${install_url_q} | bash -s --"
+    fi
+
+    for resume_arg in "${resume_args[@]}"; do
+        printf -v resume_arg_q '%q' "$resume_arg"
+        resume_cmd="${resume_cmd} ${resume_arg_q}"
+    done
+
+    printf '%s\n' "$resume_cmd"
+}
+
 # Report installation failure with full context
 # Usage: report_failure [phase_num] [total_phases]
 # Uses global variables: CURRENT_PHASE, CURRENT_PHASE_NAME, CURRENT_STEP,
@@ -202,25 +288,8 @@ report_failure() {
         [[ -n "$matched_fix" ]] && suggested_fix="$matched_fix"
     fi
 
-    # Build resume command (prefer HTTPS-only curl when supported)
-    local install_url="${ACFS_RAW:-https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/${ACFS_REF:-main}}/install.sh"
-    local install_url_q=""
-    local curl_cmd="curl -fsSL"
-    local resume_flags=""
-    if command -v curl &>/dev/null && curl --help all 2>/dev/null | grep -q -- '--proto'; then
-        curl_cmd="curl --proto '=https' --proto-redir '=https' -fsSL"
-    fi
-    printf -v install_url_q '%q' "$install_url"
-    local -a resume_args=(--resume)
-    if [[ "${MODE:-}" == "vibe" ]]; then
-        resume_args+=(--mode vibe)
-    fi
-    if [[ "${YES_MODE:-false}" == "true" ]]; then
-        resume_args+=(--yes)
-    fi
-    printf -v resume_flags '%q ' "${resume_args[@]}"
-    resume_flags="${resume_flags% }"
-    local resume_cmd="${curl_cmd} ${install_url_q} | bash -s -- ${resume_flags}"
+    local resume_cmd=""
+    resume_cmd="$(report_build_resume_command "$phase" "$step")"
 
     # Terminal output (stderr to keep stdout clean for piping)
     {

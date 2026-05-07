@@ -156,6 +156,66 @@ EOF
     assert_equal "$count" "1"
 }
 
+@test "report_failure uses canonical resume hint when available" {
+    local report_log
+    report_log="$BATS_TEST_TMPDIR/report.log"
+
+    run env -i PATH="/usr/bin:/bin" ACFS_LOG_FILE="$report_log" /usr/bin/bash -c '
+        set -euo pipefail
+        source "$1"
+        generate_resume_hint() {
+            printf "canonical-resume phase=%s step=%s\n" "$1" "$2"
+        }
+        CURRENT_PHASE="stack"
+        CURRENT_PHASE_NAME="Dicklesworthstone Stack"
+        CURRENT_STEP="MCP Agent Mail"
+        LAST_ERROR="checksum mismatch: expected old actual new"
+        report_failure 8 9
+    ' _ "$PROJECT_ROOT/scripts/lib/report.sh"
+
+    assert_success
+    assert_output --partial "canonical-resume phase=stack step=MCP Agent Mail"
+}
+
+@test "report_failure fallback preserves pinned ref and install flags" {
+    local report_log
+    local pinned_ref
+    report_log="$BATS_TEST_TMPDIR/report.log"
+    pinned_ref="2463b6a6e4338d74502c7bb34cb02ab8ca8e2ad4"
+
+    run env -i PATH="/usr/bin:/bin" \
+        ACFS_LOG_FILE="$report_log" \
+        ACFS_COMMIT_SHA_FULL="$pinned_ref" \
+        ACFS_REF="$pinned_ref" \
+        ACFS_REF_INPUT="main" \
+        ACFS_RAW="https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/$pinned_ref" \
+        ACFS_CHECKSUMS_REF_EXPLICIT=true \
+        ACFS_CHECKSUMS_REF="release-checksums" \
+        MODE="safe" \
+        YES_MODE=true \
+        STRICT_MODE=true \
+        SKIP_CLOUD=true \
+        /usr/bin/bash -c '
+            set -euo pipefail
+            source "$1"
+            CURRENT_PHASE="stack"
+            CURRENT_PHASE_NAME="Dicklesworthstone Stack"
+            CURRENT_STEP="MCP Agent Mail"
+            LAST_ERROR="checksum mismatch: expected old actual new"
+            report_failure 8 9
+        ' _ "$PROJECT_ROOT/scripts/lib/report.sh"
+
+    assert_success
+    assert_output --partial "raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/$pinned_ref/install.sh"
+    assert_output --partial "--resume"
+    assert_output --partial "--mode safe"
+    assert_output --partial "--yes"
+    assert_output --partial "--strict"
+    assert_output --partial "--skip-cloud"
+    assert_output --partial "--ref $pinned_ref"
+    assert_output --partial "--checksums-ref release-checksums"
+}
+
 @test "report_failure fills missing context from state file" {
     local state_dir
     local state_file
