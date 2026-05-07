@@ -678,6 +678,16 @@ get_failed_step() {
     fi
 }
 
+get_resume_hint() {
+    local hint
+    hint=$(get_state_value '.resume_hint // empty')
+    if [[ -n "$hint" ]] && [[ "$hint" != "null" ]]; then
+        printf '%s\n' "$hint"
+    else
+        printf '\n'
+    fi
+}
+
 # Get installation status
 get_install_status() {
     local failed_phase current_phase finalize_completed
@@ -995,9 +1005,10 @@ main() {
             echo "  2. Run: onboard"
             echo "  3. Start coding with: cc, cod, or gmi"
         elif [[ "$status" == "failed" ]]; then
-            local failed_phase failed_step
+            local failed_phase failed_step resume_hint
             failed_phase=$(get_failed_phase)
             failed_step=$(get_failed_step)
+            resume_hint=$(get_resume_hint)
 
             echo -e "${_CONTINUE_RED}${_CONTINUE_BOLD}Installation failed.${_CONTINUE_NC}"
             if [[ -n "$failed_phase" ]]; then
@@ -1007,7 +1018,12 @@ main() {
                 echo "Failed step:  $failed_step"
             fi
             echo ""
-            echo "Review the log files listed above, fix the underlying issue, then rerun the installer with --resume."
+            if [[ -n "$resume_hint" ]]; then
+                echo "To resume:"
+                printf '  %s\n' "$resume_hint"
+            else
+                echo "Review the log files listed above, fix the underlying issue, then rerun the installer with --resume."
+            fi
         else
             local install_log=""
             install_log=$(get_latest_install_log || true)

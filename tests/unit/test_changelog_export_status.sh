@@ -6160,6 +6160,39 @@ EOF
     cleanup_mock_env
 }
 
+test_continue_failed_state_prints_resume_hint() {
+    setup_installed_layout_env
+    setup_poisoned_acfs_home
+
+    local resume_cmd="curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/2463b6a6e4338d74502c7bb34cb02ab8ca8e2ad4/install.sh | bash -s -- --resume --ref 2463b6a6e4338d74502c7bb34cb02ab8ca8e2ad4 --yes"
+    cat > "$TEST_INSTALLED_ACFS/state.json" <<JSON
+{
+  "mode": "safe",
+  "target_user": "tester",
+  "started_at": "2026-03-09T08:00:00Z",
+  "last_updated": "2026-03-10T12:34:56Z",
+  "failed_phase": "stack",
+  "failed_step": "MCP Agent Mail",
+  "resume_hint": "$resume_cmd"
+}
+JSON
+
+    local output
+    output=$(HOME="$TEST_ROOT_HOME" PATH="$TEST_FAKE_BIN:/usr/bin:/bin" \
+        ACFS_HOME="$TEST_POISONED_ACFS_HOME" \
+        bash "$TEST_INSTALLED_ACFS/scripts/lib/continue.sh" --status)
+
+    if [[ "$output" == *"To resume:"* ]] && \
+       [[ "$output" == *"$resume_cmd"* ]] && \
+       [[ "$output" != *"rerun the installer with --resume"* ]]; then
+        harness_pass "continue failed state prints persisted resume hint"
+    else
+        harness_fail "continue failed state prints persisted resume hint" "$output"
+    fi
+
+    cleanup_mock_env
+}
+
 test_continue_reports_installed_layout_log_locations() {
     setup_installed_layout_env
     setup_poisoned_acfs_home
@@ -11633,6 +11666,7 @@ main() {
     test_continue_ignores_relative_home_state_trap || true
     test_continue_ignores_generic_install_process_matches || true
     test_continue_failed_state_beats_runtime_probe || true
+    test_continue_failed_state_prints_resume_hint || true
     test_continue_reports_installed_layout_log_locations || true
     test_continue_live_log_hint_uses_installed_layout_log_dir || true
     test_continue_can_be_sourced_without_leaking_install_context || true
