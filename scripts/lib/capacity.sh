@@ -11,6 +11,10 @@ CAPACITY_JSON=false
 CAPACITY_WORKLOAD="standard"
 CAPACITY_PROFILE=""
 CAPACITY_RECOMMEND_NTM=false
+CAPACITY_RESOURCE_PROFILE=false
+CAPACITY_RESOURCE_PROFILE_APPLY=false
+CAPACITY_RESOURCE_PROFILE_DISABLE=false
+CAPACITY_RESOURCE_PROFILE_ROOT=""
 
 capacity_usage() {
     cat <<'EOF'
@@ -21,6 +25,11 @@ Options:
   --workload <name>       light, standard, or heavy (default: standard)
   --profile <agents>      Check a target agent count, e.g. 25 or 25-agents
   --recommend-ntm         Include an NTM launch recommendation
+  --resource-profile      Report opt-in systemd resource profile wrappers
+  --apply-resource-profile
+                          Write opt-in ACFS wrapper files under ~/.acfs
+  --disable-resource-profile
+                          Write a disabled profile marker/snippet, no deletion
   -h, --help              Show this help
 
 Environment overrides for tests:
@@ -29,6 +38,8 @@ Environment overrides for tests:
   ACFS_CAPACITY_DISK_AVAILABLE_KB
   ACFS_CAPACITY_RCH_AVAILABLE=true|false
   ACFS_CAPACITY_NTM_AVAILABLE=true|false
+  ACFS_CAPACITY_BIN_DIR
+  ACFS_RESOURCE_PROFILE_HOME
 EOF
 }
 
@@ -53,6 +64,20 @@ capacity_parse_args() {
                 CAPACITY_RECOMMEND_NTM=true
                 shift
                 ;;
+            --resource-profile)
+                CAPACITY_RESOURCE_PROFILE=true
+                shift
+                ;;
+            --apply-resource-profile)
+                CAPACITY_RESOURCE_PROFILE=true
+                CAPACITY_RESOURCE_PROFILE_APPLY=true
+                shift
+                ;;
+            --disable-resource-profile)
+                CAPACITY_RESOURCE_PROFILE=true
+                CAPACITY_RESOURCE_PROFILE_DISABLE=true
+                shift
+                ;;
             -h|--help)
                 capacity_usage
                 return 100
@@ -72,6 +97,11 @@ capacity_parse_args() {
             return 2
             ;;
     esac
+
+    if [[ "$CAPACITY_RESOURCE_PROFILE_APPLY" == true && "$CAPACITY_RESOURCE_PROFILE_DISABLE" == true ]]; then
+        echo "Error: choose only one of --apply-resource-profile or --disable-resource-profile" >&2
+        return 2
+    fi
 }
 
 capacity_system_binary_path() {
@@ -84,6 +114,14 @@ capacity_system_binary_path() {
             return 1
             ;;
     esac
+
+    if [[ -n "${ACFS_CAPACITY_BIN_DIR:-}" ]]; then
+        candidate="${ACFS_CAPACITY_BIN_DIR%/}/$name"
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
 
     for candidate in \
         "/usr/bin/$name" \
@@ -188,6 +226,319 @@ capacity_requested_agents() {
     local digits="${value//[^0-9]/}"
     [[ -n "$digits" ]] || return 1
     printf '%s\n' "$digits"
+}
+
+capacity_resource_profile_root() {
+    if [[ -n "$CAPACITY_RESOURCE_PROFILE_ROOT" ]]; then
+        printf '%s\n' "$CAPACITY_RESOURCE_PROFILE_ROOT"
+        return 0
+    fi
+
+    CAPACITY_RESOURCE_PROFILE_ROOT="${ACFS_RESOURCE_PROFILE_HOME:-${HOME:-/tmp}/.acfs/resource-profile}"
+    printf '%s\n' "$CAPACITY_RESOURCE_PROFILE_ROOT"
+}
+
+capacity_resource_systemd_run_available() {
+    if capacity_system_binary_path systemd-run >/dev/null 2>&1; then
+        printf 'true\n'
+    else
+        printf 'false\n'
+    fi
+}
+
+capacity_resource_systemd_user_available() {
+    local systemctl_bin=""
+    systemctl_bin="$(capacity_system_binary_path systemctl 2>/dev/null || true)"
+    if [[ -n "$systemctl_bin" ]] && "$systemctl_bin" --user show-environment >/dev/null 2>&1; then
+        printf 'true\n'
+    else
+        printf 'false\n'
+    fi
+}
+
+capacity_resource_profile_state() {
+    if [[ "$CAPACITY_RESOURCE_PROFILE_DISABLE" == true ]]; then
+        printf 'disabled\n'
+    elif [[ "$CAPACITY_RESOURCE_PROFILE_APPLY" == true ]]; then
+        printf 'applied\n'
+    else
+        printf 'dry-run\n'
+    fi
+}
+
+capacity_resource_profile_json() {
+    local root="$1"
+    local state="$2"
+    local systemd_run_available="$3"
+    local systemd_user_available="$4"
+    local bin_dir="$root/bin"
+    local env_file="$root/acfs-resource-profile.sh"
+    local manifest_file="$root/profile.json"
+
+    command -v jq >/dev/null 2>&1 || {
+        echo "Error: jq is required for resource profile JSON" >&2
+        return 1
+    }
+
+    jq -n \
+        --arg generated_at "$(date -Iseconds)" \
+        --arg state "$state" \
+        --arg root "$root" \
+        --arg bin_dir "$bin_dir" \
+        --arg env_file "$env_file" \
+        --arg manifest_file "$manifest_file" \
+        --argjson systemd_run_available "$systemd_run_available" \
+        --argjson systemd_user_available "$systemd_user_available" \
+        '{
+            schema_version: 1,
+            generated_at: $generated_at,
+            mode: $state,
+            opt_in: true,
+            root: $root,
+            bin_dir: $bin_dir,
+            env_file: $env_file,
+            manifest_file: $manifest_file,
+            systemd: {
+                systemd_run_available: $systemd_run_available,
+                user_manager_available: $systemd_user_available
+            },
+            safety: {
+                no_hard_memory_limits_by_default: true,
+                direct_agent_aliases_unchanged: true,
+                rch_remains_preferred_build_path: true,
+                limited_to_acfs_owned_files: true,
+                destructive_cleanup_required: false
+            },
+            classes: [
+                {name: "agent", slice: "acfs-agent.slice", properties: ["CPUAccounting=yes", "MemoryAccounting=yes", "IOAccounting=yes", "TasksAccounting=yes", "CPUWeight=100", "IOWeight=100", "TasksMax=512"]},
+                {name: "background", slice: "acfs-background.slice", properties: ["CPUAccounting=yes", "MemoryAccounting=yes", "IOAccounting=yes", "TasksAccounting=yes", "CPUWeight=40", "IOWeight=50", "TasksMax=512"]},
+                {name: "local-build", slice: "acfs-local-build.slice", properties: ["CPUAccounting=yes", "MemoryAccounting=yes", "IOAccounting=yes", "TasksAccounting=yes", "CPUWeight=60", "IOWeight=50", "TasksMax=512"]},
+                {name: "support", slice: "acfs-support.slice", properties: ["CPUAccounting=yes", "MemoryAccounting=yes", "IOAccounting=yes", "TasksAccounting=yes", "CPUWeight=80", "IOWeight=100", "TasksMax=256"]},
+                {name: "rch", slice: "acfs-rch.slice", properties: ["CPUAccounting=yes", "MemoryAccounting=yes", "IOAccounting=yes", "TasksAccounting=yes", "CPUWeight=100", "IOWeight=100", "TasksMax=512"]}
+            ],
+            wrappers: [
+                {name: "acfs-scope", path: ($bin_dir + "/acfs-scope"), purpose: "Run an explicit command in an opt-in ACFS systemd user scope when available; otherwise execute directly."},
+                {name: "ccs", path: ($bin_dir + "/ccs"), command: "acfs-scope agent -- claude"},
+                {name: "cods", path: ($bin_dir + "/cods"), command: "acfs-scope agent -- codex"},
+                {name: "gmis", path: ($bin_dir + "/gmis"), command: "acfs-scope agent -- gemini"},
+                {name: "acfs-local-build", path: ($bin_dir + "/acfs-local-build"), command: "acfs-scope local-build --"}
+            ],
+            managed_files: [
+                ($bin_dir + "/acfs-scope"),
+                ($bin_dir + "/ccs"),
+                ($bin_dir + "/cods"),
+                ($bin_dir + "/gmis"),
+                ($bin_dir + "/acfs-local-build"),
+                $env_file,
+                $manifest_file
+            ],
+            actions: (
+                if $state == "dry-run" then
+                    ["would create wrapper directory", "would write opt-in wrappers", "would write shell snippet", "would write manifest"]
+                elif $state == "disabled" then
+                    ["wrote disabled shell snippet", "wrote disabled manifest"]
+                else
+                    ["wrote wrapper directory", "wrote opt-in wrappers", "wrote shell snippet", "wrote manifest"]
+                end
+            )
+        }'
+}
+
+capacity_write_resource_scope_wrapper() {
+    local path="$1"
+    cat > "$path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat <<'USAGE'
+Usage: acfs-scope <agent|background|local-build|support|rch> -- <command> [args...]
+
+Runs a command inside an opt-in ACFS systemd user scope when systemd user
+scopes are available. Falls back to direct execution when unavailable.
+USAGE
+}
+
+class="${1:-}"
+if [[ -z "$class" || "$class" == "-h" || "$class" == "--help" ]]; then
+    usage
+    exit 0
+fi
+shift
+if [[ "${1:-}" == "--" ]]; then
+    shift
+fi
+if [[ $# -eq 0 ]]; then
+    echo "Error: command required" >&2
+    usage >&2
+    exit 2
+fi
+
+slice=""
+properties=()
+case "$class" in
+    agent)
+        slice="acfs-agent.slice"
+        properties=(CPUAccounting=yes MemoryAccounting=yes IOAccounting=yes TasksAccounting=yes CPUWeight=100 IOWeight=100 TasksMax=512)
+        ;;
+    background)
+        slice="acfs-background.slice"
+        properties=(CPUAccounting=yes MemoryAccounting=yes IOAccounting=yes TasksAccounting=yes CPUWeight=40 IOWeight=50 TasksMax=512)
+        ;;
+    local-build)
+        slice="acfs-local-build.slice"
+        properties=(CPUAccounting=yes MemoryAccounting=yes IOAccounting=yes TasksAccounting=yes CPUWeight=60 IOWeight=50 TasksMax=512)
+        ;;
+    support)
+        slice="acfs-support.slice"
+        properties=(CPUAccounting=yes MemoryAccounting=yes IOAccounting=yes TasksAccounting=yes CPUWeight=80 IOWeight=100 TasksMax=256)
+        ;;
+    rch)
+        slice="acfs-rch.slice"
+        properties=(CPUAccounting=yes MemoryAccounting=yes IOAccounting=yes TasksAccounting=yes CPUWeight=100 IOWeight=100 TasksMax=512)
+        ;;
+    *)
+        echo "Error: unknown ACFS resource class: $class" >&2
+        exit 2
+        ;;
+esac
+
+if ! command -v systemd-run >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
+    exec "$@"
+fi
+if ! systemctl --user show-environment >/dev/null 2>&1; then
+    exec "$@"
+fi
+
+args=(--user --scope --same-dir --collect "--slice=$slice")
+for property in "${properties[@]}"; do
+    args+=("--property=$property")
+done
+
+exec systemd-run "${args[@]}" "$@"
+EOF
+}
+
+capacity_write_resource_command_wrapper() {
+    local path="$1"
+    local class="$2"
+    shift 2
+
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'set -euo pipefail\n'
+        printf 'exec acfs-scope %q --' "$class"
+        printf ' %q' "$@"
+        printf ' "$@"\n'
+    } > "$path"
+}
+
+capacity_apply_resource_profile() {
+    local root="$1"
+    local state="$2"
+    local profile_json="$3"
+    local bin_dir="$root/bin"
+    local env_file="$root/acfs-resource-profile.sh"
+    local manifest_file="$root/profile.json"
+
+    mkdir -p "$bin_dir"
+
+    if [[ "$state" == "disabled" ]]; then
+        cat > "$env_file" <<'EOF'
+# ACFS resource profile disabled.
+# Re-enable with: acfs capacity --resource-profile --apply-resource-profile
+EOF
+        printf '%s\n' "$profile_json" > "$manifest_file"
+        return 0
+    fi
+
+    capacity_write_resource_scope_wrapper "$bin_dir/acfs-scope"
+    capacity_write_resource_command_wrapper "$bin_dir/ccs" agent claude
+    capacity_write_resource_command_wrapper "$bin_dir/cods" agent codex
+    capacity_write_resource_command_wrapper "$bin_dir/gmis" agent gemini
+    capacity_write_resource_command_wrapper "$bin_dir/acfs-local-build" local-build
+    chmod +x "$bin_dir/acfs-scope" "$bin_dir/ccs" "$bin_dir/cods" "$bin_dir/gmis" "$bin_dir/acfs-local-build"
+
+    cat > "$env_file" <<EOF
+# ACFS opt-in resource profile wrappers.
+# Source this file to add wrapper commands without changing cc/cod/gmi.
+case ":\${PATH:-}:" in
+  *":$bin_dir:"*) ;;
+  *) export PATH="$bin_dir:\${PATH:-}" ;;
+esac
+EOF
+    printf '%s\n' "$profile_json" > "$manifest_file"
+}
+
+capacity_emit_resource_profile_json() {
+    local root state systemd_run_available systemd_user_available profile_json
+    root="$(capacity_resource_profile_root)"
+    state="$(capacity_resource_profile_state)"
+    systemd_run_available="$(capacity_resource_systemd_run_available)"
+    systemd_user_available="$(capacity_resource_systemd_user_available)"
+    profile_json="$(capacity_resource_profile_json "$root" "$state" "$systemd_run_available" "$systemd_user_available")"
+
+    if [[ "$CAPACITY_RESOURCE_PROFILE_APPLY" == true || "$CAPACITY_RESOURCE_PROFILE_DISABLE" == true ]]; then
+        capacity_apply_resource_profile "$root" "$state" "$profile_json"
+        profile_json="$(capacity_resource_profile_json "$root" "$state" "$systemd_run_available" "$systemd_user_available")"
+    fi
+
+    printf '%s\n' "$profile_json"
+}
+
+capacity_emit_resource_profile_human() {
+    local jq_bin root state systemd_run_available systemd_user_available profile_json
+    jq_bin="$(capacity_system_binary_path jq 2>/dev/null || true)"
+    if [[ -z "$jq_bin" ]]; then
+        echo "Error: jq is required for resource profile output" >&2
+        return 1
+    fi
+
+    root="$(capacity_resource_profile_root)"
+    state="$(capacity_resource_profile_state)"
+    systemd_run_available="$(capacity_resource_systemd_run_available)"
+    systemd_user_available="$(capacity_resource_systemd_user_available)"
+    profile_json="$(capacity_resource_profile_json "$root" "$state" "$systemd_run_available" "$systemd_user_available")"
+
+    if [[ "$CAPACITY_RESOURCE_PROFILE_APPLY" == true || "$CAPACITY_RESOURCE_PROFILE_DISABLE" == true ]]; then
+        capacity_apply_resource_profile "$root" "$state" "$profile_json"
+        profile_json="$(capacity_resource_profile_json "$root" "$state" "$systemd_run_available" "$systemd_user_available")"
+    fi
+
+    echo "ACFS Resource Profile"
+    echo "Mode: $state"
+    echo "Root: $root"
+    echo "Systemd user manager: $systemd_user_available"
+    echo "systemd-run: $systemd_run_available"
+    echo ""
+    echo "Safety"
+    echo "  Opt-in only:          true"
+    echo "  Hard MemoryMax:       not set"
+    echo "  Direct cc/cod/gmi:    unchanged"
+    echo "  RCH build path:       remains preferred"
+    echo ""
+    echo "Wrappers"
+    "$jq_bin" -r '.wrappers[] | "  \(.name): \(.path)"' <<< "$profile_json"
+    echo ""
+    echo "Resource Classes"
+    "$jq_bin" -r '.classes[] | "  \(.name): \(.slice) [" + (.properties | join(", ")) + "]"' <<< "$profile_json"
+    echo ""
+    echo "Actions"
+    "$jq_bin" -r '.actions[] | "  - " + .' <<< "$profile_json"
+
+    if [[ "$state" == "dry-run" ]]; then
+        echo ""
+        echo "Apply: acfs capacity --resource-profile --apply-resource-profile"
+        echo "Disable marker/snippet: acfs capacity --resource-profile --disable-resource-profile"
+    elif [[ "$state" == "applied" ]]; then
+        echo ""
+        echo "Enable in current shell: source $root/acfs-resource-profile.sh"
+        echo "Inspect: $root/bin/acfs-scope --help"
+        echo "Disable marker/snippet: acfs capacity --resource-profile --disable-resource-profile"
+    else
+        echo ""
+        echo "Disabled. Re-enable with: acfs capacity --resource-profile --apply-resource-profile"
+    fi
 }
 
 capacity_collect_model() {
@@ -449,6 +800,15 @@ capacity_main() {
         return 0
     elif [[ $parse_status -ne 0 ]]; then
         return "$parse_status"
+    fi
+
+    if [[ "$CAPACITY_RESOURCE_PROFILE" == "true" ]]; then
+        if [[ "$CAPACITY_JSON" == "true" ]]; then
+            capacity_emit_resource_profile_json
+        else
+            capacity_emit_resource_profile_human
+        fi
+        return $?
     fi
 
     capacity_collect_model

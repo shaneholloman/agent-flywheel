@@ -70,13 +70,63 @@ For Codex and Gemini, substitute the command after the properties. A wrapper mus
 - Do not make `systemd-run` mandatory. Fresh VPS and container-like environments can have a missing or degraded user manager.
 - Do not wrap RCH-heavy commands in a way that hides the `rch exec --` policy or makes local fallback look like the preferred path.
 
-## Implementation Path
+## Current Implementation
 
-1. Add an `acfs resource-profile` or `acfs capacity --resource-profile` report that prints the proposed classes for the current host.
-2. Add a shell helper such as `acfs_scope <class> -- <command...>` that falls back to direct execution when `systemd-run --user` is unavailable.
-3. Add opt-in aliases, for example `ccs`, `cods`, and `gmis`, instead of changing `cc`, `cod`, or `gmi`.
-4. Add optional drop-ins for ACFS-owned user services only, starting with `agent-mail.service.d/resource-profile.conf`.
-5. Add NTM integration only after direct shell-wrapper tests pass; NTM should receive explicit class hints rather than infer from command strings.
+ACFS exposes the first implementation through the existing capacity command:
+
+```bash
+acfs capacity --resource-profile
+```
+
+That command is read-only by default. It reports proposed resource classes,
+wrapper paths, systemd user-manager availability, and the exact ACFS-owned files
+that would be written.
+
+To enable the opt-in wrappers:
+
+```bash
+acfs capacity --resource-profile --apply-resource-profile
+source ~/.acfs/resource-profile/acfs-resource-profile.sh
+```
+
+This writes files under `~/.acfs/resource-profile/` only:
+
+- `bin/acfs-scope` runs explicit commands in a named ACFS resource class.
+- `bin/ccs`, `bin/cods`, and `bin/gmis` wrap `claude`, `codex`, and `gemini`
+  without changing the existing `cc`, `cod`, or `gmi` aliases.
+- `bin/acfs-local-build` exists for explicit local fallback commands; RCH remains
+  the preferred build/test path.
+- `acfs-resource-profile.sh` is the opt-in PATH snippet.
+- `profile.json` records the generated profile.
+
+To inspect the active wrapper:
+
+```bash
+~/.acfs/resource-profile/bin/acfs-scope --help
+systemctl --user show-environment
+systemd-run --user --scope --same-dir --collect --property=CPUAccounting=yes true
+```
+
+To disable the profile without deleting files:
+
+```bash
+acfs capacity --resource-profile --disable-resource-profile
+source ~/.acfs/resource-profile/acfs-resource-profile.sh
+```
+
+The disable command rewrites the profile marker/snippet to a disabled state. It
+does not remove wrapper files or touch non-ACFS paths. Starting a new shell
+without sourcing the opt-in snippet also leaves direct agent commands unchanged.
+
+## Remaining Implementation Path
+
+1. Add optional drop-ins for ACFS-owned user services only, starting with
+   `agent-mail.service.d/resource-profile.conf`, after wrapper tests have
+   accumulated enough evidence.
+2. Add NTM integration only after direct shell-wrapper tests pass; NTM should
+   receive explicit class hints rather than infer from command strings.
+3. Consider conservative `MemoryHigh=` recommendations only after capacity
+   calibration has measured real high-context agent sessions.
 
 ## Verification Required Before Implementation
 

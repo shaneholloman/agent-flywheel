@@ -81,6 +81,34 @@ run_capacity_json_fixture() {
     printf '%s\n' "$output"
 }
 
+make_resource_profile_fake_bin() {
+    local name="$1"
+    local fake_bin="$ARTIFACT_DIR/$name-bin"
+    mkdir -p "$fake_bin"
+
+    cat > "$fake_bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "--user show-environment" ]]; then
+    echo "PATH=/usr/bin:/bin"
+    exit 0
+fi
+exit 1
+EOF
+    chmod +x "$fake_bin/systemctl"
+
+    cat > "$fake_bin/systemd-run" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${ACFS_FAKE_SYSTEMD_RUN_LOG:?}"
+while [[ $# -gt 0 && "$1" == --* ]]; do
+    shift
+done
+exec "$@"
+EOF
+    chmod +x "$fake_bin/systemd-run"
+
+    printf '%s\n' "$fake_bin"
+}
+
 test_high_capacity_json() {
     local output
     output="$(run_capacity_json_fixture high_capacity_json 64 268435456 314572800 true true --profile 25-agents --recommend-ntm)"
@@ -193,6 +221,93 @@ test_human_output() {
     pass "human_output"
 }
 
+test_resource_profile_dry_run_json_is_read_only() {
+    local root output
+    root="$ARTIFACT_DIR/resource-dry-run-home"
+    output="$(
+        ACFS_RESOURCE_PROFILE_HOME="$root" \
+        bash "$CAPACITY_SH" --json --resource-profile
+    )"
+    write_output_artifact "resource_profile_dry_run" "json" "$output"
+
+    jq -e '
+      .mode == "dry-run" and
+      .opt_in == true and
+      .safety.no_hard_memory_limits_by_default == true and
+      .safety.direct_agent_aliases_unchanged == true and
+      .safety.rch_remains_preferred_build_path == true and
+      ([.classes[].properties[] | select(startswith("MemoryMax="))] | length) == 0 and
+      (.wrappers[] | select(.name == "acfs-scope")) and
+      (.actions[] | select(contains("would write")))
+    ' <<<"$output" >/dev/null || return 1
+    [[ ! -e "$root/bin/acfs-scope" ]] || return 1
+
+    pass "resource_profile_dry_run_json_is_read_only"
+}
+
+test_resource_profile_apply_writes_opt_in_wrappers() {
+    local root fake_bin output log_file
+    root="$ARTIFACT_DIR/resource-apply-home"
+    fake_bin="$(make_resource_profile_fake_bin resource-apply)"
+    log_file="$ARTIFACT_DIR/resource-apply-systemd-run.log"
+
+    output="$(
+        ACFS_RESOURCE_PROFILE_HOME="$root" \
+        ACFS_CAPACITY_BIN_DIR="$fake_bin" \
+        ACFS_FAKE_SYSTEMD_RUN_LOG="$log_file" \
+        bash "$CAPACITY_SH" --json --resource-profile --apply-resource-profile
+    )"
+    write_output_artifact "resource_profile_apply" "json" "$output"
+
+    jq -e '
+      .mode == "applied" and
+      .systemd.systemd_run_available == true and
+      .systemd.user_manager_available == true and
+      (.managed_files | index("'"$root"'/bin/acfs-scope")) and
+      (.wrappers[] | select(.name == "ccs" and (.command | contains("claude"))))
+    ' <<<"$output" >/dev/null || return 1
+
+    [[ -x "$root/bin/acfs-scope" ]] || return 1
+    [[ -x "$root/bin/ccs" ]] || return 1
+    [[ -x "$root/bin/cods" ]] || return 1
+    [[ -x "$root/bin/gmis" ]] || return 1
+    [[ -x "$root/bin/acfs-local-build" ]] || return 1
+    grep -Fq "export PATH=\"$root/bin:" "$root/acfs-resource-profile.sh" || return 1
+    jq -e '.mode == "applied"' "$root/profile.json" >/dev/null || return 1
+    ! grep -R "MemoryMax=" "$root" >/dev/null 2>&1 || return 1
+
+    ACFS_FAKE_SYSTEMD_RUN_LOG="$log_file" \
+    PATH="$fake_bin:$root/bin:/usr/bin:/bin" \
+    "$root/bin/acfs-scope" agent -- true
+    grep -Fq -- "--slice=acfs-agent.slice" "$log_file" || return 1
+
+    pass "resource_profile_apply_writes_opt_in_wrappers"
+}
+
+test_resource_profile_disable_writes_marker_without_deleting_wrappers() {
+    local root fake_bin output
+    root="$ARTIFACT_DIR/resource-disable-home"
+    fake_bin="$(make_resource_profile_fake_bin resource-disable)"
+
+    ACFS_RESOURCE_PROFILE_HOME="$root" \
+    ACFS_CAPACITY_BIN_DIR="$fake_bin" \
+    bash "$CAPACITY_SH" --json --resource-profile --apply-resource-profile >/dev/null
+
+    output="$(
+        ACFS_RESOURCE_PROFILE_HOME="$root" \
+        ACFS_CAPACITY_BIN_DIR="$fake_bin" \
+        bash "$CAPACITY_SH" --json --resource-profile --disable-resource-profile
+    )"
+    write_output_artifact "resource_profile_disable" "json" "$output"
+
+    jq -e '.mode == "disabled"' <<<"$output" >/dev/null || return 1
+    jq -e '.mode == "disabled"' "$root/profile.json" >/dev/null || return 1
+    grep -Fq "resource profile disabled" "$root/acfs-resource-profile.sh" || return 1
+    [[ -x "$root/bin/acfs-scope" ]] || return 1
+
+    pass "resource_profile_disable_writes_marker_without_deleting_wrappers"
+}
+
 run_test() {
     local name="$1"
     if "$name"; then
@@ -214,6 +329,9 @@ main() {
     run_test test_low_disk_fails_capacity
     run_test test_invalid_workload_exits_2
     run_test test_human_output
+    run_test test_resource_profile_dry_run_json_is_read_only
+    run_test test_resource_profile_apply_writes_opt_in_wrappers
+    run_test test_resource_profile_disable_writes_marker_without_deleting_wrappers
 
     echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed"
     echo "Artifacts: $ARTIFACT_DIR"
