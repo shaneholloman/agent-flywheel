@@ -98,6 +98,9 @@ jobs:
       - name: Run installer fault-injection contract test
         run: bash tests/unit/test_installer_fault_contract.sh
 
+      - name: Run Ubuntu upgrade rehearsal tests
+        run: bash scripts/tests/ubuntu_upgrade_test.sh
+
   manifest-drift:
     name: Manifest Drift Check
     runs-on: ubuntu-latest

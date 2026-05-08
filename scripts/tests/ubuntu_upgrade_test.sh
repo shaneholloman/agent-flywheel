@@ -146,6 +146,70 @@ _clear_mocks() {
     unset _TEST_UBUNTU_VERSION
 }
 
+_write_base_state_fixture() {
+    local state_file="$1"
+
+    mkdir -p "$(dirname "$state_file")"
+    cat > "$state_file" <<'JSON'
+{
+  "schema_version": 3,
+  "version": "test",
+  "target_user": "alice",
+  "target_home": "/srv/alice",
+  "bin_dir": "/srv/alice/.local/bin",
+  "started_at": "2026-05-08T00:00:00Z",
+  "last_updated": "2026-05-08T00:00:00Z",
+  "mode": "vibe",
+  "completed_phases": [],
+  "failed_phase": null,
+  "failed_step": null,
+  "skip_postgres": false,
+  "skip_vault": false,
+  "skip_cloud": false,
+  "ubuntu_upgrade": {
+    "enabled": false,
+    "current_stage": "none",
+    "upgrade_path": [],
+    "completed_upgrades": []
+  }
+}
+JSON
+}
+
+_write_upgrade_stage_fixture() {
+    local state_file="$1"
+    local stage="$2"
+
+    _write_base_state_fixture "$state_file"
+    jq --arg stage "$stage" '
+      .ubuntu_upgrade = {
+        enabled: true,
+        started_at: "2026-05-08T00:00:00Z",
+        original_version: "24.04",
+        target_version: "25.10",
+        upgrade_path: ["25.04", "25.10"],
+        current_stage: $stage,
+        completed_upgrades: [],
+        current_upgrade: null,
+        needs_reboot: ($stage == "awaiting_reboot" or $stage == "pre_upgrade_reboot"),
+        resume_after_reboot: ($stage == "awaiting_reboot" or $stage == "pre_upgrade_reboot"),
+        last_error: null
+      }
+    ' "$state_file" > "${state_file}.tmp"
+    mv "${state_file}.tmp" "$state_file"
+}
+
+_calculate_path_for_version() {
+    local version="$1"
+    local target="${2:-2510}"
+
+    (
+        rehearsal_version="$version"
+        ubuntu_get_version_string() { printf '%s\n' "$rehearsal_version"; }
+        ubuntu_calculate_upgrade_path "$target" | paste -sd ' ' -
+    )
+}
+
 # ============================================================
 # Source the library under test
 # ============================================================
@@ -377,6 +441,177 @@ test_next_version_hardcoded() {
     assert_equals "25.10" "$result" "25.04 → 25.10"
 }
 
+test_upgrade_rehearsal_fixture_paths() {
+    log_test "Upgrade Rehearsal Fixture Paths"
+
+    local path=""
+    local unsupported_output=""
+
+    path="$(_calculate_path_for_version "22.04")"
+    assert_equals "24.04 25.04 25.10" "$path" "22.04 rehearses LTS hop plus interim chain"
+
+    path="$(_calculate_path_for_version "24.04")"
+    assert_equals "25.04 25.10" "$path" "24.04 skips EOL 24.10 and reaches 25.10"
+
+    path="$(_calculate_path_for_version "24.10")"
+    assert_equals "25.04 25.10" "$path" "24.10 resumes through supported interim releases"
+
+    path="$(_calculate_path_for_version "25.10")"
+    assert_empty "$path" "25.10 already current has empty path"
+
+    if unsupported_output="$(_calculate_path_for_version "23.10" 2>/dev/null)"; then
+        log_fail "Unsupported 23.10 should not produce a path, got: ${unsupported_output:-<empty>}"
+    else
+        log_pass "Unsupported 23.10 fails closed"
+    fi
+}
+
+test_upgrade_rehearsal_state_machine_multi_hop() {
+    log_test "Upgrade Rehearsal State Machine Multi-Hop"
+
+    if ! command -v jq >/dev/null 2>&1; then
+        log_skip "jq required for state-machine rehearsal"
+        return 0
+    fi
+
+    local test_dir=""
+    local state_file=""
+    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-upgrade-rehearsal.XXXXXX")"
+    state_file="$test_dir/state.json"
+    _write_base_state_fixture "$state_file"
+
+    if (
+        set -euo pipefail
+        export ACFS_STATE_FILE="$state_file"
+        # shellcheck source=scripts/lib/state.sh
+        source "$PROJECT_ROOT/scripts/lib/state.sh"
+
+        state_upgrade_init "22.04" "25.10" '["24.04","25.04","25.10"]'
+        [[ "$(state_upgrade_get_next_version)" == "24.04" ]]
+
+        state_upgrade_start "22.04" "24.04"
+        jq -e '.ubuntu_upgrade.current_stage == "upgrading" and .ubuntu_upgrade.current_upgrade.to == "24.04"' "$state_file" >/dev/null
+        state_upgrade_complete "24.04"
+        state_upgrade_needs_reboot
+        jq -e '.ubuntu_upgrade.current_stage == "awaiting_reboot" and .ubuntu_upgrade.needs_reboot == true and .ubuntu_upgrade.resume_after_reboot == true' "$state_file" >/dev/null
+
+        state_upgrade_resumed
+        [[ "$(state_upgrade_get_next_version)" == "25.04" ]]
+        state_upgrade_start "24.04" "25.04"
+        state_upgrade_complete "25.04"
+        state_upgrade_needs_reboot
+
+        state_upgrade_resumed
+        [[ "$(state_upgrade_get_next_version)" == "25.10" ]]
+        state_upgrade_start "25.04" "25.10"
+        state_upgrade_complete "25.10"
+        state_upgrade_is_complete
+
+        state_upgrade_mark_complete
+        jq -e '
+          .ubuntu_upgrade.current_stage == "completed" and
+          .ubuntu_upgrade.needs_reboot == false and
+          .ubuntu_upgrade.resume_after_reboot == false and
+          .ubuntu_upgrade.current_upgrade == null and
+          (.ubuntu_upgrade.completed_upgrades | length) == 3
+        ' "$state_file" >/dev/null
+    ); then
+        log_pass "Multi-hop state machine reaches terminal completed state"
+    else
+        log_fail "Multi-hop state machine rehearsal failed"
+    fi
+}
+
+test_upgrade_rehearsal_reboot_marker_context() {
+    log_test "Upgrade Rehearsal Reboot Marker Context"
+
+    if ! command -v jq >/dev/null 2>&1; then
+        log_skip "jq required for reboot marker rehearsal"
+        return 0
+    fi
+
+    local test_dir=""
+    local state_file=""
+    local args_line=""
+
+    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/acfs-upgrade-reboot-marker.XXXXXX")"
+    state_file="$test_dir/pre/state.json"
+    _write_upgrade_stage_fixture "$state_file" "pre_upgrade_reboot"
+    if args_line="$(
+        set -euo pipefail
+        export ACFS_RESUME_DIR="$test_dir/pre/resume"
+        export ACFS_STATE_FILE="$state_file"
+        export ACFS_HOME="$test_dir/pre/home/.acfs"
+        export TARGET_USER="alice"
+        unset TARGET_HOME
+        HOME="/root"
+        ubuntu_lookup_passwd_home() { [[ "${1:-}" == "alice" ]] && printf '%s\n' "$test_dir/pre/home"; }
+        ubuntu_resolve_current_user() { printf '%s\n' 'root'; }
+        cp() {
+            local destination="${*: -1}"
+            [[ "$destination" == /etc/* ]] && return 0
+            command cp "$@"
+        }
+        chmod() { command chmod "$@" 2>/dev/null || true; }
+        systemctl() { :; }
+        mkdir() {
+            [[ "$*" == "-p /var/log/acfs" ]] && return 0
+            command mkdir "$@"
+        }
+        upgrade_create_status_script() { :; }
+        upgrade_setup_infrastructure "$PROJECT_ROOT" --yes --mode vibe >/dev/null
+        # shellcheck disable=SC1091
+        source "$ACFS_RESUME_DIR/continue_context.env"
+        printf '%s\n' "${CONTINUE_INSTALL_ARGS[*]}"
+    )"; then
+        if [[ "$args_line" == "--yes --mode vibe" ]]; then
+            log_pass "Pre-upgrade reboot marker keeps Ubuntu upgrade enabled after reboot"
+        else
+            log_fail "Pre-upgrade reboot marker produced unexpected args: $args_line"
+        fi
+    else
+        log_fail "Pre-upgrade reboot marker rehearsal failed"
+    fi
+
+    state_file="$test_dir/awaiting/state.json"
+    _write_upgrade_stage_fixture "$state_file" "awaiting_reboot"
+    if args_line="$(
+        set -euo pipefail
+        export ACFS_RESUME_DIR="$test_dir/awaiting/resume"
+        export ACFS_STATE_FILE="$state_file"
+        export ACFS_HOME="$test_dir/awaiting/home/.acfs"
+        export TARGET_USER="alice"
+        unset TARGET_HOME
+        HOME="/root"
+        ubuntu_lookup_passwd_home() { [[ "${1:-}" == "alice" ]] && printf '%s\n' "$test_dir/awaiting/home"; }
+        ubuntu_resolve_current_user() { printf '%s\n' 'root'; }
+        cp() {
+            local destination="${*: -1}"
+            [[ "$destination" == /etc/* ]] && return 0
+            command cp "$@"
+        }
+        chmod() { command chmod "$@" 2>/dev/null || true; }
+        systemctl() { :; }
+        mkdir() {
+            [[ "$*" == "-p /var/log/acfs" ]] && return 0
+            command mkdir "$@"
+        }
+        upgrade_create_status_script() { :; }
+        upgrade_setup_infrastructure "$PROJECT_ROOT" --yes --mode vibe >/dev/null
+        # shellcheck disable=SC1091
+        source "$ACFS_RESUME_DIR/continue_context.env"
+        printf '%s\n' "${CONTINUE_INSTALL_ARGS[*]}"
+    )"; then
+        if [[ "$args_line" == "--yes --mode vibe --skip-ubuntu-upgrade" ]]; then
+            log_pass "Post-upgrade reboot marker skips repeat Ubuntu upgrade during continuation"
+        else
+            log_fail "Post-upgrade reboot marker produced unexpected args: $args_line"
+        fi
+    else
+        log_fail "Post-upgrade reboot marker rehearsal failed"
+    fi
+}
+
 # ============================================================
 # Preflight Check Tests
 # ============================================================
@@ -468,6 +703,11 @@ test_upgrade_setup_infrastructure_persists_resolved_target_home() {
         }
         cp() { :; }
         chmod() { :; }
+        systemctl() { :; }
+        mkdir() {
+            [[ "$*" == "-p /var/log/acfs" ]] && return 0
+            command mkdir "$@"
+        }
         state_get_file() { return 1; }
         upgrade_setup_infrastructure "$PROJECT_ROOT" --yes >/dev/null 2>&1 || exit 1
         # shellcheck disable=SC1090
@@ -669,6 +909,9 @@ run_all_tests() {
     test_upgrade_path_lts_hop || true
     test_upgrade_path_no_upgrade_needed || true
     test_next_version_hardcoded || true
+    test_upgrade_rehearsal_fixture_paths || true
+    test_upgrade_rehearsal_state_machine_multi_hop || true
+    test_upgrade_rehearsal_reboot_marker_context || true
     echo ""
 
     echo "--- Preflight Check Tests ---"
