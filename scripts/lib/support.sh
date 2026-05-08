@@ -253,6 +253,7 @@ OUTPUT_BASE_EXPLICIT=false
 REDACTION_COUNT=0
 DOCTOR_TIMEOUT="${SUPPORT_BUNDLE_DOCTOR_TIMEOUT:-120}"
 SWARM_STATUS_TIMEOUT="${SUPPORT_BUNDLE_SWARM_STATUS_TIMEOUT:-10}"
+PROVENANCE_TIMEOUT="${SUPPORT_BUNDLE_PROVENANCE_TIMEOUT:-10}"
 SUPPORT_SYSTEM_STATE_WAS_EXPLICIT=false
 [[ -n "${ACFS_SYSTEM_STATE_FILE:-}" ]] && [[ "${ACFS_SYSTEM_STATE_FILE%/}" != "/var/lib/acfs/state.json" ]] && SUPPORT_SYSTEM_STATE_WAS_EXPLICIT=true
 SUPPORT_SYSTEM_STATE_FILE="$(support_sanitize_abs_nonroot_path "${ACFS_SYSTEM_STATE_FILE:-/var/lib/acfs/state.json}" 2>/dev/null || true)"
@@ -964,6 +965,42 @@ capture_swarm_status_json() {
     return 1
 }
 
+# Capture installed-tool provenance ledger JSON.
+# Usage: capture_provenance_json <bundle_dir>
+capture_provenance_json() {
+    local bundle_dir="$1"
+
+    local provenance_script=""
+    if [[ -n "$_SUPPORT_ACFS_HOME" ]] && [[ -f "$_SUPPORT_ACFS_HOME/scripts/lib/provenance.sh" ]]; then
+        provenance_script="$_SUPPORT_ACFS_HOME/scripts/lib/provenance.sh"
+    elif [[ -f "$_SUPPORT_SCRIPT_DIR/provenance.sh" ]]; then
+        provenance_script="$_SUPPORT_SCRIPT_DIR/provenance.sh"
+    fi
+
+    if [[ -z "$provenance_script" ]]; then
+        log_warn "provenance.sh not found, skipping tool provenance"
+        return 1
+    fi
+
+    log_detail "Running acfs provenance --json ..."
+    local timeout_bin=""
+    timeout_bin="$(support_system_binary_path timeout 2>/dev/null || command -v timeout 2>/dev/null || true)"
+    if [[ -n "$timeout_bin" ]]; then
+        if "$timeout_bin" "$PROVENANCE_TIMEOUT" bash "$provenance_script" --json > "$bundle_dir/provenance.json" 2>/dev/null; then
+            record_bundle_file "provenance.json"
+            return 0
+        fi
+    elif bash "$provenance_script" --json > "$bundle_dir/provenance.json" 2>/dev/null; then
+        record_bundle_file "provenance.json"
+        return 0
+    fi
+
+    log_warn "Tool provenance capture timed out or failed"
+    echo '{"error": "tool provenance capture failed or timed out"}' > "$bundle_dir/provenance.json"
+    record_bundle_file "provenance.json"
+    return 1
+}
+
 # Capture tool versions.
 # Usage: capture_versions <bundle_dir>
 capture_versions() {
@@ -1374,6 +1411,7 @@ main() {
     log_detail "Running health checks..."
     capture_doctor_json "$bundle_dir" || true
     capture_swarm_status_json "$bundle_dir" || true
+    capture_provenance_json "$bundle_dir" || true
 
     # --- Capture versions ---
     log_detail "Collecting tool versions..."
