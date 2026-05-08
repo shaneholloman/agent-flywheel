@@ -50,6 +50,85 @@ _acfs() {
                         '--html[Self-contained HTML dashboard]' \
                         '--minimal[Just the essentials]'
                     ;;
+                capacity|cap)
+                    _arguments \
+                        '--json[JSON output for scripting]' \
+                        '--workload[Workload model]:workload:(light standard heavy)' \
+                        '--profile[Target agent count]:agents:' \
+                        '--recommend-ntm[Include NTM launch profile]' \
+                        '-h[Show help message]' \
+                        '--help[Show help message]'
+                    ;;
+                swarm)
+                    _arguments -C \
+                        '1: :_acfs_swarm_commands' \
+                        '*::arg:->swarm_args'
+
+                    case $state in
+                        swarm_args)
+                            case $line[1] in
+                                status|snapshot)
+                                    _arguments \
+                                        '--json[JSON output]' \
+                                        '-h[Show help message]' \
+                                        '--help[Show help message]'
+                                    ;;
+                                doctor|preflight)
+                                    _arguments \
+                                        '--json[JSON output]' \
+                                        '--status-file[Read an existing swarm status snapshot]:file:_files' \
+                                        '-h[Show help message]' \
+                                        '--help[Show help message]'
+                                    ;;
+                                simulate)
+                                    _arguments \
+                                        '--json[JSON output]' \
+                                        '--counts[Comma-separated agent counts]:counts:' \
+                                        '--workload[Workload model]:workload:(light standard heavy)' \
+                                        '--artifact-dir[Directory for simulation artifacts]:directory:_files -/' \
+                                        '--status-file[Read an existing swarm status snapshot]:file:_files' \
+                                        '-h[Show help message]' \
+                                        '--help[Show help message]'
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
+                swarm-status|swarm_status)
+                    _arguments \
+                        '--json[JSON output]' \
+                        '-h[Show help message]' \
+                        '--help[Show help message]'
+                    ;;
+                swarm-simulate|swarm_simulate)
+                    _arguments \
+                        '--json[JSON output]' \
+                        '--counts[Comma-separated agent counts]:counts:' \
+                        '--workload[Workload model]:workload:(light standard heavy)' \
+                        '--artifact-dir[Directory for simulation artifacts]:directory:_files -/' \
+                        '--status-file[Read an existing swarm status snapshot]:file:_files' \
+                        '-h[Show help message]' \
+                        '--help[Show help message]'
+                    ;;
+                coordinate|coord)
+                    _arguments -C \
+                        '1: :_acfs_coordinate_commands' \
+                        '*::arg:->coordinate_args'
+
+                    case $state in
+                        coordinate_args)
+                            case $line[1] in
+                                doctor|preflight)
+                                    _arguments \
+                                        '--json[JSON output]' \
+                                        '--status-file[Read an existing swarm status snapshot]:file:_files' \
+                                        '-h[Show help message]' \
+                                        '--help[Show help message]'
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                    ;;
                 cheatsheet|cs)
                     _arguments \
                         '--json[JSON output for scripting]'
@@ -158,6 +237,15 @@ _acfs_commands() {
         'progress:View progress (alias for continue)'
         'info:Quick system overview (hostname, IP, uptime, progress)'
         'i:System overview (alias for info)'
+        'capacity:Estimate safe/recommended agent counts'
+        'cap:Capacity report (alias for capacity)'
+        'swarm:Swarm status, doctor, and dry-run simulation'
+        'swarm-status:Local swarm status snapshot'
+        'swarm_status:Local swarm status snapshot'
+        'swarm-simulate:Dry-run fleet-scale simulation harness'
+        'swarm_simulate:Dry-run fleet-scale simulation harness'
+        'coordinate:Coordination preflight helpers'
+        'coord:Coordination helpers (alias for coordinate)'
         'cheatsheet:Command reference (aliases, shortcuts)'
         'cs:Command reference (alias for cheatsheet)'
         'changelog:Show recent project changes'
@@ -196,6 +284,29 @@ _acfs_dashboard_commands() {
         'serve:Serve dashboard locally'
     )
     _describe -t commands 'dashboard command' commands
+}
+
+_acfs_swarm_commands() {
+    local commands
+    commands=(
+        'status:Local coordination snapshot'
+        'snapshot:Local coordination snapshot'
+        'doctor:Pre-swarm coordination preflight'
+        'preflight:Pre-swarm coordination preflight'
+        'simulate:Dry-run fleet-scale simulation harness'
+        'help:Show swarm help'
+    )
+    _describe -t commands 'swarm command' commands
+}
+
+_acfs_coordinate_commands() {
+    local commands
+    commands=(
+        'doctor:Pre-swarm coordination preflight'
+        'preflight:Pre-swarm coordination preflight'
+        'help:Show coordinate help'
+    )
+    _describe -t commands 'coordinate command' commands
 }
 
 _acfs "$@"

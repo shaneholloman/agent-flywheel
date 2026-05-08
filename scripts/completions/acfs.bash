@@ -8,13 +8,19 @@ _acfs_completions() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="newproj new services svc services-setup setup doctor check session sessions update status continue progress info i cheatsheet cs changelog changes log export-config export dashboard dash support-bundle bundle version help"
+    local commands="newproj new services svc services-setup setup doctor check session sessions update status continue progress info i capacity cap swarm swarm-status swarm_status swarm-simulate swarm_simulate coordinate coord cheatsheet cs changelog changes log export-config export dashboard dash support-bundle bundle version help"
 
     # Subcommand-specific flags
     local newproj_flags="-i --interactive --no-br --no-claude --no-agents -h --help"
     local doctor_flags="--json --deep --no-cache --fix --dry-run -h --help"
     local status_flags="--json --short --check-updates -h --help"
     local info_flags="--json --html --minimal"
+    local capacity_flags="--json --workload --profile --recommend-ntm -h --help"
+    local swarm_subcommands="status snapshot doctor preflight simulate help"
+    local swarm_status_flags="--json -h --help"
+    local swarm_doctor_flags="--json --status-file -h --help"
+    local swarm_simulate_flags="--json --counts --workload --artifact-dir --status-file -h --help"
+    local coordinate_subcommands="doctor preflight help"
     local cheatsheet_flags="--json"
     local changelog_flags="--all --since --json -h --help"
     local export_config_flags="--json --minimal --output -h --help"
@@ -34,7 +40,7 @@ _acfs_completions() {
     local cmd=""
     for ((i=1; i < cword; i++)); do
         case "${words[i]}" in
-            newproj|new|services|svc|services-setup|setup|doctor|check|session|sessions|update|status|continue|progress|info|i|cheatsheet|cs|changelog|changes|log|export-config|export|dashboard|dash|support-bundle|bundle|version|help)
+            newproj|new|services|svc|services-setup|setup|doctor|check|session|sessions|update|status|continue|progress|info|i|capacity|cap|swarm|swarm-status|swarm_status|swarm-simulate|swarm_simulate|coordinate|coord|cheatsheet|cs|changelog|changes|log|export-config|export|dashboard|dash|support-bundle|bundle|version|help)
                 cmd="${words[i]}"
                 break
                 ;;
@@ -56,6 +62,72 @@ _acfs_completions() {
             ;;
         info|i)
             mapfile -t COMPREPLY < <(compgen -W "$info_flags" -- "$cur")
+            return
+            ;;
+        capacity|cap)
+            mapfile -t COMPREPLY < <(compgen -W "$capacity_flags" -- "$cur")
+            return
+            ;;
+        swarm)
+            local swarm_cmd=""
+            for ((j=i+1; j < cword; j++)); do
+                case "${words[j]}" in
+                    status|snapshot|doctor|preflight|simulate|help)
+                        swarm_cmd="${words[j]}"
+                        break
+                        ;;
+                esac
+            done
+
+            case "$swarm_cmd" in
+                status|snapshot)
+                    mapfile -t COMPREPLY < <(compgen -W "$swarm_status_flags" -- "$cur")
+                    ;;
+                doctor|preflight)
+                    mapfile -t COMPREPLY < <(compgen -W "$swarm_doctor_flags" -- "$cur")
+                    ;;
+                simulate)
+                    mapfile -t COMPREPLY < <(compgen -W "$swarm_simulate_flags" -- "$cur")
+                    ;;
+                help)
+                    COMPREPLY=()
+                    ;;
+                *)
+                    mapfile -t COMPREPLY < <(compgen -W "$swarm_subcommands" -- "$cur")
+                    ;;
+            esac
+            return
+            ;;
+        swarm-status|swarm_status)
+            mapfile -t COMPREPLY < <(compgen -W "$swarm_status_flags" -- "$cur")
+            return
+            ;;
+        swarm-simulate|swarm_simulate)
+            mapfile -t COMPREPLY < <(compgen -W "$swarm_simulate_flags" -- "$cur")
+            return
+            ;;
+        coordinate|coord)
+            local coord_cmd=""
+            for ((j=i+1; j < cword; j++)); do
+                case "${words[j]}" in
+                    doctor|preflight|help)
+                        coord_cmd="${words[j]}"
+                        break
+                        ;;
+                esac
+            done
+
+            case "$coord_cmd" in
+                doctor|preflight)
+                    mapfile -t COMPREPLY < <(compgen -W "$swarm_doctor_flags" -- "$cur")
+                    ;;
+                help)
+                    COMPREPLY=()
+                    ;;
+                *)
+                    mapfile -t COMPREPLY < <(compgen -W "$coordinate_subcommands" -- "$cur")
+                    ;;
+            esac
             return
             ;;
         cheatsheet|cs)

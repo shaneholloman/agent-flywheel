@@ -996,6 +996,7 @@ print_acfs_help() {
     echo "  capacity [options]  Estimate safe/recommended agent counts"
     echo "  swarm status        Local swarm/coordination JSON snapshot"
     echo "  swarm doctor        Pre-swarm coordination preflight"
+    echo "  swarm simulate      Dry-run 10/25/50 logical-agent harness"
     echo "  coordinate doctor   Alias for swarm doctor"
     echo "  cheatsheet          Command reference (aliases, shortcuts)"
     echo "  changelog [options] Show recent project changes"
@@ -4282,8 +4283,20 @@ main() {
                     echo "Error: swarm_doctor.sh not found" >&2
                     return 1
                     ;;
+                simulate|simulation|dry-run)
+                    [[ $# -gt 0 ]] && shift
+                    local swarm_simulation_script=""
+                    swarm_simulation_script="$(_acfs_doctor_find_lib_script "swarm_simulation.sh" 2>/dev/null || true)"
+
+                    if [[ -n "$swarm_simulation_script" ]]; then
+                        _acfs_doctor_exec_bash_script "$swarm_simulation_script" "$@"
+                    fi
+
+                    echo "Error: swarm_simulation.sh not found" >&2
+                    return 1
+                    ;;
                 help|-h|--help)
-                    echo "Usage: acfs swarm <status|doctor> [--json]"
+                    echo "Usage: acfs swarm <status|doctor|simulate> [--json]"
                     return 0
                     ;;
                 *)
@@ -4303,6 +4316,18 @@ main() {
             fi
 
             echo "Error: swarm_status.sh not found" >&2
+            return 1
+            ;;
+        swarm-simulate|swarm_simulate)
+            shift
+            local swarm_simulation_script=""
+            swarm_simulation_script="$(_acfs_doctor_find_lib_script "swarm_simulation.sh" 2>/dev/null || true)"
+
+            if [[ -n "$swarm_simulation_script" ]]; then
+                _acfs_doctor_exec_bash_script "$swarm_simulation_script" "$@"
+            fi
+
+            echo "Error: swarm_simulation.sh not found" >&2
             return 1
             ;;
         coordinate|coord)

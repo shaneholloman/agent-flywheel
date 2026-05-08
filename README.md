@@ -3349,6 +3349,16 @@ tmux session: acfs-swarm
 └── ...
 ```
 
+### Dry-Run Swarm Simulation
+
+Before launching a large real swarm, ACFS can run an offline simulation of the control plane:
+
+```bash
+acfs swarm simulate
+```
+
+The default simulation runs 10, 25, and 50 logical-agent scenarios without launching tmux sessions, model CLIs, Beads mutations, Agent Mail writes, or local CPU-heavy builds. It writes artifacts for each scenario: generated launch plan, telemetry JSON, capacity/resource sample, timing, and pass/fail summary. Treat this as a local readiness harness, not a substitute for provider factory tests on real VPS hosts.
+
 ---
 
 ## Philosophy
