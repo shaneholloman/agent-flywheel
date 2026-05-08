@@ -858,6 +858,214 @@ record_bundle_file() {
     BUNDLE_FILES+=("$relative_path")
 }
 
+support_manifest_diagnostic_json() {
+    local bundle_dir="$1"
+    local relative_path="$2"
+    local label="$3"
+    local categories_json="$4"
+    local jq_bin="$5"
+    local file_path="$bundle_dir/$relative_path"
+
+    if [[ ! -f "$file_path" ]]; then
+        "$jq_bin" -n \
+            --arg source_file "$relative_path" \
+            --arg label "$label" \
+            --argjson categories "$categories_json" \
+            '{
+                proof_schema_version: 1,
+                included: false,
+                status: "skipped",
+                source_file: $source_file,
+                source_status: "missing",
+                source_status_reason: "source file not collected",
+                redaction_categories: $categories,
+                paths_redacted: true,
+                raw_hosts_collected: false,
+                raw_paths_collected: false,
+                records: {
+                    raw_count: 0,
+                    sanitized_count: 0,
+                    raw_records_collected: false,
+                    raw_values_collected: false
+                },
+                redaction: {
+                    categories: $categories,
+                    paths_redacted: true,
+                    raw_values_collected: false,
+                    secrets_collected: false,
+                    raw_hosts_collected: false,
+                    raw_paths_collected: false,
+                    sanitized_records_only: true
+                },
+                summary: {
+                    status: "skipped",
+                    paths_redacted: true,
+                    raw_paths_collected: false
+                },
+                source: {valid_json: false, malformed: false}
+            }'
+        return 0
+    fi
+
+    if ! "$jq_bin" . "$file_path" >/dev/null 2>&1; then
+        "$jq_bin" -n \
+            --arg source_file "$relative_path" \
+            --arg label "$label" \
+            --argjson categories "$categories_json" \
+            '{
+                proof_schema_version: 1,
+                included: true,
+                status: "fail",
+                source_file: $source_file,
+                source_status: "malformed",
+                source_status_reason: "malformed JSON; raw content intentionally not summarized",
+                redaction_categories: $categories,
+                paths_redacted: true,
+                raw_hosts_collected: false,
+                raw_paths_collected: false,
+                records: {
+                    raw_count: 0,
+                    sanitized_count: 0,
+                    raw_records_collected: false,
+                    raw_values_collected: false
+                },
+                redaction: {
+                    categories: $categories,
+                    paths_redacted: true,
+                    raw_values_collected: false,
+                    secrets_collected: false,
+                    raw_hosts_collected: false,
+                    raw_paths_collected: false,
+                    sanitized_records_only: true
+                },
+                summary: {
+                    status: "fail",
+                    paths_redacted: true,
+                    raw_paths_collected: false
+                },
+                source: {valid_json: false, malformed: true}
+            }'
+        return 0
+    fi
+
+    "$jq_bin" \
+        --arg source_file "$relative_path" \
+        --arg label "$label" \
+        --argjson categories "$categories_json" \
+        '
+        def bool_or_false($v): if $v == true then true else false end;
+        def status_value:
+            (.status // .summary.status // .capture.status // "present")
+            | if type == "string" and length > 0 then . else "present" end;
+        def record_count:
+            if type == "array" then length
+            elif (.summary.hosts_total | type) == "number" then .summary.hosts_total
+            elif (.managed_file_count | type) == "number" then .managed_file_count
+            elif (.probes | type) == "array" then (.probes | length)
+            elif (.probes | type) == "object" then (.probes | keys | length)
+            elif (.checks | type) == "array" then (.checks | length)
+            elif (.timeline | type) == "object" then (.timeline | keys | length)
+            elif (.versions | type) == "object" then (.versions | keys | length)
+            elif (.summary.total | type) == "number" then .summary.total
+            elif type == "object" then ([paths(scalars)] | length)
+            else 0
+            end;
+        def paths_redacted_value:
+            if (.redaction.paths_redacted | type) == "boolean" then .redaction.paths_redacted
+            elif $label == "versions" then false
+            else true
+            end;
+        def raw_hosts_collected_value:
+            bool_or_false(.redaction.raw_hosts_collected // .inventory.raw_hosts_collected // false);
+        def raw_paths_collected_value:
+            bool_or_false(.redaction.raw_paths_collected // false);
+        def source_included($status):
+            if $label == "swarm_inventory" and (.inventory.present == false) then false
+            elif $status == "skipped" then false
+            else true
+            end;
+        status_value as $source_status
+        | record_count as $count
+        | paths_redacted_value as $paths_redacted
+        | raw_hosts_collected_value as $raw_hosts_collected
+        | raw_paths_collected_value as $raw_paths_collected
+        | {
+            proof_schema_version: 1,
+            included: source_included($source_status),
+            status: $source_status,
+            source_file: $source_file,
+            source_status: $source_status,
+            source_status_reason: (.capture.reason // .reason // null),
+            redaction_categories: $categories,
+            paths_redacted: $paths_redacted,
+            raw_hosts_collected: $raw_hosts_collected,
+            raw_paths_collected: $raw_paths_collected,
+            records: {
+                raw_count: $count,
+                sanitized_count: $count,
+                raw_records_collected: ($raw_hosts_collected or $raw_paths_collected),
+                raw_values_collected: false
+            },
+            redaction: {
+                categories: $categories,
+                paths_redacted: $paths_redacted,
+                raw_values_collected: false,
+                secrets_collected: bool_or_false(.redaction.secrets_collected // false),
+                raw_hosts_collected: $raw_hosts_collected,
+                raw_paths_collected: $raw_paths_collected,
+                sanitized_records_only: true
+            },
+            summary: {
+                status: $source_status,
+                mode: (.mode // null),
+                paths_redacted: $paths_redacted,
+                raw_paths_collected: $raw_paths_collected,
+                managed_file_count: (.managed_file_count // null)
+            },
+            probes: (if (.probes | type) == "array" then [.probes[] | {id: (.id // null), status: (.status // "unknown"), reason: (.reason // null)}] else [] end),
+            source: {valid_json: true, malformed: false}
+        }
+        ' "$file_path" 2>/dev/null || {
+        "$jq_bin" -n \
+            --arg source_file "$relative_path" \
+            --arg label "$label" \
+            --argjson categories "$categories_json" \
+            '{
+                proof_schema_version: 1,
+                included: true,
+                status: "warn",
+                source_file: $source_file,
+                source_status: "summary_failed",
+                source_status_reason: "diagnostic proof rendering failed",
+                redaction_categories: $categories,
+                paths_redacted: true,
+                raw_hosts_collected: false,
+                raw_paths_collected: false,
+                records: {
+                    raw_count: 0,
+                    sanitized_count: 0,
+                    raw_records_collected: false,
+                    raw_values_collected: false
+                },
+                redaction: {
+                    categories: $categories,
+                    paths_redacted: true,
+                    raw_values_collected: false,
+                    secrets_collected: false,
+                    raw_hosts_collected: false,
+                    raw_paths_collected: false,
+                    sanitized_records_only: true
+                },
+                summary: {
+                    status: "warn",
+                    paths_redacted: true,
+                    raw_paths_collected: false
+                },
+                source: {valid_json: false, malformed: false}
+            }'
+    }
+}
+
 # Generate a bundle name that stays unique even when multiple runs land
 # in the same second or a prior bundle path already exists.
 # Usage: next_bundle_name
@@ -1794,29 +2002,22 @@ write_manifest() {
     # Build files array from BUNDLE_FILES
     local files_json
     files_json=$(printf '%s\n' "${BUNDLE_FILES[@]}" | "$jq_bin" -R . | "$jq_bin" -s .) || files_json="[]"
-    local swarm_timeline_manifest="null"
-    if [[ -f "$bundle_dir/swarm_timeline.json" ]]; then
-        swarm_timeline_manifest="$("$jq_bin" '[.probes[]? | {id: .id, status: .status, reason: (.reason // null)}]' "$bundle_dir/swarm_timeline.json" 2>/dev/null || echo null)"
-    fi
-    local resource_profile_manifest="null"
-    if [[ -f "$bundle_dir/resource_profile.json" ]]; then
-        resource_profile_manifest="$("$jq_bin" '{
-            status: (.status // "unknown"),
-            mode: (.mode // null),
-            paths_redacted: (if .redaction.paths_redacted == true then true else false end),
-            raw_paths_collected: (if .redaction.raw_paths_collected == true then true else false end),
-            managed_file_count: (.managed_file_count // null)
-        }' "$bundle_dir/resource_profile.json" 2>/dev/null || echo null)"
-    fi
-    local swarm_inventory_manifest="null"
-    if [[ -f "$bundle_dir/swarm_inventory.json" ]]; then
-        swarm_inventory_manifest="$("$jq_bin" '{
-            included: (.inventory.present == true),
-            status: (.status // "unknown"),
-            paths_redacted: (if .redaction.paths_redacted == true then true else false end),
-            raw_hosts_collected: (if .redaction.raw_hosts_collected == true then true else false end)
-        }' "$bundle_dir/swarm_inventory.json" 2>/dev/null || echo null)"
-    fi
+    local doctor_manifest=""
+    local swarm_status_manifest=""
+    local swarm_timeline_manifest=""
+    local provenance_manifest=""
+    local resource_profile_manifest=""
+    local swarm_inventory_manifest=""
+    local versions_manifest=""
+    local environment_manifest=""
+    doctor_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "doctor.json" "doctor" '["secret_values","local_paths","command_output"]' "$jq_bin")"
+    swarm_status_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "swarm_status.json" "swarm_status" '["host_metrics","local_paths","command_output"]' "$jq_bin")"
+    swarm_timeline_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "swarm_timeline.json" "swarm_timeline" '["agent_mail_bodies","terminal_history","tmux_panes","command_output","local_paths"]' "$jq_bin")"
+    provenance_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "provenance.json" "provenance" '["tool_versions","install_sources","local_paths"]' "$jq_bin")"
+    resource_profile_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "resource_profile.json" "resource_profile" '["local_paths","wrapper_commands","secret_values"]' "$jq_bin")"
+    swarm_inventory_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "swarm_inventory.json" "swarm_inventory" '["hostnames","ip_addresses","ssh_users","ssh_key_paths","provider_ids","repo_paths","home_paths","token_like_notes"]' "$jq_bin")"
+    versions_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "versions.json" "versions" '["tool_versions"]' "$jq_bin")"
+    environment_manifest="$(support_manifest_diagnostic_json "$bundle_dir" "environment.json" "environment" '["hostnames","home_paths","local_paths"]' "$jq_bin")"
 
     "$jq_bin" -n \
         --argjson schema_version 1 \
@@ -1828,9 +2029,14 @@ write_manifest() {
         --argjson file_count "${#BUNDLE_FILES[@]}" \
         --argjson redaction_enabled "$( [[ "$REDACT" == "true" ]] && echo true || echo false )" \
         --argjson redaction_files_modified "$REDACTION_COUNT" \
+        --argjson doctor_manifest "$doctor_manifest" \
+        --argjson swarm_status_manifest "$swarm_status_manifest" \
         --argjson swarm_timeline_manifest "$swarm_timeline_manifest" \
+        --argjson provenance_manifest "$provenance_manifest" \
         --argjson resource_profile_manifest "$resource_profile_manifest" \
         --argjson swarm_inventory_manifest "$swarm_inventory_manifest" \
+        --argjson versions_manifest "$versions_manifest" \
+        --argjson environment_manifest "$environment_manifest" \
         '{
             schema_version: $schema_version,
             created_at: $created_at,
@@ -1845,20 +2051,14 @@ write_manifest() {
                 patterns: ["api_key", "aws_key", "github_token", "github_pat", "vault_token", "slack_token", "bearer", "jwt", "password", "private_key", "generic_secret", "message_snippet", "command_path"]
             },
             diagnostics: {
-                swarm_timeline: {
-                    included: ($swarm_timeline_manifest != null),
-                    probes: ($swarm_timeline_manifest // [])
-                },
-                resource_profile: {
-                    included: ($resource_profile_manifest != null),
-                    summary: ($resource_profile_manifest // {})
-                },
-                swarm_inventory: ($swarm_inventory_manifest // {
-                    included: false,
-                    status: "skipped",
-                    paths_redacted: true,
-                    raw_hosts_collected: false
-                })
+                doctor: $doctor_manifest,
+                swarm_status: $swarm_status_manifest,
+                swarm_timeline: $swarm_timeline_manifest,
+                provenance: $provenance_manifest,
+                resource_profile: $resource_profile_manifest,
+                swarm_inventory: $swarm_inventory_manifest,
+                versions: $versions_manifest,
+                environment: $environment_manifest
             }
         }' > "$manifest_file" 2>/dev/null || return 1
 }
@@ -2080,6 +2280,8 @@ redact_file() {
     # Skip binary files (check first 512 bytes for null bytes)
     # -a forces grep to treat input as text (otherwise it silently skips binary data)
     if head -c 512 "$file" 2>/dev/null | grep -qaP '\x00'; then
+        printf '<REDACTED:binary_file>\n' > "$file" 2>/dev/null || return 0
+        REDACTION_COUNT=$((REDACTION_COUNT + 1))
         return 0
     fi
 

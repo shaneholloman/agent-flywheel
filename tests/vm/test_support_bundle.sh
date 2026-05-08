@@ -292,6 +292,27 @@ test_manifest_json_valid() {
         harness_fail "Manifest includes skipped swarm inventory diagnostics"
     fi
 
+    if jq -e '
+        (.diagnostics | keys | length) >= 8 and
+        ([.diagnostics[] | select(
+            .proof_schema_version == 1 and
+            (.included | type) == "boolean" and
+            (.source_status | type) == "string" and
+            (.records.raw_count | type) == "number" and
+            (.records.sanitized_count | type) == "number" and
+            .records.raw_values_collected == false and
+            (.redaction.categories | type) == "array" and
+            .redaction.raw_values_collected == false
+        )] | length) == (.diagnostics | keys | length) and
+        (.diagnostics.doctor.redaction.categories | index("secret_values")) and
+        (.diagnostics.swarm_inventory.redaction.categories | index("hostnames")) and
+        (.diagnostics.environment.redaction.categories | index("home_paths"))
+    ' "$manifest" >/dev/null 2>&1; then
+        harness_pass "Manifest includes redaction proof metadata for diagnostic sources"
+    else
+        harness_fail "Manifest includes redaction proof metadata for diagnostic sources"
+    fi
+
     rm -rf "$extract_dir"
     cleanup_mock_env
 }
@@ -625,6 +646,59 @@ test_redaction_catches_secrets() {
     cleanup_mock_env
 }
 
+test_binary_log_replaced_with_redaction_marker() {
+    setup_mock_env
+    local output_dir="$MOCK_HOME/test-output"
+    mkdir -p "$output_dir"
+
+    printf 'binary-prefix\000BINARY_SECRET_SHOULD_NOT_LEAK\n' > "$MOCK_ACFS/logs/install-20260126_235959.log"
+
+    local archive_path
+    archive_path=$(HOME="$MOCK_HOME" ACFS_HOME="$MOCK_ACFS" \
+        SUPPORT_BUNDLE_DOCTOR_TIMEOUT=1 \
+        SUPPORT_BUNDLE_SWARM_STATUS_TIMEOUT=1 \
+        SUPPORT_BUNDLE_PROVENANCE_TIMEOUT=1 \
+        SUPPORT_BUNDLE_RESOURCE_PROFILE_TIMEOUT=1 \
+        SUPPORT_BUNDLE_SWARM_INVENTORY_TIMEOUT=1 \
+        SUPPORT_BUNDLE_SWARM_TIMELINE_TIMEOUT=1 \
+        bash "$SUPPORT_SH" --output "$output_dir" 2>/dev/null) || true
+
+    if [[ -z "$archive_path" ]] || [[ ! -f "$archive_path" ]]; then
+        harness_fail "Bundle archive exists for binary redaction check"
+        cleanup_mock_env
+        return
+    fi
+
+    local extract_dir
+    extract_dir=$(mktemp -d)
+    tar xzf "$archive_path" -C "$extract_dir" 2>/dev/null
+
+    local binary_log
+    binary_log=$(find "$extract_dir" -name 'install-20260126_235959.log' -type f 2>/dev/null | head -1)
+    if [[ -n "$binary_log" ]] && grep -Fxq '<REDACTED:binary_file>' "$binary_log"; then
+        harness_pass "Binary log is replaced with redaction marker"
+    else
+        harness_fail "Binary log is replaced with redaction marker"
+    fi
+
+    if ! grep -R -a 'BINARY_SECRET_SHOULD_NOT_LEAK' "$extract_dir" >/dev/null 2>&1; then
+        harness_pass "Binary log raw content is not retained"
+    else
+        harness_fail "Binary log raw content is not retained"
+    fi
+
+    local manifest
+    manifest=$(find "$extract_dir" -name 'manifest.json' -type f 2>/dev/null | head -1)
+    if [[ -n "$manifest" ]] && jq -e '.redaction.files_modified >= 1' "$manifest" >/dev/null 2>&1; then
+        harness_pass "Manifest records binary redaction modification"
+    else
+        harness_fail "Manifest records binary redaction modification"
+    fi
+
+    rm -rf "$extract_dir"
+    cleanup_mock_env
+}
+
 test_no_redact_flag() {
     setup_mock_env
     local output_dir="$MOCK_HOME/test-output"
@@ -807,6 +881,7 @@ main() {
 
     harness_section "Redaction Tests"
     test_redaction_catches_secrets || true
+    test_binary_log_replaced_with_redaction_marker || true
     test_no_redact_flag || true
 
     harness_summary

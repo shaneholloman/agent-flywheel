@@ -9,7 +9,7 @@
 # - Known secret patterns are redacted with <REDACTED:type> markers
 # - Safe values (git SHAs, version strings, paths) are NOT redacted
 # - --no-redact flag disables redaction
-# - Binary files are skipped
+# - Binary files are replaced with a redaction marker
 # - Redaction count is tracked
 # - Manifest includes redaction summary
 #
@@ -402,16 +402,19 @@ result=$(redact_and_read "short_pw.txt" "PASSWORD=abc")
 assert_not_contains "Short password not redacted" "$result" "<REDACTED"
 
 # ============================================================
-# Tests: Binary file skipping
+# Tests: Binary file handling
 # ============================================================
 echo ""
 echo "=== Binary File Handling ==="
 
-# Create a file with null bytes (binary)
+# Create a file with null bytes (binary). Bundle-local binary copies fail closed:
+# keep the file path for manifest inventory, but replace opaque bytes with a marker.
 printf 'sk-secretkey1234567890abcdef\x00binary' > "$TEST_DIR/binary.bin"
 REDACTION_COUNT=0
 redact_file "$TEST_DIR/binary.bin"
-assert_redaction_count "Binary file skipped (count=0)" 0
+binary_result=$(cat "$TEST_DIR/binary.bin")
+assert_equals "Binary file replaced with marker" "$binary_result" "<REDACTED:binary_file>"
+assert_redaction_count "Binary file replacement counted" 1
 
 # ============================================================
 # Tests: Redaction count tracking

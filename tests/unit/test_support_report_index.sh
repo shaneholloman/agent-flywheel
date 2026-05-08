@@ -158,6 +158,43 @@ test_unknown_sensitive_fields_fail_closed() {
     pass "unknown_sensitive_fields_fail_closed"
 }
 
+test_manifest_redaction_proof_sanitizes_bad_sources() {
+    local bundle_dir manifest
+    bundle_dir="$(new_bundle proof)"
+    manifest="$bundle_dir/manifest.json"
+    BUNDLE_FILES=()
+    REDACTION_COUNT=0
+
+    write_file "$bundle_dir" "doctor.json" '{"status":'
+    write_file "$bundle_dir" "swarm_inventory.json" '{"schema_version":1,"status":"pass","inventory":{"present":true,"raw_hosts_collected":false},"summary":{"hosts_total":2},"redaction":{"paths_redacted":true,"raw_hosts_collected":false},"host":"prod-controller.example.com","path":"/home/alice/private","token":"ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn"}'
+    write_file "$bundle_dir" "environment.json" '{"status":"pass","hostname":"prod.example.com","home":"/home/alice","acfs_home":"/home/alice/.acfs"}'
+    write_file "$bundle_dir" "provenance.json" '{"status":"pass","token":"ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn"}'
+    chmod 000 "$bundle_dir/provenance.json"
+
+    write_manifest "$bundle_dir"
+    chmod 600 "$bundle_dir/provenance.json"
+
+    jq -e '
+      .diagnostics.doctor.source.malformed == true and
+      .diagnostics.doctor.source_status == "malformed" and
+      .diagnostics.provenance.source.malformed == true and
+      .diagnostics.provenance.source_status == "malformed" and
+      .diagnostics.swarm_inventory.included == true and
+      .diagnostics.swarm_inventory.records.raw_count == 2 and
+      .diagnostics.swarm_inventory.records.sanitized_count == 2 and
+      .diagnostics.swarm_inventory.records.raw_values_collected == false and
+      .diagnostics.swarm_inventory.raw_hosts_collected == false and
+      (.diagnostics.swarm_inventory.redaction.categories | index("token_like_notes")) and
+      .diagnostics.environment.redaction.raw_values_collected == false
+    ' "$manifest" >/dev/null || return 1
+
+    assert_not_contains "$manifest" "prod-controller.example.com" || return 1
+    assert_not_contains "$manifest" "/home/alice/private" || return 1
+    assert_not_contains "$manifest" "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn" || return 1
+
+    pass "manifest_redaction_proof_sanitizes_bad_sources"
+}
+
 run_test() {
     local name="$1"
     if "$name"; then
@@ -176,6 +213,7 @@ main() {
     run_test test_minimal_bundle_handles_missing_optional_artifacts
     run_test test_malformed_optional_json_is_labeled_degraded
     run_test test_unknown_sensitive_fields_fail_closed
+    run_test test_manifest_redaction_proof_sanitizes_bad_sources
 
     echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed"
     echo "Artifacts: $ARTIFACT_DIR"
