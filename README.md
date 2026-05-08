@@ -2369,6 +2369,26 @@ bash scripts/stack-provenance-report.sh --network=check --json
 
 Offline mode reports local manifest/checksum consistency for stack tools. Network mode also checks GitHub latest release metadata and generates a checksum candidate without writing `checksums.yaml`. Changed stack installer hashes fail the report, unrelated checksum diffs are called out separately, and `rch` release changes are flagged as mandatory checksum-refresh review items.
 
+### Agent Readiness Audit (`scripts/agent-readiness-audit.sh`)
+
+Run the local agent readiness audit before launching a swarm on a freshly installed VPS:
+
+```bash
+bash scripts/agent-readiness-audit.sh
+bash scripts/agent-readiness-audit.sh --json
+```
+
+The audit checks Claude Code, Codex CLI, Gemini CLI, and `caam` without printing token values or auth file contents. It reports CLI presence, version availability, parseable auth/config files, CAAM default profile consistency, and stale CAAM defaults that point at missing profiles.
+
+Useful options:
+
+```bash
+bash scripts/agent-readiness-audit.sh --no-version  # Skip CLI --version probes
+bash scripts/agent-readiness-audit.sh --home /home/ubuntu --path "$PATH"
+```
+
+Treat failures as launch blockers. Warnings usually mean the CLI is installed but needs a user sign-in or CAAM default profile selection.
+
 ### Website Deployment (`website.yml`)
 
 ```yaml
@@ -4113,6 +4133,12 @@ acfs support-bundle --no-redact
 
 ### Agent Authentication Issues
 
+Start with the safe readiness report:
+
+```bash
+bash scripts/agent-readiness-audit.sh --json
+```
+
 **Claude Code**:
 ```bash
 # Check auth status
@@ -4120,7 +4146,7 @@ claude --version
 ls -la ~/.claude/  # or ~/.config/claude/
 
 # Re-authenticate
-claude  # Follow prompts
+claude  # Follow prompts, then use /login inside Claude Code to switch accounts
 ```
 
 **Codex CLI**:
@@ -4129,7 +4155,7 @@ claude  # Follow prompts
 codex --version
 
 # Re-authenticate (uses ChatGPT account, not API key)
-codex login
+codex  # Follow first-run sign-in prompts
 ```
 
 **Gemini CLI**:
@@ -4138,7 +4164,7 @@ codex login
 gemini --version
 
 # Re-authenticate
-gemini  # Follow Google login flow
+gemini  # Follow Google login flow, or use /auth inside Gemini CLI
 ```
 
 ### "Command Not Found" After Install

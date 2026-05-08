@@ -27,7 +27,8 @@
     "generate:validate": "bun run src/generate.ts --validate",
     "generate:diff": "bun run src/generate.ts --diff",
     "drift:contract": "bun run src/drift-contract.ts",
-    "stack:provenance": "bun run src/stack-provenance-report.ts"
+    "stack:provenance": "bun run src/stack-provenance-report.ts",
+    "agent:readiness": "bun run src/agent-readiness-audit.ts"
   },
   "dependencies": {
     "yaml": "^2.8.2",
