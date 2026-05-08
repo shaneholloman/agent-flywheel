@@ -7078,6 +7078,7 @@ finalize() {
     try_step "Installing continue.sh" install_asset "scripts/lib/continue.sh" "$ACFS_HOME/scripts/lib/continue.sh" || return 1
     try_step "Installing info.sh" install_asset "scripts/lib/info.sh" "$ACFS_HOME/scripts/lib/info.sh" || return 1
     try_step "Installing status.sh" install_asset "scripts/lib/status.sh" "$ACFS_HOME/scripts/lib/status.sh" || return 1
+    try_step "Installing rescue.sh" install_asset "scripts/lib/rescue.sh" "$ACFS_HOME/scripts/lib/rescue.sh" || return 1
     try_step "Installing capacity.sh" install_asset "scripts/lib/capacity.sh" "$ACFS_HOME/scripts/lib/capacity.sh" || return 1
     try_step "Installing policy_lint.sh" install_asset "scripts/lib/policy_lint.sh" "$ACFS_HOME/scripts/lib/policy_lint.sh" || return 1
     try_step "Installing credential_preflight.sh" install_asset "scripts/lib/credential_preflight.sh" "$ACFS_HOME/scripts/lib/credential_preflight.sh" || return 1

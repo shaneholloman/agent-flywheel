@@ -993,6 +993,7 @@ print_acfs_help() {
     echo "    --deep            Run functional tests (auth, connections)"
     echo "  info [options]      Quick system overview (terminal/json/html)"
     echo "  status [options]    Quick one-line health summary"
+    echo "  rescue [options]    Read-only first-run recovery advisor"
     echo "  capacity [options]  Estimate safe/recommended agent counts"
     echo "  policy-lint         Lint AGENTS/templates/docs for policy drift"
     echo "  credential-preflight Read-only credential exposure preflight"
@@ -4248,6 +4249,18 @@ main() {
             fi
 
             echo "Error: status.sh not found" >&2
+            return 1
+            ;;
+        rescue|rescue-advisor|first-run-rescue)
+            shift
+            local rescue_script=""
+            rescue_script="$(_acfs_doctor_find_lib_script "rescue.sh" 2>/dev/null || true)"
+
+            if [[ -n "$rescue_script" ]]; then
+                _acfs_doctor_exec_bash_script "$rescue_script" "$@"
+            fi
+
+            echo "Error: rescue.sh not found" >&2
             return 1
             ;;
         capacity|cap)

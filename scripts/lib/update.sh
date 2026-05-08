@@ -2761,6 +2761,7 @@ sync_acfs_deployed() {
         "scripts/services-setup.sh:scripts/services-setup.sh"
         "scripts/lib/info.sh:scripts/lib/info.sh"
         "scripts/lib/status.sh:scripts/lib/status.sh"
+        "scripts/lib/rescue.sh:scripts/lib/rescue.sh"
         "scripts/lib/changelog.sh:scripts/lib/changelog.sh"
         "scripts/lib/export-config.sh:scripts/lib/export-config.sh"
         "scripts/lib/continue.sh:scripts/lib/continue.sh"
