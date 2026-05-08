@@ -79,9 +79,9 @@ manifest entries, or files not represented in `manifest.json`.
   "acfs": {
     "version": "0.0.0-dev",
     "sourceRef": "main",
-    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
     "manifestSha256": "<sha256 of acfs.manifest.yaml>",
-    "checksumsSha256": "<sha256 of checksums.yaml>",
+    "checksumsYamlSha256": "<sha256 of checksums.yaml>",
     "generatedIndexSha256": "<sha256 of scripts/generated/manifest_index.sh>"
   },
   "targets": [
@@ -147,8 +147,9 @@ Every v1 pack manifest must include:
 
 - `schema`, `schemaVersion`, `generatedBy`, `generatedAt`, `expiresAt`,
   `staleAfterDays`
-- `acfs.version`, `acfs.sourceRef`, `acfs.commit`, `acfs.manifestSha256`,
-  `acfs.checksumsSha256`, `acfs.generatedIndexSha256`
+- `acfs.version`, `acfs.sourceRef`, `acfs.sourceCommit`,
+  `acfs.manifestSha256`, `acfs.checksumsYamlSha256`,
+  `acfs.generatedIndexSha256`
 - at least one `targets[]` entry with `os`, `versions`, `arch`, and `libc`
 - one `modules[]` entry for every ACFS manifest module the pack claims to cover
 - one `artifacts[]` entry for every packed file under `artifacts/`
@@ -368,6 +369,24 @@ Future installer consumers must:
 - report stable error codes from this document
 - continue to run existing preflight checks for OS, shell, disk, user, and
   required local tools
+
+The installer accepts an extracted pack with:
+
+```bash
+./install.sh --offline-pack /path/to/acfs-offline-pack --yes --mode vibe
+```
+
+The equivalent environment contract is:
+
+```bash
+ACFS_OFFLINE_PACK=/path/to/acfs-offline-pack
+ACFS_OFFLINE_NETWORK_MODE=offline
+ACFS_OFFLINE_PACK_REQUIRED=true
+```
+
+When `ACFS_OFFLINE_PACK` is unset, verified installers keep the normal live
+download behavior. When it is set, `verify_checksum` must prefer a matching
+local artifact and fail closed for `ACFS_OFFLINE_NETWORK_MODE=offline`.
 
 ## Test Plan
 

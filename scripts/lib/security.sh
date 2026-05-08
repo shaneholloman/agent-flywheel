@@ -501,6 +501,331 @@ _acfs_remove_temp_files() {
     done
 }
 
+acfs_security_file_size() {
+    local file="${1:-}"
+    local output=""
+    local wc_bin=""
+
+    [[ -r "$file" ]] || return 1
+    wc_bin="$(acfs_security_required_binary_path wc)" || return $?
+    output="$("$wc_bin" -c < "$file")" || return 1
+    output="${output//[[:space:]]/}"
+    [[ -n "$output" ]] || return 1
+    printf '%s\n' "$output"
+}
+
+acfs_offline_pack_requested() {
+    [[ -n "${ACFS_OFFLINE_PACK:-${ACFS_OFFLINE_ARTIFACT_PACK:-}}" ]]
+}
+
+acfs_offline_pack_fail_closed() {
+    local mode="${ACFS_OFFLINE_NETWORK_MODE:-offline}"
+    local required="${ACFS_OFFLINE_PACK_REQUIRED:-}"
+
+    [[ "$mode" == "offline" || "$mode" == "disabled" || "$required" == "true" || "$required" == "1" ]]
+}
+
+acfs_offline_pack_error() {
+    local code="$1"
+    local name="$2"
+    local detail="$3"
+
+    log_error "offline_pack_refused code=$code tool=$name"
+    printf "  Detail: %s\n" "$detail" >&2
+}
+
+acfs_offline_pack_jq_bin() {
+    acfs_security_required_binary_path jq
+}
+
+acfs_offline_pack_current_arch() {
+    local raw_arch=""
+    local uname_bin=""
+
+    uname_bin="$(acfs_security_required_binary_path uname)" || return $?
+    raw_arch="$("$uname_bin" -m)" || return 1
+
+    case "$raw_arch" in
+        amd64|x64) printf 'x86_64\n' ;;
+        arm64) printf 'aarch64\n' ;;
+        *) printf '%s\n' "$raw_arch" ;;
+    esac
+}
+
+acfs_offline_pack_current_manifest_file() {
+    local manifest_file="${ACFS_MANIFEST_YAML:-}"
+    local default_manifest="$SECURITY_SCRIPT_DIR/../../acfs.manifest.yaml"
+
+    if [[ -n "$manifest_file" && -r "$manifest_file" ]]; then
+        printf '%s\n' "$manifest_file"
+        return 0
+    fi
+    if [[ -r "$default_manifest" ]]; then
+        printf '%s\n' "$default_manifest"
+        return 0
+    fi
+
+    return 1
+}
+
+acfs_offline_pack_locate() {
+    local configured="${ACFS_OFFLINE_PACK:-${ACFS_OFFLINE_ARTIFACT_PACK:-}}"
+    local name="$1"
+    local pack_root=""
+
+    if [[ -z "$configured" ]]; then
+        acfs_offline_pack_error "pack_missing_manifest" "$name" "ACFS_OFFLINE_PACK is empty"
+        return 1
+    fi
+
+    case "$configured" in
+        /*) ;;
+        *) configured="$PWD/$configured" ;;
+    esac
+    configured="${configured%/}"
+
+    if [[ -d "$configured/acfs-offline-pack" ]]; then
+        pack_root="$configured/acfs-offline-pack"
+    else
+        pack_root="$configured"
+    fi
+
+    if [[ ! -r "$pack_root/manifest.json" ]]; then
+        acfs_offline_pack_error "pack_missing_manifest" "$name" "manifest.json is absent under $pack_root"
+        return 1
+    fi
+
+    printf '%s\t%s\n' "$pack_root" "$pack_root/manifest.json"
+}
+
+acfs_offline_pack_path_is_safe() {
+    local rel_path="${1:-}"
+
+    case "$rel_path" in
+        ""|.|..|/*|../*|*/..|*"/../"*|*"/./"*|*"/")
+            return 1
+            ;;
+    esac
+
+    return 0
+}
+
+acfs_offline_pack_validate_manifest() {
+    local pack_root="$1"
+    local manifest_file="$2"
+    local name="$3"
+    local jq_bin=""
+    local schema=""
+    local schema_version=""
+    local pack_mode=""
+    local network_mode=""
+    local policy=""
+    local expires_at=""
+    local expires_epoch=""
+    local now_epoch=""
+    local arch=""
+    local checksums_declared=""
+    local checksums_actual=""
+    local pack_checksums_actual=""
+    local manifest_declared=""
+    local manifest_actual=""
+    local current_manifest=""
+
+    jq_bin="$(acfs_offline_pack_jq_bin)" || {
+        acfs_offline_pack_error "pack_malformed_manifest" "$name" "jq is required to read manifest.json"
+        return 1
+    }
+
+    if ! "$jq_bin" -e . "$manifest_file" >/dev/null 2>&1; then
+        acfs_offline_pack_error "pack_malformed_manifest" "$name" "manifest.json is not valid JSON"
+        return 1
+    fi
+
+    schema="$("$jq_bin" -r '.schema // empty' "$manifest_file")"
+    schema_version="$("$jq_bin" -r '.schemaVersion // empty' "$manifest_file")"
+    if [[ "$schema" != "acfs.offline-artifact-pack.v1" || "$schema_version" != "1" ]]; then
+        acfs_offline_pack_error "pack_schema_unsupported" "$name" "unsupported schema=${schema:-missing} schemaVersion=${schema_version:-missing}"
+        return 1
+    fi
+
+    pack_mode="$("$jq_bin" -r '.packMode // "complete"' "$manifest_file")"
+    if [[ "$pack_mode" != "complete" ]]; then
+        acfs_offline_pack_error "pack_unbundled_required_module" "$name" "packMode=$pack_mode cannot satisfy a verified offline install"
+        return 1
+    fi
+
+    policy="$("$jq_bin" -r '.policy.verifiedInstallerPolicy // empty' "$manifest_file")"
+    if [[ "$policy" != "must_match_checksums_yaml" ]]; then
+        acfs_offline_pack_error "pack_checksums_mismatch" "$name" "verifiedInstallerPolicy must be must_match_checksums_yaml"
+        return 1
+    fi
+
+    network_mode="$("$jq_bin" -r '.policy.networkMode // "offline"' "$manifest_file")"
+    if [[ "$network_mode" != "offline" ]]; then
+        acfs_offline_pack_error "pack_unbundled_required_module" "$name" "policy.networkMode=$network_mode does not provide offline guarantees"
+        return 1
+    fi
+
+    expires_at="$("$jq_bin" -r '.expiresAt // empty' "$manifest_file")"
+    expires_epoch="$(acfs_security_date -u -d "$expires_at" +%s 2>/dev/null || true)"
+    now_epoch="$(acfs_security_date -u +%s 2>/dev/null || true)"
+    if [[ -z "$expires_at" || -z "$expires_epoch" || -z "$now_epoch" || "$now_epoch" -gt "$expires_epoch" ]]; then
+        acfs_offline_pack_error "pack_expired" "$name" "expiresAt=${expires_at:-missing}"
+        return 1
+    fi
+
+    arch="$(acfs_offline_pack_current_arch)" || {
+        acfs_offline_pack_error "pack_arch_unsupported" "$name" "unable to determine current architecture"
+        return 1
+    }
+    if ! "$jq_bin" -e --arg arch "$arch" '
+        any(.targets[]?; ((.os // "ubuntu") == "ubuntu") and (((.architecture // .arch // "") == $arch) or ((.architectures // []) | index($arch))))
+    ' "$manifest_file" >/dev/null; then
+        acfs_offline_pack_error "pack_arch_unsupported" "$name" "current architecture $arch is not listed in targets[]"
+        return 1
+    fi
+
+    checksums_declared="$("$jq_bin" -r '.acfs.checksumsYamlSha256 // .acfs.checksumsSha256 // empty' "$manifest_file")"
+    if [[ -z "$checksums_declared" || -z "${CHECKSUMS_FILE:-}" || ! -r "${CHECKSUMS_FILE:-}" ]]; then
+        acfs_offline_pack_error "pack_checksums_mismatch" "$name" "current checksums.yaml is unavailable for pack comparison"
+        return 1
+    fi
+    checksums_actual="$(calculate_file_sha256 "$CHECKSUMS_FILE")" || {
+        acfs_offline_pack_error "pack_checksums_mismatch" "$name" "failed to checksum current checksums.yaml"
+        return 1
+    }
+    if [[ "$checksums_actual" != "$checksums_declared" ]]; then
+        acfs_offline_pack_error "pack_checksums_mismatch" "$name" "pack was built with a different checksums.yaml"
+        return 1
+    fi
+    if [[ ! -r "$pack_root/checksums.yaml" ]]; then
+        acfs_offline_pack_error "pack_checksums_mismatch" "$name" "pack copy of checksums.yaml is missing"
+        return 1
+    fi
+    pack_checksums_actual="$(calculate_file_sha256 "$pack_root/checksums.yaml")" || return 1
+    if [[ "$pack_checksums_actual" != "$checksums_declared" ]]; then
+        acfs_offline_pack_error "pack_checksums_mismatch" "$name" "pack copy of checksums.yaml does not match manifest"
+        return 1
+    fi
+
+    manifest_declared="$("$jq_bin" -r '.acfs.manifestSha256 // empty' "$manifest_file")"
+    if [[ -n "$manifest_declared" ]]; then
+        current_manifest="$(acfs_offline_pack_current_manifest_file 2>/dev/null || true)"
+        if [[ -z "$current_manifest" ]]; then
+            acfs_offline_pack_error "pack_malformed_manifest" "$name" "current acfs.manifest.yaml is unavailable for pack comparison"
+            return 1
+        fi
+        manifest_actual="$(calculate_file_sha256 "$current_manifest")" || {
+            acfs_offline_pack_error "pack_malformed_manifest" "$name" "failed to checksum current acfs.manifest.yaml"
+            return 1
+        }
+        if [[ "$manifest_actual" != "$manifest_declared" ]]; then
+            acfs_offline_pack_error "pack_malformed_manifest" "$name" "pack was built with a different acfs.manifest.yaml"
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
+acfs_offline_pack_verify_artifact() {
+    local url="$1"
+    local expected_sha256="$2"
+    local name="$3"
+    local pack_info=""
+    local pack_root=""
+    local manifest_file=""
+    local jq_bin=""
+    local arch=""
+    local artifact_tsv=""
+    local key_count=""
+    local module_id=""
+    local rel_path=""
+    local artifact_sha=""
+    local size_bytes=""
+    local artifact_file=""
+    local actual_sha=""
+    local actual_size=""
+
+    pack_info="$(acfs_offline_pack_locate "$name")" || return 1
+    pack_root="${pack_info%%$'\t'*}"
+    manifest_file="${pack_info#*$'\t'}"
+
+    acfs_offline_pack_validate_manifest "$pack_root" "$manifest_file" "$name" || return 1
+
+    jq_bin="$(acfs_offline_pack_jq_bin)" || return 1
+    arch="$(acfs_offline_pack_current_arch)" || return 1
+    artifact_tsv="$("$jq_bin" -r --arg key "$name" --arg url "$url" --arg sha "$expected_sha256" --arg arch "$arch" '
+        def artifact_arch: (.architecture // .platform.arch // "");
+        [
+            .artifacts[]?
+            | select((.kind == "verified_installer" or .kind == "verified_installer_script") and .verifiedInstallerKey == $key)
+            | select((.sourceUrl // "") == $url)
+            | select(((.sha256 // "") == $sha) or ((.checksumsYamlSha256 // "") == $sha))
+            | select((artifact_arch == "") or (artifact_arch == $arch))
+        ]
+        | first // empty
+        | if type == "object" then [.moduleId, .path, (.sha256 // ""), ((.sizeBytes // "") | tostring)] | @tsv else empty end
+    ' "$manifest_file")"
+
+    if [[ -z "$artifact_tsv" ]]; then
+        key_count="$("$jq_bin" -r --arg key "$name" '[.artifacts[]? | select(.verifiedInstallerKey == $key)] | length' "$manifest_file")"
+        if [[ "$key_count" == "0" ]]; then
+            acfs_offline_pack_error "pack_unbundled_required_module" "$name" "no bundled artifact has verifiedInstallerKey=$name"
+        else
+            acfs_offline_pack_error "pack_checksums_mismatch" "$name" "no artifact matches the requested URL, sha256, and architecture"
+        fi
+        return 1
+    fi
+
+    IFS=$'\t' read -r module_id rel_path artifact_sha size_bytes <<< "$artifact_tsv"
+    if ! "$jq_bin" -e --arg moduleId "$module_id" --arg key "$name" '
+        any(.modules[]?; .id == $moduleId and (.bundlingPolicy // "") == "bundled" and (.verifiedInstallerKey // "") == $key)
+    ' "$manifest_file" >/dev/null; then
+        acfs_offline_pack_error "pack_unbundled_required_module" "$name" "module $module_id is not marked bundled for verifiedInstallerKey=$name"
+        return 1
+    fi
+
+    if ! acfs_offline_pack_path_is_safe "$rel_path"; then
+        acfs_offline_pack_error "pack_path_escape" "$name" "artifact path is unsafe: $rel_path"
+        return 1
+    fi
+
+    artifact_file="$pack_root/$rel_path"
+    if [[ ! -f "$artifact_file" || -L "$artifact_file" ]]; then
+        acfs_offline_pack_error "pack_unbundled_required_module" "$name" "artifact file is missing or unsafe: $rel_path"
+        return 1
+    fi
+
+    actual_sha="$(calculate_file_sha256 "$artifact_file")" || {
+        acfs_offline_pack_error "pack_hash_mismatch" "$name" "failed to checksum artifact $rel_path"
+        return 1
+    }
+    if [[ "$artifact_sha" != "$expected_sha256" ]]; then
+        acfs_offline_pack_error "pack_checksums_mismatch" "$name" "manifest sha256 for $rel_path does not match checksums.yaml"
+        return 1
+    fi
+    if [[ "$actual_sha" != "$expected_sha256" ]]; then
+        acfs_offline_pack_error "pack_hash_mismatch" "$name" "artifact $rel_path does not match expected sha256"
+        return 1
+    fi
+
+    if [[ -n "$size_bytes" && "$size_bytes" != "null" ]]; then
+        actual_size="$(acfs_security_file_size "$artifact_file")" || {
+            acfs_offline_pack_error "pack_hash_mismatch" "$name" "failed to measure artifact $rel_path"
+            return 1
+        }
+        if [[ "$actual_size" != "$size_bytes" ]]; then
+            acfs_offline_pack_error "pack_hash_mismatch" "$name" "artifact $rel_path does not match declared size"
+            return 1
+        fi
+    fi
+
+    log_detail "offline_pack_hit tool=$name module=$module_id artifact=$rel_path"
+    log_success "Verified offline artifact: $name"
+    acfs_security_cat_file "$artifact_file"
+}
+
 # Fetch content and calculate checksum (using temp file)
 fetch_checksum() {
     local url="$1"
@@ -551,6 +876,18 @@ verify_checksum() {
 
     if ! enforce_https "$url"; then
         return 1
+    fi
+
+    if acfs_offline_pack_requested; then
+        local offline_status=0
+        acfs_offline_pack_verify_artifact "$url" "$expected_sha256" "$name" || offline_status=$?
+        if [[ "$offline_status" -eq 0 ]]; then
+            return 0
+        fi
+        if acfs_offline_pack_fail_closed; then
+            return "$offline_status"
+        fi
+        log_warn "offline_pack_live_fallback tool=$name url=$url"
     fi
 
     # Create safe temp file

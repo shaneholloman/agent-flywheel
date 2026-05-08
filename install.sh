@@ -34,6 +34,7 @@
 #   --skip <module>       Skip a specific module (repeatable)
 #   --no-deps             Disable automatic dependency closure (expert/debug)
 #   --checksums-ref <ref> Fetch checksums.yaml from this ref (default: main for pinned tags/SHAs)
+#   --offline-pack <dir>  Use an extracted acfs-offline-pack/ and refuse live fallback
 #   --ref <ref>          Git ref to install (branch, tag, or SHA). Equivalent to
 #                        ACFS_REF env var but works reliably in curl|bash pipelines.
 #   --pin-ref            Print resolved SHA and pinned command, then exit
@@ -80,6 +81,10 @@ ACFS_RAW="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}
 ACFS_CHECKSUMS_RAW="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/${ACFS_CHECKSUMS_REF}"
 export ACFS_RAW ACFS_CHECKSUMS_REF ACFS_CHECKSUMS_RAW ACFS_CHECKSUMS_REF_EXPLICIT ACFS_VERSION
 export CHECKSUMS_FILE="${ACFS_CHECKSUMS_YAML:-${CHECKSUMS_FILE:-}}"
+ACFS_OFFLINE_PACK="${ACFS_OFFLINE_PACK:-}"
+ACFS_OFFLINE_NETWORK_MODE="${ACFS_OFFLINE_NETWORK_MODE:-}"
+ACFS_OFFLINE_PACK_REQUIRED="${ACFS_OFFLINE_PACK_REQUIRED:-}"
+export ACFS_OFFLINE_PACK ACFS_OFFLINE_NETWORK_MODE ACFS_OFFLINE_PACK_REQUIRED
 ACFS_COMMIT_SHA=""       # Short SHA for display (12 chars)
 ACFS_COMMIT_SHA_FULL=""  # Full SHA for pinning resume scripts (40 chars)
 
@@ -1186,6 +1191,9 @@ generate_resume_hint() {
         # checksum metadata from main, not the symbolic branch used originally.
         resume_args+=(--checksums-ref "$ACFS_CHECKSUMS_REF")
     fi
+    if [[ -n "${ACFS_OFFLINE_PACK:-}" ]]; then
+        resume_args+=(--offline-pack "$ACFS_OFFLINE_PACK")
+    fi
 
     # Add skip flags that were used
     [[ "${SKIP_POSTGRES:-false}" == "true" ]] && resume_args+=(--skip-postgres)
@@ -1507,6 +1515,27 @@ parse_args() {
                 ACFS_CHECKSUMS_REF_EXPLICIT=true
                 ACFS_CHECKSUMS_RAW="https://raw.githubusercontent.com/${ACFS_REPO_OWNER}/${ACFS_REPO_NAME}/${ACFS_CHECKSUMS_REF}"
                 export ACFS_CHECKSUMS_REF ACFS_CHECKSUMS_RAW ACFS_CHECKSUMS_REF_EXPLICIT
+                ;;
+            --offline-pack|--offline-pack=*)
+                if [[ "$1" == "--offline-pack" ]]; then
+                    if [[ -z "${2:-}" || "$2" == -* ]]; then
+                        log_fatal "--offline-pack requires a directory"
+                    fi
+                    ACFS_OFFLINE_PACK="$2"
+                    shift 2
+                else
+                    ACFS_OFFLINE_PACK="${1#*=}"
+                    if [[ -z "$ACFS_OFFLINE_PACK" ]]; then
+                        log_fatal "--offline-pack requires a directory"
+                    fi
+                    shift
+                fi
+                if [[ "$ACFS_OFFLINE_PACK" == *$'\n'* || "$ACFS_OFFLINE_PACK" == *$'\r'* ]]; then
+                    log_fatal "--offline-pack requires a single-line directory"
+                fi
+                ACFS_OFFLINE_NETWORK_MODE=offline
+                ACFS_OFFLINE_PACK_REQUIRED=true
+                export ACFS_OFFLINE_PACK ACFS_OFFLINE_NETWORK_MODE ACFS_OFFLINE_PACK_REQUIRED
                 ;;
             --pin-ref|--confirm-ref)
                 # Print resolved SHA and pinned command, then exit
