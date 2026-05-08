@@ -32,6 +32,7 @@ const TROUBLESHOOTING = [
     fixes: [
       "You're running this on your Windows computer, not on the VPS!",
       "First, connect to your VPS with: ssh root@YOUR_VPS_IP",
+      "If root login is disabled, use: ssh ubuntu@YOUR_VPS_IP and then run: sudo -i",
       "Wait until you see 'root@vps:~#' or similar",
       "THEN paste the preflight command",
       "The preflight command only works on the Linux VPS, not on Windows",
@@ -86,6 +87,7 @@ export default function PreflightCheckPage() {
 
   const displayIP = vpsIP || "YOUR_VPS_IP";
   const rootTarget = formatSshTarget("root", displayIP);
+  const ubuntuTarget = formatSshTarget("ubuntu", displayIP);
   const preflightRef = normalizeGitRef(acfsRef) ?? DEFAULT_PREFLIGHT_REF;
   const preflightCommand = useMemo(
     () =>
@@ -161,6 +163,12 @@ export default function PreflightCheckPage() {
           <p>
             Go back to your terminal, type <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">ssh {rootTarget}</code>,
             enter your VPS password, and THEN paste the preflight command.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            If your provider disabled root login, use{" "}
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">ssh {ubuntuTarget}</code>,
+            then run <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">sudo -i</code>.
+            Continue only after your prompt ends with <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">#</code>.
           </p>
         </div>
       </AlertCard>

@@ -822,6 +822,16 @@ test.describe("Step 8: Pre-Flight Check Page", () => {
     await expect(commandElement).toContainText("/v2.0.0/scripts/preflight.sh");
     await expect(commandElement).not.toContainText("/main/scripts/preflight.sh");
   });
+
+  test("should preserve the ubuntu-to-root fallback in local-machine mistake guidance", async ({ page }) => {
+    await page.goto("/wizard/preflight-check");
+    await page.waitForLoadState("domcontentloaded");
+
+    await expect(page.getByText(/If your provider disabled root login/i)).toBeVisible();
+    await expect(page.locator("code").filter({ hasText: "ssh ubuntu@192.168.1.100" }).first()).toBeVisible();
+    await expect(page.locator("code").filter({ hasText: "sudo -i" }).first()).toBeVisible();
+    await expect(page.getByText(/Continue only after your prompt ends with/i)).toBeVisible();
+  });
 });
 
 // =============================================================================
