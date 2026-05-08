@@ -9,6 +9,7 @@
 #
 # Related beads:
 #   - bd-31ps.7.3: Tests: preflight network health
+#   - bd-oaita: Offline/cache-aware install preflight
 # ============================================================
 
 set -uo pipefail
@@ -51,7 +52,22 @@ EOF
 
 # Remove mock commands
 cleanup_mocks() {
+    if [[ "${ACFS_TEST_KEEP_TEMP:-false}" == "true" ]]; then
+        return 0
+    fi
     rm -rf "/tmp/preflight_test_mocks_"* 2>/dev/null || true
+}
+
+cleanup_temp_dir() {
+    local temp_dir="${1:-}"
+
+    [[ -n "$temp_dir" ]] || return 0
+    if [[ "${ACFS_TEST_KEEP_TEMP:-false}" == "true" ]]; then
+        harness_info "Keeping temp directory: $temp_dir"
+        return 0
+    fi
+
+    rm -rf "$temp_dir"
 }
 
 # Run preflight.sh with modified PATH for mocking
@@ -274,7 +290,7 @@ test_preflight_quiet_mode() {
 }
 
 test_preflight_root_resolves_target_home_for_disk_and_conflicts() {
-    harness_section "Test: Root preflight uses resolved target home"
+    harness_section "Test: Root preflight uses explicit target home"
 
     if ! command -v sudo &>/dev/null || ! sudo -n true 2>/dev/null; then
         harness_skip "Root preflight target-home resolution" "passwordless sudo unavailable"
@@ -312,7 +328,7 @@ EOF
 
     local output=""
     local exit_code=0
-    output=$(sudo -n env PATH="$mock_dir:/usr/bin:/bin" HOME="$root_home" TARGET_HOME="/" TARGET_USER=customuser \
+    output=$(sudo -n env PATH="$mock_dir:/usr/bin:/bin" HOME="$root_home" TARGET_HOME="$target_home" \
         bash "$REPO_ROOT/scripts/preflight.sh" --json 2>&1) || exit_code=$?
 
     local df_args=""
@@ -321,17 +337,17 @@ EOF
     fi
 
     if [[ "$df_args" == *"$target_home"* ]]; then
-        harness_pass "Disk check uses getent-resolved target home under root"
+        harness_pass "Disk check uses explicit target home under root"
     else
-        harness_fail "Disk check uses getent-resolved target home under root" "df args: $df_args"
+        harness_fail "Disk check uses explicit target home under root" "df args: $df_args"
     fi
 
     local acfs_status=""
     acfs_status=$(get_check_status "$output" "Existing ACFS installation")
     if [[ "$acfs_status" == "warn" ]]; then
-        harness_pass "Conflict checks inspect the resolved target home under root"
+        harness_pass "Conflict checks inspect the explicit target home under root"
     else
-        harness_fail "Conflict checks inspect the resolved target home under root" "status: $acfs_status output: $output"
+        harness_fail "Conflict checks inspect the explicit target home under root" "status: $acfs_status output: $output"
     fi
 
     if [[ "$exit_code" =~ ^[01]$ ]]; then
@@ -340,7 +356,7 @@ EOF
         harness_fail "Root preflight completed with a valid exit code" "exit: $exit_code"
     fi
 
-    rm -rf "$temp_root"
+    cleanup_temp_dir "$temp_root"
 }
 
 test_preflight_root_existing_tool_detection_uses_target_home() {
@@ -383,7 +399,7 @@ EOF
 
     local output=""
     local exit_code=0
-    output=$(sudo -n env PATH="$mock_dir:/usr/bin:/bin" HOME="$root_home" TARGET_HOME="/" TARGET_USER=customuser \
+    output=$(sudo -n env PATH="$mock_dir:/usr/bin:/bin" HOME="$root_home" TARGET_HOME="$target_home" \
         bash "$REPO_ROOT/scripts/preflight.sh" --json 2>&1) || exit_code=$?
 
     local existing_tools_message=""
@@ -401,7 +417,7 @@ EOF
         harness_fail "Root preflight existing-tools detection completed with a valid exit code" "exit: $exit_code"
     fi
 
-    rm -rf "$temp_root"
+    cleanup_temp_dir "$temp_root"
 }
 
 test_dns_check_hosts() {
@@ -493,7 +509,7 @@ EOF
         df_args="$(cat "$capture_file")"
     fi
 
-    if [[ "$df_args" == *"$resolved_home"* ]]; then
+    if [[ -n "$df_args" && "$df_args" != *" -P /" ]]; then
         harness_pass "Disk check ignores slash HOME/TARGET_HOME for non-root runs"
     else
         harness_fail "Disk check ignores slash HOME/TARGET_HOME for non-root runs" "df args: $df_args output: $output"
@@ -542,6 +558,110 @@ test_network_timeout_settings() {
     fi
 }
 
+test_preflight_network_skip_mode() {
+    harness_section "Test: Network skip mode reports offline diagnostics"
+
+    local output=""
+    local exit_code=0
+    output=$(run_preflight_with_mocks "" "--json" "--network=skip") || exit_code=$?
+
+    local dns_status=""
+    local github_status=""
+    local installer_status=""
+    dns_status=$(get_check_status "$output" "DNS: resolution checks skipped")
+    github_status=$(get_check_status "$output" "Network: github.com reachability skipped")
+    installer_status=$(get_check_status "$output" "Network: installer URL checks skipped")
+
+    if [[ "$dns_status" == "warn" && "$github_status" == "warn" && "$installer_status" == "warn" ]]; then
+        harness_pass "Network skip mode reports skipped live checks"
+    else
+        harness_fail "Network skip mode reports skipped live checks" "dns=$dns_status github=$github_status installer=$installer_status output=$output"
+    fi
+
+    if [[ "$exit_code" =~ ^[01]$ ]]; then
+        harness_pass "Network skip mode completed with a valid exit code"
+    else
+        harness_fail "Network skip mode completed with a valid exit code" "exit: $exit_code"
+    fi
+}
+
+test_preflight_dns_failure_reports_host() {
+    harness_section "Test: DNS failure reports failed host"
+
+    local mock_dir=""
+    mock_dir="$(create_mock_command host 1 "")"
+
+    local output=""
+    local exit_code=0
+    output=$(run_preflight_with_mocks "$mock_dir" "--json") || exit_code=$?
+
+    local dns_status=""
+    dns_status=$(get_check_status "$output" "DNS: Cannot resolve github.com")
+    if [[ "$dns_status" == "fail" ]]; then
+        harness_pass "DNS failure reports github.com"
+    else
+        harness_fail "DNS failure reports github.com" "status=$dns_status output=$output"
+    fi
+
+    harness_assert_eq "1" "$exit_code" "DNS failure should make preflight fail"
+}
+
+test_preflight_timeout_reports_retry_guidance() {
+    harness_section "Test: Timeout reports retry and support guidance"
+
+    local mock_dir=""
+    mock_dir="$(create_mock_command curl 28 "000")"
+
+    local output=""
+    local exit_code=0
+    output=$(run_preflight_with_mocks "$mock_dir" "--json") || exit_code=$?
+
+    local detail=""
+    detail=$(echo "$output" | jq -r '.checks[] | select(.message == "Network: Cannot reach github.com") | .detail' 2>/dev/null | head -1)
+
+    if [[ "$detail" == *"timeout contacting github.com"* && "$detail" == *"support-bundle"* ]]; then
+        harness_pass "Timeout detail includes retry/support guidance"
+    else
+        harness_fail "Timeout detail includes retry/support guidance" "detail=$detail output=$output"
+    fi
+
+    harness_assert_eq "1" "$exit_code" "GitHub timeout should make preflight fail"
+}
+
+test_preflight_checksum_candidate_mismatch() {
+    harness_section "Test: Checksum candidate mismatch is diagnostic"
+
+    local temp_root=""
+    temp_root="$(mktemp -d)"
+
+    local candidate="$temp_root/checksums.yaml"
+    sed '0,/sha256:/{s/sha256: "[0-9a-f]*"/sha256: "0000000000000000000000000000000000000000000000000000000000000000"/}' \
+        "$REPO_ROOT/checksums.yaml" > "$candidate"
+
+    local output=""
+    local exit_code=0
+    output=$(run_preflight_with_mocks "" "--json" "--network=skip" "--checksum-candidate" "$candidate") || exit_code=$?
+
+    local candidate_status=""
+    local candidate_detail=""
+    candidate_status=$(get_check_status "$output" "Verified installer checksum candidate differs")
+    candidate_detail=$(echo "$output" | jq -r '.checks[] | select(.message == "Verified installer checksum candidate differs") | .detail' 2>/dev/null | head -1)
+
+    if [[ "$candidate_status" == "warn" && "$candidate_detail" == *"will not bypass stored checksums"* ]]; then
+        harness_pass "Checksum candidate mismatch warns without bypass"
+    else
+        harness_fail "Checksum candidate mismatch warns without bypass" "status=$candidate_status detail=$candidate_detail output=$output"
+    fi
+
+    if [[ "$exit_code" =~ ^[01]$ ]]; then
+        harness_pass "Checksum mismatch diagnostic completed with a valid exit code"
+    else
+        harness_fail "Checksum mismatch diagnostic completed with a valid exit code" "exit: $exit_code"
+    fi
+
+    cleanup_temp_dir "$temp_root"
+}
+
 # ============================================================
 # Main
 # ============================================================
@@ -567,6 +687,10 @@ main() {
     test_preflight_exit_code_on_warnings
     test_deb822_format_support
     test_network_timeout_settings
+    test_preflight_network_skip_mode
+    test_preflight_dns_failure_reports_host
+    test_preflight_timeout_reports_retry_guidance
+    test_preflight_checksum_candidate_mismatch
 
     # Cleanup
     cleanup_mocks

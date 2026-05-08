@@ -47,6 +47,8 @@ WARNINGS=0
 QUIET=false
 OUTPUT_FORMAT="text" # text|json|toon
 MACHINE_OUTPUT=false
+NETWORK_MODE="${ACFS_PREFLIGHT_NETWORK:-check}" # check|skip
+CHECKSUM_CANDIDATE_FILE="${ACFS_PREFLIGHT_CHECKSUM_CANDIDATE:-}"
 
 # Results for JSON output
 declare -a RESULTS=()
@@ -370,6 +372,104 @@ preflight_binary_exists() {
     [[ -n "$resolved" ]]
 }
 
+preflight_script_dir() {
+    local source_path="${BASH_SOURCE[0]:-}"
+
+    [[ -n "$source_path" ]] || return 1
+    [[ -f "$source_path" ]] || return 1
+    cd "$(dirname "$source_path")" && pwd -P
+}
+
+preflight_find_checksums_file() {
+    local candidates=()
+    local script_dir=""
+    local candidate=""
+
+    if [[ -n "${ACFS_PREFLIGHT_CHECKSUMS_FILE:-}" ]]; then
+        candidates+=("$ACFS_PREFLIGHT_CHECKSUMS_FILE")
+    fi
+
+    if [[ -n "${ACFS_CHECKSUMS_YAML:-}" ]]; then
+        candidates+=("$ACFS_CHECKSUMS_YAML")
+    fi
+
+    script_dir="$(preflight_script_dir 2>/dev/null || true)"
+    if [[ -n "$script_dir" ]]; then
+        candidates+=("$script_dir/../checksums.yaml")
+        candidates+=("$script_dir/checksums.yaml")
+    fi
+
+    candidates+=("./checksums.yaml")
+
+    if [[ -n "${HOME:-}" ]]; then
+        candidates+=("$HOME/.acfs/checksums.yaml")
+    fi
+
+    for candidate in "${candidates[@]}"; do
+        [[ -n "$candidate" ]] || continue
+        [[ -f "$candidate" && -r "$candidate" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+
+    return 1
+}
+
+preflight_checksum_field() {
+    local checksums_file="$1"
+    local tool="$2"
+    local field="$3"
+
+    awk -v tool="$tool" -v field="$field" '
+        $0 == "  " tool ":" {
+            in_tool = 1
+            next
+        }
+        in_tool && $0 ~ /^  [^[:space:]][^:]*:/ {
+            exit
+        }
+        in_tool && $0 ~ "^[[:space:]]+" field ":" {
+            sub("^[[:space:]]+" field ":[[:space:]]*", "", $0)
+            gsub(/^"/, "", $0)
+            gsub(/"$/, "", $0)
+            print
+            exit
+        }
+    ' "$checksums_file"
+}
+
+preflight_network_skip_detail() {
+    printf '%s\n' "offline mode requested; live reachability was not verified. Retry with --network=check when online. If install later fails, run: acfs support-bundle"
+}
+
+preflight_describe_curl_result() {
+    local curl_exit="$1"
+    local http_status="$2"
+    local target="$3"
+
+    case "$curl_exit" in
+        0)
+            printf 'HTTP %s from %s' "$http_status" "$target"
+            ;;
+        6)
+            printf 'DNS lookup failed for %s' "$target"
+            ;;
+        7)
+            printf 'connection failed for %s' "$target"
+            ;;
+        28)
+            printf 'timeout contacting %s' "$target"
+            ;;
+        *)
+            if [[ "$http_status" != "000" ]]; then
+                printf 'HTTP %s from %s' "$http_status" "$target"
+            else
+                printf 'curl exit %s for %s' "$curl_exit" "$target"
+            fi
+            ;;
+    esac
+}
+
 # ============================================================
 # Argument Parsing
 # ============================================================
@@ -402,14 +502,45 @@ while [[ $# -gt 0 ]]; do
             esac
             shift 2
             ;;
+        --network=check|--network=skip)
+            NETWORK_MODE="${1#--network=}"
+            shift
+            ;;
+        --network)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --network requires an argument (check|skip)" >&2
+                exit 1
+            fi
+            NETWORK_MODE="$2"
+            shift 2
+            ;;
+        --offline)
+            NETWORK_MODE="skip"
+            shift
+            ;;
+        --checksum-candidate=*)
+            CHECKSUM_CANDIDATE_FILE="${1#--checksum-candidate=}"
+            shift
+            ;;
+        --checksum-candidate)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --checksum-candidate requires a file path" >&2
+                exit 1
+            fi
+            CHECKSUM_CANDIDATE_FILE="$2"
+            shift 2
+            ;;
         --help|-h)
-            echo "Usage: $0 [--quiet] [--json|--format json|toon]"
+            echo "Usage: $0 [--quiet] [--json|--format json|toon] [--network check|skip]"
             echo ""
             echo "Options:"
-            echo "  --quiet, -q  Suppress output, exit code only"
-            echo "  --json       Output results as JSON"
-            echo "  --format     Output results as json or toon"
-            echo "  --help, -h   Show this help message"
+            echo "  --quiet, -q           Suppress output, exit code only"
+            echo "  --json                Output results as JSON"
+            echo "  --format              Output results as json or toon"
+            echo "  --network             Network checks: check (default) or skip"
+            echo "  --offline             Alias for --network skip"
+            echo "  --checksum-candidate  Compare a generated checksums.yaml candidate"
+            echo "  --help, -h            Show this help message"
             exit 0
             ;;
         *)
@@ -418,6 +549,15 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+case "$NETWORK_MODE" in
+    check|skip)
+        ;;
+    *)
+        echo "Error: invalid --network '$NETWORK_MODE' (expected check|skip)" >&2
+        exit 1
+        ;;
+esac
 
 # ============================================================
 # Output Functions
@@ -636,7 +776,83 @@ check_cpu() {
 # Network Checks
 # ============================================================
 
+check_verified_installers_cache() {
+    local checksums_file=""
+    local tool=""
+    local url=""
+    local sha256=""
+    local present=()
+    local missing=()
+    local critical_tools=(
+        bun
+        uv
+        rust
+        claude
+        caam
+        rch
+    )
+
+    checksums_file="$(preflight_find_checksums_file 2>/dev/null || true)"
+    if [[ -z "$checksums_file" ]]; then
+        warn "Offline/cache: checksums.yaml unavailable" "verified installers fail closed without checksums.yaml; use a complete ACFS checkout or rerun with network. If install fails, run: acfs support-bundle"
+        return
+    fi
+
+    for tool in "${critical_tools[@]}"; do
+        url="$(preflight_checksum_field "$checksums_file" "$tool" url 2>/dev/null || true)"
+        sha256="$(preflight_checksum_field "$checksums_file" "$tool" sha256 2>/dev/null || true)"
+        if [[ -n "$url" && "$sha256" =~ ^[0-9a-f]{64}$ ]]; then
+            present+=("$tool")
+        else
+            missing+=("$tool")
+        fi
+    done
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        pass "Offline/cache: verified installer checksums available" "cached checksums.yaml: $checksums_file; entries: ${present[*]}"
+    else
+        warn "Offline/cache: verified installer checksums incomplete" "missing or invalid entries: ${missing[*]}; update ACFS/checksums.yaml before relying on verified installers"
+    fi
+}
+
+check_checksum_candidate_file() {
+    local checksums_file=""
+    local current_body=""
+    local candidate_body=""
+
+    [[ -n "$CHECKSUM_CANDIDATE_FILE" ]] || return 0
+
+    if [[ ! -r "$CHECKSUM_CANDIDATE_FILE" ]]; then
+        warn "Verified installer checksum candidate unreadable" "$CHECKSUM_CANDIDATE_FILE"
+        return
+    fi
+
+    checksums_file="$(preflight_find_checksums_file 2>/dev/null || true)"
+    if [[ -z "$checksums_file" ]]; then
+        warn "Verified installer checksum candidate not compared" "local checksums.yaml unavailable"
+        return
+    fi
+
+    if cmp -s "$checksums_file" "$CHECKSUM_CANDIDATE_FILE"; then
+        pass "Verified installer checksum candidate matches" "$CHECKSUM_CANDIDATE_FILE"
+        return
+    fi
+
+    current_body="$(tail -n +2 "$checksums_file" 2>/dev/null || true)"
+    candidate_body="$(tail -n +2 "$CHECKSUM_CANDIDATE_FILE" 2>/dev/null || true)"
+    if [[ "$current_body" == "$candidate_body" ]]; then
+        pass "Verified installer checksum candidate header-only diff" "only the generated timestamp differs; leave checksums.yaml unchanged"
+    else
+        warn "Verified installer checksum candidate differs" "review the diff before release or install support; ACFS will not bypass stored checksums. If unsure, run: acfs support-bundle"
+    fi
+}
+
 check_dns() {
+    if [[ "$NETWORK_MODE" == "skip" ]]; then
+        warn "DNS: resolution checks skipped" "$(preflight_network_skip_detail)"
+        return
+    fi
+
     # Test DNS resolution before HTTP checks
     local test_hosts=(
         "github.com"
@@ -683,63 +899,110 @@ check_dns() {
 }
 
 check_network_basic() {
+    if [[ "$NETWORK_MODE" == "skip" ]]; then
+        warn "Network: github.com reachability skipped" "$(preflight_network_skip_detail)"
+        return
+    fi
+
     if ! command -v curl &>/dev/null; then
         warn "curl not installed" "Network checks skipped; curl will be installed"
         return
     fi
 
     # Test basic connectivity to GitHub (critical)
-    if curl -sf --max-time 10 https://github.com > /dev/null 2>&1; then
+    local http_status=""
+    local curl_exit=0
+    http_status=$(curl -sL --max-time 10 --connect-timeout 5 -o /dev/null -w "%{http_code}" https://github.com 2>/dev/null) || curl_exit=$?
+    [[ "$http_status" =~ ^[0-9]+$ ]] || http_status="000"
+
+    if [[ "$curl_exit" -eq 0 && "$http_status" -ge 200 && "$http_status" -lt 400 ]]; then
         pass "Network: github.com reachable"
     else
-        fail "Network: Cannot reach github.com" "Check network/firewall settings"
+        fail "Network: Cannot reach github.com" "$(preflight_describe_curl_result "$curl_exit" "$http_status" "github.com"); check network/firewall settings, then retry with --network=check. If it persists, run: acfs support-bundle"
         return
     fi
 }
 
 check_network_installers() {
+    if [[ "$NETWORK_MODE" == "skip" ]]; then
+        warn "Network: installer URL checks skipped" "$(preflight_network_skip_detail)"
+        return
+    fi
+
     if ! command -v curl &>/dev/null; then
         return
     fi
 
-    # Test key installer URLs (warnings, not failures)
-    # Use simple GET with HTTP status check - most reliable across VPS providers
-    local urls=(
-        "https://bun.sh/install:Bun installer"
-        "https://astral.sh/uv/install.sh:UV/Python installer"
-        "https://sh.rustup.rs:Rust installer"
-        "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/README.md:GitHub raw content"
+    local checksums_file=""
+    local url=""
+    local tool=""
+    local name=""
+    local critical_targets=(
+        "bun:Bun installer"
+        "uv:UV/Python installer"
+        "rust:Rust installer"
+        "claude:Claude Code installer"
+        "caam:CAAM installer"
+        "rch:RCH installer"
     )
+    local urls=()
+
+    checksums_file="$(preflight_find_checksums_file 2>/dev/null || true)"
+    if [[ -n "$checksums_file" ]]; then
+        for entry in "${critical_targets[@]}"; do
+            tool="${entry%%:*}"
+            name="${entry##*:}"
+            url="$(preflight_checksum_field "$checksums_file" "$tool" url 2>/dev/null || true)"
+            [[ -n "$url" ]] || continue
+            urls+=("$url:$name")
+        done
+    fi
+
+    if [[ ${#urls[@]} -eq 0 ]]; then
+        # Fallback for curl|bash preflight where checksums.yaml is not local.
+        urls=(
+            "https://bun.sh/install:Bun installer"
+            "https://astral.sh/uv/install.sh:UV/Python installer"
+            "https://sh.rustup.rs:Rust installer"
+        )
+    fi
+
+    urls+=("https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/README.md:ACFS raw content")
 
     local all_ok=true
     local failed_urls=()
+    local failure_details=()
 
     for entry in "${urls[@]}"; do
         # Use single % to remove shortest match from end (preserves https://)
-        local url="${entry%:*}"
-        local name="${entry##*:}"
+        url="${entry%:*}"
+        name="${entry##*:}"
 
         # Simple check: follow redirects, get HTTP status, 15s timeout
         # We just need to verify the URL is reachable, not download the content
         local http_status
-        http_status=$(curl -sL --max-time 15 --connect-timeout 10 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null) || http_status="000"
+        local curl_exit=0
+        http_status=$(curl -sL --max-time 15 --connect-timeout 10 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null) || curl_exit=$?
 
         # Ensure http_status is a valid number (default to 000 if empty or invalid)
         [[ "$http_status" =~ ^[0-9]+$ ]] || http_status="000"
 
-        if [[ "$http_status" -ge 200 && "$http_status" -lt 400 ]]; then
+        if [[ "$curl_exit" -eq 0 && "$http_status" -ge 200 && "$http_status" -lt 400 ]]; then
             : # Success
         else
             all_ok=false
             failed_urls+=("$name")
+            failure_details+=("$(preflight_describe_curl_result "$curl_exit" "$http_status" "$url")")
         fi
     done
 
     if [[ "$all_ok" == "true" ]]; then
         pass "Network: All installer URLs reachable"
     else
+        local i=0
         for name in "${failed_urls[@]}"; do
-            warn "Network: Cannot reach $name" "May need to retry during install"
+            warn "Network: Cannot reach $name" "${failure_details[$i]}; retry later. ACFS will keep checksum verification enabled and will not use unverified fallbacks."
+            ((i++)) || true
         done
     fi
 }
@@ -749,6 +1012,11 @@ check_network_installers() {
 # ============================================================
 
 check_apt_mirrors() {
+    if [[ "$NETWORK_MODE" == "skip" ]]; then
+        warn "APT mirror check skipped" "$(preflight_network_skip_detail)"
+        return
+    fi
+
     # Only relevant on Debian/Ubuntu systems
     if ! command -v apt-get &>/dev/null; then
         return
@@ -995,6 +1263,8 @@ main() {
 
     [[ "$QUIET" != "true" && "$MACHINE_OUTPUT" != "true" ]] && echo ""
 
+    check_verified_installers_cache
+    check_checksum_candidate_file
     check_dns
     check_network_basic
     check_network_installers

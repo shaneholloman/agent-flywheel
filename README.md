@@ -507,6 +507,7 @@ Before running the full installer, validate your system:
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash -s -- --json
 curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash -s -- --format toon
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/agentic_coding_flywheel_setup/main/scripts/preflight.sh" | bash -s -- --network=skip
 ```
 
 This checks:
@@ -514,6 +515,7 @@ This checks:
 - Architecture (x86_64 or ARM64)
 - Memory and disk space (minimum 4GB RAM, 10GB free disk)
 - Network connectivity to required URLs
+- Cached `checksums.yaml` availability for verified upstream installers
 - APT lock status
 - Potential conflicts (nvm, pyenv, existing ACFS)
 
@@ -522,8 +524,16 @@ This checks:
 |-------|------------------|----------------|
 | DNS resolution | Can resolve github.com, raw.githubusercontent.com | Check provider DNS settings; inspect `resolvectl status` or `/etc/resolv.conf` |
 | GitHub HTTPS | Can reach github.com:443 | Check firewall, proxy, or VPN settings |
-| Installer URLs | Raw GitHub, Homebrew, Oh-My-Zsh, Rust, etc. | May need to retry; transient failures OK |
+| Verified installer URLs | Critical upstream installer endpoints from `checksums.yaml` plus ACFS raw content | May need to retry; transient failures OK; checksum verification still stays enabled |
 | APT mirrors | Default Ubuntu mirror reachable | Check `/etc/apt/sources.list` or try different mirror |
+| Offline/cache mode | `--network=skip` skips live URL checks while still reporting local checksum availability | Re-run with `--network=check` when online before a release or difficult install |
+
+For checksum-refresh review, compare a generated candidate without changing `checksums.yaml`:
+```bash
+candidate="/tmp/acfs-checksums.$$.candidate.yaml"
+./scripts/lib/security.sh --update-checksums > "$candidate"
+./scripts/preflight.sh --checksum-candidate "$candidate"
+```
 
 **Common preflight failures:**
 
@@ -531,7 +541,9 @@ This checks:
 |-------|-------|----------|
 | "Cannot resolve github.com" | DNS misconfigured | Check provider DNS settings or reboot; do not overwrite managed resolver files |
 | "Cannot reach github.com" | Firewall blocking HTTPS | Allow outbound port 443 |
+| "timeout contacting github.com" | Network, proxy, or provider route is slow | Retry with `--network=check`; if it persists after install bootstrap, run `acfs support-bundle` |
 | "APT mirror slow or unreachable" | Regional mirror down | Edit `/etc/apt/sources.list` to use `archive.ubuntu.com` |
+| "checksum candidate differs" | Upstream verified installer content changed | Review the diff; do not install from unverified fallback sources |
 | "APT lock held" | Another apt process running | Wait for it to finish; reboot and resume if it remains stuck |
 | "Insufficient disk space" | Less than 10GB free | Clean up with `sudo apt autoremove` or expand disk |
 
