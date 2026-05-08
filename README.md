@@ -3386,6 +3386,19 @@ acfs swarm simulate
 
 The default simulation runs 10, 25, and 50 logical-agent scenarios without launching tmux sessions, model CLIs, Beads mutations, Agent Mail writes, or local CPU-heavy builds. It writes artifacts for each scenario: generated launch plan, telemetry JSON, capacity/resource sample, timing, and pass/fail summary. Treat this as a local readiness harness, not a substitute for provider factory tests on real VPS hosts.
 
+After one or more simulation runs, calibrate the static capacity assumptions
+against those local artifacts:
+
+```bash
+acfs swarm calibration --artifact-dir ~/.acfs/logs/swarm-simulations
+acfs swarm calibration --json --artifact-dir ./swarm-artifacts --rch-file ./rch-timing.json
+```
+
+The calibration report is read-only. It classifies the local evidence as
+conservative, aligned, or too aggressive, handles missing or partial artifacts
+with warnings, and never changes capacity defaults, RCH state, NTM sessions,
+Beads, or Agent Mail.
+
 ---
 
 ## Philosophy

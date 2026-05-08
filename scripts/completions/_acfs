@@ -142,6 +142,15 @@ _acfs() {
                                         '-h[Show help message]' \
                                         '--help[Show help message]'
                                     ;;
+                                calibration)
+                                    _arguments \
+                                        '--json[JSON output]' \
+                                        '--markdown[Markdown output]' \
+                                        '--artifact-dir[Read simulation artifact directory]:directory:_files -/' \
+                                        '--rch-file[Read optional RCH timing JSON]:file:_files' \
+                                        '-h[Show help message]' \
+                                        '--help[Show help message]'
+                                    ;;
                             esac
                             ;;
                     esac
@@ -211,6 +220,15 @@ _acfs() {
                         '--epic-file[Read epic JSON from file]:file:_files' \
                         '--issues-file[Read issue JSON/JSONL from file]:file:_files' \
                         '--commits-file[Read commit evidence JSON from file]:file:_files' \
+                        '-h[Show help message]' \
+                        '--help[Show help message]'
+                    ;;
+                swarm-calibration|swarm_calibration)
+                    _arguments \
+                        '--json[JSON output]' \
+                        '--markdown[Markdown output]' \
+                        '--artifact-dir[Read simulation artifact directory]:directory:_files -/' \
+                        '--rch-file[Read optional RCH timing JSON]:file:_files' \
                         '-h[Show help message]' \
                         '--help[Show help message]'
                     ;;
@@ -356,6 +374,8 @@ _acfs_commands() {
         'swarm_assign:Role-aware Beads assignment planner'
         'swarm-convergence:Epic success-criteria convergence audit'
         'swarm_convergence:Epic success-criteria convergence audit'
+        'swarm-calibration:Artifact-backed capacity calibration report'
+        'swarm_calibration:Artifact-backed capacity calibration report'
         'coordinate:Coordination preflight helpers'
         'coord:Coordination helpers (alias for coordinate)'
         'cheatsheet:Command reference (aliases, shortcuts)'
@@ -411,6 +431,7 @@ _acfs_swarm_commands() {
         'packet:Per-agent startup packet generator'
         'assign:Role-aware Beads assignment planner'
         'convergence:Epic success-criteria convergence audit'
+        'calibration:Artifact-backed capacity calibration report'
         'help:Show swarm help'
     )
     _describe -t commands 'swarm command' commands

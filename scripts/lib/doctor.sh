@@ -1000,6 +1000,7 @@ print_acfs_help() {
     echo "  swarm simulate      Dry-run 10/25/50 logical-agent harness"
     echo "  swarm assign        Role-aware Beads assignment planner"
     echo "  swarm convergence   Epic success-criteria convergence audit"
+    echo "  swarm calibration   Artifact-backed capacity calibration report"
     echo "  coordinate doctor   Alias for swarm doctor"
     echo "  cheatsheet          Command reference (aliases, shortcuts)"
     echo "  changelog [options] Show recent project changes"
@@ -4346,8 +4347,20 @@ main() {
                     echo "Error: swarm_convergence.sh not found" >&2
                     return 1
                     ;;
+                calibration|calibrate|capacity-calibration)
+                    [[ $# -gt 0 ]] && shift
+                    local swarm_calibration_script=""
+                    swarm_calibration_script="$(_acfs_doctor_find_lib_script "swarm_calibration.sh" 2>/dev/null || true)"
+
+                    if [[ -n "$swarm_calibration_script" ]]; then
+                        _acfs_doctor_exec_bash_script "$swarm_calibration_script" "$@"
+                    fi
+
+                    echo "Error: swarm_calibration.sh not found" >&2
+                    return 1
+                    ;;
                 help|-h|--help)
-                    echo "Usage: acfs swarm <plan|status|doctor|simulate|packet|assign|convergence> [--json]"
+                    echo "Usage: acfs swarm <plan|status|doctor|simulate|packet|assign|convergence|calibration> [--json]"
                     return 0
                     ;;
                 *)
@@ -4427,6 +4440,18 @@ main() {
             fi
 
             echo "Error: swarm_convergence.sh not found" >&2
+            return 1
+            ;;
+        swarm-calibration|swarm_calibration)
+            shift
+            local swarm_calibration_script=""
+            swarm_calibration_script="$(_acfs_doctor_find_lib_script "swarm_calibration.sh" 2>/dev/null || true)"
+
+            if [[ -n "$swarm_calibration_script" ]]; then
+                _acfs_doctor_exec_bash_script "$swarm_calibration_script" "$@"
+            fi
+
+            echo "Error: swarm_calibration.sh not found" >&2
             return 1
             ;;
         coordinate|coord)
