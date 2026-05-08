@@ -2358,6 +2358,17 @@ The release doctor composes the maintainer checks that are easy to forget:
 
 The checksum candidate check uses the canonical updater output. If the generated body differs from `checksums.yaml`, review the diff before release; if only the timestamp header differs, leave `checksums.yaml` unchanged. The default `--network=skip` keeps routine runs offline, and `--web=auto` runs website checks only when web files changed unless `--full` or `--web=always` is provided.
 
+### Stack Provenance Report (`scripts/stack-provenance-report.sh`)
+
+Use the stack provenance report when reviewing Dicklesworthstone stack tool freshness before release:
+
+```bash
+bash scripts/stack-provenance-report.sh --json
+bash scripts/stack-provenance-report.sh --network=check --json
+```
+
+Offline mode reports local manifest/checksum consistency for stack tools. Network mode also checks GitHub latest release metadata and generates a checksum candidate without writing `checksums.yaml`. Changed stack installer hashes fail the report, unrelated checksum diffs are called out separately, and `rch` release changes are flagged as mandatory checksum-refresh review items.
+
 ### Website Deployment (`website.yml`)
 
 ```yaml
