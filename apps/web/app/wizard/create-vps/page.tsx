@@ -353,8 +353,8 @@ export default function CreateVPSPage() {
                 Your data stays on your device
               </p>
               <p className="text-[12px] leading-relaxed text-muted-foreground sm:text-[13px]">
-                This IP address is stored <strong className="text-foreground/80">only in your browser&apos;s local storage</strong>. It&apos;s
-                never sent to our servers or any third party. The{" "}
+                This IP address is stored <strong className="text-foreground/80">in your browser&apos;s local storage</strong>.
+                If browser storage is blocked, the wizard keeps it in the page URL so the next step still works. The{" "}
                 <a
                   href="https://github.com/Dicklesworthstone/agentic_coding_flywheel_setup"
                   target="_blank"

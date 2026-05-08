@@ -185,7 +185,7 @@ export function detectOS(): OperatingSystem | null {
 }
 
 /**
- * Get the user's VPS IP address from localStorage.
+ * Get the user's VPS IP address from the URL fallback or localStorage.
  */
 export function getVPSIP(): string | null {
   const fromQuery = getQueryParam(VPS_IP_QUERY_KEY);
@@ -203,8 +203,7 @@ export function getVPSIP(): string | null {
 
 /**
  * Save the user's VPS IP address to localStorage.
- * Only saves if the IP is valid to prevent storing malformed data.
- * Returns true if saved successfully, false otherwise.
+ * Only keeps the IP in the URL when localStorage is unavailable.
  */
 export function setVPSIP(ip: string): boolean {
   const normalized = ip.trim();
@@ -212,7 +211,7 @@ export function setVPSIP(ip: string): boolean {
     return false;
   }
   const storedOk = safeSetItem(VPS_IP_KEY, normalized);
-  const urlOk = setQueryParam(VPS_IP_QUERY_KEY, normalized);
+  const urlOk = setQueryParam(VPS_IP_QUERY_KEY, storedOk ? null : normalized);
   if (storedOk || urlOk) {
     emitUserPreferencesUpdate();
   }

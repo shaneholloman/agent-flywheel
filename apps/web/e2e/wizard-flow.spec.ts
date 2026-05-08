@@ -271,7 +271,7 @@ test.describe("Wizard Flow", () => {
     await expect(page).toHaveURL(urlPathWithOptionalQuery("/wizard/ssh-connect"));
     const step6Url = new URL(page.url());
     expect(step6Url.searchParams.get("os")).toBe("mac");
-    expect(step6Url.searchParams.get("ip")).toBe("192.168.1.100");
+    expect(step6Url.searchParams.get("ip")).toBeNull();
   });
 });
 
@@ -428,9 +428,9 @@ test.describe("State Persistence", () => {
 
   test("should persist VPS IP across page reloads", async ({ page }) => {
     // Set up prerequisite state
-    await page.goto("/");
-    await page.evaluate(() => {
-      localStorage.setItem("agent-flywheel-user-os", "mac");
+    await setupWizardState(page, {
+      os: "mac",
+      completedSteps: [1, 2, 3, 4],
     });
 
     await page.goto("/wizard/create-vps");
@@ -464,8 +464,8 @@ test.describe("State Persistence", () => {
     const ip = await page.evaluate(() => localStorage.getItem("agent-flywheel-vps-ip"));
     expect(ip).toBe("10.0.0.50");
 
-    // URL query string should also reflect the IP
-    expect(new URL(page.url()).searchParams.get("ip")).toBe("10.0.0.50");
+    // When localStorage works, the IP should stay out of the URL.
+    expect(new URL(page.url()).searchParams.get("ip")).toBeNull();
   });
 });
 
@@ -669,7 +669,7 @@ test.describe("Complete Wizard Flow Integration", () => {
     await expect(page).toHaveURL(urlPathWithOptionalQuery("/wizard/ssh-connect"));
     const sshConnectUrl = new URL(page.url());
     expect(sshConnectUrl.searchParams.get("os")).toBe("mac");
-    expect(sshConnectUrl.searchParams.get("ip")).toBe("192.168.1.100");
+    expect(sshConnectUrl.searchParams.get("ip")).toBeNull();
 
     // Step 6: SSH Connect - THE CRITICAL TEST
     // This should NOT get stuck on a loading spinner

@@ -21,33 +21,65 @@ import {
   CREATE_VPS_CHECKLIST_KEY,
   getACFSRef,
   getCreateVPSChecklist,
+  getVPSIP,
   setACFSRef,
   setCreateVPSChecklist,
+  setVPSIP,
 } from "./userPreferences";
 
 type StorageController = {
   dispatchCalls: Event[];
+  getCurrentUrl: () => string | null;
   getStoredValue: (key: string) => string | null;
 };
 
 const originalWindow = globalThis.window;
 const originalLocalStorage = globalThis.localStorage;
+const VPS_IP_TEST_KEY = "agent-flywheel-vps-ip";
 
 function installMockBrowser(options?: {
   failSetItemForKey?: string;
   initialValues?: Record<string, string>;
+  url?: string;
 }): StorageController {
   const dispatchCalls: Event[] = [];
   const storage = new Map(Object.entries(options?.initialValues ?? {}));
+  let currentUrl = options?.url ? new URL(options.url) : null;
+  let historyState: unknown = null;
+
+  const windowValue = {
+    dispatchEvent(event: Event) {
+      dispatchCalls.push(event);
+      return true;
+    },
+  };
+
+  if (currentUrl) {
+    Object.defineProperty(windowValue, "location", {
+      configurable: true,
+      get() {
+        return currentUrl;
+      },
+    });
+    Object.defineProperty(windowValue, "history", {
+      configurable: true,
+      value: {
+        get state() {
+          return historyState;
+        },
+        replaceState(state: unknown, _unused: string, url?: string | URL | null) {
+          historyState = state;
+          if (url) {
+            currentUrl = new URL(String(url), currentUrl?.href);
+          }
+        },
+      },
+    });
+  }
 
   Object.defineProperty(globalThis, "window", {
     configurable: true,
-    value: {
-      dispatchEvent(event: Event) {
-        dispatchCalls.push(event);
-        return true;
-      },
-    },
+    value: windowValue,
   });
 
   Object.defineProperty(globalThis, "localStorage", {
@@ -70,6 +102,9 @@ function installMockBrowser(options?: {
 
   return {
     dispatchCalls,
+    getCurrentUrl() {
+      return currentUrl?.toString() ?? null;
+    },
     getStoredValue(key: string) {
       return storage.get(key) ?? null;
     },
@@ -185,6 +220,31 @@ describe("progress persistence guards", () => {
     expect(setCreateVPSChecklist(["ubuntu"])).toBe(false);
     expect(failingBrowser.getStoredValue(CREATE_VPS_CHECKLIST_KEY)).toBeNull();
     expect(failingBrowser.dispatchCalls).toHaveLength(0);
+  });
+
+  test("VPS IP stays out of the URL when localStorage works", () => {
+    const browser = installMockBrowser({
+      url: "https://example.test/wizard/create-vps?os=mac&ip=192.0.2.10",
+    });
+
+    expect(setVPSIP("10.0.0.50")).toBe(true);
+    expect(browser.getStoredValue(VPS_IP_TEST_KEY)).toBe("10.0.0.50");
+    expect(new URL(browser.getCurrentUrl() ?? "").searchParams.get("ip")).toBeNull();
+    expect(getVPSIP()).toBe("10.0.0.50");
+    expect(browser.dispatchCalls).toHaveLength(1);
+  });
+
+  test("VPS IP uses the URL only when localStorage is blocked", () => {
+    const browser = installMockBrowser({
+      failSetItemForKey: VPS_IP_TEST_KEY,
+      url: "https://example.test/wizard/create-vps?os=mac",
+    });
+
+    expect(setVPSIP("10.0.0.50")).toBe(true);
+    expect(browser.getStoredValue(VPS_IP_TEST_KEY)).toBeNull();
+    expect(new URL(browser.getCurrentUrl() ?? "").searchParams.get("ip")).toBe("10.0.0.50");
+    expect(getVPSIP()).toBe("10.0.0.50");
+    expect(browser.dispatchCalls).toHaveLength(1);
   });
 
   test("ACFS ref persistence rejects invalid refs without clearing the saved ref", () => {
