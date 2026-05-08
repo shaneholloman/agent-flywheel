@@ -1001,6 +1001,7 @@ print_acfs_help() {
     echo "  swarm assign        Role-aware Beads assignment planner"
     echo "  swarm convergence   Epic success-criteria convergence audit"
     echo "  swarm calibration   Artifact-backed capacity calibration report"
+    echo "  swarm inventory     Local host inventory report/import/export/validate"
     echo "  coordinate doctor   Alias for swarm doctor"
     echo "  cheatsheet          Command reference (aliases, shortcuts)"
     echo "  changelog [options] Show recent project changes"
@@ -4359,8 +4360,20 @@ main() {
                     echo "Error: swarm_calibration.sh not found" >&2
                     return 1
                     ;;
+                inventory|hosts|host-inventory)
+                    [[ $# -gt 0 ]] && shift
+                    local swarm_inventory_script=""
+                    swarm_inventory_script="$(_acfs_doctor_find_lib_script "swarm_inventory.sh" 2>/dev/null || true)"
+
+                    if [[ -n "$swarm_inventory_script" ]]; then
+                        _acfs_doctor_exec_bash_script "$swarm_inventory_script" "$@"
+                    fi
+
+                    echo "Error: swarm_inventory.sh not found" >&2
+                    return 1
+                    ;;
                 help|-h|--help)
-                    echo "Usage: acfs swarm <plan|status|doctor|simulate|packet|assign|convergence|calibration> [--json]"
+                    echo "Usage: acfs swarm <plan|status|doctor|simulate|packet|assign|convergence|calibration|inventory> [--json]"
                     return 0
                     ;;
                 *)
@@ -4452,6 +4465,18 @@ main() {
             fi
 
             echo "Error: swarm_calibration.sh not found" >&2
+            return 1
+            ;;
+        swarm-inventory|swarm_inventory)
+            shift
+            local swarm_inventory_script=""
+            swarm_inventory_script="$(_acfs_doctor_find_lib_script "swarm_inventory.sh" 2>/dev/null || true)"
+
+            if [[ -n "$swarm_inventory_script" ]]; then
+                _acfs_doctor_exec_bash_script "$swarm_inventory_script" "$@"
+            fi
+
+            echo "Error: swarm_inventory.sh not found" >&2
             return 1
             ;;
         coordinate|coord)

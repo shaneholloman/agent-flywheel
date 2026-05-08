@@ -8,7 +8,7 @@ _acfs_completions() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="newproj new services svc services-setup setup doctor check session sessions update status continue progress info i capacity cap swarm swarm-plan swarm_plan swarm-status swarm_status swarm-simulate swarm_simulate swarm-packet swarm_packet swarm-assign swarm_assign swarm-convergence swarm_convergence swarm-calibration swarm_calibration coordinate coord cheatsheet cs changelog changes log export-config export dashboard dash support-bundle bundle version help"
+    local commands="newproj new services svc services-setup setup doctor check session sessions update status continue progress info i capacity cap swarm swarm-plan swarm_plan swarm-status swarm_status swarm-simulate swarm_simulate swarm-packet swarm_packet swarm-assign swarm_assign swarm-convergence swarm_convergence swarm-calibration swarm_calibration swarm-inventory swarm_inventory coordinate coord cheatsheet cs changelog changes log export-config export dashboard dash support-bundle bundle version help"
 
     # Subcommand-specific flags
     local newproj_flags="-i --interactive --no-br --no-claude --no-agents -h --help"
@@ -16,7 +16,7 @@ _acfs_completions() {
     local status_flags="--json --short --check-updates -h --help"
     local info_flags="--json --html --minimal"
     local capacity_flags="--json --workload --profile --recommend-ntm -h --help"
-    local swarm_subcommands="plan advisor status snapshot doctor preflight simulate packet assign convergence calibration help"
+    local swarm_subcommands="plan advisor status snapshot doctor preflight simulate packet assign convergence calibration inventory hosts host-inventory help"
     local swarm_plan_flags="--json --agents --profile --workload --status-file -h --help"
     local swarm_status_flags="--json -h --help"
     local swarm_doctor_flags="--json --status-file -h --help"
@@ -25,6 +25,7 @@ _acfs_completions() {
     local swarm_assign_flags="--json --markdown --agents --roles --profile --ready-file --triage-file -h --help"
     local swarm_convergence_flags="--json --markdown --epic --epic-file --issues-file --commits-file -h --help"
     local swarm_calibration_flags="--json --markdown --artifact-dir --rch-file -h --help"
+    local swarm_inventory_flags="report import export validate --json --markdown --inventory --input --output --format --artifact-dir -h --help"
     local coordinate_subcommands="doctor preflight help"
     local cheatsheet_flags="--json"
     local changelog_flags="--all --since --json -h --help"
@@ -45,7 +46,7 @@ _acfs_completions() {
     local cmd=""
     for ((i=1; i < cword; i++)); do
         case "${words[i]}" in
-            newproj|new|services|svc|services-setup|setup|doctor|check|session|sessions|update|status|continue|progress|info|i|capacity|cap|swarm|swarm-plan|swarm_plan|swarm-status|swarm_status|swarm-simulate|swarm_simulate|swarm-packet|swarm_packet|swarm-assign|swarm_assign|swarm-convergence|swarm_convergence|swarm-calibration|swarm_calibration|coordinate|coord|cheatsheet|cs|changelog|changes|log|export-config|export|dashboard|dash|support-bundle|bundle|version|help)
+            newproj|new|services|svc|services-setup|setup|doctor|check|session|sessions|update|status|continue|progress|info|i|capacity|cap|swarm|swarm-plan|swarm_plan|swarm-status|swarm_status|swarm-simulate|swarm_simulate|swarm-packet|swarm_packet|swarm-assign|swarm_assign|swarm-convergence|swarm_convergence|swarm-calibration|swarm_calibration|swarm-inventory|swarm_inventory|coordinate|coord|cheatsheet|cs|changelog|changes|log|export-config|export|dashboard|dash|support-bundle|bundle|version|help)
                 cmd="${words[i]}"
                 break
                 ;;
@@ -77,7 +78,7 @@ _acfs_completions() {
             local swarm_cmd=""
             for ((j=i+1; j < cword; j++)); do
                 case "${words[j]}" in
-                    plan|advisor|status|snapshot|doctor|preflight|simulate|packet|assign|convergence|calibration|help)
+                    plan|advisor|status|snapshot|doctor|preflight|simulate|packet|assign|convergence|calibration|inventory|hosts|host-inventory|help)
                         swarm_cmd="${words[j]}"
                         break
                         ;;
@@ -108,6 +109,9 @@ _acfs_completions() {
                     ;;
                 calibration)
                     mapfile -t COMPREPLY < <(compgen -W "$swarm_calibration_flags" -- "$cur")
+                    ;;
+                inventory|hosts|host-inventory)
+                    mapfile -t COMPREPLY < <(compgen -W "$swarm_inventory_flags" -- "$cur")
                     ;;
                 help)
                     COMPREPLY=()
@@ -144,6 +148,10 @@ _acfs_completions() {
             ;;
         swarm-calibration|swarm_calibration)
             mapfile -t COMPREPLY < <(compgen -W "$swarm_calibration_flags" -- "$cur")
+            return
+            ;;
+        swarm-inventory|swarm_inventory)
+            mapfile -t COMPREPLY < <(compgen -W "$swarm_inventory_flags" -- "$cur")
             return
             ;;
         coordinate|coord)

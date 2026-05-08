@@ -151,6 +151,19 @@ _acfs() {
                                         '-h[Show help message]' \
                                         '--help[Show help message]'
                                     ;;
+                                inventory|hosts|host-inventory)
+                                    _arguments \
+                                        '1:inventory command:(report import export validate)' \
+                                        '--json[JSON output]' \
+                                        '--markdown[Markdown output]' \
+                                        '--inventory[Inventory file]:file:_files' \
+                                        '--input[Input file for import]:file:_files' \
+                                        '--output[Output file for import/export]:file:_files' \
+                                        '--format[Export format]:format:(json)' \
+                                        '--artifact-dir[Write error artifacts here]:directory:_files -/' \
+                                        '-h[Show help message]' \
+                                        '--help[Show help message]'
+                                    ;;
                             esac
                             ;;
                     esac
@@ -229,6 +242,19 @@ _acfs() {
                         '--markdown[Markdown output]' \
                         '--artifact-dir[Read simulation artifact directory]:directory:_files -/' \
                         '--rch-file[Read optional RCH timing JSON]:file:_files' \
+                        '-h[Show help message]' \
+                        '--help[Show help message]'
+                    ;;
+                swarm-inventory|swarm_inventory)
+                    _arguments \
+                        '1:inventory command:(report import export validate)' \
+                        '--json[JSON output]' \
+                        '--markdown[Markdown output]' \
+                        '--inventory[Inventory file]:file:_files' \
+                        '--input[Input file for import]:file:_files' \
+                        '--output[Output file for import/export]:file:_files' \
+                        '--format[Export format]:format:(json)' \
+                        '--artifact-dir[Write error artifacts here]:directory:_files -/' \
                         '-h[Show help message]' \
                         '--help[Show help message]'
                     ;;
@@ -361,7 +387,7 @@ _acfs_commands() {
         'i:System overview (alias for info)'
         'capacity:Estimate safe/recommended agent counts'
         'cap:Capacity report (alias for capacity)'
-        'swarm:Swarm plan, status, doctor, simulation, and startup packets'
+        'swarm:Swarm plan, status, doctor, simulation, packets, and inventory'
         'swarm-plan:Queue-aware launch advisor'
         'swarm_plan:Queue-aware launch advisor'
         'swarm-status:Local swarm status snapshot'
@@ -376,6 +402,8 @@ _acfs_commands() {
         'swarm_convergence:Epic success-criteria convergence audit'
         'swarm-calibration:Artifact-backed capacity calibration report'
         'swarm_calibration:Artifact-backed capacity calibration report'
+        'swarm-inventory:Local host inventory report/import/export/validate'
+        'swarm_inventory:Local host inventory report/import/export/validate'
         'coordinate:Coordination preflight helpers'
         'coord:Coordination helpers (alias for coordinate)'
         'cheatsheet:Command reference (aliases, shortcuts)'
@@ -432,6 +460,9 @@ _acfs_swarm_commands() {
         'assign:Role-aware Beads assignment planner'
         'convergence:Epic success-criteria convergence audit'
         'calibration:Artifact-backed capacity calibration report'
+        'inventory:Local host inventory report/import/export/validate'
+        'hosts:Local host inventory report/import/export/validate'
+        'host-inventory:Local host inventory report/import/export/validate'
         'help:Show swarm help'
     )
     _describe -t commands 'swarm command' commands

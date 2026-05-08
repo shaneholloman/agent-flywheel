@@ -3364,6 +3364,21 @@ only: it does not launch agents, mutate Beads, send Agent Mail, force-release
 reservations, or run build commands. JSON output is available with `--json`,
 and fixture replay is available with `--status-file`.
 
+For multi-host planning, keep a local redacted inventory at
+`~/.acfs/swarm/hosts.inventory.json`:
+
+```bash
+acfs swarm inventory report
+acfs swarm inventory validate --json
+acfs swarm inventory export --format json --output inventory.redacted.json
+acfs swarm inventory import --input inventory.redacted.json
+```
+
+The inventory commands are local and advisory. They read or write JSON files,
+preserve unknown fields for future versions, reject sensitive field names such
+as hostnames, IPs, keys, tokens, passwords, and home paths, and never SSH,
+launch NTM, run RU, send Agent Mail, mutate Beads, or change RCH config.
+
 For each agent you plan to launch, generate a bounded startup packet from the
 selected Bead plus current repo instructions and bounded CM/CASS context:
 
