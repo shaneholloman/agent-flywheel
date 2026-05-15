@@ -1415,6 +1415,55 @@ acfs_require_ref_arg_value() {
     esac
 }
 
+acfs_resolve_offline_pack_dir() {
+    local flag="$1"
+    local value="${2:-}"
+    local candidate=""
+    local resolved=""
+
+    if [[ -z "$value" || "$value" == -* ]]; then
+        log_fatal "$flag requires a directory"
+    fi
+    if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+        log_fatal "$flag requires a single-line directory"
+    fi
+
+    case "$value" in
+        /*) candidate="$value" ;;
+        *) candidate="$PWD/$value" ;;
+    esac
+    candidate="${candidate%/}"
+
+    if [[ -z "$candidate" || ! -d "$candidate" ]]; then
+        log_fatal "$flag must point to an existing extracted offline pack directory (got: $value)"
+    fi
+
+    resolved="$(cd "$candidate" && pwd -P)" || {
+        log_fatal "$flag could not resolve directory: $value"
+    }
+
+    if [[ ! -r "$resolved/manifest.json" && ! -r "$resolved/acfs-offline-pack/manifest.json" ]]; then
+        log_fatal "$flag must point to acfs-offline-pack/ or its parent directory with manifest.json"
+    fi
+
+    printf '%s\n' "$resolved"
+}
+
+acfs_normalize_offline_pack_configuration() {
+    if [[ -z "${ACFS_OFFLINE_PACK:-}" ]]; then
+        return 0
+    fi
+
+    ACFS_OFFLINE_PACK="$(acfs_resolve_offline_pack_dir "ACFS_OFFLINE_PACK" "$ACFS_OFFLINE_PACK")"
+    if [[ -z "${ACFS_OFFLINE_NETWORK_MODE:-}" ]]; then
+        ACFS_OFFLINE_NETWORK_MODE=offline
+    fi
+    if [[ "${ACFS_OFFLINE_NETWORK_MODE:-}" == "offline" && -z "${ACFS_OFFLINE_PACK_REQUIRED:-}" ]]; then
+        ACFS_OFFLINE_PACK_REQUIRED=true
+    fi
+    export ACFS_OFFLINE_PACK ACFS_OFFLINE_NETWORK_MODE ACFS_OFFLINE_PACK_REQUIRED
+}
+
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -1529,9 +1578,6 @@ parse_args() {
                         log_fatal "--offline-pack requires a directory"
                     fi
                     shift
-                fi
-                if [[ "$ACFS_OFFLINE_PACK" == *$'\n'* || "$ACFS_OFFLINE_PACK" == *$'\r'* ]]; then
-                    log_fatal "--offline-pack requires a single-line directory"
                 fi
                 ACFS_OFFLINE_NETWORK_MODE=offline
                 ACFS_OFFLINE_PACK_REQUIRED=true
@@ -7882,6 +7928,8 @@ main() {
         print_pinned_ref
         exit 0
     fi
+
+    acfs_normalize_offline_pack_configuration
 
     if [[ -z "${SCRIPT_DIR:-}" ]]; then
         # Resolve ACFS_REF to a specific commit SHA early to prevent mixed-ref installs.
