@@ -93,10 +93,20 @@ describe("provider provisioning packet contract", () => {
   test("keeps manual wizard providers aligned with the password-first setup flow", () => {
     const contaboSteps = manualStepsForProvider("contabo").join("\n").toLowerCase();
     const ovhSteps = manualStepsForProvider("ovh").join("\n").toLowerCase();
+    const forbiddenProviderKeyActions = [
+      "paste or select the public ssh key",
+      "attach the public ssh key",
+      "upload the public ssh key",
+      "add the public ssh key",
+    ];
 
-    expect(contaboSteps).toContain("password");
-    expect(contaboSteps).toContain("root");
-    expect(contaboSteps).not.toContain("ssh key");
+    for (const steps of [contaboSteps, ovhSteps]) {
+      expect(steps).toContain("password");
+      expect(steps).toContain("root");
+      for (const phrase of forbiddenProviderKeyActions) {
+        expect(steps).not.toContain(phrase);
+      }
+    }
     expect(ovhSteps).toContain("password authentication");
     expect(ovhSteps).toContain("skip the provider ssh key section");
   });

@@ -208,6 +208,7 @@ test_valid_packet_json_output_is_stable() {
       .packet.provider.name == "Contabo" and
       .packet.compatibility.targetAgents == 10 and
       .validation.errors == [] and
+      any(.validation.manualSteps[]; contains("temporary VPS root password")) and
       (.validation.manualSteps[] | select(contains("Complete checkout"))) and
       (.validation.verificationCommands[] | select(.id == "installer"))
     ' <<<"$output" >/dev/null || return 1
@@ -227,6 +228,7 @@ test_valid_packet_markdown_renders_steps() {
     [[ "$output" == *"Status: pass"* ]] || return 1
     [[ "$output" == *"Provider: Contabo (manual)"* ]] || return 1
     [[ "$output" == *"Manual provider steps:"* ]] || return 1
+    [[ "$output" == *"temporary VPS root password"* ]] || return 1
     [[ "$output" == *"[installer] ACFS installer exits successfully"* ]] || return 1
 
     pass "valid_packet_markdown_renders_steps"
